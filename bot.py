@@ -3,7 +3,7 @@
 
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.0 - النسخة النهائية المصححة بالكامل
+الإصدار: 20.0.1 - النسخة النهائية المصححة بالكامل
 المطور: @RelaxMgr
 تم تصحيح جميع الأخطاء وتحسين الأداء
 """
@@ -7178,7 +7178,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.0
+📦 **الإصدار:** 20.0.1
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -11108,7 +11108,7 @@ async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAUL
         return
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    if chat_id.type not in ['group', 'supergroup']:
+    if chat.type not in ['group', 'supergroup']:
         await update.message.reply_text("⚠️ هذا الأمر يعمل فقط في المجموعات!")
         return
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
@@ -12071,7 +12071,7 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
                         # ثم البحث عن رد عام
                         reply = await db_get_reply(text.lower())
                     if not reply:
-                        # أخيراً استخدام الردود المدمجة مع مطابقة دقيقة باستخدام regex
+                        # أخيراً استخدام الردود المدمجة مع مطابقة دقيقة
                         import re
                         for key, value in ALL_REPLIES.items():
                             if re.search(r'\b' + re.escape(key) + r'\b', text, re.IGNORECASE):
@@ -12152,6 +12152,20 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 web_app = web.Application()
 
+# دالة الصفحة الرئيسية - إصدار مصحح (بدون خطأ content_type)
+async def index_handler(request):
+    html_content = """<html>
+        <head><title>ريلاكس مانيجر</title></head>
+        <body style="font-family: Arial; text-align: center; padding: 50px; direction: rtl;">
+            <h1>🌿 ريلاكس مانيجر</h1>
+            <p>✅ البوت يعمل بكفاءة</p>
+            <p>📊 <a href="/health">التحقق من الصحة</a></p>
+            <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.1</p>
+        </body>
+        </html>"""
+    return web.Response(text=html_content, content_type="text/html", charset="utf-8")
+
 async def health_check_handler(request):
     try:
         db_healthy = await check_database_health()
@@ -12174,25 +12188,10 @@ async def health_check_handler(request):
             'error': str(e)
         }, status=503)
 
-web_app.router.add_get('/health', health_check_handler)
-async def index_handler(request):
-    return web.Response(
-        text="""<html>
-        <head><title>ريلاكس مانيجر</title></head>
-        <body style="font-family: Arial; text-align: center; padding: 50px; direction: rtl;">
-            <h1>🌿 ريلاكس مانيجر</h1>
-            <p>✅ البوت يعمل بكفاءة</p>
-            <p>📊 <a href="/health">التحقق من الصحة</a></p>
-            <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.0</p>
-        </body>
-        </html>""",
-        content_type="text/html; charset=utf-8"
-    )
-
-# أضف هذين السطرين بعد تعريف الدالة وقبل /health
+# تسجيل نقاط النهاية
 web_app.router.add_get('/', index_handler)
 web_app.router.add_get('/index.html', index_handler)
+web_app.router.add_get('/health', health_check_handler)
 
 async def start_web_server():
     try:
@@ -13462,7 +13461,7 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.0 - النسخة النهائية المصححة)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.1 - النسخة النهائية المصححة)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ أزرار جديدة: حذف الفيديوهات، رسائل الخدمة، الملفات، الملصقات، الصوتيات، المتحركات")
     print("   • ✅ أزرار تفعيل/تعطيل الكل")
@@ -13478,6 +13477,7 @@ async def main():
     print("   • ✅ نظام NSFW متكامل مع تخزين مؤقت")
     print("   • ✅ نظام الردود التلقائية المتقدمة")
     print("   • ✅ تصحيح جميع الأخطاء المكتشفة (حالات المسابقات، /sendcode، 2FA، وغيرها)")
+    print("   • ✅ إصلاح خطأ content_type في صفحة الويب")
 
     try:
         await application.run_polling(
