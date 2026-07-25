@@ -12454,6 +12454,27 @@ async def main():
     # استيراد الكلمات المحظورة من ملف
     try:
         words = load_banned_words_from_file(BANNED_WORDS_FILE)
+# ===================== دالة rebuild_banned_patterns =====================
+async def rebuild_banned_patterns():
+    """إعادة بناء أنماط الكلمات المحظورة من قاعدة البيانات"""
+    global BANNED_PATTERNS
+    async with _BANNED_PATTERNS_LOCK:
+        BANNED_PATTERNS = []
+        try:
+            async def _get_patterns(conn):
+                cur = await conn.execute("SELECT word FROM banned_words WHERE chat_id = -1")
+                rows = await cur.fetchall()
+                return [row[0] for row in rows]
+            words = await execute_db(_get_patterns)
+            for word in words:
+                if '*' in word or '?' in word or '+' in word:
+                    try:
+                        BANNED_PATTERNS.append(re.compile(word))
+                    except:
+                        pass
+            logger.info(f"✅ تم إعادة بناء {len(BANNED_PATTERNS)} نمط محظور")
+        except Exception as e:
+            logger.error(f"❌ فشل إعادة بناء الأنماط المحظورة: {e}")
         if words:
             async def _import(conn):
                 imported = 0
