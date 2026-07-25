@@ -1594,7 +1594,8 @@ class ErrorHandler:
 error_handler = ErrorHandler()
 
 # ===================== نظام إدارة الذاكرة =====================
-def memory_optimizer():
+# ===== التعديل الأول: تحويل memory_optimizer إلى async مع استخدام await =====
+async def memory_optimizer():
     """تحسين استخدام الذاكرة"""
     try:
         # تنظيف الكاش
@@ -1608,8 +1609,8 @@ def memory_optimizer():
             _auth_cache.clear()
             _security_cache_time.clear()
 
-        # تنظيف كاش الترجمة
-        _translation_cache.clear()
+        # تنظيف كاش الترجمة - تم إصلاحه باستخدام await
+        await _translation_cache.clear()
 
         # تنظيف كاش NSFW
         NSFW_CACHE.clear()
@@ -1622,12 +1623,13 @@ def memory_optimizer():
         advanced_logger.log_error("فشل تحسين الذاكرة", e)
         return False
 
+# ===== التعديل الثاني: تعديل memory_optimizer_loop لاستخدام await =====
 async def memory_optimizer_loop():
     """حلقة تحسين الذاكرة التلقائية"""
     while True:
         await asyncio.sleep(300)  # كل 5 دقائق
         try:
-            memory_optimizer()
+            await memory_optimizer()  # تم إضافة await
             advanced_logger.log_access(0, "MEMORY_OPTIMIZED", {"timestamp": utc_now_iso()})
         except Exception as e:
             advanced_logger.log_error("فشل حلقة تحسين الذاكرة", e)
@@ -6544,7 +6546,7 @@ async def security_banned_words_menu_callback(update: Update, context: ContextTy
     else:
         await update.message.reply_text(msg, reply_markup=get_group_banned_words_keyboard(chat_id))
 
-# ===================== معالجات الكولباك الجديدة لحذف الفيديوهات ورسائل الخدمة والملفات والملصقات =====================
+# ===== التعديل الثالث: دالة security_toggle_helper المحسّنة =====
 async def security_toggle_helper(update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):
     query = update.callback_query
     if query:
@@ -6559,15 +6561,21 @@ async def security_toggle_helper(update: Update, context: ContextTypes.DEFAULT_T
         else:
             await update.message.reply_text(get_text(uid, 'admin_only'))
         return
+
+    # جلب الإعدادات الحالية
     settings = await db_get_security_settings(chat_id)
+    # تبديل القيمة
     settings[key] = not settings.get(key, False)
+    # حفظ الإعدادات
     await db_set_security_settings(chat_id, **settings)
-    if query:
-        await query.edit_message_text(get_text(uid, 'updated'))
-    else:
-        await update.message.reply_text(get_text(uid, 'updated'))
+
+    # إعادة تحميل الإعدادات للتأكد من التحديث (مسح الكاش)
+    settings = await db_get_security_settings(chat_id)
+
+    # إعادة بناء الواجهة بالكامل
     await group_settings_callback(update, context)
 
+# ===================== معالجات الكولباك الجديدة لحذف الفيديوهات ورسائل الخدمة والملفات والملصقات =====================
 async def security_delete_videos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await security_toggle_helper(update, context, 'delete_videos')
 
@@ -11106,6 +11114,7 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
 async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None or update.effective_chat is None or update.effective_user is None:
         return
+    chat = update.effective_chat
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     if chat.type not in ['group', 'supergroup']:
@@ -12618,7 +12627,7 @@ async def memory_monitor():
             ram = get_ram_usage()
             if ram['percent'] > 80:
                 logger.warning(f"⚠️ استخدام الذاكرة عالي: {ram['percent']}%")
-                memory_optimizer()
+                await memory_optimizer()  # تم إضافة await
                 logger.info("✅ تم تنظيف الذاكرة")
             await asyncio.sleep(60)
         except Exception as e:
@@ -13478,6 +13487,8 @@ async def main():
     print("   • ✅ نظام الردود التلقائية المتقدمة")
     print("   • ✅ تصحيح جميع الأخطاء المكتشفة (حالات المسابقات، /sendcode، 2FA، وغيرها)")
     print("   • ✅ إصلاح خطأ content_type في صفحة الويب")
+    print("   • ✅ تحسين دالة memory_optimizer (استخدام await)")
+    print("   • ✅ تحسين دالة security_toggle_helper (إعادة تحميل الإعدادات)")
 
     try:
         await application.run_polling(
