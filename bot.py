@@ -6140,7 +6140,7 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
         text += f"🛠️ حذف رسائل الخدمة: {'✅' if settings.get('delete_service', False) else '❌'}\n"
         text += f"📄 حذف الملفات: {'✅' if settings.get('delete_documents', False) else '❌'}\n"
         text += f"🖼️ حذف الملصقات: {'✅' if settings.get('delete_stickers', False) else '❌'}\n"
-        text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    #    text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
         penalty = settings.get('auto_penalty', 'none')
         if penalty == 'kick':
             penalty_text = "طرد"
