@@ -3,7 +3,7 @@
 
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.1 - النسخة النهائية المصححة بالكامل
+الإصدار: 20.0.2 - النسخة النهائية المصححة بالكامل مع تحديثات الأمان والذاكرة
 المطور: @RelaxMgr
 تم تصحيح جميع الأخطاء وتحسين الأداء
 """
@@ -1594,9 +1594,8 @@ class ErrorHandler:
 error_handler = ErrorHandler()
 
 # ===================== نظام إدارة الذاكرة =====================
-# ===== التعديل الأول: تحويل memory_optimizer إلى async مع استخدام await =====
 async def memory_optimizer():
-    """تحسين استخدام الذاكرة"""
+    """تحسين استخدام الذاكرة - الإصدار المصحح (غير متزامن)"""
     try:
         # تنظيف الكاش
         if CACHETOOLS_AVAILABLE:
@@ -1609,7 +1608,7 @@ async def memory_optimizer():
             _auth_cache.clear()
             _security_cache_time.clear()
 
-        # تنظيف كاش الترجمة - تم إصلاحه باستخدام await
+        # تنظيف كاش الترجمة (استخدام await)
         await _translation_cache.clear()
 
         # تنظيف كاش NSFW
@@ -1623,9 +1622,8 @@ async def memory_optimizer():
         advanced_logger.log_error("فشل تحسين الذاكرة", e)
         return False
 
-# ===== التعديل الثاني: تعديل memory_optimizer_loop لاستخدام await =====
 async def memory_optimizer_loop():
-    """حلقة تحسين الذاكرة التلقائية"""
+    """حلقة تحسين الذاكرة التلقائية - الإصدار المصحح"""
     while True:
         await asyncio.sleep(300)  # كل 5 دقائق
         try:
@@ -6546,7 +6544,7 @@ async def security_banned_words_menu_callback(update: Update, context: ContextTy
     else:
         await update.message.reply_text(msg, reply_markup=get_group_banned_words_keyboard(chat_id))
 
-# ===== التعديل الثالث: دالة security_toggle_helper المحسّنة =====
+# ===================== معالجات الكولباك الجديدة لحذف الفيديوهات ورسائل الخدمة والملفات والملصقات =====================
 async def security_toggle_helper(update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):
     query = update.callback_query
     if query:
@@ -6575,7 +6573,6 @@ async def security_toggle_helper(update: Update, context: ContextTypes.DEFAULT_T
     # إعادة بناء الواجهة بالكامل
     await group_settings_callback(update, context)
 
-# ===================== معالجات الكولباك الجديدة لحذف الفيديوهات ورسائل الخدمة والملفات والملصقات =====================
 async def security_delete_videos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await security_toggle_helper(update, context, 'delete_videos')
 
@@ -7186,7 +7183,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.1
+📦 **الإصدار:** 20.0.2
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -11114,9 +11111,9 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
 async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None or update.effective_chat is None or update.effective_user is None:
         return
-    chat = update.effective_chat
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+    chat = update.effective_chat
     if chat.type not in ['group', 'supergroup']:
         await update.message.reply_text("⚠️ هذا الأمر يعمل فقط في المجموعات!")
         return
@@ -12170,7 +12167,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.1</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.2</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -12627,7 +12624,7 @@ async def memory_monitor():
             ram = get_ram_usage()
             if ram['percent'] > 80:
                 logger.warning(f"⚠️ استخدام الذاكرة عالي: {ram['percent']}%")
-                await memory_optimizer()  # تم إضافة await
+                await memory_optimizer()
                 logger.info("✅ تم تنظيف الذاكرة")
             await asyncio.sleep(60)
         except Exception as e:
@@ -13417,6 +13414,17 @@ async def main():
         delete_service_messages
     ))
 
+# ===== معالجات الوسائط بدون كابشن =====
+   application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+   application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+   application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+   application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+   application.add_handler(MessageHandler(filters.DOCUMENT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+   application.add_handler(MessageHandler(filters.Sticker & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+   application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+   application.add_handler(MessageHandler(filters.CONTACT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+   application.add_handler(MessageHandler(filters.LOCATION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+   application.add_handler(MessageHandler(filters.POLL & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     commands = [
         BotCommand("start", "بدء البوت"),
         BotCommand("trial", "تجربة مجانية"),
@@ -13470,7 +13478,7 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.1 - النسخة النهائية المصححة)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.2 - النسخة النهائية المصححة)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ أزرار جديدة: حذف الفيديوهات، رسائل الخدمة، الملفات، الملصقات، الصوتيات، المتحركات")
     print("   • ✅ أزرار تفعيل/تعطيل الكل")
@@ -13487,8 +13495,9 @@ async def main():
     print("   • ✅ نظام الردود التلقائية المتقدمة")
     print("   • ✅ تصحيح جميع الأخطاء المكتشفة (حالات المسابقات، /sendcode، 2FA، وغيرها)")
     print("   • ✅ إصلاح خطأ content_type في صفحة الويب")
-    print("   • ✅ تحسين دالة memory_optimizer (استخدام await)")
-    print("   • ✅ تحسين دالة security_toggle_helper (إعادة تحميل الإعدادات)")
+    print("   • ✅ إصلاح دالة memory_optimizer (إضافة await)")
+    print("   • ✅ إصلاح حلقة memory_optimizer_loop")
+    print("   • ✅ إصلاح دالة security_toggle_helper لتحديث الرموز فوراً")
 
     try:
         await application.run_polling(
