@@ -3,7 +3,7 @@
 
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.3 - النسخة النهائية المصححة بالكامل مع جميع الإصلاحات
+الإصدار: 20.0.4 - النسخة النهائية المصححة بالكامل مع جميع الإصلاحات
 المطور: @RelaxMgr
 تم تصحيح جميع الأخطاء وتحسين الأداء وإضافة جميع الفلاتر
 """
@@ -7183,7 +7183,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.3
+📦 **الإصدار:** 20.0.4
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -12167,7 +12167,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.3</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.4</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13407,16 +13407,21 @@ async def main():
     application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.DOCUMENT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.Sticker & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.CONTACT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.LOCATION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.POLL & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     
-    # ===== معالجات الوسائط بدون كابشن =====
-    application.add_handler(MessageHandler(filters.ATTACHMENT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.Sticker & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     # ===== معالجات الخاص =====
     application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
     application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
 
     # ===== إضافة معالج حذف رسائل الخدمة المنفصل =====
     application.add_handler(MessageHandler(
@@ -13477,7 +13482,7 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.3 - النسخة النهائية المصححة)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.4 - النسخة النهائية المصححة)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ أزرار جديدة: حذف الفيديوهات، رسائل الخدمة، الملفات، الملصقات، الصوتيات، المتحركات")
     print("   • ✅ أزرار تفعيل/تعطيل الكل")
@@ -13498,6 +13503,7 @@ async def main():
     print("   • ✅ إصلاح حلقة memory_optimizer_loop")
     print("   • ✅ إصلاح دالة security_toggle_helper لتحديث الرموز فوراً")
     print("   • ✅ إضافة جميع معالجات الوسائط بدون كابشن (صور، فيديوهات، صوتيات، متحركات، مستندات، ملصقات، صوت قصير، جهات اتصال، موقع، استطلاعات)")
+    print("   • ✅ استبدال الفلاتر القديمة بـ filters.ATTACHMENT + filters.Sticker لتوافق جميع الإصدارات")
 
     try:
         await application.run_polling(
