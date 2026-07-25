@@ -12175,6 +12175,24 @@ async def health_check_handler(request):
         }, status=503)
 
 web_app.router.add_get('/health', health_check_handler)
+async def index_handler(request):
+    return web.Response(
+        text="""<html>
+        <head><title>ريلاكس مانيجر</title></head>
+        <body style="font-family: Arial; text-align: center; padding: 50px; direction: rtl;">
+            <h1>🌿 ريلاكس مانيجر</h1>
+            <p>✅ البوت يعمل بكفاءة</p>
+            <p>📊 <a href="/health">التحقق من الصحة</a></p>
+            <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.0</p>
+        </body>
+        </html>""",
+        content_type="text/html; charset=utf-8"
+    )
+
+# أضف هذين السطرين بعد تعريف الدالة وقبل /health
+web_app.router.add_get('/', index_handler)
+web_app.router.add_get('/index.html', index_handler)
 
 async def start_web_server():
     try:
