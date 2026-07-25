@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#
+
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
 الإصدار: 20.0.2 - النسخة النهائية المصححة بالكامل مع تحديثات الأمان والذاكرة
@@ -13407,24 +13407,21 @@ async def main():
     application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
-
+#
+    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
+    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
     # ===== إضافة معالج حذف رسائل الخدمة المنفصل =====
     application.add_handler(MessageHandler(
         filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER,
         delete_service_messages
     ))
 
-# ===== معالجات الوسائط بدون كابشن =====
-   application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-   application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-   application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-   application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-   application.add_handler(MessageHandler(filters.DOCUMENT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-   application.add_handler(MessageHandler(filters.Sticker & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-   application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-   application.add_handler(MessageHandler(filters.CONTACT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-   application.add_handler(MessageHandler(filters.LOCATION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-   application.add_handler(MessageHandler(filters.POLL & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     commands = [
         BotCommand("start", "بدء البوت"),
         BotCommand("trial", "تجربة مجانية"),
