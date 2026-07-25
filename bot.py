@@ -6546,18 +6546,24 @@ async def security_banned_words_menu_callback(update: Update, context: ContextTy
 
 # ===================== معالجات الكولباك الجديدة لحذف الفيديوهات ورسائل الخدمة والملفات والملصقات =====================
 async def security_toggle_helper(update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):
+    """
+    دالة مساعدة لتبديل إعدادات الحذف (فيديوهات، خدمة، صوت، إلخ)
+    """
     query = update.callback_query
     if query:
-        await query.answer()
-    uid = update.effective_user.id
-    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
+        await query.answer()  # تأكيد الضغط فوراً
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
     if not chat_id:
         return
-    if not await is_authorized_in_group(context.bot, chat_id, uid):
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
         if query:
-            await query.answer(get_text(uid, 'admin_only'), show_alert=True)
+            await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
         else:
-            await update.message.reply_text(get_text(uid, 'admin_only'))
+            await update.message.reply_text(get_text(user_id, 'admin_only'))
         return
 
     # جلب الإعدادات الحالية
@@ -6578,6 +6584,30 @@ async def security_toggle_helper(update: Update, context: ContextTypes.DEFAULT_T
 
     # إعادة بناء الواجهة بالكامل
     await group_settings_callback(update, context)
+
+
+async def security_delete_videos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await security_toggle_helper(update, context, 'delete_videos')
+
+
+async def security_delete_service_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await security_toggle_helper(update, context, 'delete_service')
+
+
+async def security_delete_audio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await security_toggle_helper(update, context, 'delete_audio')
+
+
+async def security_delete_documents_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await security_toggle_helper(update, context, 'delete_documents')
+
+
+async def security_delete_stickers_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await security_toggle_helper(update, context, 'delete_stickers')
+
+
+async def security_delete_animation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await security_toggle_helper(update, context, 'delete_animation')
 
 async def security_delete_videos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await security_toggle_helper(update, context, 'delete_videos')
