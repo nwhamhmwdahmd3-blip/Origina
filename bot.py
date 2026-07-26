@@ -1409,15 +1409,6 @@ def invalidate_auth_cache(chat_id: int = None, user_id: int = None):
 
 # ===================== دالة الإرسال الآمنة للمستخدمين المجهولين =====================
 async def safe_send_to_user_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None, parse_mode='MarkdownV2', chat_id_override: int = None):
-    """
-    ترسل رسالة إلى المستخدم إن أمكن، وإلا ترسلها إلى المجموعة (في حالة المستخدم المجهول).
-    - update: كائن التحديث (للاستفادة من effective_user و effective_chat)
-    - context: سياق البوت
-    - text: النص المرسل
-    - reply_markup: أزرار إضافية (اختياري)
-    - parse_mode: نمط التنسيق (افتراضي MarkdownV2)
-    - chat_id_override: يمكن تمرير معرف محدد للتجاوز (مثل عند عدم وجود update)
-    """
     try:
         if update:
             user_id = update.effective_user.id if update.effective_user else None
@@ -1426,27 +1417,24 @@ async def safe_send_to_user_or_group(update: Update, context: ContextTypes.DEFAU
             user_id = None
             chat_id = None
 
-        # إذا تم تمرير معرف محدد للتجاوز، استخدمه
         if chat_id_override:
             target_id = chat_id_override
-        # إذا كان المستخدم مجهولاً أو لا يوجد تحديث، نرسل إلى المجموعة (إذا كانت معروفة)
         elif user_id == ANONYMOUS_ADMIN_ID and chat_id:
             target_id = chat_id
         elif user_id:
             target_id = user_id
         else:
-            # حالة نادرة: لا يوجد معرف، نستخدم معرف المطور
             target_id = PRIMARY_OWNER_ID
 
         return await safe_send_markdown(context.bot, target_id, text, reply_markup, parse_mode)
     except Exception as e:
         logger.error(f"فشل إرسال الرسالة الآمنة: {e}")
-        # محاولة إرسال إلى المطور كحل أخير
         try:
             await safe_send_markdown(context.bot, PRIMARY_OWNER_ID, f"⚠️ فشل إرسال رسالة آمنة: {text[:100]}")
         except:
             pass
         return None
+
 
 # ===================== التحقق من التشغيل الواحد =====================
 def check_single_instance():
@@ -1472,13 +1460,46 @@ def clean_text_for_telegram(text: str) -> str:
     text = re.sub(r'[\u200b\u200c\u200d\u2060\uFEFF\u202a\u202b\u202c\u202d\u202e]', '', text)
     return text
 
-def escape_markdown_v2(text: str) -> str:
+async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, parse_mode='MarkdownV2', **kwargs):
     if not text:
-        return ""
-    special_chars = r'_*[]()~`>#+\-=|{}.!'
-    for char in special_chars:
-        text = text.replace(char, f'\\{char}')
-    return text
+        return None
+    clean_text = sanitize_text(text)
+    
+    # إزالة أي \\ مزدوجة (حماية إضافية)
+    clean_text = clean_text.replace('\\\\', '\\')
+    
+    try:
+        if parse_mode == 'MarkdownV2':
+            escaped = escape_markdown_v2(clean_text)
+        else:
+            escaped = clean_text
+            
+        if len(escaped) > 4096:
+            escaped = escaped[:4093] + "..."
+            
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=escaped,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+            **kwargs
+        )
+    except BadRequest as e:
+        error_msg = str(e).lower()
+        if "can't parse entities" in error_msg:
+            html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            if len(html_text) > 4096:
+                html_text = html_text[:4093] + "..."
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=html_text,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                **kwargs
+            )
+        elif "message is not modified" in error_msg:
+            return None
+        raise
 
 def sanitize_text(text: str, max_length: int = 4096, allow_tags: list = None) -> str:
     if not text:
@@ -1684,15 +1705,47 @@ class NotificationSystem:
         self._lock = asyncio.Lock()
         self._scheduled_tasks = []
 
-    async def send_notification(self, bot, user_id: int, text: str, parse_mode: str = "MarkdownV2", reply_markup=None):
-        """إرسال إشعار لمستخدم"""
-        try:
-            await safe_send_markdown(bot, user_id, text, reply_markup)
-            advanced_logger.log_access(user_id, "NOTIFICATION_SENT", {"text": text[:50]})
-            return True
-        except Exception as e:
-            advanced_logger.log_error("فشل إرسال الإشعار", e, {"user_id": user_id})
-            return False
+    async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, parse_mode='MarkdownV2', **kwargs):
+    if not text:
+        return None
+    clean_text = sanitize_text(text)
+    
+    # إزالة أي escape مزدوج (\\\\) لتجنب المشاكل
+    clean_text = clean_text.replace('\\\\', '\\')
+    
+    try:
+        if parse_mode == 'MarkdownV2':
+            escaped = escape_markdown_v2(clean_text)
+        else:
+            escaped = clean_text
+            
+        if len(escaped) > 4096:
+            escaped = escaped[:4093] + "..."
+            
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=escaped,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+            **kwargs
+        )
+    except BadRequest as e:
+        error_msg = str(e).lower()
+        if "can't parse entities" in error_msg:
+            # محاولة الإرسال بـ HTML
+            html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            if len(html_text) > 4096:
+                html_text = html_text[:4093] + "..."
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=html_text,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                **kwargs
+            )
+        elif "message is not modified" in error_msg:
+            return None
+        raise
 
     async def send_bulk_notification(self, bot, user_ids: List[int], text: str, parse_mode: str = "MarkdownV2", delay: float = 0.5):
         """إرسال إشعار لمجموعة من المستخدمين"""
