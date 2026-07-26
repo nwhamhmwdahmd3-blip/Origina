@@ -3,7 +3,7 @@
 
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.6 - النسخة النهائية مع تحسينات الأزرار والمعالج الموحد
+الإصدار: 20.0.7 - النسخة النهائية مع إصلاح جميع الأخطاء
 المطور: @RelaxMgr
 تم إعادة كتابة الكود بالكامل مع جميع التحسينات والإصلاحات
 """
@@ -3188,7 +3188,7 @@ async def db_set_security_settings(chat_id: int, **kwargs):
             cur = await conn.execute("SELECT 1 FROM group_security WHERE chat_id=?", (chat_id,))
             exists = await cur.fetchone()
             if not exists:
-                # إنشاء صف افتراضي
+                # إنشاء صف افتراضي مع القيم المطلوبة من kwargs
                 default_settings = {
                     'links': False, 'mentions': False, 'warn': True,
                     'slow_mode': False, 'slow_mode_seconds': 5,
@@ -3201,6 +3201,9 @@ async def db_set_security_settings(chat_id: int, **kwargs):
                     'delete_documents': False, 'delete_stickers': False,
                     'delete_penalty': 'none', 'delete_penalty_duration': 0
                 }
+                # دمج القيم المرسلة مع الافتراضيات
+                final_settings = default_settings.copy()
+                final_settings.update(kwargs)
                 await conn.execute(
                     """INSERT INTO group_security
                        (chat_id, delete_links, mentions, warn_message, slow_mode,
@@ -3211,31 +3214,36 @@ async def db_set_security_settings(chat_id: int, **kwargs):
                         delete_penalty, delete_penalty_duration)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (chat_id,
-                     1 if kwargs.get('links', default_settings['links']) else 0,
-                     1 if kwargs.get('mentions', default_settings['mentions']) else 0,
-                     1 if kwargs.get('warn', default_settings['warn']) else 0,
-                     1 if kwargs.get('slow_mode', default_settings['slow_mode']) else 0,
-                     kwargs.get('slow_mode_seconds', default_settings['slow_mode_seconds']),
-                     1 if kwargs.get('welcome_enabled', default_settings['welcome_enabled']) else 0,
-                     kwargs.get('welcome_text', default_settings['welcome_text']),
-                     1 if kwargs.get('goodbye_enabled', default_settings['goodbye_enabled']) else 0,
-                     kwargs.get('goodbye_text', default_settings['goodbye_text']),
-                     1 if kwargs.get('delete_banned_words', default_settings['delete_banned_words']) else 0,
-                     kwargs.get('auto_penalty', default_settings['auto_penalty']),
-                     kwargs.get('auto_mute_duration', default_settings['auto_mute_duration']),
-                     1 if kwargs.get('delete_videos', default_settings['delete_videos']) else 0,
-                     1 if kwargs.get('delete_audio', default_settings['delete_audio']) else 0,
-                     1 if kwargs.get('delete_animation', default_settings['delete_animation']) else 0,
-                     1 if kwargs.get('delete_service', default_settings['delete_service']) else 0,
-                     1 if kwargs.get('delete_documents', default_settings['delete_documents']) else 0,
-                     1 if kwargs.get('delete_stickers', default_settings['delete_stickers']) else 0,
-                     kwargs.get('delete_penalty', default_settings['delete_penalty']),
-                     kwargs.get('delete_penalty_duration', default_settings['delete_penalty_duration'])
+                     1 if final_settings.get('links', False) else 0,
+                     1 if final_settings.get('mentions', False) else 0,
+                     1 if final_settings.get('warn', True) else 0,
+                     1 if final_settings.get('slow_mode', False) else 0,
+                     final_settings.get('slow_mode_seconds', 5),
+                     1 if final_settings.get('welcome_enabled', False) else 0,
+                     final_settings.get('welcome_text', default_settings['welcome_text']),
+                     1 if final_settings.get('goodbye_enabled', False) else 0,
+                     final_settings.get('goodbye_text', default_settings['goodbye_text']),
+                     1 if final_settings.get('delete_banned_words', False) else 0,
+                     final_settings.get('auto_penalty', 'none'),
+                     final_settings.get('auto_mute_duration', 60),
+                     1 if final_settings.get('delete_videos', False) else 0,
+                     1 if final_settings.get('delete_audio', False) else 0,
+                     1 if final_settings.get('delete_animation', False) else 0,
+                     1 if final_settings.get('delete_service', False) else 0,
+                     1 if final_settings.get('delete_documents', False) else 0,
+                     1 if final_settings.get('delete_stickers', False) else 0,
+                     final_settings.get('delete_penalty', 'none'),
+                     final_settings.get('delete_penalty_duration', 0)
                     )
                 )
                 await conn.commit()
-                # الآن نعيد المحاولة للتحديث
-                # إذا كنا هنا فهذا يعني أن الصف جديد، وكل القيم محدثة، لذا نعود مباشرة
+                # مسح الكاش
+                if chat_id in _security_cache:
+                    del _security_cache[chat_id]
+                _security_cache.pop(chat_id, None)
+                _security_cache_time.pop(chat_id, None)
+                # مسح كاش Redis إذا كان مفعلاً
+                await cache_manager.delete(f"security_{chat_id}")
                 return
 
             # بناء استعلام التحديث للمفاتيح المقدمة فقط
@@ -3313,6 +3321,8 @@ async def db_set_security_settings(chat_id: int, **kwargs):
             del _security_cache[chat_id]
         _security_cache.pop(chat_id, None)
         _security_cache_time.pop(chat_id, None)
+        # مسح كاش Redis إذا كان مفعلاً
+        await cache_manager.delete(f"security_{chat_id}")
     except sqlite3.OperationalError as e:
         if "no such column" in str(e):
             # محاولة إضافة الأعمدة ثم إعادة المحاولة
@@ -6497,6 +6507,123 @@ async def save_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             await update.message.reply_text(get_text(uid, 'error'))
 
+# ===================== دوال الأزرار الخاصة (enable_all, disable_all, delete_penalty) =====================
+async def security_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تفعيل جميع خيارات الحذف دفعة واحدة"""
+    await security_bulk_toggle(update, context, True)
+
+async def security_disable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعطيل جميع خيارات الحذف دفعة واحدة"""
+    await security_bulk_toggle(update, context, False)
+
+async def security_bulk_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE, enabled: bool):
+    """تبديل جميع خيارات الحذف (تفعيل/تعطيل)"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    if enabled:
+        # طلب تأكيد
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ نعم، تفعيل الكل", callback_data=f"confirm_enable_all:{chat_id}")],
+            [InlineKeyboardButton("❌ إلغاء", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+        ])
+        await query.edit_message_text(
+            "⚠️ **تأكيد تفعيل الكل**\n\nسيتم تفعيل جميع أنواع الحذف:\n• الفيديوهات\n• الصوتيات\n• المتحركات\n• رسائل الخدمة\n• الملفات\n• الملصقات\n\nهل أنت متأكد؟",
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+        return
+    else:
+        # تعطيل الكل مباشرة
+        keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
+        settings = await db_get_security_settings(chat_id)
+        for key in keys:
+            settings[key] = False
+        await db_set_security_settings(chat_id, **{k: settings[k] for k in keys})
+        await security_audit.log("SECURITY_DISABLE_ALL", user_id, {"chat_id": chat_id}, "INFO")
+        # مسح الكاش
+        if chat_id in _security_cache:
+            del _security_cache[chat_id]
+        _security_cache.pop(chat_id, None)
+        _security_cache_time.pop(chat_id, None)
+        await cache_manager.delete(f"security_{chat_id}")
+        await query.answer("✅ تم تعطيل الكل")
+        await _update_security_panel(query, chat_id, user_id)
+
+async def confirm_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد تفعيل الكل"""
+    query = update.callback_query
+    await query.answer()
+    chat_id = int(query.data.split(":")[-1])
+    user_id = update.effective_user.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
+    settings = await db_get_security_settings(chat_id)
+    for key in keys:
+        settings[key] = True
+    await db_set_security_settings(chat_id, **{k: settings[k] for k in keys})
+    await security_audit.log("SECURITY_ENABLE_ALL", user_id, {"chat_id": chat_id}, "INFO")
+    if chat_id in _security_cache:
+        del _security_cache[chat_id]
+    _security_cache.pop(chat_id, None)
+    _security_cache_time.pop(chat_id, None)
+    await cache_manager.delete(f"security_{chat_id}")
+    await query.answer("✅ تم تفعيل الكل")
+    await _update_security_panel(query, chat_id, user_id)
+
+async def security_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض خيارات عقوبة الحذف"""
+    query = update.callback_query
+    await query.answer()
+    chat_id = int(query.data.split(":")[-1])
+    user_id = update.effective_user.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚫 لا شيء", callback_data=f"set_delete_penalty:none:{chat_id}"),
+         InlineKeyboardButton("👢 طرد", callback_data=f"set_delete_penalty:kick:{chat_id}")],
+        [InlineKeyboardButton("🛑 حظر", callback_data=f"set_delete_penalty:ban:{chat_id}"),
+         InlineKeyboardButton("🔇 كتم", callback_data=f"set_delete_penalty:mute:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع إلى الأمان", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+    await query.edit_message_text(
+        "⚖️ **اختر عقوبة حذف المحتوى**\n\nسيتم تطبيق هذه العقوبة عند حذف أي محتوى مخالف.",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+async def set_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين عقوبة الحذف"""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")
+    if len(parts) == 3:
+        penalty = parts[1]
+        chat_id = int(parts[2])
+        user_id = update.effective_user.id
+        
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+            return
+        
+        await db_set_security_settings(chat_id, delete_penalty=penalty, delete_penalty_duration=60)
+        await security_audit.log("SECURITY_DELETE_PENALTY_SET", user_id, {"chat_id": chat_id, "penalty": penalty}, "INFO")
+        await query.answer(f"✅ تم تعيين عقوبة الحذف إلى: {penalty}")
+        await _update_security_panel(query, chat_id, user_id)
+
 # ===================== معالج الأزرار الموحد (universal_security_toggle) =====================
 async def universal_security_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالج شامل وديناميكي لجميع أزرار الأمان"""
@@ -6535,6 +6662,7 @@ async def universal_security_toggle(update: Update, context: ContextTypes.DEFAUL
         del _security_cache[chat_id]
     _security_cache.pop(chat_id, None)
     _security_cache_time.pop(chat_id, None)
+    await cache_manager.delete(f"security_{chat_id}")
 
     logger.info(f"SECURITY_{key.upper()}_TOGGLED | User: {uid} | Chat: {chat_id} | New State: {new_val}")
 
@@ -6547,6 +6675,7 @@ async def universal_security_toggle(update: Update, context: ContextTypes.DEFAUL
 
         gname = await execute_db(_get_group_name)
 
+        # استخدام safe_edit_markdown لتجنب مشاكل Markdown
         text = f"""⚙️ **لوحة تحكم المجموعة: {gname}**
 ━━━━━━━━━━━━━━━━━━━━━━
 🔗 حذف الروابط: {'✅' if settings.get('links', False) else '❌'}
@@ -6567,23 +6696,24 @@ async def universal_security_toggle(update: Update, context: ContextTypes.DEFAUL
 
         new_keyboard = security_keyboard(chat_id)
 
-        # محاولة تعديل الرسالة، وإذا فشل نرسل رسالة جديدة
-        try:
-            if query.message.text == text:
-                await query.answer("✅ تم التحديث")
-                return
-            await query.edit_message_text(text, reply_markup=new_keyboard, parse_mode="Markdown")
-        except BadRequest as e:
-            error_msg = str(e).lower()
-            if "message is not modified" in error_msg:
-                await query.answer("✅ تم التحديث")
-            elif "message can't be edited" in error_msg or "message to edit not found" in error_msg:
-                # الرسالة قد تكون محذوفة، نرسل رسالة جديدة
+        # استخدام safe_edit_markdown للتعديل الآمن
+        await safe_edit_markdown(query, text, reply_markup=new_keyboard)
+
+    except BadRequest as e:
+        error_msg = str(e).lower()
+        if "message is not modified" in error_msg:
+            await query.answer("✅ تم التحديث")
+        elif "message can't be edited" in error_msg or "message to edit not found" in error_msg:
+            # الرسالة قد تكون محذوفة، نرسل رسالة جديدة
+            try:
                 await query.message.reply_text(text, reply_markup=new_keyboard, parse_mode="Markdown")
-                await query.answer("✅ تم التحديث")
-            else:
-                logger.error(f"Telegram BadRequest in panel edit: {e}")
-                await query.answer("⚠️ حدث خطأ في تحديث الواجهة", show_alert=True)
+                await query.answer("✅ تم التحديث (رسالة جديدة)")
+            except Exception as e2:
+                logger.error(f"فشل إرسال رسالة جديدة: {e2}")
+                await query.answer("⚠️ حدث خطأ، حاول مرة أخرى", show_alert=True)
+        else:
+            logger.error(f"Telegram BadRequest in panel edit: {e}")
+            await query.answer("⚠️ حدث خطأ في تحديث الواجهة", show_alert=True)
     except Exception as e:
         logger.error(f"Unexpected error in security panel: {e}")
         await query.answer("⚠️ حدث خطأ غير متوقع", show_alert=True)
@@ -6707,13 +6837,13 @@ async def _update_security_panel(query, chat_id, uid):
     # بناء النص مع التهرب من الرموز الخاصة لـ MarkdownV2
     text = f"""⚙️ **لوحة تحكم المجموعة: {gname}**
 ━━━━━━━━━━━━━━━━━━━━━━
-🔗 حذف الروابط: {'✅' if settings['links'] else '❌'}
-@ حذف المعرفات: {'✅' if settings['mentions'] else '❌'}
+🔗 حذف الروابط: {'✅' if settings.get('links', False) else '❌'}
+@ حذف المعرفات: {'✅' if settings.get('mentions', False) else '❌'}
 🚫 كلمات محظورة: {'✅' if settings.get('delete_banned_words', False) else '❌'}
-⏱️ وضع بطيء: {'✅' if settings['slow_mode'] else '❌'}
-🎯 ترحيب: {'✅' if settings['welcome_enabled'] else '❌'}
-👋 وداع: {'✅' if settings['goodbye_enabled'] else '❌'}
-🔊 تحذير: {'✅' if settings['warn'] else '❌'}
+⏱️ وضع بطيء: {'✅' if settings.get('slow_mode', False) else '❌'}
+🎯 ترحيب: {'✅' if settings.get('welcome_enabled', False) else '❌'}
+👋 وداع: {'✅' if settings.get('goodbye_enabled', False) else '❌'}
+🔊 تحذير: {'✅' if settings.get('warn', False) else '❌'}
 🎬 حذف الفيديوهات: {'✅' if settings.get('delete_videos', False) else '❌'}
 🎵 حذف الصوتيات: {'✅' if settings.get('delete_audio', False) else '❌'}
 🎞️ حذف المتحركات: {'✅' if settings.get('delete_animation', False) else '❌'}
@@ -6726,44 +6856,19 @@ async def _update_security_panel(query, chat_id, uid):
 ━━━━━━━━━━━━━━━━━━━━━━
 💡 **اختر الإجراء المناسب:**"""
 
-    # استخدام edit_message_text مع MarkdownV2
+    # استخدام safe_edit_markdown للتعديل الآمن
     try:
-        # تهرب النص من الرموز الخاصة لـ MarkdownV2
-        escaped_text = escape_markdown_v2(text)
-        await query.edit_message_text(
-            text=escaped_text,
-            parse_mode='MarkdownV2',
-            reply_markup=security_keyboard(chat_id)
-        )
+        await safe_edit_markdown(query, text, reply_markup=security_keyboard(chat_id))
     except BadRequest as e:
-        error_msg = str(e).lower()
-        if "message is not modified" in error_msg:
+        if "message is not modified" in str(e).lower():
             await query.answer("✅ تم التحديث")
-        elif "can't parse entities" in error_msg:
-            # في حال فشل MarkdownV2، نستخدم HTML كحل احتياطي
-            html_text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            try:
-                await query.edit_message_text(
-                    text=html_text,
-                    parse_mode='HTML',
-                    reply_markup=security_keyboard(chat_id)
-                )
-            except:
-                # الحل النهائي: إرسال نص عادي
-                await query.edit_message_text(
-                    text=re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', text),
-                    reply_markup=security_keyboard(chat_id)
-                )
         else:
             logger.warning(f"فشل تعديل رسالة الأمان: {e}")
             # محاولة إرسال رسالة جديدة في حال فشل التعديل
             if query and query.message:
                 try:
-                    await query.message.reply_text(
-                        text=text,
-                        reply_markup=security_keyboard(chat_id)
-                    )
-                    await query.answer("✅ تم التحديث")
+                    await query.message.reply_text(text, reply_markup=security_keyboard(chat_id))
+                    await query.answer("✅ تم التحديث (رسالة جديدة)")
                 except:
                     pass
     except Exception as e:
@@ -7144,7 +7249,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.5
+📦 **الإصدار:** 20.0.7
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -12142,7 +12247,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.5</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.7</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13441,7 +13546,7 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.5 - النسخة النهائية المتكاملة)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.7 - النسخة النهائية المتكاملة)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ أزرار جديدة: حذف الفيديوهات، رسائل الخدمة، الملفات، الملصقات، الصوتيات، المتحركات")
     print("   • ✅ أزرار تفعيل/تعطيل الكل مع تأكيد")
@@ -13481,6 +13586,7 @@ async def main():
     print("   • ✅ تحسين معالجة BadRequest في universal_security_toggle")
     print("   • ✅ تحسين db_set_security_settings للتحديث الجزئي")
     print("   • ✅ تحسين db_get_security_settings للتحقق من وجود العمود mentions")
+    print("   • ✅ إضافة الدوال المفقودة: security_enable_all_callback, security_disable_all_callback, security_bulk_toggle, confirm_enable_all_callback, security_delete_penalty_callback, set_delete_penalty_callback")
 
     try:
         await application.run_polling(
