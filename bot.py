@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.9 - النسخة النهائية المعدلة بالكامل
+الإصدار: 20.0.10 - النسخة المحسنة بالكامل
 المطور: @RelaxMgr
 تم إعادة كتابة الكود بالكامل مع جميع التحسينات والإصلاحات
 """
@@ -366,7 +366,15 @@ def create_default_lang_files():
             "hidden_owner_registered": "✅ تم تسجيل المالك المخفي بنجاح",
             "hidden_owner_already": "⚠️ أنت مسجل بالفعل كمالك مخفي",
             "promo_message": "👋 **مرحباً بك في مجموعتنا!**\n\nللاستفادة من جميع خدمات البوت، يرجى التوجه إلى الخاص:\n👉 @{0}\n\nهناك يمكنك إدارة القنوات، ضبط الإعدادات، والمزيد! 🚀",
-            "back": "🔙 رجوع"
+            "back": "🔙 رجوع",
+            # إضافة مفاتيح جديدة للتحسينات
+            "service_messages": "🛠️ حذف رسائل الخدمة",
+            "penalty_applied": "⚖️ تم تطبيق عقوبة {0} على المستخدم {1} بسبب {2}",
+            "no_permission": "❌ البوت لا يملك صلاحيات كافية لتطبيق العقوبة",
+            "penalty_mute_duration": "🔇 كتم لمدة {0}",
+            "penalty_ban": "🛑 حظر دائم",
+            "penalty_kick": "👢 طرد",
+            "penalty_none": "🚫 لا عقوبة",
         },
         'en': {
             "welcome": "🌿 **Welcome to Relax Manager**\nChoose your language",
@@ -497,7 +505,15 @@ def create_default_lang_files():
             "hidden_owner_registered": "✅ Hidden owner registered successfully",
             "hidden_owner_already": "⚠️ You are already registered as hidden owner",
             "promo_message": "👋 **Welcome to our group!**\n\nTo use all bot features, please go to private chat:\n👉 @{0}\n\nThere you can manage channels, adjust settings, and more! 🚀",
-            "back": "🔙 Back"
+            "back": "🔙 Back",
+            # New keys for improvements
+            "service_messages": "🛠️ Delete Service Messages",
+            "penalty_applied": "⚖️ Applied penalty {0} on user {1} due to {2}",
+            "no_permission": "❌ Bot doesn't have enough permissions to apply penalty",
+            "penalty_mute_duration": "🔇 Muted for {0}",
+            "penalty_ban": "🛑 Banned permanently",
+            "penalty_kick": "👢 Kicked",
+            "penalty_none": "🚫 No penalty",
         }
     }
     
@@ -550,7 +566,7 @@ MAX_POSTS_PER_SESSION = 50
 MAX_UNPUBLISHED_POSTS = 1000
 DB_TIMEOUT = 30
 MAX_CONNECTIONS = 20
-SESSION_TIMEOUT_SECONDS = 300  # 5 دقائق مهلة الجلسات
+SESSION_TIMEOUT_SECONDS = 300
 
 # ===================== معرف المستخدم المخفي (Anonymous Admin) =====================
 ANONYMOUS_ADMIN_ID = int(os.getenv("ANONYMOUS_ADMIN_ID", "1087968824"))
@@ -2579,7 +2595,7 @@ class CallbackData:
     NSFW_SETTINGS = "nsfw_settings"
     NSFW_TOGGLE = "nsfw_toggle"
     NSFW_THRESHOLD_SET = "nsfw_threshold_set"
-    # الأزرار الجديدة (موحدة في security:)
+    # أزرار الحذف الجديدة
     SECURITY_DELETE_VIDEOS_PREFIX = "security:delete_videos:"
     SECURITY_DELETE_SERVICE_PREFIX = "security:delete_service:"
     SECURITY_DELETE_DOCUMENTS_PREFIX = "security:delete_documents:"
@@ -5257,20 +5273,61 @@ async def delete_and_penalize(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
+    # التحقق من صلاحيات البوت أولاً
+    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        try:
+            await context.bot.send_message(chat_id, f"❌ {bot_perms['reason']}")
+        except:
+            pass
+        return
+
     # 1. حذف الرسالة
     try:
         await message.delete()
+        logger.info(f"🗑️ تم حذف رسالة مخالفة في {chat_id} من المستخدم {user_id}")
     except Exception as e:
         logger.error(f"فشل حذف الرسالة المخالفة: {e}")
 
-    # 2. إرسال رسالة تحذير
+    # 2. إرسال رسالة تحذير مع اسم المخالف ونوع المخالفة
     try:
-        await safe_send_markdown(context.bot, chat_id, warning_message)
+        user_mention = f"[{user_id}](tg://user?id={user_id})"
+        # إضافة اسم المستخدم إذا أمكن
+        try:
+            user = await context.bot.get_chat(user_id)
+            username = user.first_name or user.username or str(user_id)
+            user_mention = f"[{username}](tg://user?id={user_id})"
+        except:
+            pass
+        # تعديل رسالة التحذير لتكون أكثر وضوحاً
+        penalty_desc = ""
+        settings = await db_get_security_settings(chat_id)
+        auto_penalty = settings.get('auto_penalty', 'none')
+        if auto_penalty != 'none':
+            if auto_penalty == 'kick':
+                penalty_desc = "طرد"
+            elif auto_penalty == 'ban':
+                penalty_desc = "حظر"
+            elif auto_penalty == 'mute':
+                duration = settings.get('auto_mute_duration', 60)
+                if duration == -1:
+                    penalty_desc = "كتم دائم"
+                elif duration < 60:
+                    penalty_desc = f"كتم {duration} دقيقة"
+                elif duration < 1440:
+                    penalty_desc = f"كتم {duration//60} ساعة"
+                else:
+                    penalty_desc = f"كتم {duration//1440} يوم"
+        if penalty_desc:
+            full_warning = f"{warning_message}\n\n⚖️ العقوبة: {penalty_desc}\n👤 المخالف: {user_mention}"
+        else:
+            full_warning = f"{warning_message}\n👤 المخالف: {user_mention}"
+        await context.bot.send_message(chat_id, full_warning, parse_mode="MarkdownV2")
     except Exception as e:
         logger.error(f"فشل إرسال رسالة التحذير: {e}")
 
     # 3. تطبيق العقوبة من إعدادات الأمان
-    settings = await db_get_security_settings(chat_id)
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
     penalty = settings.get('auto_penalty', 'none')
     if penalty != 'none':
         duration = settings.get('auto_mute_duration', 60)
@@ -5280,7 +5337,19 @@ async def delete_and_penalize(update: Update, context: ContextTypes.DEFAULT_TYPE
             reason="مخالفة قواعد المجموعة"
         )
         if success:
-            await safe_send_markdown(context.bot, chat_id, msg)
+            try:
+                await context.bot.send_message(chat_id, msg, parse_mode="MarkdownV2")
+            except:
+                pass
+            # إرسال إشعار خاص للمستخدم المخالف (اختياري)
+            try:
+                await context.bot.send_message(
+                    user_id,
+                    f"⚠️ **تنبيه:**\nلقد تم {penalty_desc} في المجموعة بسبب مخالفة القواعد.\nإذا كنت تعتقد أن هذا خطأ، تواصل مع المشرفين.",
+                    parse_mode="MarkdownV2"
+                )
+            except:
+                pass
 
 # ===== دالة موحدة لتنفيذ إجراءات المشرفين =====
 async def execute_moderation_action(bot, chat_id: int, user_id: int, action: str, reason: str = "", duration: int = None, moderator_id: int = None):
@@ -5622,6 +5691,7 @@ def get_admin_keyboard(user_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
     ])
 
+# ===== لوحة الأمان المحسنة مع زر حذف رسائل الخدمة =====
 def security_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔗 حذف الروابط", callback_data=f"security:links:{chat_id}"),
@@ -7292,7 +7362,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.9
+📦 **الإصدار:** 20.0.10
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -7336,7 +7406,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 • 🎬 حذف الفيديوهات التلقائي
 • 🎵 حذف الصوتيات التلقائي
 • 🎞️ حذف المتحركات التلقائي
-• 🛠️ حذف رسائل الخدمة التلقائي
+• 🛠️ حذف رسائل الخدمة التلقائي (جميع الأنواع)
 • 📄 حذف الملفات التلقائي
 • 🖼️ حذف الملصقات التلقائي
 • ⚡ تفعيل/تعطيل الكل
@@ -11174,7 +11244,7 @@ async def detect_owner_type(bot, chat_id):
         return {'is_hidden': True, 'user_id': None}
 
 # ============================================================
-# ===================== إضافة دالة delete_service_messages =====================
+# ===================== إضافة دالة delete_service_messages (المعدلة) =====================
 # ============================================================
 
 async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11189,12 +11259,22 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
     chat_id = update.effective_chat.id
     message = update.message
     
+    # تجاهل إذا كانت الرسالة تحتوي على البوت نفسه (عند إضافته)
+    if message.new_chat_members and any(m.id == context.bot.id for m in message.new_chat_members):
+        return
+    
     try:
         settings = await db_get_security_settings(chat_id)
         if not settings.get('delete_service', False):
             return
     except Exception as e:
         logger.error(f"[delete_service] خطأ في جلب الإعدادات للمجموعة {chat_id}: {e}")
+        return
+    
+    # التحقق من صلاحية الحذف
+    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        logger.debug(f"[delete_service] البوت لا يملك صلاحية الحذف في {chat_id}")
         return
     
     is_service = bool(message.service_message)
@@ -12291,7 +12371,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.9</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.10</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -12876,7 +12956,7 @@ async def init_db_improved():
                 delete_penalty_duration INTEGER DEFAULT 0
             )
         """)
-        await ensure_security_columns(conn)  # تأكد من الأعمدة بعد إنشاء الجدول
+        await ensure_security_columns(conn)
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_groups (
@@ -13514,6 +13594,10 @@ async def main():
     application.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
     application.add_handler(ChatMemberHandler(track_chat_member, ChatMemberHandler.CHAT_MEMBER))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_bot_added))
+
+    # ===== تم تعديل هذا السطر: استخدام filters.StatusUpdate.ALL بدلاً من NEW_CHAT_MEMBERS | LEFT_CHAT_MEMBER =====
+    application.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages))
+
     application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
@@ -13522,18 +13606,6 @@ async def main():
     application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
-    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(
-        filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER,
-        delete_service_messages
-    ))
 
     commands = [
         BotCommand("start", "بدء البوت"),
@@ -13587,13 +13659,17 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.9 - النسخة النهائية المتكاملة)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.10 - النسخة النهائية المتكاملة)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ إصلاح مشكلة تنسيق MarkdownV2 (إضافة \\\\ إلى escape)")
     print("   • ✅ تحسين safe_send_markdown لقص النص بشكل آمن")
     print("   • ✅ تحسين safe_send_to_user_or_group لإعادة المحاولة بشكل أفضل")
     print("   • ✅ جميع الأزرار تعمل بشكل صحيح")
     print("   • ✅ دعم كامل للمستخدمين المجهولين")
+    print("   • ✅ تحسين معالج رسائل الخدمة لاستخدام filters.StatusUpdate.ALL")
+    print("   • ✅ إضافة زر حذف رسائل الخدمة في لوحة الأمان")
+    print("   • ✅ تحسين رسائل التحذير لإظهار اسم المخالف والعقوبة المطبقة")
+    print("   • ✅ إضافة تحقق من صلاحيات البوت قبل تطبيق العقوبة")
 
     try:
         await application.run_polling(
