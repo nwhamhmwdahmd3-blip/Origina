@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.11 - النسخة المحسنة النهائية (تصحيح أزرار المجموعات)
+الإصدار: 20.0.12 - النسخة النهائية المتكاملة (تصحيح أزرار المجموعات)
 المطور: @RelaxMgr
 """
 
@@ -7344,7 +7344,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.11
+📦 **الإصدار:** 20.0.12
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -12358,7 +12358,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.11</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.12</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13657,7 +13657,7 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.11 - النسخة النهائية المتكاملة)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.12 - النسخة النهائية المتكاملة)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ إصلاح مشكلة تنسيق MarkdownV2 (إضافة \\\\ إلى escape)")
     print("   • ✅ تحسين safe_send_markdown لقص النص بشكل آمن")
