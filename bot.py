@@ -1407,8 +1407,8 @@ def invalidate_auth_cache(chat_id: int = None, user_id: int = None):
         _auth_cache.clear()
 
 # ===================== دالة الإرسال الآمنة للمستخدمين المجهولين =====================
-async def safe_send_to_user_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None, parse_mode='MarkdownV2', chat_id_override: int = None):
-    """
+#async def safe_send_to_user_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None, parse_mode='MarkdownV2', chat_id_override: int = None):
+ #   """
     ترسل رسالة إلى المستخدم إن أمكن، وإلا ترسلها إلى المجموعة (في حالة المستخدم المجهول).
     - update: كائن التحديث (للاستفادة من effective_user و effective_chat)
     - context: سياق البوت
