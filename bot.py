@@ -1475,24 +1475,17 @@ def clean_text_for_telegram(text: str) -> str:
 # ===================== دالة escape_markdown_v2 المحسنة =====================
 # ===================================================================
 def escape_markdown_v2(text: str) -> str:
-    """
-    تهريب الأحرف الخاصة بـ MarkdownV2 مع منع التهريب المزدوج.
-    """
     if not text:
         return ""
-    # الأحرف التي تحتاج إلى تهريب في MarkdownV2
     special_chars = r'_*[]()~`>#+\-=|{}.!\\'
-    
-    # نستخدم re.sub مع دالة لتجنب التهريب المزدوج
     def escape_char(match):
         char = match.group(0)
-        # إذا كان الحرف مسبوقاً بالفعل بـ \, لا نضيف \ آخر
         start = match.start()
         if start > 0 and text[start-1] == '\\':
             return char
         return '\\' + char
-    
     return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\])', escape_char, text)
+
 # ===================================================================
 
 def sanitize_text(text: str, max_length: int = 4096, allow_tags: list = None) -> str:
@@ -1824,14 +1817,10 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
             )
 
 async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
-    """تعديل رسالة بأمان مع دعم MarkdownV2 وتجنب خطأ 'message is not modified'"""
     if not query or not query.message:
         return None
-    
-    # تحقق إذا كانت الرسالة نفسها
     current_text = query.message.text or ""
     current_reply_markup = query.message.reply_markup
-    
     if current_text == text:
         if reply_markup is None and current_reply_markup is None:
             try:
@@ -1846,70 +1835,26 @@ async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
                 except:
                     pass
                 return None
-    
     if not text:
         return None
-    
     clean_text = sanitize_text(text)
-    escaped = escape_markdown_v2(clean_text)
-    escaped = re.sub(r'\\{2,}', '\\\\', escaped)  # منع التهريب المزدوج
     MAX_LEN = 4096
-    if len(escaped) > MAX_LEN:
-        cut_point = MAX_LEN - 3
-        while cut_point > 0 and escaped[cut_point - 1] == '\\':
-            cut_point -= 1
-        escaped = escaped[:cut_point] + "..."
-
     try:
+        escaped = escape_markdown_v2(clean_text)
+        escaped = re.sub(r'\\{2,}', '\\\\', escaped)
+        if len(escaped) > MAX_LEN:
+            cut_point = MAX_LEN - 3
+            while cut_point > 0 and escaped[cut_point - 1] == '\\':
+                cut_point -= 1
+            escaped = escaped[:cut_point] + "..."
         return await query.edit_message_text(
             text=escaped,
             parse_mode='MarkdownV2',
             reply_markup=reply_markup,
             **kwargs
         )
-    except BadRequest as e:
-        error_msg = str(e).lower()
-        if "can't parse entities" in error_msg:
-            try:
-                html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                if len(html_text) > MAX_LEN:
-                    html_text = html_text[:MAX_LEN-3] + "..."
-                return await query.edit_message_text(
-                    text=html_text,
-                    parse_mode='HTML',
-                    reply_markup=reply_markup,
-                    **kwargs
-                )
-            except:
-                plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
-                if len(plain) > MAX_LEN:
-                    plain = plain[:MAX_LEN-3] + "..."
-                return await query.edit_message_text(
-                    text=plain,
-                    reply_markup=reply_markup,
-                    **kwargs
-                )
-        elif "message is not modified" in error_msg:
-            try:
-                await query.answer("✅ تم التحديث")
-            except:
-                pass
-            return None
-        else:
-            # محاولة إرسال رسالة جديدة بدلاً من التعديل
-            try:
-                return await query.message.reply_text(
-                    text=escaped,
-                    parse_mode='MarkdownV2',
-                    reply_markup=reply_markup,
-                    **kwargs
-                )
-            except:
-                return await query.message.reply_text(
-                    text=clean_text,
-                    reply_markup=reply_markup,
-                    **kwargs
-                )
+    except
+
 
 async def safe_send_error(bot, chat_id: int, text: str):
     try:
