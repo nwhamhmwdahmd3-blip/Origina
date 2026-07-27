@@ -6747,7 +6747,7 @@ async def universal_security_toggle(update: Update, context: ContextTypes.DEFAUL
     # 2. حفظ الإعدادات في قاعدة البيانات (تحديث جزئي)
     await db_set_security_settings(chat_id, **{key: new_val})
     
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.1)  # تأخير بسيط لضمان اكتمال الكتابة
 
     # 3. مسح الكاش تماماً لمنع قراءة القديم
     if chat_id in _security_cache:
@@ -6758,57 +6758,8 @@ async def universal_security_toggle(update: Update, context: ContextTypes.DEFAUL
 
     logger.info(f"SECURITY_{key.upper()}_TOGGLED | User: {uid} | Chat: {chat_id} | New State: {new_val}")
 
-    # 4. إعادة بناء النص واللوحة
-    try:
-        async def _get_group_name(conn):
-            cur = await conn.execute("SELECT chat_name FROM bot_groups WHERE chat_id=?", (chat_id,))
-            row = await cur.fetchone()
-            return row[0] if row else str(chat_id)
-
-        gname = await execute_db(_get_group_name)
-
-        # استخدام safe_edit_markdown لتجنب مشاكل Markdown
-        text = f"""⚙️ **لوحة تحكم المجموعة: {gname}**
-━━━━━━━━━━━━━━━━━━━━━━
-🔗 حذف الروابط: {'✅' if settings.get('links', False) else '❌'}
-@ حذف المعرفات: {'✅' if settings.get('mentions', False) else '❌'}
-🚫 كلمات محظورة: {'✅' if settings.get('delete_banned_words', False) else '❌'}
-⏱️ وضع بطيء: {'✅' if settings.get('slow_mode', False) else '❌'}
-🎯 ترحيب: {'✅' if settings.get('welcome_enabled', False) else '❌'}
-👋 وداع: {'✅' if settings.get('goodbye_enabled', False) else '❌'}
-🔊 تحذير: {'✅' if settings.get('warn', False) else '❌'}
-🎬 حذف الفيديوهات: {'✅' if settings.get('delete_videos', False) else '❌'}
-🎵 حذف الصوتيات: {'✅' if settings.get('delete_audio', False) else '❌'}
-🎞️ حذف المتحركات: {'✅' if settings.get('delete_animation', False) else '❌'}
-🛠️ حذف رسائل الخدمة: {'✅' if settings.get('delete_service', False) else '❌'}
-📄 حذف الملفات: {'✅' if settings.get('delete_documents', False) else '❌'}
-🖼️ حذف الملصقات: {'✅' if settings.get('delete_stickers', False) else '❌'}
-━━━━━━━━━━━━━━━━━━━━━━
-💡 **اختر الإجراء المناسب:**"""
-
-        new_keyboard = security_keyboard(chat_id)
-
-        # استخدام safe_edit_markdown للتعديل الآمن
-        await safe_edit_markdown(query, text, reply_markup=new_keyboard)
-
-    except BadRequest as e:
-        error_msg = str(e).lower()
-        if "message is not modified" in error_msg:
-            await query.answer("✅ تم التحديث")
-        elif "message can't be edited" in error_msg or "message to edit not found" in error_msg:
-            # الرسالة قد تكون محذوفة، نرسل رسالة جديدة
-            try:
-                await query.message.reply_text(text, reply_markup=new_keyboard, parse_mode="Markdown")
-                await query.answer("✅ تم التحديث (رسالة جديدة)")
-            except Exception as e2:
-                logger.error(f"فشل إرسال رسالة جديدة: {e2}")
-                await query.answer("⚠️ حدث خطأ، حاول مرة أخرى", show_alert=True)
-        else:
-            logger.error(f"Telegram BadRequest in panel edit: {e}")
-            await query.answer("⚠️ حدث خطأ في تحديث الواجهة", show_alert=True)
-    except Exception as e:
-        logger.error(f"Unexpected error in security panel: {e}")
-        await query.answer("⚠️ حدث خطأ غير متوقع", show_alert=True)
+    # 4. إعادة بناء النص واللوحة مع force_refresh=True
+    await _update_security_panel(query, chat_id, uid, force_refresh=True)
 
 # ===================== معالجات الكولباك للأمان (بقيت للخصائص الخاصة) =====================
 async def security_banned_words_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6909,7 +6860,7 @@ async def security_refresh_groups_callback(update: Update, context: ContextTypes
         await safe_send_markdown(context.bot, uid, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ===================== الدالة الموحدة لعرض لوحة الأمان =====================
-async def _update_security_panel(query, chat_id, uid, force_refresh=False):
+async def _update_security_panel(query, chat_id, uid, force_refresh=True):
     """
     تعرض لوحة إعدادات الأمان محدثة في نفس الرسالة
     دون الاعتماد على بيانات الكولباك الحالية.
@@ -6924,7 +6875,7 @@ async def _update_security_panel(query, chat_id, uid, force_refresh=False):
         return name
 
     gname = await execute_db(_get_group_name)
-    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    settings = await db_get_security_settings(chat_id, force_refresh=force_refresh)
 
     # بناء النص مع التهرب من الرموز الخاصة لـ MarkdownV2
     text = f"""⚙️ **لوحة تحكم المجموعة: {gname}**
