@@ -1472,17 +1472,27 @@ def clean_text_for_telegram(text: str) -> str:
     return text
 
 def escape_markdown_v2(text: str) -> str:
-    """
-    تهريب جميع الأحرف الخاصة بـ MarkdownV2، بالإضافة إلى الشرطة المائلة العكسية.
-    القائمة الكاملة للأحرف الخاصة: _ * [ ] ( ) ~ ` > # + - = | { } . ! \
-    """
     if not text:
         return ""
-    # الأحرف الخاصة حسب توثيق تيليجرام لـ MarkdownV2
-    special_chars = r'_*[]()~`>#+\-=|{}.!\\'
-    for char in special_chars:
-        text = text.replace(char, f'\\{char}')
-    return text
+    special_chars = set('_*[]()~`>#+-=|{}.!')
+    result = []
+    i = 0
+    while i < len(text):
+        if text[i] == '\\' and i + 1 < len(text) and text[i + 1] in special_chars:
+            result.append(text[i])
+            result.append(text[i + 1])
+            i += 2
+        elif text[i] == '\\':
+            result.append('\\\\')
+            i += 1
+        elif text[i] in special_chars:
+            result.append('\\')
+            result.append(text[i])
+            i += 1
+        else:
+            result.append(text[i])
+            i += 1
+    return ''.join(result)
 
 def sanitize_text(text: str, max_length: int = 4096, allow_tags: list = None) -> str:
     if not text:
