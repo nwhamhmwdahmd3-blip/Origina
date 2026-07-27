@@ -1471,28 +1471,46 @@ def clean_text_for_telegram(text: str) -> str:
     text = re.sub(r'[\u200b\u200c\u200d\u2060\uFEFF\u202a\u202b\u202c\u202d\u202e]', '', text)
     return text
 
-def escape_markdown_v2(text: str) -> str:
+#========= دوال الإرسال الآمنة =====================
+async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
     if not text:
-        return ""
-    special_chars = set('_*[]()~`>#+-=|{}.!')
-    result = []
-    i = 0
-    while i < len(text):
-        if text[i] == '\\' and i + 1 < len(text) and text[i + 1] in special_chars:
-            result.append(text[i])
-            result.append(text[i + 1])
-            i += 2
-        elif text[i] == '\\':
-            result.append('\\\\')
-            i += 1
-        elif text[i] in special_chars:
-            result.append('\\')
-            result.append(text[i])
-            i += 1
-        else:
-            result.append(text[i])
-            i += 1
-    return ''.join(result)
+        return None
+    clean_text = sanitize_text(text)
+    try:
+        escaped = escape_markdown_v2(clean_text)
+        if len(escaped) > 4096:
+            escaped = escaped[:4093] + "..."
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=escaped,
+            parse_mode='MarkdownV2',
+            reply_markup=reply_markup,
+            **kwargs
+        )
+    except BadRequest as e:
+        if "can't parse entities" in str(e).lower():
+            try:
+                html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                if len(html_text) > 4096:
+                    html_text = html_text[:4093] + "..."
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=html_text,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup,
+                    **kwargs
+                )
+            except:
+                plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
+                if len(plain) > 4096:
+                    plain = plain[:4093] + "..."
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=plain,
+                    reply_markup=reply_markup,
+                    **kwargs
+                )
+        raise
 
 def sanitize_text(text: str, max_length: int = 4096, allow_tags: list = None) -> str:
     if not text:
