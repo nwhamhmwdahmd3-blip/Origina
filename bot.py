@@ -12856,7 +12856,7 @@ async def main():
     application.add_handler(CommandHandler("contests", contests_command_handler))
     application.add_handler(CommandHandler("create_contest", create_contest_command_handler))
     application.add_handler(CommandHandler("declare_winner", declare_winner_command_handler))
-    application.add_handler(CommandHandler("set_rules", set_rules_command_handler))
+    application.add_handler(CommandHandler("set_rules", set_rules))
     application.add_handler(CommandHandler("rules", rules_command_handler))
 
     # ========== CallbackQuery Handlers ==========
