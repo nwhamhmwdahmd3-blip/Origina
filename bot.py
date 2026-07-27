@@ -10818,7 +10818,9 @@ async def set_log_channel_command_handler(update: Update, context: ContextTypes.
     context.user_data.pop('state', None)
     context.user_data.pop('temp_log_channel_identifier', None)
 
-async function is_bot_admin(user_id: int) -> bool:
+# ===== دوال المشرفين على مستوى البوت (معرفة بشكل صحيح) =====
+
+async def is_bot_admin(user_id: int) -> bool:
     if user_id == PRIMARY_OWNER_ID:
         return True
     async def _check(conn):
@@ -10826,7 +10828,7 @@ async function is_bot_admin(user_id: int) -> bool:
         return await cur.fetchone() is not None
     return await execute_db(_check)
 
-async function add_bot_admin(user_id: int) -> bool:
+async def add_bot_admin(user_id: int) -> bool:
     if user_id == PRIMARY_OWNER_ID:
         return True
     async def _add(conn):
@@ -10835,7 +10837,7 @@ async function add_bot_admin(user_id: int) -> bool:
         return True
     return await execute_db(_add)
 
-async function remove_bot_admin(user_id: int) -> bool:
+async def remove_bot_admin(user_id: int) -> bool:
     if user_id == PRIMARY_OWNER_ID:
         return False
     async def _remove(conn):
@@ -10844,11 +10846,13 @@ async function remove_bot_admin(user_id: int) -> bool:
         return True
     return await execute_db(_remove)
 
-async function get_all_bot_admins() -> List[int]:
+async def get_all_bot_admins() -> List[int]:
     async def _get(conn):
         cur = await conn.execute("SELECT user_id FROM bot_admins")
         return [row[0] for row in await cur.fetchall()]
     return await execute_db(_get)
+
+# ===== معالج الرسائل الرئيسي (خاص) =====
 
 async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None or update.effective_user is None:
@@ -11576,6 +11580,8 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
 
         await main_menu_callback(update, context)
 
+# ===== معالج الرسائل في المجموعات =====
+
 async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None or update.effective_chat is None or update.effective_user is None:
         return
@@ -11704,6 +11710,8 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
                         except:
                             pass
 
+# ===== معالج الأخطاء العالمي =====
+
 async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         error = context.error
@@ -11753,6 +11761,8 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.error(f"فشل إرسال إشعار الخطأ للمطور: {e}")
     except Exception as e:
         logger.error(f"فشل معالج الأخطاء نفسه: {e}")
+
+# ===== خادم الويب =====
 
 web_app = web.Application()
 
@@ -11822,19 +11832,7 @@ async def start_web_server():
     except Exception as e:
         logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
 
-def import_web_server():
-    try:
-        import web_server
-        web_port = int(os.getenv('WEB_PORT', '8080'))
-        web_server.start_web_server_background(web_port)
-        logger.info("✅ تم تضمين وتشغيل خادم الويب المنفصل")
-        return True
-    except ImportError:
-        logger.warning("⚠️ لم يتم العثور على ملف web_server.py")
-        return False
-    except Exception as e:
-        logger.error(f"❌ فشل تشغيل خادم الويب المنفصل: {e}")
-        return False
+# ===== نظام إدارة المهام =====
 
 class TaskManager:
     def __init__(self, max_tasks=50, max_concurrent=10):
@@ -11868,6 +11866,8 @@ class TaskManager:
             await asyncio.gather(*self.tasks, return_exceptions=True)
 
 task_manager = TaskManager(max_concurrent=10)
+
+# ===== أنظمة التشغيل الخلفي =====
 
 async def auto_publish_loop_improved(bot):
     await asyncio.sleep(5)
@@ -12236,6 +12236,8 @@ async def self_ping_loop():
             logger.warning(f"⚠️ فشل النبض الداخلي: {e}")
         await asyncio.sleep(600)
 
+# ===== تهيئة قاعدة البيانات =====
+
 async def init_db_improved():
     async with aiosqlite.connect(str(DB_PATH), timeout=DB_TIMEOUT) as conn:
         await conn.execute("PRAGMA journal_mode=WAL")
@@ -12248,6 +12250,7 @@ async def init_db_improved():
         await conn.execute("PRAGMA max_page_count=1000000")
         await conn.execute("PRAGMA secure_delete=ON")
 
+        # ========== إنشاء الجداول الأساسية ==========
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -12621,6 +12624,7 @@ async def init_db_improved():
             )
         """)
 
+        # ========== الفهارس ==========
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel_published ON posts(channel_db_id, published)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_next ON schedule(next_publish_date)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_channels_user ON user_channels(user_id)")
@@ -12633,6 +12637,7 @@ async def init_db_improved():
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_hidden_admins_chat ON hidden_admins(chat_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_group_admins_chat ON group_admins(chat_id)")
 
+        # ========== تحديث الجداول القديمة ==========
         try:
             cursor = await conn.execute("PRAGMA table_info(group_security)")
             columns = [col[1] for col in await cursor.fetchall()]
@@ -12651,6 +12656,7 @@ async def init_db_improved():
         except:
             pass
 
+        # ========== البيانات الافتراضية ==========
         await conn.execute("INSERT OR IGNORE INTO bot_admins (user_id) VALUES (?)", (PRIMARY_OWNER_ID,))
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('publish_interval', '720')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('updates_channel', '')")
@@ -12667,11 +12673,15 @@ async def init_db_improved():
     await rebuild_banned_patterns()
     logger.info("✅ قاعدة البيانات جاهزة مع جميع الجداول والتحسينات")
 
+# ===== إغلاق الموارد =====
+
 async def cleanup_resources():
     logger.info("🧹 جاري تنظيف الموارد...")
     await smart_translator.close()
     await db_pool.close()
     logger.info("✅ تم تنظيف الموارد بنجاح")
+
+# ===== الوظيفة الرئيسية =====
 
 async def main():
     await init_db_improved()
