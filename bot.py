@@ -12681,6 +12681,91 @@ async def cleanup_resources():
     await db_pool.close()
     logger.info("✅ تم تنظيف الموارد بنجاح")
 
+# ===== معالج أوامر الإدارة في المجموعات =====
+
+async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج موحد لأوامر الإدارة: ban, mute, warn, kick, restrict, pin, unban"""
+    if update.message is None or update.effective_chat is None or update.effective_user is None:
+        return
+
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+
+    chat_id = chat.id
+    user_id = update.effective_user.id
+    text = update.message.text.strip() if update.message.text else ""
+
+    # التحقق من الصلاحيات
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+
+    # التحقق من صلاحيات البوت
+    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        await safe_send_markdown(context.bot, user_id, f"❌ {bot_perms['reason']}")
+        return
+
+    # استخراج الأمر
+    command = text.split()[0].lower() if text else ""
+    args = text.split(maxsplit=1)
+    reason = args[1] if len(args) > 1 else ""
+
+    # تحديد الإجراء والمدة إن وجدت
+    action = None
+    duration = None
+
+    if command == "/ban":
+        action = "ban"
+    elif command == "/mute":
+        action = "mute"
+        duration = context.user_data.get('mute_minutes', 60)
+    elif command == "/warn":
+        action = "warn"
+    elif command == "/kick":
+        action = "kick"
+    elif command == "/restrict":
+        action = "restrict"
+    elif command == "/pin":
+        action = "pin"
+    elif command == "/unban":
+        action = "unban"
+    else:
+        return  # ليس أمر إدارة
+
+    # استخراج target_id
+    target_id = None
+    if update.message.reply_to_message:
+        target_id = update.message.reply_to_message.from_user.id
+    else:
+        # محاولة استخراج المعرف من النص
+        parts = text.split()
+        if len(parts) >= 2:
+            try:
+                target_id = int(parts[1])
+            except ValueError:
+                pass
+
+    if action == "pin":
+        if update.message.reply_to_message:
+            success, msg = await execute_pin(context.bot, chat_id, update.message.reply_to_message.message_id)
+            await safe_send_markdown(context.bot, chat_id, msg)
+        else:
+            await safe_send_markdown(context.bot, user_id, "❌ قم بالرد على الرسالة التي تريد تثبيتها ثم استخدم /pin")
+        return
+
+    if not target_id:
+        await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المستخدم. أرسل المعرف أو قم بالرد على رسالة المستخدم.")
+        return
+
+    # تنفيذ الإجراء
+    success, msg = await execute_moderation_action(
+        context.bot, chat_id, target_id, action, reason, duration, user_id
+    )
+    await safe_send_markdown(context.bot, chat_id, msg)
+
 # ===== الوظيفة الرئيسية =====
 
 async def main():
