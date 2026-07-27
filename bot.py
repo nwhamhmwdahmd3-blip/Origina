@@ -2,9 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.10 - النسخة المحسنة بالكامل
+الإصدار: 20.0.11 - النسخة المحسنة النهائية (تصحيح أزرار المجموعات)
 المطور: @RelaxMgr
-تم إعادة كتابة الكود بالكامل مع جميع التحسينات والإصلاحات
 """
 
 import sys
@@ -367,7 +366,6 @@ def create_default_lang_files():
             "hidden_owner_already": "⚠️ أنت مسجل بالفعل كمالك مخفي",
             "promo_message": "👋 **مرحباً بك في مجموعتنا!**\n\nللاستفادة من جميع خدمات البوت، يرجى التوجه إلى الخاص:\n👉 @{0}\n\nهناك يمكنك إدارة القنوات، ضبط الإعدادات، والمزيد! 🚀",
             "back": "🔙 رجوع",
-            # إضافة مفاتيح جديدة للتحسينات
             "service_messages": "🛠️ حذف رسائل الخدمة",
             "penalty_applied": "⚖️ تم تطبيق عقوبة {0} على المستخدم {1} بسبب {2}",
             "no_permission": "❌ البوت لا يملك صلاحيات كافية لتطبيق العقوبة",
@@ -506,7 +504,6 @@ def create_default_lang_files():
             "hidden_owner_already": "⚠️ You are already registered as hidden owner",
             "promo_message": "👋 **Welcome to our group!**\n\nTo use all bot features, please go to private chat:\n👉 @{0}\n\nThere you can manage channels, adjust settings, and more! 🚀",
             "back": "🔙 Back",
-            # New keys for improvements
             "service_messages": "🛠️ Delete Service Messages",
             "penalty_applied": "⚖️ Applied penalty {0} on user {1} due to {2}",
             "no_permission": "❌ Bot doesn't have enough permissions to apply penalty",
@@ -5637,6 +5634,8 @@ def get_advanced_group_actions_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     ])
 
 def get_advanced_mute_duration_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    if not isinstance(chat_id, int):
+        chat_id = int(chat_id)
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⏱️ 5 دقائق", callback_data=f"adv_mute_duration:5:{chat_id}"),
          InlineKeyboardButton("⏱️ 30 دقيقة", callback_data=f"adv_mute_duration:30:{chat_id}")],
@@ -6788,70 +6787,53 @@ async def set_delete_penalty_callback(update: Update, context: ContextTypes.DEFA
 
 # ===================== معالج الأزرار الموحد (universal_security_toggle) =====================
 async def universal_security_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج شامل وديناميكي لجميع أزرار الأمان"""
+    """معالج شامل للأزرار البسيطة (links, mentions, delete_*, slow_mode, welcome, goodbye)"""
     query = update.callback_query
     await query.answer()
     
-    uid = update.effective_user.id
+    user_id = update.effective_user.id
     
     try:
         parts = query.data.split(":")
-        key = parts[1]  # مثل mentions أو delete_videos أو delete_documents
+        key = parts[1]   # links, mentions, delete_videos, etc.
         chat_id = int(parts[2])
-    except (IndexError, ValueError) as e:
-        logger.error(f"Invalid callback data format: {query.data} - {e}")
+    except (IndexError, ValueError):
         await query.answer("⚠️ بيانات الزر غير صالحة", show_alert=True)
         return
 
-    # التحقق من صلاحيات المشرف
-    if not await is_authorized_in_group(context.bot, chat_id, uid):
-        await query.answer(get_text(uid, 'admin_only'), show_alert=True)
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
         return
 
-    # 1. جلب الإعدادات مع إجبار تجاوز الكاش
     settings = await db_get_security_settings(chat_id, force_refresh=True)
-    
     current_val = settings.get(key, False)
     new_val = not current_val
-
-    # 2. حفظ الإعدادات في قاعدة البيانات (تحديث جزئي)
     await db_set_security_settings(chat_id, **{key: new_val})
     
-    await asyncio.sleep(0.1)  # تأخير بسيط لضمان اكتمال الكتابة
-
-    # 3. مسح الكاش تماماً لمنع قراءة القديم
+    # مسح الكاش
     if chat_id in _security_cache:
         del _security_cache[chat_id]
     _security_cache.pop(chat_id, None)
     _security_cache_time.pop(chat_id, None)
     await cache_manager.delete(f"security_{chat_id}")
 
-    logger.info(f"SECURITY_{key.upper()}_TOGGLED | User: {uid} | Chat: {chat_id} | New State: {new_val}")
-
-    # 4. إعادة بناء النص واللوحة مع force_refresh=True
-    await _update_security_panel(query, chat_id, uid, force_refresh=True)
+    await _update_security_panel(query, chat_id, user_id, force_refresh=True)
 
 # ===================== معالجات الكولباك للأمان (بقيت للخصائص الخاصة) =====================
 async def security_banned_words_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query:
-        await query.answer()
-    uid = update.effective_user.id
+    await query.answer()
+    user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
     if not chat_id:
+        await query.edit_message_text("❌ لم يتم تحديد المجموعة.")
         return
-    if not await is_authorized_in_group(context.bot, chat_id, uid):
-        if query:
-            await query.answer(get_text(uid, 'admin_only'), show_alert=True)
-        else:
-            await safe_send_markdown(context.bot, uid, get_text(uid, 'admin_only'))
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
         return
     context.user_data['banned_words_chat_id'] = chat_id
     msg = "🚫 إدارة الكلمات المحظورة للمجموعة"
-    if query:
-        await query.edit_message_text(msg, reply_markup=get_group_banned_words_keyboard(chat_id))
-    else:
-        await safe_send_markdown(context.bot, uid, msg, reply_markup=get_group_banned_words_keyboard(chat_id))
+    await safe_edit_markdown(query, msg, reply_markup=get_group_banned_words_keyboard(chat_id))
 
 async def security_close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -7362,7 +7344,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.10
+📦 **الإصدار:** 20.0.11
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -9836,27 +9818,34 @@ async def handle_text_callbacks(update: Update, context: ContextTypes.DEFAULT_TY
 # ===================== معالجات الكولباك للإجراءات المتقدمة =====================
 async def advanced_actions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query:
-        await query.answer()
-    uid = update.effective_user.id
-    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    await query.answer()
+    user_id = update.effective_user.id
+
+    # استخراج chat_id من البيانات أو من السياق
+    chat_id = context.user_data.get('advanced_chat_id')
+    if not chat_id:
+        try:
+            chat_id = int(query.data.split(":")[-1])
+        except:
+            chat_id = 0
+
     if chat_id == 0:
-        if query:
-            await query.edit_message_text("⚠️ يرجى اختيار مجموعة أولاً باستخدام أمر /security")
+        # جلب أول مجموعة للمستخدم
+        groups = await db_get_user_groups(user_id)
+        if groups:
+            chat_id = groups[0][0]
+            context.user_data['advanced_chat_id'] = chat_id
         else:
-            await safe_send_markdown(context.bot, uid, "⚠️ يرجى اختيار مجموعة أولاً باستخدام أمر /security")
+            await query.edit_message_text("⚠️ يرجى اختيار مجموعة أولاً باستخدام /security")
+            return
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
         return
-    if not await is_authorized_in_group(context.bot, chat_id, uid):
-        if query:
-            await query.answer(get_text(uid, 'admin_only'), show_alert=True)
-        else:
-            await safe_send_markdown(context.bot, uid, get_text(uid, 'admin_only'))
-        return
+
+    context.user_data['advanced_chat_id'] = chat_id
     msg = "🛠️ **الإجراءات المتقدمة للمجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر الإجراء المطلوب:"
-    if query:
-        await safe_edit_markdown(query, msg, reply_markup=get_advanced_group_actions_keyboard(chat_id))
-    else:
-        await safe_send_markdown(context.bot, uid, msg, reply_markup=get_advanced_group_actions_keyboard(chat_id))
+    await safe_edit_markdown(query, msg, reply_markup=get_advanced_group_actions_keyboard(chat_id))
 
 async def group_action_ban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -9902,34 +9891,32 @@ async def group_action_mute_callback(update: Update, context: ContextTypes.DEFAU
 
 async def advanced_mute_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query:
-        await query.answer()
-    parts = query.data.split(":") if query else context.user_data.get('mute_duration_data', '').split(":")
-    if len(parts) == 3:
+    await query.answer()
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        await query.edit_message_text("❌ بيانات غير صالحة.")
+        return
+
+    try:
         minutes = int(parts[1])
         chat_id = int(parts[2])
-        uid = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, uid):
-            if query:
-                await query.answer(get_text(uid, 'admin_only'), show_alert=True)
-            else:
-                await safe_send_markdown(context.bot, uid, get_text(uid, 'admin_only'))
-            return
-        context.user_data['mute_minutes'] = minutes
-        context.user_data['state'] = UserState.WAITING_MUTE_USER
-        context.user_data['advanced_chat_id'] = chat_id
-        if minutes == 0:
-            msg = "🔇 **كتم دائم**\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /mute\n\nيمكنك إضافة سبب: `/mute 123456789 السبب`"
-        elif minutes < 60:
-            msg = f"🔇 **كتم {minutes} دقيقة**\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /mute\n\nيمكنك إضافة سبب: `/mute 123456789 السبب`"
-        elif minutes < 1440:
-            msg = f"🔇 **كتم {minutes // 60} ساعة**\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /mute\n\nيمكنك إضافة سبب: `/mute 123456789 السبب`"
-        else:
-            msg = f"🔇 **كتم {minutes // 1440} يوم**\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /mute\n\nيمكنك إضافة سبب: `/mute 123456789 السبب`"
-        if query:
-            await safe_edit_markdown(query, msg)
-        else:
-            await safe_send_markdown(context.bot, uid, msg)
+    except ValueError:
+        await query.edit_message_text("❌ قيمة غير صالحة.")
+        return
+
+    user_id = update.effective_user.id
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+
+    # تخزين المدة والمجموعة في السياق
+    context.user_data['mute_minutes'] = minutes
+    context.user_data['advanced_chat_id'] = chat_id
+    context.user_data['state'] = UserState.WAITING_MUTE_USER
+
+    duration_text = "دائم" if minutes == 0 else f"{minutes} دقيقة" if minutes < 60 else f"{minutes//60} ساعة" if minutes < 1440 else f"{minutes//1440} يوم"
+    msg = f"🔇 **كتم {duration_text}**\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /mute\n\nيمكنك إضافة سبب: `/mute 123456789 السبب`"
+    await safe_edit_markdown(query, msg)
 
 async def group_action_warn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -12371,7 +12358,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.10</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.11</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13445,18 +13432,25 @@ async def main():
     application.add_handler(CallbackQueryHandler(day_select_callback, pattern=f"^{CallbackData.SCHEDULE_DAY_SELECT_PREFIX}"))
     application.add_handler(CallbackQueryHandler(save_days_callback, pattern=f"^{CallbackData.SCHEDULE_SAVE_DAYS}$"))
 
-    # ===== أولاً: الأزرار الخاصة (تأخذ أولوية) =====
+    # ===== المعالجات الخاصة (تأخذ أولوية) =====
     application.add_handler(CallbackQueryHandler(security_enable_all_callback, pattern=f"^{CallbackData.SECURITY_ENABLE_ALL_PREFIX}"))
     application.add_handler(CallbackQueryHandler(security_disable_all_callback, pattern=f"^{CallbackData.SECURITY_DISABLE_ALL_PREFIX}"))
     application.add_handler(CallbackQueryHandler(security_delete_penalty_callback, pattern=f"^{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}"))
     application.add_handler(CallbackQueryHandler(set_delete_penalty_callback, pattern="^set_delete_penalty:"))
     application.add_handler(CallbackQueryHandler(confirm_enable_all_callback, pattern="^confirm_enable_all:"))
 
-    # ===== ثانياً: معالج الأزرار الموحد (يلتقط الباقي) =====
-    application.add_handler(CallbackQueryHandler(universal_security_toggle, pattern="^security:"))
-
-    # ===== ثالثاً: معالجات الكلمات المحظورة والعقوبات =====
     application.add_handler(CallbackQueryHandler(security_banned_words_menu_callback, pattern=f"^{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}"))
+
+    # ===== أزرار مدة الكتم =====
+    application.add_handler(CallbackQueryHandler(advanced_mute_duration_callback, pattern="^adv_mute_duration:"))
+
+    # ===== المعالج الموحد للأزرار البسيطة (بعد الخاص) =====
+    application.add_handler(CallbackQueryHandler(
+        universal_security_toggle,
+        pattern=r"^security:(links|mentions|slow_mode|delete_videos|delete_audio|delete_animation|delete_service|delete_documents|delete_stickers|welcome_enabled|goodbye_enabled):\d+$"
+    ))
+
+    # ===== باقي المعالجات =====
     application.add_handler(CallbackQueryHandler(security_close_callback, pattern=f"^{CallbackData.SECURITY_CLOSE}$"))
     application.add_handler(CallbackQueryHandler(security_select_group_callback, pattern=f"^{CallbackData.SECURITY_SELECT_GROUP}"))
     application.add_handler(CallbackQueryHandler(security_refresh_groups_callback, pattern=f"^{CallbackData.SECURITY_REFRESH_GROUPS}$"))
@@ -13467,8 +13461,13 @@ async def main():
     application.add_handler(CallbackQueryHandler(penalty_kick_callback, pattern=f"^{CallbackData.PENALTY_KICK}:"))
     application.add_handler(CallbackQueryHandler(penalty_ban_callback, pattern=f"^{CallbackData.PENALTY_BAN}:"))
     application.add_handler(CallbackQueryHandler(penalty_mute_callback, pattern=f"^{CallbackData.PENALTY_MUTE}:"))
-
-    # بقية المعالجات الأخرى...
+    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_5}:"))
+    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_30}:"))
+    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_60}:"))
+    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_720}:"))
+    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_1440}:"))
+    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_10080}:"))
+    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_PERMANENT}:"))
     application.add_handler(CallbackQueryHandler(help_callback, pattern=f"^{CallbackData.HELP}$"))
     application.add_handler(CallbackQueryHandler(support_menu_callback, pattern=f"^{CallbackData.SUPPORT_MENU}$"))
     application.add_handler(CallbackQueryHandler(support_help_callback, pattern=f"^{CallbackData.SUPPORT_HELP}$"))
@@ -13578,7 +13577,6 @@ async def main():
     application.add_handler(CallbackQueryHandler(advanced_actions_callback, pattern=f"^{CallbackData.ADVANCED_ACTIONS}:"))
     application.add_handler(CallbackQueryHandler(group_action_ban_callback, pattern=f"^{CallbackData.GROUP_ACTION_BAN}:"))
     application.add_handler(CallbackQueryHandler(group_action_mute_callback, pattern=f"^{CallbackData.GROUP_ACTION_MUTE}:"))
-    application.add_handler(CallbackQueryHandler(advanced_mute_duration_callback, pattern="^adv_mute_duration:"))
     application.add_handler(CallbackQueryHandler(group_action_warn_callback, pattern=f"^{CallbackData.GROUP_ACTION_WARN}:"))
     application.add_handler(CallbackQueryHandler(group_action_kick_callback, pattern=f"^{CallbackData.GROUP_ACTION_KICK}:"))
     application.add_handler(CallbackQueryHandler(group_action_restrict_callback, pattern=f"^{CallbackData.GROUP_ACTION_RESTRICT}:"))
@@ -13659,7 +13657,7 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.10 - النسخة النهائية المتكاملة)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.11 - النسخة النهائية المتكاملة)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ إصلاح مشكلة تنسيق MarkdownV2 (إضافة \\\\ إلى escape)")
     print("   • ✅ تحسين safe_send_markdown لقص النص بشكل آمن")
@@ -13670,6 +13668,8 @@ async def main():
     print("   • ✅ إضافة زر حذف رسائل الخدمة في لوحة الأمان")
     print("   • ✅ تحسين رسائل التحذير لإظهار اسم المخالف والعقوبة المطبقة")
     print("   • ✅ إضافة تحقق من صلاحيات البوت قبل تطبيق العقوبة")
+    print("   • ✅ تصحيح أزرار المجموعات: كلمات محظورة ومدة الكتم")
+    print("   • ✅ إعادة ترتيب المعالجات لضمان الأولوية الصحيحة")
 
     try:
         await application.run_polling(
