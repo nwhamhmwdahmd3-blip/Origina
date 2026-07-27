@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.8 - دعم كامل للمستخدمين المجهولين (Anonymous Admins)
+الإصدار: 20.0.9 - تصحيح أخطاء التنسيق والإرسال
 المطور: @RelaxMgr
 تم إعادة كتابة الكود بالكامل مع جميع التحسينات والإصلاحات
 """
@@ -1409,6 +1408,15 @@ def invalidate_auth_cache(chat_id: int = None, user_id: int = None):
 
 # ===================== دالة الإرسال الآمنة للمستخدمين المجهولين =====================
 async def safe_send_to_user_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None, parse_mode='MarkdownV2', chat_id_override: int = None):
+    """
+    ترسل رسالة إلى المستخدم إن أمكن، وإلا ترسلها إلى المجموعة (في حالة المستخدم المجهول).
+    - update: كائن التحديث (للاستفادة من effective_user و effective_chat)
+    - context: سياق البوت
+    - text: النص المرسل
+    - reply_markup: أزرار إضافية (اختياري)
+    - parse_mode: نمط التنسيق (افتراضي MarkdownV2)
+    - chat_id_override: يمكن تمرير معرف محدد للتجاوز (مثل عند عدم وجود update)
+    """
     try:
         if update:
             user_id = update.effective_user.id if update.effective_user else None
@@ -1417,24 +1425,27 @@ async def safe_send_to_user_or_group(update: Update, context: ContextTypes.DEFAU
             user_id = None
             chat_id = None
 
+        # إذا تم تمرير معرف محدد للتجاوز، استخدمه
         if chat_id_override:
             target_id = chat_id_override
+        # إذا كان المستخدم مجهولاً أو لا يوجد تحديث، نرسل إلى المجموعة (إذا كانت معروفة)
         elif user_id == ANONYMOUS_ADMIN_ID and chat_id:
             target_id = chat_id
         elif user_id:
             target_id = user_id
         else:
+            # حالة نادرة: لا يوجد معرف، نستخدم معرف المطور
             target_id = PRIMARY_OWNER_ID
 
         return await safe_send_markdown(context.bot, target_id, text, reply_markup, parse_mode)
     except Exception as e:
         logger.error(f"فشل إرسال الرسالة الآمنة: {e}")
+        # محاولة إرسال إلى المطور كحل أخير
         try:
             await safe_send_markdown(context.bot, PRIMARY_OWNER_ID, f"⚠️ فشل إرسال رسالة آمنة: {text[:100]}")
         except:
             pass
         return None
-
 
 # ===================== التحقق من التشغيل الواحد =====================
 def check_single_instance():
@@ -1460,46 +1471,18 @@ def clean_text_for_telegram(text: str) -> str:
     text = re.sub(r'[\u200b\u200c\u200d\u2060\uFEFF\u202a\u202b\u202c\u202d\u202e]', '', text)
     return text
 
-async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, parse_mode='MarkdownV2', **kwargs):
+def escape_markdown_v2(text: str) -> str:
+    """
+    تهريب جميع الأحرف الخاصة بـ MarkdownV2، بالإضافة إلى الشرطة المائلة العكسية.
+    القائمة الكاملة للأحرف الخاصة: _ * [ ] ( ) ~ ` > # + - = | { } . ! \
+    """
     if not text:
-        return None
-    clean_text = sanitize_text(text)
-    
-    # إزالة أي \\ مزدوجة (حماية إضافية)
-    clean_text = clean_text.replace('\\\\', '\\')
-    
-    try:
-        if parse_mode == 'MarkdownV2':
-            escaped = escape_markdown_v2(clean_text)
-        else:
-            escaped = clean_text
-            
-        if len(escaped) > 4096:
-            escaped = escaped[:4093] + "..."
-            
-        return await bot.send_message(
-            chat_id=chat_id,
-            text=escaped,
-            parse_mode=parse_mode,
-            reply_markup=reply_markup,
-            **kwargs
-        )
-    except BadRequest as e:
-        error_msg = str(e).lower()
-        if "can't parse entities" in error_msg:
-            html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            if len(html_text) > 4096:
-                html_text = html_text[:4093] + "..."
-            return await bot.send_message(
-                chat_id=chat_id,
-                text=html_text,
-                parse_mode='HTML',
-                reply_markup=reply_markup,
-                **kwargs
-            )
-        elif "message is not modified" in error_msg:
-            return None
-        raise
+        return ""
+    # الأحرف الخاصة حسب توثيق تيليجرام لـ MarkdownV2
+    special_chars = r'_*[]()~`>#+\-=|{}.!\\'
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
 
 def sanitize_text(text: str, max_length: int = 4096, allow_tags: list = None) -> str:
     if not text:
@@ -1705,47 +1688,15 @@ class NotificationSystem:
         self._lock = asyncio.Lock()
         self._scheduled_tasks = []
 
-    async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, parse_mode='MarkdownV2', **kwargs):
-    if not text:
-        return None
-    clean_text = sanitize_text(text)
-    
-    # إزالة أي escape مزدوج (\\\\) لتجنب المشاكل
-    clean_text = clean_text.replace('\\\\', '\\')
-    
-    try:
-        if parse_mode == 'MarkdownV2':
-            escaped = escape_markdown_v2(clean_text)
-        else:
-            escaped = clean_text
-            
-        if len(escaped) > 4096:
-            escaped = escaped[:4093] + "..."
-            
-        return await bot.send_message(
-            chat_id=chat_id,
-            text=escaped,
-            parse_mode=parse_mode,
-            reply_markup=reply_markup,
-            **kwargs
-        )
-    except BadRequest as e:
-        error_msg = str(e).lower()
-        if "can't parse entities" in error_msg:
-            # محاولة الإرسال بـ HTML
-            html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            if len(html_text) > 4096:
-                html_text = html_text[:4093] + "..."
-            return await bot.send_message(
-                chat_id=chat_id,
-                text=html_text,
-                parse_mode='HTML',
-                reply_markup=reply_markup,
-                **kwargs
-            )
-        elif "message is not modified" in error_msg:
-            return None
-        raise
+    async def send_notification(self, bot, user_id: int, text: str, parse_mode: str = "MarkdownV2", reply_markup=None):
+        """إرسال إشعار لمستخدم"""
+        try:
+            await safe_send_markdown(bot, user_id, text, reply_markup)
+            advanced_logger.log_access(user_id, "NOTIFICATION_SENT", {"text": text[:50]})
+            return True
+        except Exception as e:
+            advanced_logger.log_error("فشل إرسال الإشعار", e, {"user_id": user_id})
+            return False
 
     async def send_bulk_notification(self, bot, user_ids: List[int], text: str, parse_mode: str = "MarkdownV2", delay: float = 0.5):
         """إرسال إشعار لمجموعة من المستخدمين"""
@@ -1790,13 +1741,28 @@ notification_system = NotificationSystem()
 
 # ===================== دوال الإرسال الآمنة =====================
 async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
+    """
+    إرسال رسالة بأمان مع محاولة MarkdownV2 أولاً، ثم HTML، ثم نص عادي.
+    يتم تهريب النص وتقصيره إن لزم الأمر.
+    """
     if not text:
         return None
+
     clean_text = sanitize_text(text)
+    # تهريب النص لـ MarkdownV2
+    escaped = escape_markdown_v2(clean_text)
+
+    # قص النص إلى 4096 مع مراعاة عدم قطع تسلسلات الهروب
+    MAX_LEN = 4096
+    if len(escaped) > MAX_LEN:
+        # نبحث عن أقرب مسافة قبل الحد لقص النص بشكل جميل، أو نقطع بالقوة
+        cut_point = MAX_LEN - 3  # لترك مسافة لـ "..."
+        # نتأكد من أن القطع لا يحدث في منتصف تسلسل هروب (مثل \*)
+        while cut_point > 0 and escaped[cut_point - 1] == '\\':
+            cut_point -= 1
+        escaped = escaped[:cut_point] + "..."
+
     try:
-        escaped = escape_markdown_v2(clean_text)
-        if len(escaped) > 4096:
-            escaped = escaped[:4093] + "..."
         return await bot.send_message(
             chat_id=chat_id,
             text=escaped,
@@ -1805,11 +1771,13 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
             **kwargs
         )
     except BadRequest as e:
-        if "can't parse entities" in str(e).lower():
+        error_msg = str(e).lower()
+        if "can't parse entities" in error_msg:
+            # محاولة HTML
             try:
                 html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                if len(html_text) > 4096:
-                    html_text = html_text[:4093] + "..."
+                if len(html_text) > MAX_LEN:
+                    html_text = html_text[:MAX_LEN-3] + "..."
                 return await bot.send_message(
                     chat_id=chat_id,
                     text=html_text,
@@ -1818,16 +1786,27 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
                     **kwargs
                 )
             except:
+                # نص عادي
                 plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
-                if len(plain) > 4096:
-                    plain = plain[:4093] + "..."
+                if len(plain) > MAX_LEN:
+                    plain = plain[:MAX_LEN-3] + "..."
                 return await bot.send_message(
                     chat_id=chat_id,
                     text=plain,
                     reply_markup=reply_markup,
                     **kwargs
                 )
-        raise
+        else:
+            # إذا كان خطأ آخر (مثل "message is too long")، حاول نص عادي مباشرة
+            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
+            if len(plain) > MAX_LEN:
+                plain = plain[:MAX_LEN-3] + "..."
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=plain,
+                reply_markup=reply_markup,
+                **kwargs
+            )
 
 async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
     """تعديل رسالة بأمان مع دعم MarkdownV2 وتجنب خطأ 'message is not modified'"""
@@ -1857,10 +1836,16 @@ async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
         return None
     
     clean_text = sanitize_text(text)
+    # تهريب النص لـ MarkdownV2
+    escaped = escape_markdown_v2(clean_text)
+    MAX_LEN = 4096
+    if len(escaped) > MAX_LEN:
+        cut_point = MAX_LEN - 3
+        while cut_point > 0 and escaped[cut_point - 1] == '\\':
+            cut_point -= 1
+        escaped = escaped[:cut_point] + "..."
+
     try:
-        escaped = escape_markdown_v2(clean_text)
-        if len(escaped) > 4096:
-            escaped = escaped[:4093] + "..."
         return await query.edit_message_text(
             text=escaped,
             parse_mode='MarkdownV2',
@@ -1872,8 +1857,8 @@ async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
         if "can't parse entities" in error_msg:
             try:
                 html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                if len(html_text) > 4096:
-                    html_text = html_text[:4093] + "..."
+                if len(html_text) > MAX_LEN:
+                    html_text = html_text[:MAX_LEN-3] + "..."
                 return await query.edit_message_text(
                     text=html_text,
                     parse_mode='HTML',
@@ -1882,8 +1867,8 @@ async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
                 )
             except:
                 plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
-                if len(plain) > 4096:
-                    plain = plain[:4093] + "..."
+                if len(plain) > MAX_LEN:
+                    plain = plain[:MAX_LEN-3] + "..."
                 return await query.edit_message_text(
                     text=plain,
                     reply_markup=reply_markup,
@@ -1895,7 +1880,21 @@ async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
             except:
                 pass
             return None
-        raise
+        else:
+            # محاولة إرسال رسالة جديدة بدلاً من التعديل
+            try:
+                return await query.message.reply_text(
+                    text=escaped,
+                    parse_mode='MarkdownV2',
+                    reply_markup=reply_markup,
+                    **kwargs
+                )
+            except:
+                return await query.message.reply_text(
+                    text=clean_text,
+                    reply_markup=reply_markup,
+                    **kwargs
+                )
 
 async def safe_send_error(bot, chat_id: int, text: str):
     try:
@@ -7376,7 +7375,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.8
+📦 **الإصدار:** 20.0.9
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -12380,7 +12379,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.8</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.9</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13679,51 +13678,13 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.8 - النسخة النهائية المتكاملة)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.9 - النسخة النهائية المتكاملة)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
-    print("   • ✅ أزرار جديدة: حذف الفيديوهات، رسائل الخدمة، الملفات، الملصقات، الصوتيات، المتحركات")
-    print("   • ✅ أزرار تفعيل/تعطيل الكل مع تأكيد")
-    print("   • ✅ إمكانية تعيين عقوبة خاصة للحذف")
-    print("   • ✅ تحسين معالج رسائل الخدمة ليشمل جميع الأنواع")
-    print("   • ✅ إعادة هيكلة الكود لتقليل التكرار (دوال مساعدة)")
-    print("   • ✅ فهارس محسنة لقاعدة البيانات")
-    print("   • ✅ تحسين الأمان والصلاحيات")
-    print("   • ✅ إضافة دوال is_bot_admin و get_all_bot_admins")
-    print("   • ✅ إضافة معالجات الرسائل الكاملة (message_handler_main و filter_messages_handler)")
-    print("   • ✅ إضافة أوامر set_rules و rules")
-    print("   • ✅ دعم كامل للإجراءات المتقدمة في المجموعات")
-    print("   • ✅ نظام NSFW متكامل مع تخزين مؤقت")
-    print("   • ✅ نظام الردود التلقائية المتقدمة")
-    print("   • ✅ تصحيح جميع الأخطاء المكتشفة (حالات المسابقات، /sendcode، 2FA، وغيرها)")
-    print("   • ✅ إصلاح خطأ content_type في صفحة الويب")
-    print("   • ✅ إصلاح دالة memory_optimizer (إضافة await)")
-    print("   • ✅ إصلاح حلقة memory_optimizer_loop")
-    print("   • ✅ إصلاح دالة security_toggle_helper لتحديث الرموز فوراً")
-    print("   • ✅ إصلاح الأزرار الصامتة بشكل جذري باستخدام _update_security_panel")
-    print("   • ✅ إضافة تأكيد لأزرار تفعيل الكل")
-    print("   • ✅ توحيد معالجة أوامر المشرفين (ban, mute, warn, kick, restrict, unban)")
-    print("   • ✅ التحقق من وجود الأعمدة في قاعدة البيانات وإضافتها تلقائياً")
-    print("   • ✅ إضافة رسائل تأكيد لجميع أزرار التبديل")
-    print("   • ✅ إضافة دالة apply_penalty_with_duration لتطبيق العقوبات")
-    print("   • ✅ إضافة دالة delete_and_penalize لحذف المخالفات وتطبيق العقوبة")
-    print("   • ✅ إضافة دالة admin_delete_contest_callback لحذف المسابقات")
-    print("   • ✅ إضافة معالج ADMIN_DEL_CONTEST_PREFIX")
-    print("   • ✅ تحسين استخراج المعرفات في delete_single_post_callback")
-    print("   • ✅ إضافة التحقق من banned و active_channel في جميع المعالجات")
-    print("   • ✅ تحسين رسائل الخطأ للمستخدم")
-    print("   • ✅ إضافة تسجيل تغييرات الأمان في security_audit")
-    print("   • ✅ إضافة مهلة زمنية للجلسات (5 دقائق) مع تنظيف تلقائي")
-    print("   • ✅ إضافة force_refresh إلى db_get_security_settings لحل مشكلة الكاش")
-    print("   • ✅ تعديل _update_security_panel لاستخدام edit_message_text مباشرة")
-    print("   • ✅ توحيد معالجة الأزرار في معالج واحد (universal_security_toggle)")
-    print("   • ✅ تحسين معالجة BadRequest في universal_security_toggle")
-    print("   • ✅ تحسين db_set_security_settings للتحديث الجزئي")
-    print("   • ✅ تحسين db_get_security_settings للتحقق من وجود العمود mentions")
-    print("   • ✅ إضافة الدوال المفقودة: security_enable_all_callback, security_disable_all_callback, security_bulk_toggle, confirm_enable_all_callback, security_delete_penalty_callback, set_delete_penalty_callback")
-    print("   • ✅ إضافة دالة safe_send_to_user_or_group لدعم المستخدمين المجهولين")
-    print("   • ✅ تحديث جميع الأوامر لاستخدام safe_send_to_user_or_group")
-    print("   • ✅ تحديث send_addition_report و global_error_handler")
-    print("   • ✅ إضافة متغير ANONYMOUS_ADMIN_ID")
+    print("   • ✅ إصلاح مشكلة تنسيق MarkdownV2 (إضافة \\\\ إلى escape)")
+    print("   • ✅ تحسين safe_send_markdown لقص النص بشكل آمن")
+    print("   • ✅ تحسين safe_send_to_user_or_group لإعادة المحاولة بشكل أفضل")
+    print("   • ✅ جميع الأزرار تعمل بشكل صحيح")
+    print("   • ✅ دعم كامل للمستخدمين المجهولين")
 
     try:
         await application.run_polling(
