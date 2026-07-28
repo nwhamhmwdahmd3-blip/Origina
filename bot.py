@@ -13487,11 +13487,13 @@ async def main():
     application.add_handler(CallbackQueryHandler(set_delete_penalty_callback, pattern="^set_delete_penalty:"))
     application.add_handler(CallbackQueryHandler(confirm_enable_all_callback, pattern="^confirm_enable_all:"))
 
-    # ===== ثانياً: معالج الأزرار الموحد (يلتقط الباقي) =====
+    # ===== ثانياً: معالج الكلمات المحظورة (يجب أن يكون قبل الموحد) =====
+    application.add_handler(CallbackQueryHandler(security_banned_words_menu_callback, pattern=f"^{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}"))
+
+    # ===== ثالثاً: معالج الأزرار الموحد (يلتقط باقي الأزرار التي تبدأ بـ security:) =====
     application.add_handler(CallbackQueryHandler(universal_security_toggle, pattern="^security:"))
 
-    # ===== ثالثاً: معالجات الكلمات المحظورة والعقوبات =====
-    application.add_handler(CallbackQueryHandler(security_banned_words_menu_callback, pattern=f"^{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}"))
+    # ===== رابعاً: بقية معالجات الأمان والعقوبات =====
     application.add_handler(CallbackQueryHandler(security_close_callback, pattern=f"^{CallbackData.SECURITY_CLOSE}$"))
     application.add_handler(CallbackQueryHandler(security_select_group_callback, pattern=f"^{CallbackData.SECURITY_SELECT_GROUP}"))
     application.add_handler(CallbackQueryHandler(security_refresh_groups_callback, pattern=f"^{CallbackData.SECURITY_REFRESH_GROUPS}$"))
@@ -13636,7 +13638,6 @@ async def main():
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback_handler))
 
     application.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
-    # تم إزالة ChatMemberHandler القديم واستبداله بالمعالجات المنفصلة أعلاه
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_bot_added))
     application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
