@@ -155,20 +155,20 @@ def ensure_package(package_name: str, import_name: str = None) -> bool:
         __import__(import_name)
         return True
     except ImportError:
-        try:
-            import subprocess
-            print(f"📦 جاري تثبيت {package_name}...")
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", package_name, "--quiet"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            __import__(import_name)
-            print(f"✅ تم تثبيت {package_name}")
-            return True
-        except:
-            print(f"⚠️ لا يمكن تثبيت {package_name}")
-            return False
+        for _ in range(3):  # إعادة المحاولة 3 مرات
+            try:
+                import subprocess
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", package_name, "--quiet"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                __import__(import_name)
+                return True
+            except:
+                time.sleep(1)
+        print(f"⚠️ لا يمكن تثبيت {package_name} بعد 3 محاولات")
+        return False
 
 # تثبيت المكتبات الأساسية (سيتم تثبيت المفقود تلقائياً)
 ensure_package("python-dotenv", "dotenv")
