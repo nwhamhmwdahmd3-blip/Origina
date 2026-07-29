@@ -7,60 +7,115 @@
 """
 
 import sys
-import time
 import os
-from pathlib import Path
-import secrets
-import string
-import urllib.parse
-import base64
-import io
+import time
+import asyncio
+import socket
+import subprocess
+import shutil
 import tempfile
 import json
 import hashlib
 import hmac
-import time as time_module
+import base64
 import re
-import shutil
-import logging
-import traceback
 import random
-import asyncio
-import socket
-import subprocess
 import gc
 import sqlite3
+import threading
+import queue
+import signal
+import smtplib
+import csv
+import secrets
+import string
+import urllib.parse
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 from typing import Optional, List, Dict, Tuple, Any, Union, Callable, Awaitable
 from functools import lru_cache, wraps
 from dataclasses import dataclass, asdict
 from enum import Enum, auto
-import gzip
-import zipfile
-import platform
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import queue
 from concurrent.futures import ThreadPoolExecutor
-import types
-import signal
-import smtplib
-import csv
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from logging.handlers import RotatingFileHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from logging.handlers import RotatingFileHandler
-import asyncio
-import aiosqlite
+
+# ===================== التثبيت التلقائي للمكتبات =====================
+def ensure_package(package_name: str, import_name: str = None) -> bool:
+    if import_name is None:
+        import_name = package_name
+    try:
+        __import__(import_name)
+        return True
+    except ImportError:
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", package_name, "--quiet"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            __import__(import_name)
+            print(f"✅ تم تثبيت {package_name}")
+            return True
+        except:
+            print(f"⚠️ لا يمكن تثبيت {package_name}")
+            return False
+
+# تثبيت المكتبات الأساسية
+ensure_package("python-dotenv", "dotenv")
+ensure_package("cachetools")
+ensure_package("psutil")
+ensure_package("nest-asyncio", "nest_asyncio")
+ensure_package("aiosqlite")
+ensure_package("cryptography")
+ensure_package("deep-translator", "deep_translator")
+ensure_package("bleach")
+ensure_package("qrcode")
+ensure_package("Pillow", "PIL")
+ensure_package("plotly")
+ensure_package("aiohttp")
+ensure_package("aiofiles")
+ensure_package("httpx")
+ensure_package("reportlab")
+ensure_package("jinja2")
+ensure_package("markdown")
+ensure_package("python-multipart", "multipart")
+ensure_package("redis")  # استخدم redis بدلاً من aioredis
+ensure_package("pyotp")
+ensure_package("zstandard")
+ensure_package("opencv-python-headless", "cv2")
+ensure_package("google-auth", "google.auth")
+ensure_package("google-auth-oauthlib", "google_auth_oauthlib")
+ensure_package("google-api-python-client", "googleapiclient")
+ensure_package("python-json-logger", "pythonjsonlogger")
+
+# ===================== استيراد المكتبات بعد التثبيت =====================
 from dotenv import load_dotenv
-import httpx
-from deep_translator import GoogleTranslator
+from cachetools import TTLCache, LRUCache
+import psutil
+import nest_asyncio
+import aiosqlite
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
-import aiohttp
+from deep_translator import GoogleTranslator
+import bleach
+import qrcode
 from PIL import Image
 import numpy as np
+import plotly.graph_objects as go
+import aiohttp
+import aiofiles
+import httpx
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+import jinja2
+import markdown
+import multipart
+import redis.asyncio as aioredis  # استخدام redis.asyncio
 import pyotp
 import zstandard
 import cv2
@@ -69,8 +124,6 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from pythonjsonlogger import jsonlogger
-import bleach
-import nest_asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember, BotCommand, LabeledPrice, ChatPermissions
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, PreCheckoutQueryHandler, ChatMemberHandler, ChatJoinRequestHandler
 from telegram.error import TimedOut, NetworkError, BadRequest, Forbidden, Conflict
@@ -120,7 +173,6 @@ def get_writable_path(base_path: Path, subdir: str) -> Path:
             return path
         except:
             continue
-    import tempfile
     temp_path = Path(tempfile.gettempdir()) / f"bot_{subdir}"
     temp_path.mkdir(parents=True, exist_ok=True)
     return temp_path
@@ -138,7 +190,7 @@ ACCESS_LOG = get_writable_path(BASE_PATH, "logs") / "access.log"
 TEMP_PATH = get_temp_path()
 STATIC_PATH = get_writable_path(BASE_PATH, "static")
 TEMPLATES_PATH = get_writable_path(BASE_PATH, "templates")
-LANG_PATH = BASE_PATH / "lang"
+LANG_PATH = BASE_PATH / "lang"   # تعريف LANG_PATH مبكراً
 
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 DATA_PATH.mkdir(parents=True, exist_ok=True)
@@ -148,60 +200,8 @@ STATIC_PATH.mkdir(parents=True, exist_ok=True)
 TEMPLATES_PATH.mkdir(parents=True, exist_ok=True)
 LANG_PATH.mkdir(parents=True, exist_ok=True)
 
-# ===================== التثبيت التلقائي للمكتبات =====================
-def ensure_package(package_name: str, import_name: str = None) -> bool:
-    if import_name is None:
-        import_name = package_name
-    try:
-        __import__(import_name)
-        return True
-    except ImportError:
-        for _ in range(3):  # إعادة المحاولة 3 مرات
-            try:
-                import subprocess
-                subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", package_name, "--quiet"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                __import__(import_name)
-                return True
-            except:
-                time.sleep(1)
-        print(f"⚠️ لا يمكن تثبيت {package_name} بعد 3 محاولات")
-        return False
-
-# تثبيت المكتبات الأساسية (سيتم تثبيت المفقود تلقائياً)
-ensure_package("python-dotenv", "dotenv")
-ensure_package("cachetools")
-ensure_package("psutil")
-ensure_package("nest-asyncio", "nest_asyncio")
-ensure_package("aiosqlite")
-ensure_package("cryptography")
-ensure_package("deep-translator", "deep_translator")
-ensure_package("bleach")
-ensure_package("qrcode")
-ensure_package("Pillow", "PIL")
-ensure_package("plotly")
-ensure_package("aiohttp")
-ensure_package("aiofiles")
-ensure_package("httpx")
-ensure_package("reportlab")
-ensure_package("jinja2")
-ensure_package("markdown")
-ensure_package("python-multipart", "multipart")
-ensure_package("redis", "redis")
-ensure_package("pyotp")
-ensure_package("zstandard")
-ensure_package("opencv-python-headless", "cv2")
-ensure_package("google-auth", "google.auth")
-ensure_package("google-auth-oauthlib", "google_auth_oauthlib")
-ensure_package("google-api-python-client", "googleapiclient")
-ensure_package("python-json-logger", "pythonjsonlogger")
-
 # ===================== تحميل ملفات البيئة =====================
 def load_env_files():
-    from dotenv import load_dotenv
     env_files = [
         ".env",
         ".env.local",
@@ -232,7 +232,7 @@ def get_env_or_default(key: str, default: any, env_type: type = str) -> any:
     except:
         return default
 
-# ===================== الثوابت الأساسية من البيئة =====================
+# ===================== الثوابت الأساسية =====================
 TOKEN = get_env_or_default("BOT_TOKEN", None, str)
 if not TOKEN:
     raise ValueError("❌ لم يتم العثور على BOT_TOKEN في ملفات البيئة")
@@ -250,24 +250,20 @@ ADMIN_2FA_SECRET = get_env_or_default("ADMIN_2FA_SECRET", pyotp.random_base32(),
 DB_ENCRYPTION = get_env_or_default("DB_ENCRYPTION", True, bool)
 MAX_BACKUPS = get_env_or_default("MAX_BACKUPS", 10, int)
 SECURITY_LOG_LEVEL = get_env_or_default("SECURITY_LOG_LEVEL", "CRITICAL", str)
-
 GOOGLE_DRIVE_FOLDER_ID = get_env_or_default("GOOGLE_DRIVE_FOLDER_ID", "", str)
 CLOUD_BACKUP_ENABLED = get_env_or_default("CLOUD_BACKUP_ENABLED", False, bool)
 GOOGLE_CREDENTIALS_FILE = get_env_or_default("GOOGLE_CREDENTIALS_FILE", "credentials.json", str)
 TOKEN_FILE = get_env_or_default("TOKEN_FILE", "token.json", str)
-
 EMAIL_NOTIFICATIONS_ENABLED = get_env_or_default("EMAIL_NOTIFICATIONS_ENABLED", False, bool)
 EMAIL_SMTP_SERVER = get_env_or_default("EMAIL_SMTP_SERVER", "smtp.gmail.com", str)
 EMAIL_SMTP_PORT = get_env_or_default("EMAIL_SMTP_PORT", 587, int)
 EMAIL_USERNAME = get_env_or_default("EMAIL_USERNAME", "", str)
 EMAIL_PASSWORD = get_env_or_default("EMAIL_PASSWORD", "", str)
 EMAIL_RECIPIENTS = get_env_or_default("EMAIL_RECIPIENTS", "", str)
-
 RENDER_PORT = int(os.getenv("PORT", "10000"))
 WEB_PORT = get_env_or_default("WEB_PORT", RENDER_PORT, int)
 if WEB_PORT == 8080 and RENDER_PORT != 8080:
     WEB_PORT = RENDER_PORT
-
 WEB_HOST = get_env_or_default("WEB_HOST", "0.0.0.0", str)
 WEB_PASSWORD = get_env_or_default("WEB_PASSWORD", "", str)
 if not WEB_PASSWORD and os.getenv('ENVIRONMENT', 'development') == 'production':
@@ -279,12 +275,9 @@ WEB_SECRET_KEY = get_env_or_default("WEB_SECRET_KEY", secrets.token_urlsafe(32),
 WEB_SESSION_TIMEOUT = get_env_or_default("WEB_SESSION_TIMEOUT", 3600, int)
 WEB_RATE_LIMIT = get_env_or_default("WEB_RATE_LIMIT", 100, int)
 WEB_RATE_WINDOW = get_env_or_default("WEB_RATE_WINDOW", 60, int)
-
 BATTERY_SAVER_MODE = get_env_or_default("BATTERY_SAVER_MODE", False, bool)
-
 DEFAULT_PUBLISH_INTERVAL_SECONDS = 720
 CLEANUP_SLEEP = 3600
-
 if BATTERY_SAVER_MODE:
     POLL_INTERVAL = 10.0
     SCHEDULED_POSTS_SLEEP = 120
@@ -295,8 +288,21 @@ else:
     SCHEDULED_POSTS_SLEEP = 10
     REMINDERS_SLEEP = 3600
     AUTO_BACKUP_SLEEP = 24 * 60 * 60
-
 WEB_PORT_USED = WEB_PORT
+
+# تعريف المتغيرات المفقودة
+MAX_CONNECTIONS = 20
+DB_TIMEOUT = 30
+MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', 20 * 1024 * 1024))
+MAX_CHANNELS_PER_CYCLE = int(os.getenv('MAX_CHANNELS_PER_CYCLE', '20'))
+PUBLISH_RETRY_DELAY = 300
+MAX_POSTS_PER_SESSION = 50
+MAX_UNPUBLISHED_POSTS = 1000
+SESSION_TIMEOUT_SECONDS = 300
+MAX_MESSAGE_LENGTH = 4096
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_ATTEMPT_WINDOW = 3600
+ANONYMOUS_ADMIN_ID = 1087968824  # معرف المستخدم المجهول في تيليجرام
 
 # ===================== التشفير =====================
 def derive_key_from_password(password: str, salt: bytes) -> bytes:
@@ -306,8 +312,7 @@ def derive_key_from_password(password: str, salt: bytes) -> bytes:
         salt=salt,
         iterations=100000,
     )
-    key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
-    return key
+    return base64.urlsafe_b64encode(kdf.derive(password.encode()))
 
 def get_encryption_key() -> bytes:
     try:
@@ -324,8 +329,7 @@ def get_encryption_key() -> bytes:
     if key_file.exists() and salt_file.exists():
         try:
             with open(key_file, 'rb') as f:
-                key = f.read()
-            return key
+                return f.read()
         except:
             pass
 
@@ -333,64 +337,18 @@ def get_encryption_key() -> bytes:
     if password and len(password) >= 8:
         salt = os.urandom(16)
         key = derive_key_from_password(password, salt)
-        try:
-            with open(key_file, 'wb') as f:
-                f.write(key)
-            with open(salt_file, 'wb') as f:
-                f.write(salt)
-            try:
-                import keyring
-                keyring.set_password("relax_bot", "db_key", base64.urlsafe_b64encode(key).decode())
-            except:
-                pass
-        except:
-            pass
-        print("✅ تم إنشاء مفتاح التشفير من متغير البيئة")
-        return key
-
-    if not sys.stdin.isatty():
-        print("🔐 بيئة غير تفاعلية - إنشاء مفتاح عشوائي")
-        key = Fernet.generate_key()
-        try:
-            with open(key_file, 'wb') as f:
-                f.write(key)
-        except:
-            pass
-        return key
-
-    try:
-        import getpass
-        print("🔐 لإعداد تشفير قاعدة البيانات، أدخل كلمة مرور قوية:")
-        password = getpass.getpass("كلمة المرور: ")
-        confirm = getpass.getpass("تأكيد كلمة المرور: ")
-
-        if password != confirm:
-            print("❌ كلمات المرور غير متطابقة!")
-            sys.exit(1)
-
-        if len(password) < 8:
-            print("❌ كلمة المرور يجب أن تكون 8 أحرف على الأقل!")
-            sys.exit(1)
-
-        salt = os.urandom(16)
-        key = derive_key_from_password(password, salt)
-
         with open(key_file, 'wb') as f:
             f.write(key)
         with open(salt_file, 'wb') as f:
             f.write(salt)
+        print("✅ تم إنشاء مفتاح التشفير من متغير البيئة")
+        return key
 
-        print("✅ تم إنشاء مفتاح التشفير وحفظه بشكل آمن")
-        return key
-    except:
-        print("⚠️ فشل في الحصول على كلمة المرور - استخدام مفتاح عشوائي")
-        key = Fernet.generate_key()
-        try:
-            with open(key_file, 'wb') as f:
-                f.write(key)
-        except:
-            pass
-        return key
+    # إنشاء مفتاح عشوائي
+    key = Fernet.generate_key()
+    with open(key_file, 'wb') as f:
+        f.write(key)
+    return key
 
 ENCRYPTION_KEY = get_encryption_key()
 cipher_suite = Fernet(ENCRYPTION_KEY)
@@ -403,18 +361,64 @@ def get_backup_encryption_key() -> bytes:
                 return f.read()
         except:
             pass
-
     new_key = Fernet.generate_key()
-    try:
-        with open(backup_key_file, 'wb') as f:
-            f.write(new_key)
-    except:
-        pass
-    print("✅ تم توليد مفتاح جديد لتشفير النسخ الاحتياطية")
+    with open(backup_key_file, 'wb') as f:
+        f.write(new_key)
     return new_key
 
 BACKUP_ENCRYPTION_KEY = get_backup_encryption_key()
 BACKUP_CIPHER = Fernet(BACKUP_ENCRYPTION_KEY)
+
+# ===================== دوال التشفير =====================
+def encrypt_file_stream(src: Path, dst: Path, cipher: Fernet, chunk_size: int = 64*1024):
+    with open(src, 'rb') as f_in, open(dst, 'wb') as f_out:
+        while True:
+            chunk = f_in.read(chunk_size)
+            if not chunk:
+                break
+            f_out.write(cipher.encrypt(chunk))
+
+def decrypt_file_stream(src: Path, dst: Path, cipher: Fernet, chunk_size: int = 64*1024):
+    with open(src, 'rb') as f_in, open(dst, 'wb') as f_out:
+        while True:
+            chunk = f_in.read(chunk_size)
+            if not chunk:
+                break
+            f_out.write(cipher.decrypt(chunk))
+
+def encrypt_db_backup() -> Path:
+    if not DB_ENCRYPTION:
+        return DB_PATH
+    cipher = Fernet(ENCRYPTION_KEY)
+    encrypted_path = DB_PATH.with_suffix('.enc')
+    encrypt_file_stream(DB_PATH, encrypted_path, cipher)
+    return encrypted_path
+
+def decrypt_db_backup(encrypted_path: Path) -> bytes:
+    if not DB_ENCRYPTION:
+        with open(encrypted_path, 'rb') as f:
+            return f.read()
+    cipher = Fernet(ENCRYPTION_KEY)
+    temp_decrypted = encrypted_path.with_suffix('.db.tmp')
+    decrypt_file_stream(encrypted_path, temp_decrypted, cipher)
+    with open(temp_decrypted, 'rb') as f:
+        data = f.read()
+    temp_decrypted.unlink()
+    return data
+
+def compress_backup(data: bytes) -> bytes:
+    try:
+        return zstandard.ZstdCompressor().compress(data)
+    except:
+        import gzip
+        return gzip.compress(data)
+
+def decompress_backup(data: bytes) -> bytes:
+    try:
+        return zstandard.ZstdDecompressor().decompress(data)
+    except:
+        import gzip
+        return gzip.decompress(data)
 
 # ===================== نظام السجلات =====================
 class CustomJsonFormatter(jsonlogger.JsonFormatter):
@@ -425,32 +429,18 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
         log_record['module'] = record.module
         log_record['function'] = record.funcName
         log_record['line'] = record.lineno
-        if 'token' in log_record:
-            log_record['token'] = '[HIDDEN]'
-        if 'ENCRYPTION_KEY' in log_record:
-            log_record['ENCRYPTION_KEY'] = '[HIDDEN]'
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     handlers=[
-        RotatingFileHandler(
-            LOG_PATH,
-            maxBytes=10*1024*1024,
-            backupCount=5,
-            encoding='utf-8'
-        ),
+        RotatingFileHandler(LOG_PATH, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-json_handler = RotatingFileHandler(
-    SECURITY_LOG,
-    maxBytes=10*1024*1024,
-    backupCount=5,
-    encoding='utf-8'
-)
+json_handler = RotatingFileHandler(SECURITY_LOG, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
 json_handler.setFormatter(CustomJsonFormatter('%(timestamp)s %(level)s %(module)s %(message)s'))
 security_logger = logging.getLogger('security')
 security_logger.setLevel(logging.INFO)
@@ -577,7 +567,6 @@ async def send_email_notification(subject: str, body: str) -> bool:
         msg['To'] = EMAIL_RECIPIENTS
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
-
         server = smtplib.SMTP(EMAIL_SMTP_SERVER, EMAIL_SMTP_PORT)
         server.starttls()
         server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
@@ -764,33 +753,6 @@ async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
                 except:
                     raise final_e
 
-async def safe_send_to_user_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None, parse_mode='MarkdownV2', chat_id_override: int = None):
-    try:
-        if update:
-            user_id = update.effective_user.id if update.effective_user else None
-            chat_id = update.effective_chat.id if update.effective_chat else None
-        else:
-            user_id = None
-            chat_id = None
-
-        if chat_id_override:
-            target_id = chat_id_override
-        elif user_id == ANONYMOUS_ADMIN_ID and chat_id:
-            target_id = chat_id
-        elif user_id:
-            target_id = user_id
-        else:
-            target_id = PRIMARY_OWNER_ID
-
-        return await safe_send_markdown(context.bot, target_id, text, reply_markup, parse_mode)
-    except Exception as e:
-        logger.error(f"فشل إرسال الرسالة الآمنة: {e}")
-        try:
-            await safe_send_markdown(context.bot, PRIMARY_OWNER_ID, f"⚠️ فشل إرسال رسالة آمنة: {text[:100]}")
-        except:
-            pass
-        return None
-
 # ===================== التحقق من التشغيل الواحد =====================
 def check_single_instance():
     try:
@@ -851,7 +813,7 @@ class ErrorHandler:
                 delay = self.base_delay * (2 ** attempt) + random.uniform(0, 0.5)
                 advanced_logger.log_error(f"محاولة {attempt+1} فشلت (متزامنة)", e)
                 if attempt < self.max_retries - 1:
-                    time_module.sleep(delay)
+                    time.sleep(delay)
                 continue
         if last_error:
             raise last_error
@@ -896,7 +858,7 @@ class TimedLRUCache:
         async with self._lock:
             if key in self.cache:
                 value, timestamp = self.cache[key]
-                if time_module.time() - timestamp < self.ttl:
+                if time.time() - timestamp < self.ttl:
                     return value
                 else:
                     del self.cache[key]
@@ -906,7 +868,7 @@ class TimedLRUCache:
         async with self._lock:
             if key in self.cache:
                 del self.cache[key]
-            self.cache[key] = (value, time_module.time())
+            self.cache[key] = (value, time.time())
             if len(self.cache) > self.maxsize:
                 oldest = min(self.cache.keys(), key=lambda k: self.cache[k][1])
                 del self.cache[oldest]
@@ -919,7 +881,7 @@ _translation_cache = TimedLRUCache(maxsize=500, ttl=3600)
 
 # ===================== Pool اتصالات قاعدة البيانات =====================
 class DatabasePool:
-    def __init__(self, max_connections: int = 10):
+    def __init__(self, max_connections: int = MAX_CONNECTIONS):
         self._pool = None
         self._max_connections = max_connections
         self._lock = asyncio.Lock()
@@ -992,7 +954,7 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-    print("⚠️ مكتبة aioredis غير مثبتة، سيتم استخدام التخزين المؤقت في الذاكرة")
+    print("⚠️ مكتبة redis غير مثبتة، سيتم استخدام التخزين المؤقت في الذاكرة")
 
 class CacheManager:
     def __init__(self):
@@ -1003,7 +965,10 @@ class CacheManager:
     async def init(self):
         if self.use_redis:
             try:
-                self.redis = await aioredis.from_url(os.getenv("REDIS_URL"))
+                self.redis = await aioredis.from_url(
+                    os.getenv("REDIS_URL"),
+                    decode_responses=True
+                )
                 await self.redis.ping()
                 logger.info("✅ تم الاتصال بـ Redis")
             except Exception as e:
@@ -1039,269 +1004,22 @@ class CacheManager:
 
 cache_manager = CacheManager()
 
-# ===================== دوال التشفير المحسنة =====================
-def encrypt_file_stream(src: Path, dst: Path, cipher: Fernet, chunk_size: int = 64*1024):
-    with open(src, 'rb') as f_in, open(dst, 'wb') as f_out:
-        while True:
-            chunk = f_in.read(chunk_size)
-            if not chunk:
-                break
-            encrypted_chunk = cipher.encrypt(chunk)
-            f_out.write(encrypted_chunk)
+# ===================== دوال الترجمة =====================
+SUPPORTED_LANGUAGES = {
+    'ar': 'العربية 🇸🇦',
+    'en': 'English 🇬🇧',
+    'fr': 'Français 🇫🇷',
+    'tr': 'Türkçe 🇹🇷',
+    'zh': '中文 🇨🇳',
+    'ru': 'Русский 🇷🇺',
+    'de': 'Deutsch 🇩🇪',
+    'es': 'Español 🇪🇸',
+    'it': 'Italiano 🇮🇹',
+    'pt': 'Português 🇵🇹',
+    'ja': '日本語 🇯🇵',
+    'ko': '한국어 🇰🇷'
+}
 
-def decrypt_file_stream(src: Path, dst: Path, cipher: Fernet, chunk_size: int = 64*1024):
-    with open(src, 'rb') as f_in, open(dst, 'wb') as f_out:
-        while True:
-            chunk = f_in.read(chunk_size)
-            if not chunk:
-                break
-            decrypted_chunk = cipher.decrypt(chunk)
-            f_out.write(decrypted_chunk)
-
-def encrypt_db_backup() -> Path:
-    if not DB_ENCRYPTION:
-        return DB_PATH
-    cipher = Fernet(ENCRYPTION_KEY)
-    encrypted_path = DB_PATH.with_suffix('.enc')
-    encrypt_file_stream(DB_PATH, encrypted_path, cipher)
-    return encrypted_path
-
-def decrypt_db_backup(encrypted_path: Path) -> bytes:
-    if not DB_ENCRYPTION:
-        with open(encrypted_path, 'rb') as f:
-            return f.read()
-    cipher = Fernet(ENCRYPTION_KEY)
-    temp_decrypted = encrypted_path.with_suffix('.db.tmp')
-    decrypt_file_stream(encrypted_path, temp_decrypted, cipher)
-    with open(temp_decrypted, 'rb') as f:
-        data = f.read()
-    temp_decrypted.unlink()
-    return data
-
-def compress_backup(data: bytes) -> bytes:
-    if ZSTD_AVAILABLE:
-        try:
-            return ZSTD_COMPRESSOR.compress(data)
-        except:
-            pass
-    return gzip.compress(data)
-
-def decompress_backup(data: bytes) -> bytes:
-    if ZSTD_AVAILABLE:
-        try:
-            return ZSTD_DECOMPRESSOR.decompress(data)
-        except:
-            pass
-    return gzip.decompress(data)
-
-# ===================== نظام Backoff ذكي مع Jitter =====================
-async def retry_with_jitter(func: Callable, max_retries: int = 5, base_delay: float = 1) -> Any:
-    for attempt in range(max_retries):
-        try:
-            return await func()
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise
-            jitter = random.uniform(0, 0.5)
-            delay = (base_delay * (2 ** attempt)) + jitter
-            logger.warning(f"⚠️ إعادة محاولة {attempt+1}/{max_retries} بعد {delay:.2f}s: {e}")
-            await asyncio.sleep(delay)
-
-def retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,)):
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            _delay = delay
-            for attempt in range(max_retries):
-                try:
-                    return await func(*args, **kwargs)
-                except exceptions as e:
-                    if attempt == max_retries - 1:
-                        raise
-                    jitter = random.uniform(0, 0.5)
-                    await asyncio.sleep(_delay + jitter)
-                    _delay *= backoff
-            return None
-        return wrapper
-    return decorator
-
-# ===================== نظام Rate Limiting =====================
-class GlobalRateLimiter:
-    def __init__(self):
-        self.limits = {
-            'command': (5, 10),
-            'callback': (10, 30),
-            'message': (20, 60),
-            'api': (30, 60),
-        }
-        self.records = defaultdict(list)
-        self._lock = asyncio.Lock()
-
-    async def is_allowed(self, user_id: int, action_type: str = 'command') -> bool:
-        async with self._lock:
-            max_req, window = self.limits.get(action_type, (10, 60))
-            now = time_module.time()
-            key = f"{user_id}:{action_type}"
-            user_requests = self.records[key]
-            user_requests = [t for t in user_requests if now - t < window]
-            self.records[key] = user_requests
-
-            if len(user_requests) >= max_req:
-                return False
-
-            user_requests.append(now)
-            return True
-
-global_rate_limiter = GlobalRateLimiter()
-
-def rate_limit(action_type: str = 'command'):
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(update, context, *args, **kwargs):
-            user_id = update.effective_user.id if update and update.effective_user else 0
-            if not await global_rate_limiter.is_allowed(user_id, action_type):
-                try:
-                    await update.effective_message.reply_text("⏱️ **تم تجاوز الحد الأقصى للطلبات، حاول لاحقاً.**")
-                except:
-                    pass
-                return
-            return await func(update, context, *args, **kwargs)
-        return wrapper
-    return decorator
-
-class RateLimiter:
-    def __init__(self):
-        self.requests = defaultdict(list)
-        self.lock = asyncio.Lock()
-
-    async def check_rate_limit(self, user_id: int, action: str, max_requests: int, time_window: int) -> bool:
-        async with self.lock:
-            key = f"{user_id}:{action}"
-            now = time_module.time()
-            self.requests[key] = [t for t in self.requests[key] if now - t < time_window]
-            if len(self.requests[key]) >= max_requests:
-                return False
-            self.requests[key].append(now)
-            return True
-
-rate_limiter = RateLimiter()
-
-# ===================== نظام تسجيل محاولات المصادقة =====================
-async def record_login_attempt(user_id: int, success: bool) -> int:
-    cache_key = f"login_{user_id}"
-    now = time_module.time()
-    
-    if CACHETOOLS_AVAILABLE:
-        attempts = _login_attempts_cache.get(cache_key, [])
-    else:
-        attempts = _login_attempts_cache.get(cache_key, [])
-    
-    attempts = [t for t in attempts if now - t < LOGIN_ATTEMPT_WINDOW]
-    
-    if not success:
-        attempts.append(now)
-    
-    if CACHETOOLS_AVAILABLE:
-        _login_attempts_cache[cache_key] = attempts
-    else:
-        _login_attempts_cache[cache_key] = attempts
-    
-    failed_attempts = len(attempts) if not success else 0
-    return failed_attempts
-
-async def is_login_blocked(user_id: int) -> bool:
-    cache_key = f"login_{user_id}"
-    now = time_module.time()
-    
-    if CACHETOOLS_AVAILABLE:
-        attempts = _login_attempts_cache.get(cache_key, [])
-    else:
-        attempts = _login_attempts_cache.get(cache_key, [])
-    
-    attempts = [t for t in attempts if now - t < LOGIN_ATTEMPT_WINDOW]
-    return len(attempts) >= MAX_LOGIN_ATTEMPTS
-
-# ===================== نظام إدارة الذاكرة =====================
-async def memory_optimizer():
-    try:
-        if CACHETOOLS_AVAILABLE:
-            _admin_cache.clear()
-            _security_cache.clear()
-            _auth_cache.clear()
-            _login_attempts_cache.clear()
-        else:
-            _admin_cache.clear()
-            _security_cache.clear()
-            _auth_cache.clear()
-            _login_attempts_cache.clear()
-            _security_cache_time.clear()
-        await _translation_cache.clear()
-        NSFW_CACHE.clear()
-        gc.collect()
-        return True
-    except Exception as e:
-        advanced_logger.log_error("فشل تحسين الذاكرة", e)
-        return False
-
-async def memory_optimizer_loop():
-    while True:
-        await asyncio.sleep(300)
-        try:
-            await memory_optimizer()
-            advanced_logger.log_access(0, "MEMORY_OPTIMIZED", {"timestamp": utc_now_iso()})
-        except Exception as e:
-            advanced_logger.log_error("فشل حلقة تحسين الذاكرة", e)
-
-# ===================== نظام الإشعارات =====================
-class NotificationSystem:
-    def __init__(self):
-        self.pending_notifications = []
-        self._lock = asyncio.Lock()
-        self._scheduled_tasks = []
-
-    async def send_notification(self, bot, user_id: int, text: str, parse_mode: str = "MarkdownV2", reply_markup=None):
-        try:
-            await safe_send_markdown(bot, user_id, text, reply_markup)
-            advanced_logger.log_access(user_id, "NOTIFICATION_SENT", {"text": text[:50]})
-            return True
-        except Exception as e:
-            advanced_logger.log_error("فشل إرسال الإشعار", e, {"user_id": user_id})
-            return False
-
-    async def send_bulk_notification(self, bot, user_ids: List[int], text: str, parse_mode: str = "MarkdownV2", delay: float = 0.5):
-        results = []
-        semaphore = asyncio.Semaphore(10)
-        async def send_one(user_id):
-            async with semaphore:
-                try:
-                    await safe_send_markdown(bot, user_id, text)
-                    return (user_id, True)
-                except:
-                    await asyncio.sleep(delay)
-                    return (user_id, False)
-        tasks = [send_one(uid) for uid in user_ids]
-        results = await asyncio.gather(*tasks)
-        success = sum(1 for _, ok in results if ok)
-        failed = len(results) - success
-        advanced_logger.log_access(0, "BULK_NOTIFICATION", {
-            "total": len(user_ids),
-            "success": success,
-            "failed": failed
-        })
-        return success, failed
-
-    async def schedule_notification(self, bot, user_id: int, text: str, delay_seconds: int):
-        async def delayed():
-            await asyncio.sleep(delay_seconds)
-            await self.send_notification(bot, user_id, text)
-        task = asyncio.create_task(delayed())
-        self._scheduled_tasks.append(task)
-        task.add_done_callback(lambda t: self._scheduled_tasks.remove(t) if t in self._scheduled_tasks else None)
-        return task
-
-notification_system = NotificationSystem()
-
-# ===================== نظام الترجمة =====================
 class AsyncTranslator:
     def __init__(self):
         self.session = None
@@ -1410,21 +1128,6 @@ _lang_data = {}
 _lang_cache_time = {}
 LANG_CACHE_TTL = 300
 _lang_lock = asyncio.Lock()
-
-def load_all_languages():
-    global _lang_data
-    for lang_file in LANG_PATH.glob("*.json"):
-        lang = lang_file.stem
-        try:
-            with open(lang_file, 'r', encoding='utf-8') as f:
-                _lang_data[lang] = json.load(f)
-            print(f"✅ تم تحميل اللغة: {lang}")
-        except Exception as e:
-            print(f"⚠️ فشل تحميل {lang_file}: {e}")
-    
-    if not _lang_data:
-        create_default_lang_files()
-        load_all_languages()
 
 def create_default_lang_files():
     default_langs = {
@@ -1691,42 +1394,33 @@ def create_default_lang_files():
             "back": "🔙 Back"
         }
     }
- for lang, texts in default_langs.items():
-    lang_file = LANG_PATH / f"{lang}.json"
-    if not lang_file.exists():
-        with open(lang_file, 'w', encoding='utf-8') as f:
-            json.dump(texts, f, ensure_ascii=False, indent=2)
-        print(f"✅ تم إنشاء ملف {lang_file}")
-# ===================== تعريف ثوابت أخرى =====================
-MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', 20 * 1024 * 1024))
-MAX_CONNECTIONS = 20
-MAX_CHANNELS_PER_CYCLE = int(os.getenv('MAX_CHANNELS_PER_CYCLE', '20'))
-PUBLISH_RETRY_DELAY = 300
-MAX_POSTS_PER_SESSION = 50
-MAX_UNPUBLISHED_POSTS = 1000
-DB_TIMEOUT = 30
-SESSION_TIMEOUT_SECONDS = 300
-MAX_MESSAGE_LENGTH = 4096
-MAX_LOGIN_ATTEMPTS = 5
-LOGIN_ATTEMPT_WINDOW = 3600
-ANONYMOUS_ADMIN_ID = int(os.getenv("ANONYMOUS_ADMIN_ID", "1087968824"))
 
-SUPPORTED_LANGUAGES = {
-    'ar': 'العربية 🇸🇦',
-    'en': 'English 🇬🇧',
-    'fr': 'Français 🇫🇷',
-    'tr': 'Türkçe 🇹🇷',
-    'zh': '中文 🇨🇳',
-    'ru': 'Русский 🇷🇺',
-    'de': 'Deutsch 🇩🇪',
-    'es': 'Español 🇪🇸',
-    'it': 'Italiano 🇮🇹',
-    'pt': 'Português 🇵🇹',
-    'ja': '日本語 🇯🇵',
-    'ko': '한국어 🇰🇷'
-}
+    for lang, texts in default_langs.items():
+        lang_file = LANG_PATH / f"{lang}.json"
+        if not lang_file.exists():
+            with open(lang_file, 'w', encoding='utf-8') as f:
+                json.dump(texts, f, ensure_ascii=False, indent=2)
+            print(f"✅ تم إنشاء ملف {lang_file}")
 
-# ===================== استيراد الكلمات المحظورة من ملف =====================
+def load_all_languages():
+    global _lang_data
+    for lang_file in LANG_PATH.glob("*.json"):
+        lang = lang_file.stem
+        try:
+            with open(lang_file, 'r', encoding='utf-8') as f:
+                _lang_data[lang] = json.load(f)
+            print(f"✅ تم تحميل اللغة: {lang}")
+        except Exception as e:
+            print(f"⚠️ فشل تحميل {lang_file}: {e}")
+
+    if not _lang_data:
+        create_default_lang_files()
+        load_all_languages()
+
+# تحميل اللغات
+load_all_languages()
+
+# ===================== تعريف الكلمات المحظورة =====================
 BANNED_WORDS_FILE = BASE_PATH / "banned_words.txt"
 BANNED_PATTERNS = []
 _BANNED_PATTERNS_LOCK = asyncio.Lock()
@@ -1734,27 +1428,13 @@ _BANNED_PATTERNS_LOCK = asyncio.Lock()
 def load_banned_words_from_file(file_path: Path) -> List[str]:
     words = []
     if not file_path.exists():
-        print(f"⚠️ ملف {file_path} غير موجود، سيتم إنشاؤه فارغاً")
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write("# قائمة الكلمات المحظورة - كل كلمة في سطر منفصل\n")
                 f.write("# ابدأ السطر بـ # للتعليق\n")
                 f.write("# استخدم * للتعبيرات النمطية (مثل: سكس.*\n")
                 f.write("\n")
-                f.write("بورن\n")
-                f.write("سكس\n")
-                f.write("جنس\n")
-                f.write("عري\n")
-                f.write("خمر\n")
-                f.write("خمور\n")
-                f.write("مخدرات\n")
-                f.write("حشيش\n")
-                f.write("كحول\n")
-                f.write("دعارة\n")
-                f.write("سكس.*\n")
-                f.write("جنس.*\n")
-                f.write("بورن.*\n")
-                f.write("خمر.*\n")
+                f.write("بورن\nسكس\nجنس\nعري\nخمر\nخمور\nمخدرات\nحشيش\nكحول\nدعارة\n")
             print(f"✅ تم إنشاء ملف {file_path} مع كلمات افتراضية")
         except Exception as e:
             print(f"❌ فشل إنشاء ملف الكلمات المحظورة: {e}")
@@ -1764,9 +1444,7 @@ def load_banned_words_from_file(file_path: Path) -> List[str]:
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
-                if not line:
-                    continue
-                if line.startswith('#'):
+                if not line or line.startswith('#'):
                     continue
                 word = line.lower()
                 if len(word) >= 2:
@@ -1801,26 +1479,6 @@ async def rebuild_banned_patterns():
         except Exception as e:
             logger.error(f"❌ فشل إعادة بناء الأنماط المحظورة: {e}")
 
-def import_banned_words_from_file(conn, words: List[str], added_by: int = 1) -> int:
-    if not words:
-        return 0
-    imported = 0
-    try:
-        for word in words:
-            try:
-                conn.execute(
-                    "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)",
-                    (word, -1, added_by, utc_now_iso())
-                )
-                imported += 1
-            except:
-                continue
-        conn.commit()
-        print(f"✅ تم استيراد {imported} كلمة محظورة إلى قاعدة البيانات")
-    except Exception as e:
-        print(f"❌ فشل استيراد الكلمات المحظورة: {e}")
-    return imported
-
 # ===================== نظام NSFW =====================
 SIGHTENGINE_API_USER = os.getenv("SIGHTENGINE_API_USER", "")
 SIGHTENGINE_API_SECRET = os.getenv("SIGHTENGINE_API_SECRET", "")
@@ -1840,15 +1498,15 @@ async def check_nsfw_cached(image_bytes: bytes, cache_key: str = None) -> dict:
     async with _NSFW_CACHE_LOCK:
         if cache_key in NSFW_CACHE:
             cached_data, cached_time = NSFW_CACHE[cache_key]
-            if time_module.time() - cached_time < NSFW_CACHE_TTL:
+            if time.time() - cached_time < NSFW_CACHE_TTL:
                 return cached_data
 
     result = await check_nsfw_image(image_bytes)
 
     async with _NSFW_CACHE_LOCK:
-        NSFW_CACHE[cache_key] = (result, time_module.time())
+        NSFW_CACHE[cache_key] = (result, time.time())
         if len(NSFW_CACHE) > 100:
-            expired_keys = [k for k, (_, t) in NSFW_CACHE.items() if time_module.time() - t > NSFW_CACHE_TTL]
+            expired_keys = [k for k, (_, t) in NSFW_CACHE.items() if time.time() - t > NSFW_CACHE_TTL]
             for k in expired_keys:
                 del NSFW_CACHE[k]
 
@@ -1907,9 +1565,6 @@ async def check_nsfw_image(image_bytes: bytes) -> dict:
         return {"nsfw": False, "score": 0, "error": str(e)}
 
 async def check_nsfw_video(video_bytes: bytes, frames: int = NSFW_FRAMES) -> dict:
-    if not CV2_AVAILABLE:
-        return {"nsfw": False, "score": 0, "error": "cv2 غير مثبت"}
-
     try:
         if not video_bytes:
             return {"nsfw": False, "score": 0, "error": "فيديو فارغ"}
@@ -2268,7 +1923,6 @@ class SecurityAudit:
             log_channel = await db_get_log_channel_id()
             if log_channel:
                 try:
-                    from telegram import Bot
                     bot = Bot(token=TOKEN)
                     await bot.send_message(
                         chat_id=log_channel,
@@ -2297,7 +1951,7 @@ class AnomalyDetector:
 
     async def detect_anomaly(self, user_id: int, action: str) -> bool:
         async with self.lock:
-            now = time_module.time()
+            now = time.time()
             self.user_activity[user_id].append((now, action))
             self.user_activity[user_id] = [
                 (t, a) for t, a in self.user_activity[user_id]
@@ -2840,7 +2494,7 @@ async def db_get_security_settings(chat_id: int, force_refresh: bool = False):
         else:
             if chat_id in _security_cache:
                 cached_time, value = _security_cache[chat_id]
-                if time_module.time() - cached_time < _SECURITY_CACHE_TTL:
+                if time.time() - cached_time < _SECURITY_CACHE_TTL:
                     return value
 
     try:
@@ -2902,7 +2556,7 @@ async def db_get_security_settings(chat_id: int, force_refresh: bool = False):
                     if CACHETOOLS_AVAILABLE:
                         _security_cache[chat_id] = settings
                     else:
-                        _security_cache[chat_id] = (time_module.time(), settings)
+                        _security_cache[chat_id] = (time.time(), settings)
                     return settings
 
                 await ensure_security_columns(conn)
@@ -2923,7 +2577,7 @@ async def db_get_security_settings(chat_id: int, force_refresh: bool = False):
                 if CACHETOOLS_AVAILABLE:
                     _security_cache[chat_id] = default_settings
                 else:
-                    _security_cache[chat_id] = (time_module.time(), default_settings)
+                    _security_cache[chat_id] = (time.time(), default_settings)
                 return default_settings
             finally:
                 conn.row_factory = original_factory
@@ -3247,11 +2901,11 @@ async def db_sync_group_admins(chat_id: int, bot, owner_id: int = None) -> int:
         admin_ids = [admin.user.id for admin in admins]
         if owner_id and owner_id not in admin_ids:
             admin_ids.append(owner_id)
-        
+
         if not admin_ids:
             logger.warning(f"⚠️ لا يوجد مشرفين في المجموعة {chat_id}، قد يكون البوت ليس مشرفاً")
             return 0
-            
+
         async def _update(conn):
             await conn.execute("DELETE FROM group_admins WHERE chat_id=?", (chat_id,))
             if admin_ids:
@@ -3606,7 +3260,7 @@ async def db_get_referral_code(user_id: int) -> str:
 
 async def db_generate_referral_code(user_id: int) -> str:
     async def _generate(conn):
-        code_hash = hashlib.md5(f"{user_id}{time_module.time()}".encode()).hexdigest()[:8]
+        code_hash = hashlib.md5(f"{user_id}{time.time()}".encode()).hexdigest()[:8]
         referral_code = f"REF{code_hash.upper()}"
         await conn.execute("UPDATE users SET referral_code=? WHERE user_id=?", (referral_code, user_id))
         await conn.commit()
@@ -3742,7 +3396,7 @@ async def db_update_reminder_settings(user_id: int, **kwargs):
 
 async def db_update_last_reminder_sent(user_id: int, reminder_type: str):
     async def _update(conn):
-        now_timestamp = int(time_module.time())
+        now_timestamp = int(time.time())
         await conn.execute("UPDATE user_reminder_settings SET last_reminder_sent=? WHERE user_id=?", (now_timestamp, user_id))
         await conn.commit()
     return await execute_db(_update)
@@ -3764,7 +3418,7 @@ async def db_get_users_needing_reminder() -> list:
                 if settings['subscription_reminder']:
                     reminder_days = settings['reminder_days_before']
                     last_sent = settings['last_reminder_sent']
-                    now_timestamp = int(time_module.time())
+                    now_timestamp = int(time.time())
                     need_reminder = False
                     if 0 < days_left <= reminder_days:
                         if last_sent == 0:
@@ -4542,8 +4196,8 @@ async def cleanup_points_cache():
         user_points_last_hour.clear()
 
 async def export_data_to_csv(user_id: int) -> str:
-    temp_file = TEMP_PATH / f"export_{user_id}_{int(time_module.time())}.csv"
-    
+    temp_file = TEMP_PATH / f"export_{user_id}_{int(time.time())}.csv"
+
     try:
         async def _get_data(conn):
             channels = await db_get_channels(user_id)
@@ -4552,9 +4206,9 @@ async def export_data_to_csv(user_id: int) -> str:
             level = await db_get_user_level(user_id)
             referral_stats = await db_get_referral_stats(user_id)
             return channels, posts_count, unpublished, level, referral_stats
-        
+
         channels, posts_count, unpublished, level, referral_stats = await execute_db(_get_data)
-        
+
         import csv
         with open(temp_file, 'w', encoding='utf-8', newline='') as f:
             writer = csv.writer(f)
@@ -4573,7 +4227,7 @@ async def export_data_to_csv(user_id: int) -> str:
             for ch_id, ch_tele, ch_name, banned in channels:
                 status = 'نشطة' if not banned else 'محظورة'
                 writer.writerow([ch_tele, ch_name, status])
-        
+
         return str(temp_file)
     except Exception as e:
         logger.error(f"خطأ في تصدير البيانات: {e}")
@@ -4598,7 +4252,7 @@ async def create_backup():
         backups = sorted(BACKUP_DIR.glob("backup_*.enc"), key=lambda x: x.stat().st_mtime, reverse=True)
         for old_backup in backups[MAX_BACKUPS:]:
             old_backup.unlink()
-        if CLOUD_BACKUP_ENABLED and GOOGLE_AUTH_AVAILABLE:
+        if CLOUD_BACKUP_ENABLED and GOOGLE_DRIVE_FOLDER_ID:
             await upload_backup_to_drive(backup_file)
         logger.info(f"✅ تم إنشاء نسخة احتياطية مشفرة: {backup_file}")
         return backup_file
@@ -4737,10 +4391,10 @@ _DRIVE_SERVICE_CACHE_TTL = 3600
 
 async def get_google_drive_service(force_refresh: bool = False):
     global _DRIVE_SERVICE_CACHE, _DRIVE_SERVICE_CACHE_TIME
-    if not CLOUD_BACKUP_ENABLED or not GOOGLE_AUTH_AVAILABLE:
+    if not CLOUD_BACKUP_ENABLED or not GOOGLE_DRIVE_FOLDER_ID:
         logger.warning("☁️ Google Drive Backup معطل أو غير مدعوم")
         return None
-    now = time_module.time()
+    now = time.time()
     if not force_refresh and _DRIVE_SERVICE_CACHE and (now - _DRIVE_SERVICE_CACHE_TIME) < _DRIVE_SERVICE_CACHE_TTL:
         return _DRIVE_SERVICE_CACHE
     try:
@@ -4790,7 +4444,7 @@ async def get_google_drive_service(force_refresh: bool = False):
         return None
 
 async def upload_backup_to_drive(backup_path: Path, max_retries: int = 3) -> str:
-    if not CLOUD_BACKUP_ENABLED or not GOOGLE_AUTH_AVAILABLE or not GOOGLE_DRIVE_FOLDER_ID:
+    if not CLOUD_BACKUP_ENABLED or not GOOGLE_DRIVE_FOLDER_ID:
         return None
     if not backup_path.exists():
         logger.error(f"❌ ملف النسخ غير موجود: {backup_path}")
@@ -5092,7 +4746,7 @@ class MetricsCollector:
         self.commands_count = defaultdict(int)
         self.errors_count = defaultdict(int)
         self.response_times = []
-        self.start_time = time_module.time()
+        self.start_time = time.time()
 
     def record_command(self, command: str):
         self.commands_count[command] += 1
@@ -5108,7 +4762,7 @@ class MetricsCollector:
     def get_stats(self) -> dict:
         avg_response = sum(self.response_times) / len(self.response_times) if self.response_times else 0
         return {
-            'uptime': time_module.time() - self.start_time,
+            'uptime': time.time() - self.start_time,
             'total_commands': sum(self.commands_count.values()),
             'commands': dict(self.commands_count),
             'errors': dict(self.errors_count),
@@ -5352,6 +5006,10 @@ class UserState(Enum):
     WAITING_AUTO_REPLY_MENU = auto()
     WAITING_NSFW_THRESHOLD = auto()
     WAITING_EXPORT_DATA = auto()
+
+# ==================================================================================
+# ===================== دوال الأزرار التفاعلية (جزء 1) ============================
+# ==================================================================================
 
 def get_auto_reply_keyboard(chat_id: int, settings: dict) -> InlineKeyboardMarkup:
     status_text = "🟢 مفعل" if settings['enabled'] else "🔴 معطل"
@@ -5695,6 +5353,10 @@ async def get_main_keyboard(user_id: int):
     if not valid_keyboard:
         valid_keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
     return InlineKeyboardMarkup(valid_keyboard), title, active
+
+# ==================================================================================
+# ===================== معالجات الكولباك (Callback Handlers) ======================
+# ==================================================================================
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -6467,11 +6129,11 @@ async def security_bulk_toggle(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
         return
-    
+
     if enabled:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ نعم، تفعيل الكل", callback_data=f"confirm_enable_all:{chat_id}")],
@@ -6503,11 +6165,11 @@ async def confirm_enable_all_callback(update: Update, context: ContextTypes.DEFA
     await query.answer()
     chat_id = int(query.data.split(":")[-1])
     user_id = update.effective_user.id
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
         return
-    
+
     keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
     settings = await db_get_security_settings(chat_id, force_refresh=True)
     for key in keys:
@@ -6527,11 +6189,11 @@ async def security_delete_penalty_callback(update: Update, context: ContextTypes
     await query.answer()
     chat_id = int(query.data.split(":")[-1])
     user_id = update.effective_user.id
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
         return
-    
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🚫 لا شيء", callback_data=f"set_delete_penalty:none:{chat_id}"),
          InlineKeyboardButton("👢 طرد", callback_data=f"set_delete_penalty:kick:{chat_id}")],
@@ -6553,11 +6215,11 @@ async def set_delete_penalty_callback(update: Update, context: ContextTypes.DEFA
         penalty = parts[1]
         chat_id = int(parts[2])
         user_id = update.effective_user.id
-        
+
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
             return
-        
+
         await db_set_security_settings(chat_id, delete_penalty=penalty, delete_penalty_duration=60)
         await security_audit.log("SECURITY_DELETE_PENALTY_SET", user_id, {"chat_id": chat_id, "penalty": penalty}, "INFO")
         await query.answer(f"✅ تم تعيين عقوبة الحذف إلى: {penalty}")
@@ -6566,9 +6228,9 @@ async def set_delete_penalty_callback(update: Update, context: ContextTypes.DEFA
 async def universal_security_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
+
     uid = update.effective_user.id
-    
+
     try:
         parts = query.data.split(":")
         if len(parts) < 3:
@@ -6586,12 +6248,12 @@ async def universal_security_toggle(update: Update, context: ContextTypes.DEFAUL
         return
 
     settings = await db_get_security_settings(chat_id, force_refresh=True)
-    
+
     current_val = settings.get(key, False)
     new_val = not current_val
 
     await db_set_security_settings(chat_id, **{key: new_val})
-    
+
     await asyncio.sleep(0.1)
 
     if chat_id in _security_cache:
@@ -10332,7 +9994,7 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
     else:
         if cache_key in _auth_cache:
             cached_time, value = _auth_cache[cache_key]
-            if time_module.time() - cached_time < _AUTH_CACHE_TTL:
+            if time.time() - cached_time < _AUTH_CACHE_TTL:
                 return value
 
     authorized = False
@@ -10360,7 +10022,7 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
     if CACHETOOLS_AVAILABLE:
         _auth_cache[cache_key] = authorized
     else:
-        _auth_cache[cache_key] = (time_module.time(), authorized)
+        _auth_cache[cache_key] = (time.time(), authorized)
 
     return authorized
 
@@ -10525,8 +10187,8 @@ async def sendcode_command_handler(update: Update, context: ContextTypes.DEFAULT
         await safe_send_markdown(context.bot, user_id, "🔒 تم حظر حسابك مؤقتاً بسبب كثرة المحاولات الفاشلة. حاول بعد ساعة.")
         return
 
-    if ENABLE_2FA and ADMIN_2FA_SECRET and PYOTP_AVAILABLE:
-        if not context.user_data.get('2fa_verified') or time_module.time() - context.user_data.get('2fa_time', 0) > 300:
+    if ENABLE_2FA and ADMIN_2FA_SECRET:
+        if not context.user_data.get('2fa_verified') or time.time() - context.user_data.get('2fa_time', 0) > 300:
             secret = ADMIN_2FA_SECRET
             totp = pyotp.TOTP(secret)
             context.user_data['waiting_2fa'] = True
@@ -10535,7 +10197,7 @@ async def sendcode_command_handler(update: Update, context: ContextTypes.DEFAULT
 
     temp_password = secrets.token_urlsafe(12)
     context.user_data['sendcode_temp_password'] = temp_password
-    context.user_data['sendcode_temp_timestamp'] = time_module.time()
+    context.user_data['sendcode_temp_timestamp'] = time.time()
     context.user_data['state'] = UserState.WAITING_SENDCODE_PASSWORD
 
     await safe_send_markdown(context.bot, user_id,
@@ -10556,7 +10218,7 @@ async def handle_sendcode_confirmation_handler(update: Update, context: ContextT
         return
 
     SENDCODE_TIMEOUT = 600
-    if time_module.time() - timestamp > SENDCODE_TIMEOUT:
+    if time.time() - timestamp > SENDCODE_TIMEOUT:
         await safe_send_markdown(context.bot, user_id,
             f"❌ انتهت صلاحية كلمة المرور (المهلة {SENDCODE_TIMEOUT // 60} دقائق).\nأعد استخدام الأمر /sendcode."
         )
@@ -10572,7 +10234,7 @@ async def handle_sendcode_confirmation_handler(update: Update, context: ContextT
             watermark = f"""# ============================================================
 # ORIGINAL_OWNER: {user_id}
 # GENERATED_AT: {mecca_now().strftime('%Y-%m-%d %H:%M:%S')}
-# SIGNATURE: {hashlib.sha256(f"{user_id}{time_module.time()}{TOKEN}".encode()).hexdigest()[:16]}
+# SIGNATURE: {hashlib.sha256(f"{user_id}{time.time()}{TOKEN}".encode()).hexdigest()[:16]}
 # ============================================================
 # ⚠️ تحذير: هذا الكود يحتوي على معلومات حساسة
 # لا تشاركه مع أي شخص غير موثوق
@@ -10582,7 +10244,7 @@ async def handle_sendcode_confirmation_handler(update: Update, context: ContextT
             watermarked_content = watermark + content
 
             temp_dir = tempfile.gettempdir()
-            temp_file = os.path.join(temp_dir, f"bot_code_{user_id}_{int(time_module.time())}.py")
+            temp_file = os.path.join(temp_dir, f"bot_code_{user_id}_{int(time.time())}.py")
             with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(watermarked_content)
 
@@ -10959,7 +10621,7 @@ async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAU
         return
     args = text.split(maxsplit=1)
     reason = args[1] if len(args) > 1 else ""
-    
+
     action = None
     if text.startswith("/ban"):
         action = "ban"
@@ -10973,7 +10635,7 @@ async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAU
         action = "restrict"
     elif text.startswith("/unban"):
         action = "unban"
-    
+
     if action:
         target_id = None
         if update.message.reply_to_message:
@@ -11186,10 +10848,10 @@ async def detect_owner_type(bot, chat_id):
 async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_chat:
         return
-    
+
     chat_id = update.effective_chat.id
     message = update.message
-    
+
     try:
         settings = await db_get_security_settings(chat_id)
         if not settings.get('delete_service', False):
@@ -11197,9 +10859,9 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logger.error(f"[delete_service] خطأ في جلب الإعدادات للمجموعة {chat_id}: {e}")
         return
-    
+
     is_service = bool(message.service_message)
-    
+
     service_flags = [
         message.new_chat_members,
         message.left_chat_member,
@@ -11216,13 +10878,13 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
         message.connected_website,
         message.boost_added,
     ]
-    
+
     if any(service_flags):
         is_service = True
-    
+
     if not is_service:
         return
-    
+
     max_retries = 2
     for attempt in range(max_retries):
         try:
@@ -11257,7 +10919,7 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
                     await asyncio.sleep(0.5 * (attempt + 1))
                     continue
                 return False
-    
+
     return False
 
 async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11992,15 +11654,15 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     elif state == UserState.WAITING_2FA:
-        if PYOTP_AVAILABLE and ADMIN_2FA_SECRET:
+        if ADMIN_2FA_SECRET:
             totp = pyotp.TOTP(ADMIN_2FA_SECRET)
             if totp.verify(text):
                 context.user_data['2fa_verified'] = True
-                context.user_data['2fa_time'] = time_module.time()
+                context.user_data['2fa_time'] = time.time()
                 context.user_data.pop('waiting_2fa', None)
                 temp_password = secrets.token_urlsafe(12)
                 context.user_data['sendcode_temp_password'] = temp_password
-                context.user_data['sendcode_temp_timestamp'] = time_module.time()
+                context.user_data['sendcode_temp_timestamp'] = time.time()
                 context.user_data['state'] = UserState.WAITING_SENDCODE_PASSWORD
                 await safe_send_markdown(context.bot, user_id,
                     f"🔐 تم التحقق. أرسل كلمة المرور المؤقتة:\n`{temp_password}`\n(تنتهي خلال 10 دقائق)"
@@ -12217,6 +11879,8 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error(f"فشل معالج الأخطاء نفسه: {e}")
 
 # ===================== خادم الويب =====================
+import aiohttp.web as web
+
 web_app = web.Application()
 
 async def index_handler(request):
@@ -12274,7 +11938,7 @@ async def health_check_handler(request):
             'telegram_api': tg_healthy,
             'background_tasks': tasks_healthy,
             'memory': ram,
-            'uptime': time_module.time() - getattr(health_check_handler, 'start_time', time_module.time())
+            'uptime': time.time() - getattr(health_check_handler, 'start_time', time.time())
         }
         status = 200 if all([checks['database'], checks['telegram_api'], checks['background_tasks']]) else 503
         return web.json_response({
@@ -12628,7 +12292,7 @@ async def cleanup_expired_sessions_improved():
     CLEANUP_SLEEP = 3600
     while True:
         await asyncio.sleep(CLEANUP_SLEEP)
-        now = time_module.time()
+        now = time.time()
         async def _cleanup_sessions(conn):
             await conn.execute("DELETE FROM web_sessions WHERE expires < ?", (now,))
             await conn.commit()
@@ -13535,18 +13199,6 @@ async def main():
 
     print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 22.0.0 - النسخة المحسنة والمطورة)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
-    print("   • ✅ تفعيل NSFW مع متغيرات البيئة")
-    print("   • ✅ تأمين واجهة الويب بكلمة مرور (Basic Auth)")
-    print("   • ✅ تحسين صلاحيات المشرف (دالة is_authorized_in_group)")
-    print("   • ✅ إضافة أنماط regex في الكلمات المحظورة")
-    print("   • ✅ تفعيل النسخ الاحتياطي السحابي (Google Drive)")
-    print("   • ✅ إصلاح زر الإغلاق")
-    print("   • ✅ إضافة نظام إشعارات البريد الإلكتروني")
-    print("   • ✅ إضافة نظام تصدير البيانات (CSV)")
-    print("   • ✅ إضافة نظام تسجيل محاولات المصادقة")
-    print("   • ✅ تحسين معالجة الأخطاء")
-    print("   • ✅ إضافة Health Check متقدم يشمل المهام الخلفية")
-    print("   • ✅ إصلاح جميع الأخطاء المكتشفة")
 
     try:
         await application.run_polling(
