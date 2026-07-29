@@ -10532,6 +10532,17 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
     chat_name = update.effective_chat.title or "بدون اسم"
     user_id = update.effective_user.id
 
+async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, user_id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+    chat_id = update.effective_chat.id
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    await security_select_group_callback(update, context)
+
     # ===== التحقق من صلاحية المستخدم =====
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         # ===== عضو عادي → إرسال رسالة ترويجية =====
