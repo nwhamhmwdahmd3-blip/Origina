@@ -1,8 +1,8 @@
-##!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.11 - النسخة النهائية المستقرة مع جميع الإصلاحات
+الإصدار: 20.0.12 - النسخة المحسنة مع جميع الإصلاحات والتحسينات
 المطور: @RelaxMgr
 """
 
@@ -371,6 +371,15 @@ def derive_key_from_password(password: str, salt: bytes) -> bytes:
     return key
 
 def get_encryption_key() -> bytes:
+    # استخدام keyring إذا كان متاحاً، وإلا استخدام الملفات
+    try:
+        import keyring
+        key = keyring.get_password("relax_bot", "db_key")
+        if key:
+            return base64.urlsafe_b64decode(key)
+    except ImportError:
+        pass
+
     key_file = DATA_PATH / ".db_key"
     salt_file = DATA_PATH / ".db_salt"
 
@@ -393,6 +402,12 @@ def get_encryption_key() -> bytes:
                 f.write(key)
             with open(salt_file, 'wb') as f:
                 f.write(salt)
+            # حفظ في keyring إن أمكن
+            try:
+                import keyring
+                keyring.set_password("relax_bot", "db_key", base64.urlsafe_b64encode(key).decode())
+            except:
+                pass
         except:
             pass
         print("✅ تم إنشاء مفتاح التشفير من متغير البيئة")
@@ -1647,16 +1662,19 @@ class NotificationSystem:
 
 notification_system = NotificationSystem()
 
-# ===================== دوال الإرسال الآمنة =====================
+# ===================== دوال الإرسال الآمنة (محسنة) =====================
 async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
+    """إرسال رسالة بتنسيق MarkdownV2 مع معالجة آمنة للأخطاء"""
     if not text:
         return None
     clean_text = sanitize_text(text)
     MAX_LEN = 4096
     try:
         escaped = escape_markdown_v2(clean_text)
+        # إزالة التكرار في الشرطات المائلة
         escaped = re.sub(r'\\{2,}', '\\\\', escaped)
         if len(escaped) > MAX_LEN:
+            # قطع النص بطريقة آمنة مع مراعاة تنسيق Markdown
             cut_point = MAX_LEN - 3
             while cut_point > 0 and escaped[cut_point - 1] in ('\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!', '@'):
                 cut_point -= 1
@@ -1669,6 +1687,7 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
             **kwargs
         )
     except Exception:
+        # المحاولة الثانية: HTML
         try:
             html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             if len(html_text) > MAX_LEN:
@@ -1681,6 +1700,7 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
                 **kwargs
             )
         except Exception:
+            # المحاولة الثالثة: نص عادي
             try:
                 plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
                 if len(plain) > MAX_LEN:
@@ -1695,10 +1715,12 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
                 raise final_e
 
 async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
+    """تعديل رسالة بتنسيق MarkdownV2 مع معالجة آمنة للأخطاء"""
     if not query or not query.message:
         return None
     current_text = query.message.text or ""
     current_reply_markup = query.message.reply_markup
+    # تجنب التعديل إذا لم يتغير شيء
     if current_text == text:
         if reply_markup is None and current_reply_markup is None:
             try:
@@ -2113,7 +2135,51 @@ def retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,)):
         return wrapper
     return decorator
 
-# ===================== نظام Rate Limiting =====================
+# ===================== نظام Rate Limiting متقدم =====================
+class GlobalRateLimiter:
+    def __init__(self):
+        self.limits = {
+            'command': (5, 10),     # 5 لكل 10 ثواني
+            'callback': (10, 30),   # 10 لكل 30 ثانية
+            'message': (20, 60),    # 20 لكل دقيقة
+            'api': (30, 60),        # 30 لكل دقيقة
+        }
+        self.records = defaultdict(list)
+        self._lock = asyncio.Lock()
+
+    async def is_allowed(self, user_id: int, action_type: str = 'command') -> bool:
+        async with self._lock:
+            max_req, window = self.limits.get(action_type, (10, 60))
+            now = time_module.time()
+            key = f"{user_id}:{action_type}"
+            user_requests = self.records[key]
+            # تنظيف الطلبات القديمة
+            user_requests = [t for t in user_requests if now - t < window]
+            self.records[key] = user_requests
+
+            if len(user_requests) >= max_req:
+                return False
+
+            user_requests.append(now)
+            return True
+
+global_rate_limiter = GlobalRateLimiter()
+
+def rate_limit(action_type: str = 'command'):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(update, context, *args, **kwargs):
+            user_id = update.effective_user.id if update and update.effective_user else 0
+            if not await global_rate_limiter.is_allowed(user_id, action_type):
+                try:
+                    await update.effective_message.reply_text("⏱️ **تم تجاوز الحد الأقصى للطلبات، حاول لاحقاً.**")
+                except:
+                    pass
+                return
+            return await func(update, context, *args, **kwargs)
+        return wrapper
+    return decorator
+
 class RateLimiter:
     def __init__(self):
         self.requests = defaultdict(list)
@@ -4262,7 +4328,7 @@ async def db_create_contest(creator_id: int, title: str, description: str, prize
                 (creator_id, title, description, prize, end_date_str, created_at_str, contest_type)
             )
             await conn.commit()
-            return cur.lastrowid  # بدلاً من RETURNING id
+            return cur.lastrowid
         contest_id = await execute_db(_create)
         if contest_id:
             logger.info(f"✅ تم إنشاء مسابقة جديدة (ID: {contest_id}) بواسطة المستخدم {creator_id}")
@@ -6621,9 +6687,6 @@ async def _update_security_panel(query, chat_id, uid, force_refresh=True):
         return name
 
     gname = await execute_db(_get_group_name)
-    # باقي الكود ...
-
-    gname = await execute_db(_get_group_name)
     settings = await db_get_security_settings(chat_id, force_refresh=force_refresh)
 
     text = f"""⚙️ **لوحة تحكم المجموعة: {gname}**
@@ -7038,7 +7101,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.11
+📦 **الإصدار:** 20.0.12
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -12149,7 +12212,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.11</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.12</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13466,7 +13529,7 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.11 - النسخة النهائية مع جميع الإصلاحات)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.12 - النسخة المحسنة مع جميع الإصلاحات)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ إصلاح مشكلة تنسيق MarkdownV2 (تحسين escape و القطع الآمن)")
     print("   • ✅ تحسين safe_send_markdown و safe_edit_markdown")
