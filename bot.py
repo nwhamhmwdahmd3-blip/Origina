@@ -1692,12 +1692,10 @@ def create_default_lang_files():
         }
     }
     
-    for lang, texts in default_langs.items():
-        lang_file = LANG_PATH / f"{lang}.json"
-        if not lang_file.exists():
-            with open(lang_file, 'w', encoding='utf-8') as f:
-                json.dump(texts, f, ensure_ascii=False, indent=2)
-            print(f"✅ تم إنشاء ملف {lang_file}")
+   if not lang_file.exists():
+    with open(lang_file, 'w', encoding='utf-8') as f:
+        json.dump(texts, f, ensure_ascii=False, indent=2)
+    print(f"✅ تم إنشاء ملف {lang_file}")
 
 # ===================== تعريف ثوابت أخرى =====================
 MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', 20 * 1024 * 1024))
@@ -1707,7 +1705,6 @@ PUBLISH_RETRY_DELAY = 300
 MAX_POSTS_PER_SESSION = 50
 MAX_UNPUBLISHED_POSTS = 1000
 DB_TIMEOUT = 30
-MAX_CONNECTIONS = 20
 SESSION_TIMEOUT_SECONDS = 300
 MAX_MESSAGE_LENGTH = 4096
 MAX_LOGIN_ATTEMPTS = 5
