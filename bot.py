@@ -44,7 +44,7 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 import types
 import signal
-from handlers import security_command_handler
+
 # ===================== التحقق من إصدار بايثون =====================
 def check_python_version():
     required_version = (3, 8)
