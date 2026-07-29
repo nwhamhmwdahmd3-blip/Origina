@@ -1701,6 +1701,7 @@ def create_default_lang_files():
 
 # ===================== تعريف ثوابت أخرى =====================
 MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', 20 * 1024 * 1024))
+MAX_CONNECTIONS = 20
 MAX_CHANNELS_PER_CYCLE = int(os.getenv('MAX_CHANNELS_PER_CYCLE', '20'))
 PUBLISH_RETRY_DELAY = 300
 MAX_POSTS_PER_SESSION = 50
