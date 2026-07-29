@@ -1,18 +1,10 @@
-# ============================================================
-# ORIGINAL_OWNER: 8290212138
-# GENERATED_AT: 2026-07-29 17:36:52
-# SIGNATURE: 4f1ef7111b73087f
-# ============================================================
-# ⚠️ تحذير: هذا الكود يحتوي على معلومات حساسة
-# لا تشاركه مع أي شخص غير موثوق
-# ============================================================
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
 الإصدار: 20.0.12 - النسخة المحسنة مع جميع الإصلاحات والتحسينات
 المطور: @RelaxMgr
+تم التعديل: إظهار المجموعات للمشرفين المخفيين في قائمة "مجموعاتي"
 """
 
 import sys
@@ -2935,37 +2927,22 @@ async def db_register_group(chat_id: int, chat_name: str, added_by: int, usernam
 async def db_get_user_groups(user_id: int):
     async def _get(conn):
         try:
-            cur = await conn.execute("""
-                SELECT chat_id, chat_name, username, banned
-                FROM bot_groups
-                ORDER BY chat_name
-            """)
-            all_groups = await cur.fetchall()
+            all_groups = await conn.execute("SELECT chat_id, chat_name, username, banned FROM bot_groups ORDER BY chat_name").fetchall()
 
-            cur = await conn.execute("""
-                SELECT chat_id FROM hidden_owner_groups WHERE owner_id=?
-            """, (user_id,))
-            hidden_owner_rows = await cur.fetchall()
+            hidden_owner_rows = await conn.execute("SELECT chat_id FROM hidden_owner_groups WHERE owner_id=?", (user_id,)).fetchall()
             hidden_owner_groups = {row[0] for row in hidden_owner_rows}
 
-            cur = await conn.execute("""
-                SELECT chat_id FROM hidden_admins WHERE admin_id=?
-            """, (user_id,))
-            hidden_admin_rows = await cur.fetchall()
+            hidden_admin_rows = await conn.execute("SELECT chat_id FROM hidden_admins WHERE admin_id=?", (user_id,)).fetchall()
             hidden_admin_groups = {row[0] for row in hidden_admin_rows}
 
-            cur = await conn.execute("""
+            linked_rows = await conn.execute("""
                 SELECT chat_id FROM bot_groups WHERE added_by=?
                 UNION
                 SELECT chat_id FROM user_groups_link WHERE user_id=?
-            """, (user_id, user_id))
-            linked_rows = await cur.fetchall()
+            """, (user_id, user_id)).fetchall()
             linked_groups = {row[0] for row in linked_rows}
 
-            cur = await conn.execute("""
-                SELECT chat_id FROM group_admins WHERE user_id=?
-            """, (user_id,))
-            admin_rows = await cur.fetchall()
+            admin_rows = await conn.execute("SELECT chat_id FROM group_admins WHERE user_id=?", (user_id,)).fetchall()
             admin_groups = {row[0] for row in admin_rows}
 
             visible_groups = []
@@ -2974,14 +2951,14 @@ async def db_get_user_groups(user_id: int):
                 if chat_id in hidden_owner_groups:
                     visible_groups.append(group)
                 elif chat_id in hidden_admin_groups:
-                    continue
+                    # التعديل: إظهار المجموعات للمشرفين المخفيين
+                    visible_groups.append(group)
                 elif chat_id in admin_groups:
                     visible_groups.append(group)
                 elif chat_id in linked_groups:
                     visible_groups.append(group)
                 else:
                     continue
-
             return visible_groups
         except Exception as e:
             logger.error(f"خطأ في جلب مجموعات المستخدم {user_id}: {e}")
@@ -10541,9 +10518,36 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
     chat_name = update.effective_chat.title or "بدون اسم"
     user_id = update.effective_user.id
 
+    # ===== التحقق من صلاحية المستخدم =====
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        # ===== عضو عادي → إرسال رسالة ترويجية =====
+        promo_message = (
+            "🌟 **مرحباً بك في ريلاكس مانيجر!**\n\n"
+            "🔹 **البوت يوفر لك:**\n"
+            "• إدارة القنوات والمجموعات بكل احترافية\n"
+            "• نظام أمان متكامل (حظر، كتم، تحذير، ردود تلقائية)\n"
+            "• جدولة المنشورات والنشر التلقائي\n"
+            "• إحصائيات متقدمة للقنوات\n"
+            "• دعم المشرفين المخفيين والمالكين المخفيين\n"
+            "• والكثير من الميزات الرائعة! 🚀\n\n"
+            "📌 **للتفعيل:**\n"
+            "1️⃣ أضف البوت إلى مجموعتك\n"
+            "2️⃣ اجعله مشرفاً مع صلاحيات كاملة\n"
+            "3️⃣ استخدم الأمر `/syncgroup` مرة أخرى\n\n"
+            "💡 **للاستفسار أو الدعم:** تواصل مع المطور @RelaxMgr\n"
+            "📢 **قناة التحديثات:** @Reelaaaxbot"
+        )
+        await safe_send_markdown(context.bot, user_id, promo_message)
+        logger.info(f"ℹ️ تم إرسال رسالة ترويجية للعضو العادي {user_id} في المجموعة {chat_id}")
+        return  # الخروج دون أي إجراء آخر
+
+    # ===== تسجيل المجموعة (للمخولين فقط) =====
     await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
+
+    # ===== مزامنة المشرفين الحقيقيين =====
     await db_sync_group_admins(chat_id, context.bot, user_id)
 
+    # ===== التحقق من صلاحيات البوت (إعلامي فقط) =====
     bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
     if not bot_perms['can_act']:
         await safe_send_markdown(
@@ -10553,10 +10557,12 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
-    if await is_authorized_in_group(context.bot, chat_id, user_id):
+    # ===== تسجيل المالك المخفي (إذا كان المستخدم مشرفاً حقيقياً) =====
+    if await db_is_real_admin(chat_id, user_id):
         await db_register_hidden_owner_group(chat_id, user_id)
         invalidate_auth_cache(chat_id, user_id)
 
+    # ===== إرسال رد نجاح =====
     await safe_send_markdown(
         context.bot,
         user_id,
@@ -10567,19 +10573,6 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         f"🔐 استخدم /security لإعدادات الأمان\n"
         f"🛠️ استخدم /panel للوحة التحكم"
     )
-
-async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if update.effective_chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(context.bot, user_id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
-        return
-
-    chat_id = update.effective_chat.id
-    if not await is_authorized_in_group(context.bot, chat_id, user_id):
-        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
-        return
-
-    await security_select_group_callback(update, context)
 
 async def trial_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await trial_callback(update, context)
@@ -13552,6 +13545,8 @@ async def main():
     print("   • ✅ تحسين auto_publish_loop_improved للتعامل مع الحالات التي لا توجد فيها منشورات")
     print("   • ✅ تحسين auto_close_contests_loop للتحقق من وجود مشاركين")
     print("   • ✅ إضافة docstrings للدوال الرئيسية")
+    print("   • ✅ إضافة رسالة ترويجية للأعضاء العاديين عند استخدام /syncgroup")
+    print("   • ✅ **تعديل مهم:** إظهار المجموعات للمشرفين المخفيين في قائمة 'مجموعاتي'")
 
     try:
         await application.run_polling(
