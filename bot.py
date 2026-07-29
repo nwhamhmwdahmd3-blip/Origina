@@ -6614,10 +6614,14 @@ async def security_refresh_groups_callback(update: Update, context: ContextTypes
 async def _update_security_panel(query, chat_id, uid, force_refresh=True):
     async def _get_group_name(conn):
         cur = await conn.execute("SELECT chat_name FROM bot_groups WHERE chat_id=?", (chat_id,))
-        name = cur.fetchone()[0] if await cur.fetchone() else str(chat_id)
+        row = await cur.fetchone()
+        name = row[0] if row else str(chat_id)
         if len(name) > 50:
             name = name[:47] + "..."
         return name
+
+    gname = await execute_db(_get_group_name)
+    # باقي الكود ...
 
     gname = await execute_db(_get_group_name)
     settings = await db_get_security_settings(chat_id, force_refresh=force_refresh)
