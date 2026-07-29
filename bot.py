@@ -1,3 +1,12 @@
+# ============================================================
+# ORIGINAL_OWNER: 8290212138
+# GENERATED_AT: 2026-07-29 17:36:52
+# SIGNATURE: 4f1ef7111b73087f
+# ============================================================
+# ⚠️ تحذير: هذا الكود يحتوي على معلومات حساسة
+# لا تشاركه مع أي شخص غير موثوق
+# ============================================================
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -10532,47 +10541,9 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
     chat_name = update.effective_chat.title or "بدون اسم"
     user_id = update.effective_user.id
 
-async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if update.effective_chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(context.bot, user_id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
-        return
-    chat_id = update.effective_chat.id
-    if not await is_authorized_in_group(context.bot, chat_id, user_id):
-        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
-        return
-    await security_select_group_callback(update, context)
-
-    # ===== التحقق من صلاحية المستخدم =====
-    if not await is_authorized_in_group(context.bot, chat_id, user_id):
-        # ===== عضو عادي → إرسال رسالة ترويجية =====
-        promo_message = (
-            "🌟 **مرحباً بك في ريلاكس مانيجر!**\n\n"
-            "🔹 **البوت يوفر لك:**\n"
-            "• إدارة القنوات والمجموعات بكل احترافية\n"
-            "• نظام أمان متكامل (حظر، كتم، تحذير، ردود تلقائية)\n"
-            "• جدولة المنشورات والنشر التلقائي\n"
-            "• إحصائيات متقدمة للقنوات\n"
-            "• دعم المشرفين المخفيين والمالكين المخفيين\n"
-            "• والكثير من الميزات الرائعة! 🚀\n\n"
-            "📌 **للتفعيل:**\n"
-            "1️⃣ أضف البوت إلى مجموعتك\n"
-            "2️⃣ اجعله مشرفاً مع صلاحيات كاملة\n"
-            "3️⃣ استخدم الأمر `/syncgroup` مرة أخرى\n\n"
-            "💡 **للاستفسار أو الدعم:** تواصل مع المطور @RelaxMgr\n"
-            "📢 **قناة التحديثات:** @Reelaaaxbot"
-        )
-        await safe_send_markdown(context.bot, user_id, promo_message)
-        logger.info(f"ℹ️ تم إرسال رسالة ترويجية للعضو العادي {user_id} في المجموعة {chat_id}")
-        return  # الخروج دون أي إجراء آخر
-
-    # ===== تسجيل المجموعة (للمخولين فقط) =====
     await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
-
-    # ===== مزامنة المشرفين الحقيقيين =====
     await db_sync_group_admins(chat_id, context.bot, user_id)
 
-    # ===== التحقق من صلاحيات البوت (إعلامي فقط) =====
     bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
     if not bot_perms['can_act']:
         await safe_send_markdown(
@@ -10582,12 +10553,10 @@ async def security_command_handler(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # ===== تسجيل المالك المخفي (إذا كان المستخدم مشرفاً حقيقياً) =====
-    if await db_is_real_admin(chat_id, user_id):
+    if await is_authorized_in_group(context.bot, chat_id, user_id):
         await db_register_hidden_owner_group(chat_id, user_id)
         invalidate_auth_cache(chat_id, user_id)
 
-    # ===== إرسال رد نجاح =====
     await safe_send_markdown(
         context.bot,
         user_id,
@@ -10598,6 +10567,19 @@ async def security_command_handler(update: Update, context: ContextTypes.DEFAULT
         f"🔐 استخدم /security لإعدادات الأمان\n"
         f"🛠️ استخدم /panel للوحة التحكم"
     )
+
+async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, user_id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+
+    chat_id = update.effective_chat.id
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+
+    await security_select_group_callback(update, context)
 
 async def trial_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await trial_callback(update, context)
@@ -13570,7 +13552,6 @@ async def main():
     print("   • ✅ تحسين auto_publish_loop_improved للتعامل مع الحالات التي لا توجد فيها منشورات")
     print("   • ✅ تحسين auto_close_contests_loop للتحقق من وجود مشاركين")
     print("   • ✅ إضافة docstrings للدوال الرئيسية")
-    print("   • ✅ إضافة رسالة ترويجية للأعضاء العاديين عند استخدام /syncgroup")
 
     try:
         await application.run_polling(
