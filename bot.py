@@ -7,6 +7,7 @@
 """
 
 import sys
+import time
 import os
 from pathlib import Path
 import secrets
@@ -189,7 +190,7 @@ ensure_package("reportlab")
 ensure_package("jinja2")
 ensure_package("markdown")
 ensure_package("python-multipart", "multipart")
-ensure_package("aioredis")
+ensure_package("redis", "redis")
 ensure_package("pyotp")
 ensure_package("zstandard")
 ensure_package("opencv-python-headless", "cv2")
@@ -987,7 +988,7 @@ async def execute_transaction(queries: List[Tuple[str, tuple]]) -> Any:
 
 # ===================== نظام التخزين المؤقت باستخدام Redis =====================
 try:
-    import aioredis
+   import redis.asyncio as aioredis
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
