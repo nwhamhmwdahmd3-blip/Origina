@@ -10499,7 +10499,44 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
     if update.effective_chat.type not in ['group', 'supergroup']:
         await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
         return
+async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الأمر /security - يعيد توجيه المستخدم إلى لوحة الأمان للمجموعة الحالية"""
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
 
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+
+    # إعادة التوجيه إلى معالج اختيار المجموعة
+    # نقوم بإنشاء كولباك وهمي لاستدعاء security_select_group_callback
+    class FakeQuery:
+        def __init__(self, chat_id):
+            self.data = f"security_select_group:{chat_id}"
+            self.message = None
+            self.from_user = None
+        async def answer(self):
+            pass
+
+    fake_query = FakeQuery(chat_id)
+    fake_query.message = update.message
+    fake_query.from_user = update.effective_user
+
+    # استدعاء معالج الكولباك مباشرة
+    await security_select_group_callback(
+        Update(
+            update.update_id,
+            message=update.message,
+            callback_query=fake_query,
+            effective_user=update.effective_user,
+            effective_chat=update.effective_chat
+        ),
+        context
+    )
     chat_id = update.effective_chat.id
     chat_name = update.effective_chat.title or "بدون اسم"
     user_id = update.effective_user.id
