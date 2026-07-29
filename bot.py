@@ -1691,12 +1691,12 @@ def create_default_lang_files():
             "back": "🔙 Back"
         }
     }
-    
-   if not lang_file.exists():
-    with open(lang_file, 'w', encoding='utf-8') as f:
-        json.dump(texts, f, ensure_ascii=False, indent=2)
-    print(f"✅ تم إنشاء ملف {lang_file}")
-
+ for lang, texts in default_langs.items():
+    lang_file = LANG_PATH / f"{lang}.json"
+    if not lang_file.exists():
+        with open(lang_file, 'w', encoding='utf-8') as f:
+            json.dump(texts, f, ensure_ascii=False, indent=2)
+        print(f"✅ تم إنشاء ملف {lang_file}")
 # ===================== تعريف ثوابت أخرى =====================
 MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', 20 * 1024 * 1024))
 MAX_CONNECTIONS = 20
