@@ -10541,10 +10541,21 @@ async def language_command_handler(update: Update, context: ContextTypes.DEFAULT
     ])
     await safe_send_markdown(context.bot, user_id, get_text(user_id, 'welcome'), reply_markup=keyboard)
 
+async def db_was_hidden_owner_before(chat_id: int, user_id: int) -> bool:
+    """التحقق مما إذا كان المستخدم مسجلاً كمالك مخفي سابقاً في السجل التاريخي"""
+    async def _check(conn):
+        cur = await conn.execute(
+            "SELECT 1 FROM hidden_owner_history WHERE chat_id=? AND owner_id=?",
+            (chat_id, user_id)
+        )
+        return await cur.fetchone() is not None
+    return await execute_db(_check)
+
+
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     معالج الأمر /syncgroup - تفعيل المجموعة وربطها بالمستخدم
-    مع إرسال رسائل الرفض في المجموعة بدلاً من الخاص لضمان وصولها
+    مع دعم استعادة المالك المخفي من السجل التاريخي
     """
     # التحقق من أن الأمر صادر من مجموعة
     if update.effective_chat.type not in ['group', 'supergroup']:
@@ -10559,34 +10570,119 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
     chat_name = update.effective_chat.title or "بدون اسم"
     user_id = update.effective_user.id
 
-    # التحقق من الصلاحيات مع استخدام التخزين المؤقت أولاً
-    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+    # ==================== التحقق من الصلاحيات ====================
+    authorized = False
+
+    # 1. التحقق من قاعدة البيانات (سريع)
+    if await is_authorized_in_group(context.bot, chat_id, user_id):
+        authorized = True
+    else:
+        # 2. التحقق من تيليجرام (المشرفين الحقيقيين)
         try:
             member = await context.bot.get_chat_member(chat_id, user_id)
-            if member.status not in ['administrator', 'creator']:
-                # إرسال رسالة الرفض في المجموعة (chat_id) بدلاً من الخاص (user_id)
-                await safe_send_markdown(
-                    context.bot,
-                    chat_id,  # ← التغيير الجوهري
-                    "❌ **غير مصرح!**\nهذا الأمر مخصص للمشرفين فقط."
-                )
-                return
+            if member.status in ['administrator', 'creator']:
+                authorized = True
+                # إضافة المستخدم إلى group_admins لتسريع المرات القادمة
+                async def _add_admin(conn):
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
+                        (chat_id, user_id)
+                    )
+                    await conn.commit()
+                await execute_db(_add_admin)
         except Exception as e:
-            # إرسال رسالة الخطأ في المجموعة أيضاً
-            await safe_send_markdown(
-                context.bot,
-                chat_id,
-                f"❌ حدث خطأ أثناء التحقق من صلاحياتك: {str(e)[:100]}"
-            )
-            return
+            logger.error(f"خطأ في get_chat_member: {e}")
 
-    # تسجيل/تحديث المجموعة في قاعدة البيانات
+        # 3. إذا لم يكن مشرفاً حقيقياً، تحقق من السجل التاريخي (مالك مخفي سابق)
+        if not authorized and await db_was_hidden_owner_before(chat_id, user_id):
+            # استعادة المالك المخفي من السجل
+            await db_register_hidden_owner_group(chat_id, user_id)
+            await db_add_user_group_link(user_id, chat_id)
+            invalidate_auth_cache(chat_id, user_id)
+            authorized = True
+            await security_audit.log(
+                "HIDDEN_OWNER_RECOVERED",
+                user_id,
+                {"chat_id": chat_id, "method": "history_recovery"},
+                "HIGH"
+            )
+
+    # إذا لم يكن مصرحاً بأي شكل، نرفض
+    if not authorized:
+        await safe_send_markdown(
+            context.bot,
+            chat_id,  # إرسال في المجموعة لضمان الوصول
+            "❌ **غير مصرح!**\nهذا الأمر مخصص للمشرفين فقط."
+        )
+        return
+
+    # ==================== تسجيل المجموعة والمستخدم ====================
     await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
 
     # مزامنة المشرفين الحقيقيين من تيليجرام (دون إضافة المستخدم تلقائياً)
     await db_sync_group_admins(chat_id, context.bot, owner_id=None)
 
-    # إضافة المستخدم (بعد التأكد من كونه مشرفاً) إلى جداول الصلاحيات
+    # إضافة المستخدم إلى جداول الصلاحيات (إذا لم يكن موجوداً)
+    async def _add_user_as_admin(conn):
+        await conn.execute(
+            "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
+            (chat_id, user_id)
+        )
+        await conn.execute(
+            "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?, ?)",
+            (user_id, chat_id)
+        )
+        await conn.commit()
+    await execute_db(_add_user_as_admin)
+
+    # تسجيل المستخدم كمالك مخفي (يُحدث السجل إن وجد)
+    await db_register_hidden_owner_group(chat_id, user_id)
+    invalidate_auth_cache(chat_id, user_id)
+
+    # ==================== التحقق من صلاحيات البوت ====================
+    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        try:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"⚠️ **تنبيه:**\n{bot_perms['reason']}\n\nيرجى منح البوت الصلاحيات المطلوبة."
+            )
+        except:
+            pass
+
+    # ==================== إرسال رسالة التأكيد ====================
+    try:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+            f"📌 اسم المجموعة: {chat_name}\n"
+            f"🆔 المعرف: {chat_id}\n"
+            f"👤 المضافة بواسطة: {user_id}\n\n"
+            f"🔐 استخدم /security لإعدادات الأمان\n"
+            f"🛠️ استخدم /panel للوحة التحكم"
+        )
+    except Exception as e:
+        logger.error(f"فشل إرسال رسالة التأكيد للمستخدم {user_id}: {e}")
+        try:
+            await safe_send_markdown(
+                context.bot,
+                chat_id,
+                f"✅ تم تفعيل المجموعة بواسطة `{user_id}`\n"
+                f"🔐 استخدم /security و /panel في الخاص مع البوت."
+            )
+        except Exception as e2:
+            logger.error(f"فشل الإرسال في المجموعة أيضاً: {e2}")
+
+    # ==================== تسجيل الحدث في سجل الأمان ====================
+    await security_audit.log(
+        "GROUP_SYNCED",
+        user_id,
+        {"chat_id": chat_id, "chat_name": chat_name, "is_admin": True, "recovered": True if authorized else False},
+        "INFO"
+    )
+
     async def _add_user_as_admin(conn):
         await conn.execute(
             "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
