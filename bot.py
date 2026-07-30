@@ -10562,13 +10562,27 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        is_real_admin = member.status in ['creator', 'administrator']
-    except:
-        is_real_admin = False
+    # ══════════════════════════════════════════════════════════════
+    # 🔥 التحقق من صلاحية المستخدم (مع إصلاح المشكلة)
+    # ══════════════════════════════════════════════════════════════
+    is_authorized = await is_authorized_in_group(context.bot, chat_id, user_id)
 
-    if is_real_admin:
+    # إذا لم يكن مصرحاً، تحقق مما إذا كان مشرفاً حقيقياً (تسجيل تلقائي)
+    if not is_authorized:
+        try:
+            member = await context.bot.get_chat_member(chat_id, user_id)
+            if member.status in ['creator', 'administrator']:
+                # تسجيله كمشرف مخفي تلقائياً
+                await db_add_hidden_admin(chat_id, user_id, user_id)
+                await db_add_user_group_link(user_id, chat_id)
+                is_authorized = True
+        except:
+            pass
+
+    # ══════════════════════════════════════════════════════════════
+    # 🔥 فقط المصرح لهم يُسجلون ويحصلون على رسالة النجاح
+    # ══════════════════════════════════════════════════════════════
+    if is_authorized:
         await db_register_hidden_owner_group(chat_id, user_id)
         invalidate_auth_cache(chat_id, user_id)
 
@@ -10583,6 +10597,9 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
             f"🛠️ استخدم /panel للوحة التحكم"
         )
     else:
+        # ══════════════════════════════════════════════════════════
+        # 🔥 العضو العادي → رسالة ترويجية (بدون أي صلاحية)
+        # ══════════════════════════════════════════════════════════
         promo_text = (
             "🌟 **مرحباً بك في مجموعتنا!**\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
