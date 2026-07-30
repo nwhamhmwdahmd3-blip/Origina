@@ -10562,64 +10562,20 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
-    # ══════════════════════════════════════════════════════════════
-    # 🔥 التحقق من صلاحية المستخدم (مع إصلاح المشكلة)
-    # ══════════════════════════════════════════════════════════════
-    is_authorized = await is_authorized_in_group(context.bot, chat_id, user_id)
-
-    # إذا لم يكن مصرحاً، تحقق مما إذا كان مشرفاً حقيقياً (تسجيل تلقائي)
-    if not is_authorized:
-        try:
-            member = await context.bot.get_chat_member(chat_id, user_id)
-            if member.status in ['creator', 'administrator']:
-                # تسجيله كمشرف مخفي تلقائياً
-                await db_add_hidden_admin(chat_id, user_id, user_id)
-                await db_add_user_group_link(user_id, chat_id)
-                is_authorized = True
-        except:
-            pass
-
-    # ══════════════════════════════════════════════════════════════
-    # 🔥 فقط المصرح لهم يُسجلون ويحصلون على رسالة النجاح
-    # ══════════════════════════════════════════════════════════════
-    if is_authorized:
+    if await is_authorized_in_group(context.bot, chat_id, user_id):
         await db_register_hidden_owner_group(chat_id, user_id)
         invalidate_auth_cache(chat_id, user_id)
 
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
-            f"📌 اسم المجموعة: {chat_name}\n"
-            f"🆔 المعرف: {chat_id}\n"
-            f"👤 المضافة بواسطة: {user_id}\n\n"
-            f"🔐 استخدم /security لإعدادات الأمان\n"
-            f"🛠️ استخدم /panel للوحة التحكم"
-        )
-    else:
-        # ══════════════════════════════════════════════════════════
-        # 🔥 العضو العادي → رسالة ترويجية (بدون أي صلاحية)
-        # ══════════════════════════════════════════════════════════
-        promo_text = (
-            "🌟 **مرحباً بك في مجموعتنا!**\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "💎 **هل ترغب في الاستفادة من خدمات البوت المتقدمة؟**\n\n"
-            "✨ يمكنك الآن إدارة القنوات، جدولة المنشورات،\n"
-            "🔐 ضبط إعدادات الأمان، والحصول على إحصائيات دقيقة\n"
-            "📊 كل هذا وأكثر في مكان واحد!\n\n"
-            "📩 **للحصول على صلاحيات الإدارة في هذه المجموعة:**\n"
-            "• تواصل مع المطور: @RelaxMgr\n\n"
-            "💬 **استخدم البوت في الخاص لإدارة قنواتك الخاصة:**\n"
-            f"👉 @{context.bot.username}\n\n"
-            "🎁 **اشترك الآن واستمتع بالميزات الحصرية!**\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💡 نصيحة: اضغط على البوت أعلاه وابدأ رحلتك 🚀"
-        )
-        await context.bot.send_message(chat_id=chat_id, text=promo_text)
-        try:
-            await context.bot.send_message(chat_id=user_id, text=promo_text)
-        except:
-            pass
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+        f"📌 اسم المجموعة: {chat_name}\n"
+        f"🆔 المعرف: {chat_id}\n"
+        f"👤 المضافة بواسطة: {user_id}\n\n"
+        f"🔐 استخدم /security لإعدادات الأمان\n"
+        f"🛠️ استخدم /panel للوحة التحكم"
+    )
 
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -11296,43 +11252,36 @@ async def get_all_bot_admins() -> List[int]:
 # ============================================================
 
 async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
-    """
-    التحقق من صلاحية المستخدم في المجموعة.
-    ═══════════════════════════════════════════════════════════════
-    ✅ المطور الأساسي (PRIMARY_OWNER_ID) → دائماً مصرح.
-    ✅ التحقق المباشر من تيليجرام → المشرفين الحقيقيين.
-    ✅ التحقق من قاعدة البيانات → المالكين والمشرفين المخفيين.
-    ❌ العضو العادي → ممنوع (حتى لو كان مسجلاً في قاعدة البيانات).
-    ═══════════════════════════════════════════════════════════════
-    """
-    # المطور الأساسي دائماً مصرح
     if user_id == PRIMARY_OWNER_ID:
         return True
 
-    # ══════════════════════════════════════════════════════════════
-    # 1️⃣ التحقق المباشر من تيليجرام (الأولوية القصوى)
-    # ══════════════════════════════════════════════════════════════
-    try:
-        member = await bot.get_chat_member(chat_id, user_id)
-        if member.status in ['creator', 'administrator']:
-            return True
-    except:
-        pass
+    cache_key = f"auth_{chat_id}_{user_id}"
+    if CACHETOOLS_AVAILABLE:
+        if cache_key in _auth_cache:
+            return _auth_cache[cache_key]
+    else:
+        if cache_key in _auth_cache:
+            cached_time, value = _auth_cache[cache_key]
+            if time_module.time() - cached_time < _AUTH_CACHE_TTL:
+                return value
 
-    # ══════════════════════════════════════════════════════════════
-    # 2️⃣ التحقق من قاعدة البيانات (للمالكين والمشرفين المخفيين)
-    # ══════════════════════════════════════════════════════════════
+    authorized = False
+
     if await db_is_real_admin(chat_id, user_id):
-        return True
+        authorized = True
 
-    if await db_is_hidden_owner(chat_id, user_id):
-        return True
+    if not authorized and await db_is_hidden_owner(chat_id, user_id):
+        authorized = True
 
-    if await db_is_hidden_admin(chat_id, user_id):
-        return True
+    if not authorized and await db_is_hidden_admin(chat_id, user_id):
+        authorized = True
 
-    # ❌ العضو العادي (غير مصرح)
-    return False
+    if CACHETOOLS_AVAILABLE:
+        _auth_cache[cache_key] = authorized
+    else:
+        _auth_cache[cache_key] = (time_module.time(), authorized)
+
+    return authorized
 
 def invalidate_auth_cache(chat_id: int = None, user_id: int = None):
     if chat_id is not None and user_id is not None:
