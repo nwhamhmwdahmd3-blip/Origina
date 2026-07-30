@@ -1,8 +1,17 @@
+# ============================================================
+# ORIGINAL_OWNER: 8290212138
+# GENERATED_AT: 2026-07-29 17:36:52
+# SIGNATURE: 4f1ef7111b73087f
+# ============================================================
+# ⚠️ تحذير: هذا الكود يحتوي على معلومات حساسة
+# لا تشاركه مع أي شخص غير موثوق
+# ============================================================
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.14 - النهائي (المشرفين الحقيقيين فقط)
+الإصدار: 20.0.12 - النسخة المحسنة مع جميع الإصلاحات والتحسينات
 المطور: @RelaxMgr
 """
 
@@ -158,6 +167,7 @@ ensure_package("markdown")
 ensure_package("python-multipart", "multipart")
 ensure_package("aioredis")
 
+# محاولة تثبيت المكتبات الاختيارية
 PYOTP_AVAILABLE = ensure_package("pyotp")
 ZSTD_AVAILABLE = ensure_package("zstandard")
 CV2_AVAILABLE = ensure_package("opencv-python-headless", "cv2")
@@ -249,6 +259,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# تعريف مستويات إضافية
 class LogLevel:
     SECURITY = 25
     PERFORMANCE = 15
@@ -259,6 +270,7 @@ logging.addLevelName(LogLevel.PERFORMANCE, "PERFORMANCE")
 def log_performance(operation: str, duration: float):
     logger.log(LogLevel.PERFORMANCE, f"{operation} took {duration:.3f}s")
 
+# تطبيق المنسق المخصص على جميع المعالجات
 for handler in logger.handlers:
     handler.setFormatter(CustomFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")))
 
@@ -319,6 +331,7 @@ CLOUD_BACKUP_ENABLED = get_env_or_default("CLOUD_BACKUP_ENABLED", False, bool) a
 GOOGLE_CREDENTIALS_FILE = get_env_or_default("GOOGLE_CREDENTIALS_FILE", "credentials.json", str)
 TOKEN_FILE = get_env_or_default("TOKEN_FILE", "token.json", str)
 
+# ===== إعدادات Render =====
 RENDER_PORT = int(os.getenv("PORT", "10000"))
 WEB_PORT = get_env_or_default("WEB_PORT", RENDER_PORT, int)
 if WEB_PORT == 8080 and RENDER_PORT != 8080:
@@ -352,9 +365,10 @@ else:
     REMINDERS_SLEEP = 3600
     AUTO_BACKUP_SLEEP = 24 * 60 * 60
 
+# تعريف WEB_PORT_USED (لحل الخطأ)
 WEB_PORT_USED = WEB_PORT
 
-# ===================== التشفير =====================
+# ===================== التشفير المعتمد على كلمة المرور =====================
 def derive_key_from_password(password: str, salt: bytes) -> bytes:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -366,6 +380,7 @@ def derive_key_from_password(password: str, salt: bytes) -> bytes:
     return key
 
 def get_encryption_key() -> bytes:
+    # استخدام keyring إذا كان متاحاً، وإلا استخدام الملفات
     try:
         import keyring
         key = keyring.get_password("relax_bot", "db_key")
@@ -377,6 +392,7 @@ def get_encryption_key() -> bytes:
     key_file = DATA_PATH / ".db_key"
     salt_file = DATA_PATH / ".db_salt"
 
+    # محاولة تحميل المفتاح من ملف
     if key_file.exists() and salt_file.exists():
         try:
             with open(key_file, 'rb') as f:
@@ -385,6 +401,7 @@ def get_encryption_key() -> bytes:
         except:
             pass
 
+    # محاولة استخدام كلمة المرور من متغير البيئة
     password = os.getenv('DB_ENCRYPTION_PASSWORD')
     if password and len(password) >= 8:
         salt = os.urandom(16)
@@ -394,6 +411,7 @@ def get_encryption_key() -> bytes:
                 f.write(key)
             with open(salt_file, 'wb') as f:
                 f.write(salt)
+            # حفظ في keyring إن أمكن
             try:
                 import keyring
                 keyring.set_password("relax_bot", "db_key", base64.urlsafe_b64encode(key).decode())
@@ -404,6 +422,7 @@ def get_encryption_key() -> bytes:
         print("✅ تم إنشاء مفتاح التشفير من متغير البيئة")
         return key
 
+    # في بيئة غير تفاعلية (مثل Render)، إنشاء مفتاح عشوائي
     if not sys.stdin.isatty():
         print("🔐 بيئة غير تفاعلية - إنشاء مفتاح عشوائي")
         key = Fernet.generate_key()
@@ -414,6 +433,7 @@ def get_encryption_key() -> bytes:
             pass
         return key
 
+    # بيئة تفاعلية - طلب كلمة مرور من المستخدم
     try:
         import getpass
         print("🔐 لإعداد تشفير قاعدة البيانات، أدخل كلمة مرور قوية:")
@@ -451,6 +471,7 @@ def get_encryption_key() -> bytes:
 ENCRYPTION_KEY = get_encryption_key()
 cipher_suite = Fernet(ENCRYPTION_KEY)
 
+# ===================== مفتاح منفصل للنسخ الاحتياطي =====================
 def get_backup_encryption_key() -> bytes:
     backup_key_file = DATA_PATH / ".backup_key"
     if backup_key_file.exists():
@@ -483,14 +504,12 @@ try:
     _security_cache = TTLCache(maxsize=500, ttl=60)
     _translation_cache = LRUCache(maxsize=200)
     _auth_cache = TTLCache(maxsize=1000, ttl=300)
-    _user_groups_cache = TTLCache(maxsize=500, ttl=300)
 except ImportError:
     CACHETOOLS_AVAILABLE = False
     _admin_cache = {}
     _security_cache = {}
     _translation_cache = {}
     _auth_cache = {}
-    _user_groups_cache = {}
     _ADMIN_CACHE_TTL = 60
     _SECURITY_CACHE_TTL = 30
     _TRANSLATION_CACHE_SIZE = 500
@@ -556,8 +575,9 @@ MAX_POSTS_PER_SESSION = 50
 MAX_UNPUBLISHED_POSTS = 1000
 DB_TIMEOUT = 30
 MAX_CONNECTIONS = 20
-SESSION_TIMEOUT_SECONDS = 300
+SESSION_TIMEOUT_SECONDS = 300  # 5 دقائق مهلة الجلسات
 
+# ===================== معرف المستخدم المخفي (Anonymous Admin) =====================
 ANONYMOUS_ADMIN_ID = int(os.getenv("ANONYMOUS_ADMIN_ID", "1087968824"))
 
 # ===================== تحسينات اللغة =====================
@@ -576,12 +596,13 @@ SUPPORTED_LANGUAGES = {
     'ko': '한국어 🇰🇷'
 }
 
-# ===================== استيراد الكلمات المحظورة =====================
+# ===================== استيراد الكلمات المحظورة من ملف =====================
 BANNED_WORDS_FILE = BASE_PATH / "banned_words.txt"
 BANNED_PATTERNS = []
 _BANNED_PATTERNS_LOCK = asyncio.Lock()
 
 def load_banned_words_from_file(file_path: Path) -> List[str]:
+    """تحميل الكلمات المحظورة من ملف نصي"""
     words = []
     if not file_path.exists():
         print(f"⚠️ ملف {file_path} غير موجود، سيتم إنشاؤه فارغاً")
@@ -624,6 +645,7 @@ def load_banned_words_from_file(file_path: Path) -> List[str]:
     return words
 
 async def rebuild_banned_patterns():
+    """إعادة بناء أنماط الكلمات المحظورة من قاعدة البيانات"""
     global BANNED_PATTERNS
     async with _BANNED_PATTERNS_LOCK:
         BANNED_PATTERNS = []
@@ -644,8 +666,30 @@ async def rebuild_banned_patterns():
         except Exception as e:
             logger.error(f"❌ فشل إعادة بناء الأنماط المحظورة: {e}")
 
-# ===================== نظام كشف NSFW =====================
+def import_banned_words_from_file(conn, words: List[str], added_by: int = 1) -> int:
+    """استيراد الكلمات المحظورة إلى قاعدة البيانات مع chat_id=-1 (عامة)"""
+    if not words:
+        return 0
+    imported = 0
+    try:
+        for word in words:
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+                    (word, -1, added_by, utc_now_iso())
+                )
+                imported += 1
+            except:
+                continue
+        conn.commit()
+        print(f"✅ تم استيراد {imported} كلمة محظورة إلى قاعدة البيانات")
+    except Exception as e:
+        print(f"❌ فشل استيراد الكلمات المحظورة: {e}")
+    return imported
+
+# ===================== نظام كشف NSFW المحسن =====================
 async def check_nsfw_cached(image_bytes: bytes, cache_key: str = None) -> dict:
+    """التحقق من NSFW مع تخزين مؤقت"""
     if cache_key is None:
         cache_key = hashlib.md5(image_bytes).hexdigest()
 
@@ -667,6 +711,7 @@ async def check_nsfw_cached(image_bytes: bytes, cache_key: str = None) -> dict:
     return result
 
 async def check_nsfw_image(image_bytes: bytes) -> dict:
+    """التحقق من صورة إذا كانت غير لائقة باستخدام Sightengine API"""
     try:
         if not SIGHTENGINE_API_USER or not SIGHTENGINE_API_SECRET:
             return {"nsfw": False, "score": 0, "error": "API غير مفعل"}
@@ -719,6 +764,7 @@ async def check_nsfw_image(image_bytes: bytes) -> dict:
         return {"nsfw": False, "score": 0, "error": str(e)}
 
 async def check_nsfw_video(video_bytes: bytes, frames: int = NSFW_FRAMES) -> dict:
+    """التحقق من فيديو عن طريق أخذ عينات من الإطارات"""
     if not CV2_AVAILABLE:
         return {"nsfw": False, "score": 0, "error": "cv2 غير مثبت"}
 
@@ -783,7 +829,7 @@ async def check_nsfw_video(video_bytes: bytes, frames: int = NSFW_FRAMES) -> dic
         logger.error(f"خطأ في كشف NSFW للفيديو: {e}")
         return {"nsfw": False, "score": 0, "error": str(e)}
 
-# ===================== نظام اللغات =====================
+# ===================== نظام اللغات من ملفات منفصلة =====================
 _lang_data = {}
 _lang_cache_time = {}
 LANG_CACHE_TTL = 300
@@ -791,6 +837,7 @@ _lang_lock = asyncio.Lock()
 user_language = {}
 
 def load_all_languages():
+    """تحميل جميع ملفات اللغة"""
     global _lang_data
     for lang_file in LANG_PATH.glob("*.json"):
         lang = lang_file.stem
@@ -806,6 +853,7 @@ def load_all_languages():
         load_all_languages()
 
 def create_default_lang_files():
+    """إنشاء ملفات اللغة الافتراضية"""
     default_langs = {
         'ar': {
             "welcome": "🌿 **مرحباً بك في ريلاكس مانيجر**\nاختر اللغة المناسبة",
@@ -1078,9 +1126,11 @@ def create_default_lang_files():
                 json.dump(texts, f, ensure_ascii=False, indent=2)
             print(f"✅ تم إنشاء ملف {lang_file}")
 
+# تحميل اللغات
 load_all_languages()
 
 def get_text(user_id: int, key: str) -> str:
+    """الحصول على نص مترجم من ملف اللغة"""
     lang = user_language.get(user_id, 'ar')
     texts = _lang_data.get(lang, {})
     
@@ -1092,9 +1142,10 @@ def get_text(user_id: int, key: str) -> str:
     return texts.get(key, key)
 
 async def set_user_language(user_id: int, lang: str):
+    """تعيين لغة المستخدم"""
     user_language[user_id] = lang
 
-# ===================== 200 رد تلقائي =====================
+# ===================== 200 رد تلقائي للمجموعات =====================
 WELCOME_REPLIES = {
     "مرحباً": ["أهلاً وسهلاً بك في مجموعتنا 🤍", "أهلاً بك، نورت المجموعة 🌸", "مرحباً، تشرفنا بوجودك 🙏"],
     "السلام عليكم": ["وعليكم السلام ورحمة الله وبركاته 🌹", "وعليكم السلام، نورت المجموعة 🌸", "الله يبارك فيك 🙏"],
@@ -1344,6 +1395,7 @@ REPLY_WEIGHTS = {
 }
 
 def get_weighted_reply(reply_list: List[str], category: str = 'default') -> str:
+    """اختيار رد عشوائي من القائمة مع الأوزان"""
     if not reply_list:
         return "🙏"
     if len(reply_list) == 1:
@@ -1357,6 +1409,7 @@ def get_weighted_reply(reply_list: List[str], category: str = 'default') -> str:
     weights = [w / total for w in weights]
     return random.choices(reply_list, weights=weights, k=1)[0]
 
+# ===== دمج الردود =====
 ALL_REPLIES = {}
 ALL_REPLIES.update({k: get_weighted_reply(v, 'welcome') if isinstance(v, list) else v for k, v in WELCOME_REPLIES.items()})
 ALL_REPLIES.update({k: get_weighted_reply(v, 'faq') if isinstance(v, list) else v for k, v in FAQ_REPLIES.items()})
@@ -1436,6 +1489,7 @@ class AdvancedLogger:
         self._setup_loggers()
 
     def _setup_loggers(self):
+        # Logger للأخطاء
         error_logger = logging.getLogger('error_logger')
         error_logger.setLevel(logging.ERROR)
         error_handler = logging.FileHandler(ERROR_LOG, encoding='utf-8')
@@ -1443,6 +1497,7 @@ class AdvancedLogger:
         error_logger.addHandler(error_handler)
         self.loggers['error'] = error_logger
 
+        # Logger للوصول
         access_logger = logging.getLogger('access_logger')
         access_logger.setLevel(logging.INFO)
         access_handler = logging.FileHandler(ACCESS_LOG, encoding='utf-8')
@@ -1450,6 +1505,7 @@ class AdvancedLogger:
         access_logger.addHandler(access_handler)
         self.loggers['access'] = access_logger
 
+        # Logger للأمان
         security_logger = logging.getLogger('security_logger')
         security_logger.setLevel(logging.WARNING)
         security_handler = logging.FileHandler(SECURITY_LOG, encoding='utf-8')
@@ -1483,6 +1539,7 @@ class AdvancedLogger:
 advanced_logger = AdvancedLogger()
 
 def log_error(error: Exception, context: dict = None) -> str:
+    """تسجيل الأخطاء وإرجاع معرف فريد"""
     return advanced_logger.log_error("حدث خطأ غير متوقع", error, context)
 
 # ===================== نظام إدارة الأخطاء =====================
@@ -1543,12 +1600,10 @@ async def memory_optimizer():
             _admin_cache.clear()
             _security_cache.clear()
             _auth_cache.clear()
-            _user_groups_cache.clear()
         else:
             _admin_cache.clear()
             _security_cache.clear()
             _auth_cache.clear()
-            _user_groups_cache.clear()
             _security_cache_time.clear()
         await _translation_cache.clear()
         NSFW_CACHE.clear()
@@ -1616,16 +1671,19 @@ class NotificationSystem:
 
 notification_system = NotificationSystem()
 
-# ===================== دوال الإرسال الآمنة =====================
+# ===================== دوال الإرسال الآمنة (محسنة) =====================
 async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
+    """إرسال رسالة بتنسيق MarkdownV2 مع معالجة آمنة للأخطاء"""
     if not text:
         return None
     clean_text = sanitize_text(text)
     MAX_LEN = 4096
     try:
         escaped = escape_markdown_v2(clean_text)
+        # إزالة التكرار في الشرطات المائلة
         escaped = re.sub(r'\\{2,}', '\\\\', escaped)
         if len(escaped) > MAX_LEN:
+            # قطع النص بطريقة آمنة مع مراعاة تنسيق Markdown
             cut_point = MAX_LEN - 3
             while cut_point > 0 and escaped[cut_point - 1] in ('\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!', '@'):
                 cut_point -= 1
@@ -1638,6 +1696,7 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
             **kwargs
         )
     except Exception:
+        # المحاولة الثانية: HTML
         try:
             html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             if len(html_text) > MAX_LEN:
@@ -1650,6 +1709,7 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
                 **kwargs
             )
         except Exception:
+            # المحاولة الثالثة: نص عادي
             try:
                 plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
                 if len(plain) > MAX_LEN:
@@ -1664,10 +1724,12 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
                 raise final_e
 
 async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
+    """تعديل رسالة بتنسيق MarkdownV2 مع معالجة آمنة للأخطاء"""
     if not query or not query.message:
         return None
     current_text = query.message.text or ""
     current_reply_markup = query.message.reply_markup
+    # تجنب التعديل إذا لم يتغير شيء
     if current_text == text:
         if reply_markup is None and current_reply_markup is None:
             try:
@@ -2051,7 +2113,7 @@ def decompress_backup(data: bytes) -> bytes:
             pass
     return gzip.decompress(data)
 
-# ===================== نظام Backoff ذكي =====================
+# ===================== نظام Backoff ذكي مع Jitter =====================
 async def retry_with_jitter(func: Callable, max_retries: int = 5, base_delay: float = 1) -> Any:
     for attempt in range(max_retries):
         try:
@@ -2086,10 +2148,10 @@ def retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,)):
 class GlobalRateLimiter:
     def __init__(self):
         self.limits = {
-            'command': (5, 10),
-            'callback': (10, 30),
-            'message': (20, 60),
-            'api': (30, 60),
+            'command': (5, 10),     # 5 لكل 10 ثواني
+            'callback': (10, 30),   # 10 لكل 30 ثانية
+            'message': (20, 60),    # 20 لكل دقيقة
+            'api': (30, 60),        # 30 لكل دقيقة
         }
         self.records = defaultdict(list)
         self._lock = asyncio.Lock()
@@ -2100,6 +2162,7 @@ class GlobalRateLimiter:
             now = time_module.time()
             key = f"{user_id}:{action_type}"
             user_requests = self.records[key]
+            # تنظيف الطلبات القديمة
             user_requests = [t for t in user_requests if now - t < window]
             self.records[key] = user_requests
 
@@ -2240,7 +2303,7 @@ def get_text_local(user_id: int, key: str) -> str:
 async def get_user_language(user_id: int) -> str:
     return user_language.get(user_id, 'ar')
 
-# ===================== دوال القوائم والأزرار =====================
+# ===================== دوال القوائم والأزرار (الكيبورد) =====================
 class CallbackData:
     MAIN_MENU = "main_menu"
     CHANNELS_MY = "channels:my_channels"
@@ -2426,7 +2489,7 @@ class CallbackData:
     SECURITY_DISABLE_ALL_PREFIX = "security:disable_all:"
     SECURITY_DELETE_PENALTY_PREFIX = "security:delete_penalty:"
 
-# ===================== نظام إدارة الحالات =====================
+# ===================== نظام إدارة الحالات المتقدم =====================
 class UserState(Enum):
     NONE = auto()
     ADDING_POSTS = auto()
@@ -2870,15 +2933,6 @@ async def db_register_group(chat_id: int, chat_name: str, added_by: int, usernam
     return await execute_db(_register)
 
 async def db_get_user_groups(user_id: int):
-    if CACHETOOLS_AVAILABLE:
-        if user_id in _user_groups_cache:
-            return _user_groups_cache[user_id]
-    else:
-        if user_id in _user_groups_cache:
-            cached_time, groups = _user_groups_cache[user_id]
-            if time_module.time() - cached_time < 300:
-                return groups
-
     async def _get(conn):
         try:
             cur = await conn.execute("""
@@ -2891,54 +2945,58 @@ async def db_get_user_groups(user_id: int):
             cur = await conn.execute("""
                 SELECT chat_id FROM hidden_owner_groups WHERE owner_id=?
             """, (user_id,))
-            hidden_owner_groups = {row[0] for row in await cur.fetchall()}
+            hidden_owner_rows = await cur.fetchall()
+            hidden_owner_groups = {row[0] for row in hidden_owner_rows}
 
             cur = await conn.execute("""
                 SELECT chat_id FROM hidden_admins WHERE admin_id=?
             """, (user_id,))
-            hidden_admin_groups = {row[0] for row in await cur.fetchall()}
+            hidden_admin_rows = await cur.fetchall()
+            hidden_admin_groups = {row[0] for row in hidden_admin_rows}
+
+            cur = await conn.execute("""
+                SELECT chat_id FROM bot_groups WHERE added_by=?
+                UNION
+                SELECT chat_id FROM user_groups_link WHERE user_id=?
+            """, (user_id, user_id))
+            linked_rows = await cur.fetchall()
+            linked_groups = {row[0] for row in linked_rows}
 
             cur = await conn.execute("""
                 SELECT chat_id FROM group_admins WHERE user_id=?
             """, (user_id,))
-            admin_groups = {row[0] for row in await cur.fetchall()}
-
-            cur = await conn.execute("""
-                SELECT chat_id FROM user_groups_link WHERE user_id=?
-            """, (user_id,))
-            linked_groups = {row[0] for row in await cur.fetchall()}
-
-            authorized_chat_ids = (
-                hidden_owner_groups |
-                hidden_admin_groups |
-                admin_groups |
-                linked_groups
-            )
+            admin_rows = await cur.fetchall()
+            admin_groups = {row[0] for row in admin_rows}
 
             visible_groups = []
             for group in all_groups:
                 chat_id = group[0]
-                if chat_id in authorized_chat_ids:
+                if chat_id in hidden_owner_groups:
                     visible_groups.append(group)
+                elif chat_id in hidden_admin_groups:
+                    continue
+                elif chat_id in admin_groups:
+                    visible_groups.append(group)
+                elif chat_id in linked_groups:
+                    visible_groups.append(group)
+                else:
+                    continue
 
             return visible_groups
-
         except Exception as e:
             logger.error(f"خطأ في جلب مجموعات المستخدم {user_id}: {e}")
             return []
-
-    groups = await execute_db(_get)
-
-    if CACHETOOLS_AVAILABLE:
-        _user_groups_cache[user_id] = groups
-    else:
-        _user_groups_cache[user_id] = (time_module.time(), groups)
-
-    return groups
+    return await execute_db(_get)
 
 async def db_get_user_groups_count(user_id: int) -> int:
-    groups = await db_get_user_groups(user_id)
-    return len(groups)
+    async def _get(conn):
+        try:
+            groups = await db_get_user_groups(user_id)
+            return len(groups)
+        except Exception as e:
+            logger.error(f"خطأ في حساب عدد مجموعات المستخدم: {e}")
+            return 0
+    return await execute_db(_get)
 
 async def db_get_all_groups(only_banned: bool = False):
     async def _get(conn):
@@ -4726,8 +4784,6 @@ async def invalidate_user_cache(user_id: int):
         keys_to_remove = [k for k in _admin_cache.keys() if str(user_id) in k]
         for key in keys_to_remove:
             del _admin_cache[key]
-        if user_id in _user_groups_cache:
-            del _user_groups_cache[user_id]
     except:
         pass
 
@@ -5276,7 +5332,7 @@ class MetricsCollector:
 
 metrics = MetricsCollector()
 
-# ===================== دوال القوائم والأزرار =====================
+# ===================== دوال القوائم والأزرار (الكيبورد) =====================
 def get_auto_reply_keyboard(chat_id: int, settings: dict) -> InlineKeyboardMarkup:
     status_text = "🟢 مفعل" if settings['enabled'] else "🔴 معطل"
     admin_text = "👑 مشرفين فقط" if settings['only_admins'] else "👥 الجميع"
@@ -6590,8 +6646,6 @@ async def security_refresh_groups_callback(update: Update, context: ContextTypes
     if query:
         await query.answer()
     uid = update.effective_user.id
-    if uid in _user_groups_cache:
-        del _user_groups_cache[uid]
     groups = await db_get_user_groups(uid)
     if not groups:
         keyboard = InlineKeyboardMarkup([
@@ -7056,7 +7110,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.14
+📦 **الإصدار:** 20.0.12
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -10478,101 +10532,42 @@ async def language_command_handler(update: Update, context: ContextTypes.DEFAULT
     ])
     await safe_send_markdown(context.bot, user_id, get_text(user_id, 'welcome'), reply_markup=keyboard)
 
-# ===================== الدالة المعدلة لـ /syncgroup =====================
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    معالج أمر /syncgroup
-    يسمح للمشرفين الحقيقيين، المالكين المخفيين، والمشرفين المخفيين باستخدام الأمر.
-    يمنع الأعضاء العاديين.
-    """
-    # التأكد من أن الأمر صادر من مجموعة (وليس من الخاص)
     if update.effective_chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(
-            context.bot,
-            update.effective_user.id,
-            "⚠️ هذا الأمر يعمل فقط في المجموعات!"
-        )
+        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
         return
 
     chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
     chat_name = update.effective_chat.title or "بدون اسم"
+    user_id = update.effective_user.id
 
-    # ============================================================
-    # 1. التحقق من صلاحيات المستخدم الحقيقية (عبر API تيليجرام)
-    # ============================================================
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        is_real_admin = member.status in ['administrator', 'creator']
-    except Exception as e:
+    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
+    await db_sync_group_admins(chat_id, context.bot, user_id)
+
+    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
+    if not bot_perms['can_act']:
         await safe_send_markdown(
             context.bot,
             user_id,
-            f"❌ فشل التحقق من صلاحيتك: {e}"
+            f"⚠️ **تنبيه:**\n{bot_perms['reason']}\n\nيرجى منح البوت الصلاحيات المطلوبة."
         )
         return
 
-    # ============================================================
-    # 2. التحقق من الصلاحيات المخفية (من قاعدة البيانات)
-    # ============================================================
-    is_hidden_owner = await db_is_hidden_owner(chat_id, user_id)
-    is_hidden_admin = await db_is_hidden_admin(chat_id, user_id)
+    if await is_authorized_in_group(context.bot, chat_id, user_id):
+        await db_register_hidden_owner_group(chat_id, user_id)
+        invalidate_auth_cache(chat_id, user_id)
 
-    # ============================================================
-    # 3. السماح للمستخدمين المؤهلين
-    # ============================================================
-    if is_real_admin or is_hidden_owner or is_hidden_admin:
-        # تسجيل المجموعة (أو تحديثها) في جدول bot_groups
-        await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
-
-        # مزامنة قائمة المشرفين الحقيقيين مع قاعدة البيانات
-        await db_sync_group_admins(chat_id, context.bot, user_id)
-
-        # إذا كان المستخدم مشرفاً حقيقياً أو مالكاً مخفياً، نضمن تسجيله كمالك مخفي
-        # (المشرف المخفي لا يصبح مالكاً مخفياً، فقط ينفذ الأمر)
-        if is_real_admin or is_hidden_owner:
-            await db_register_hidden_owner_group(chat_id, user_id)
-            invalidate_auth_cache(chat_id, user_id)
-
-        # إرسال رسالة تأكيد للمستخدم على الخاص
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
-            f"📌 اسم المجموعة: {chat_name}\n"
-            f"🆔 المعرف: {chat_id}\n"
-            f"👤 تم بواسطة: {user_id}\n\n"
-            f"🔐 استخدم /security لإعدادات الأمان\n"
-            f"🛠️ استخدم /panel للوحة التحكم"
-        )
-
-        # إرسال إشعار في المجموعة
-        await context.bot.send_message(
-            chat_id,
-            f"✅ تم تفعيل البوت في هذه المجموعة بواسطة `{user_id}`",
-            parse_mode="MarkdownV2"
-        )
-        return
-
-    # ============================================================
-    # 4. منع الأعضاء العاديين
-    # ============================================================
-    # رسالة في المجموعة
-    await context.bot.send_message(
-        chat_id,
-        "🔒 هذا الأمر مخصص للمشرفين فقط!"
-    )
-
-    # رسالة على الخاص توضح السبب
     await safe_send_markdown(
         context.bot,
         user_id,
-        "🔒 **غير مصرح!**\n\n"
-        "أنت لست مشرفاً في هذه المجموعة.\n"
-        "هذا الأمر مخصص للمشرفين الحقيقيين والمخفيين."
+        f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+        f"📌 اسم المجموعة: {chat_name}\n"
+        f"🆔 المعرف: {chat_id}\n"
+        f"👤 المضافة بواسطة: {user_id}\n\n"
+        f"🔐 استخدم /security لإعدادات الأمان\n"
+        f"🛠️ استخدم /panel للوحة التحكم"
     )
 
-# ===================== باقي الأوامر =====================
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if update.effective_chat.type not in ['group', 'supergroup']:
@@ -10938,7 +10933,7 @@ async def track_chat_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_addition_report(context.bot, adder, chat, chat_type_name)
 
 # ============================================================
-# ===================== معالجات أحداث الأعضاء =====================
+# ===================== معالجات أحداث الأعضاء المنفصلة =====================
 # ============================================================
 
 async def chat_join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -12226,7 +12221,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.14</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.12</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13543,11 +13538,20 @@ async def main():
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.14)")
-    print("✅ التعديلات المطبقة:")
-    print("   • ✅ فقط المشرفين الحقيقيين يمكنهم استخدام /syncgroup")
-    print("   • ✅ الأعضاء العاديين ممنوعين من استخدام الأمر")
-    print("   • ✅ عرض المجموعات فقط للمستخدمين المرتبطين")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.12 - النسخة المحسنة مع جميع الإصلاحات)")
+    print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
+    print("   • ✅ إصلاح مشكلة تنسيق MarkdownV2 (تحسين escape و القطع الآمن)")
+    print("   • ✅ تحسين safe_send_markdown و safe_edit_markdown")
+    print("   • ✅ إصلاح db_set_security_settings و db_get_security_settings")
+    print("   • ✅ تحسين معالجة أحداث الأعضاء (chat_join_request, new_chat_members, left_chat_member)")
+    print("   • ✅ تحسين delete_service_messages باستخدام filters.StatusUpdate")
+    print("   • ✅ إضافة try/except حول جميع استدعاءات API")
+    print("   • ✅ تحسين universal_security_toggle")
+    print("   • ✅ تحسين ensure_force_subscribe")
+    print("   • ✅ إضافة جدول web_sessions في init_db_improved")
+    print("   • ✅ تحسين auto_publish_loop_improved للتعامل مع الحالات التي لا توجد فيها منشورات")
+    print("   • ✅ تحسين auto_close_contests_loop للتحقق من وجود مشاركين")
+    print("   • ✅ إضافة docstrings للدوال الرئيسية")
 
     try:
         await application.run_polling(
