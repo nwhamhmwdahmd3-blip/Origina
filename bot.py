@@ -10571,7 +10571,34 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
     chat_name = update.effective_chat.title or "بدون اسم"
     user_id = update.effective_user.id
 
-    # تسجيل المجموعة ومزامنة المشرفين
+    # ══════════════════════════════════════════════════════════════
+    # 🔥 الخطوة الأولى: فحص رتبة المستخدم في تيليجرام فوراً (منع الأعضاء العاديين)
+    # ══════════════════════════════════════════════════════════════
+    try:
+        member_check = await context.bot.get_chat_member(chat_id, user_id)
+        user_status = member_check.status
+    except:
+        user_status = "member"
+
+    # إذا لم يكن مالكاً (creator) أو مشرفاً (administrator)، امنع تفعيل المجموعة فوراً!
+    if user_status not in ['creator', 'administrator']:
+        promo_text = (
+            "💡 **هذا الأمر خاص بمشرفي المجموعة فقط.**\n\n"
+            "✨ هل ترغب في استخدام بوت مخصص لإدارة مجموعتك وقنواتك بكفاءة عالية؟\n"
+            f"👉 تواصل معنا: @RelaxMgr\n"
+            f"🤖 البوت: @{context.bot.username}"
+        )
+        # إرسال الرسالة في المجموعة أو بالخاص للتاجر/العضو العادي
+        await context.bot.send_message(chat_id=chat_id, text=promo_text)
+        try:
+            await context.bot.send_message(chat_id=user_id, text=promo_text)
+        except:
+            pass
+        return  # إيقاف التنفيذ تماماً هنا لكي لا يتم تسجيل المجموعة باسم شخص عادي
+
+    # ══════════════════════════════════════════════════════════════
+    # 🔥 الخطوة الثانية: إذا كان مشرفاً أو مالكاً، يتم المتابعة والتسجيل بشكل طبيعي
+    # ══════════════════════════════════════════════════════════════
     await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
     await db_sync_group_admins(chat_id, context.bot, user_id)
 
@@ -10585,62 +10612,30 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
-    # ══════════════════════════════════════════════════════════════
-    # 🔥 التحقق من صلاحية المستخدم
-    # ══════════════════════════════════════════════════════════════
-    is_authorized = await is_authorized_in_group(context.bot, chat_id, user_id)
-
-    # إذا لم يكن مصرحاً، تحقق مما إذا كان مشرفاً حقيقياً (تسجيل تلقائي)
-    if not is_authorized:
+    # تسجيل المشرف كمشرف مخفي وربطه
+    await db_add_hidden_admin(chat_id, user_id, user_id)
+    await db_add_user_group_link(user_id, chat_id)
+    await db_register_hidden_owner_group(chat_id, user_id)
+    
+    # تنظيف الكاش
+    _auth_cache_time.pop((chat_id, user_id), None)
+    
+    if 'invalidate_auth_cache' in globals():
         try:
-            member = await context.bot.get_chat_member(chat_id, user_id)
-            if member.status in ['creator', 'administrator']:
-                await db_add_hidden_admin(chat_id, user_id, user_id)
-                await db_add_user_group_link(user_id, chat_id)
-                is_authorized = True
+            invalidate_auth_cache(chat_id, user_id)
         except:
             pass
 
-    # ══════════════════════════════════════════════════════════════
-    # 🔥 فقط المصرح لهم يُسجلون ويحصلون على رسالة النجاح
-    # ══════════════════════════════════════════════════════════════
-    if is_authorized:
-        await db_register_hidden_owner_group(chat_id, user_id)
-        
-        # تنظيف الكاش
-        _auth_cache_time.pop((chat_id, user_id), None)
-        
-        if 'invalidate_auth_cache' in globals():
-            try:
-                invalidate_auth_cache(chat_id, user_id)
-            except:
-                pass
-
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
-            f"📌 اسم المجموعة: {chat_name}\n"
-            f"🆔 المعرف: {chat_id}\n"
-            f"👤 المضافة بواسطة: {user_id}\n\n"
-            f"🔐 استخدم /security لإعدادات الأمان\n"
-            f"🛠️ استخدم /panel للوحة التحكم"
-        )
-    else:
-        # ══════════════════════════════════════════════════════════
-        # 🔥 العضو العادي → رسالة ترويجية صغيرة ومختصرة
-        # ══════════════════════════════════════════════════════════
-        promo_text = (
-            "💡 **هذا الأمر خاص بمشرفي المجموعة.**\n\n"
-            "✨ هل ترغب في استخدام بوت مخصص لإدارة مجموعتك وقنواتك بكفاءة عالية؟\n"
-            f"👉 تواصل معنا: @RelaxMgr\n"
-            f"🤖 البوت: @{context.bot.username}"
-        )
-        await context.bot.send_message(chat_id=chat_id, text=promo_text)
-        try:
-            await context.bot.send_message(chat_id=user_id, text=promo_text)
-        except:
-            pass
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+        f"📌 اسم المجموعة: {chat_name}\n"
+        f"🆔 المعرف: {chat_id}\n"
+        f"👤 المضافة بواسطة: {user_id}\n\n"
+        f"🔐 استخدم /security لإعدادات الأمان\n"
+        f"🛠️ استخدم /panel للوحة التحكم"
+    )
 
 
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
