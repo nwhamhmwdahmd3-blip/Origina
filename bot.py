@@ -488,6 +488,7 @@ BACKUP_CIPHER = Fernet(BACKUP_ENCRYPTION_KEY)
 _background_tasks_started = False
 
 # ===================== تحسينات التخزين المؤقت =====================
+# ===================== تحسينات التخزين المؤقت =====================
 try:
     from cachetools import TTLCache, LRUCache
     CACHETOOLS_AVAILABLE = True
@@ -501,6 +502,7 @@ except ImportError:
     _security_cache = {}
     _translation_cache = {}
     _auth_cache = {}
+    _auth_cache_time = {}  # ✅ تمت الإضافة
     _ADMIN_CACHE_TTL = 60
     _SECURITY_CACHE_TTL = 30
     _TRANSLATION_CACHE_SIZE = 500
