@@ -10572,32 +10572,43 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
     user_id = update.effective_user.id
 
     # ══════════════════════════════════════════════════════════════
-    # 🔥 الخطوة الأولى: فحص رتبة المستخدم في تيليجرام فوراً (منع الأعضاء العاديين)
+    # 🔥 التحقق الذكي (شامل المشرفين العاديين والمخفيين)
     # ══════════════════════════════════════════════════════════════
+    is_admin = False
+    
+    # 1. التحقق المباشر من تيليجرام
     try:
         member_check = await context.bot.get_chat_member(chat_id, user_id)
-        user_status = member_check.status
+        if member_check.status in ['creator', 'administrator']:
+            is_admin = True
     except:
-        user_status = "member"
+        pass
 
-    # إذا لم يكن مالكاً (creator) أو مشرفاً (administrator)، امنع تفعيل المجموعة فوراً!
-    if user_status not in ['creator', 'administrator']:
+    # 2. إذا لم يظهر في تيليجرام (بسبب إخفاء الهوية)، نتحقق هل هو مسجل مسبقاً كمشرف مخفي في قاعدة البيانات
+    if not is_admin:
+        try:
+            if 'db_is_hidden_admin' in globals() or 'db_is_hidden_admin' in locals():
+                is_admin = await db_is_hidden_admin(chat_id, user_id)
+        except:
+            pass
+
+    # 3. إذا لم يكن مشرفاً حقيقياً ولا مخفياً، امنعه فوراً!
+    if not is_admin:
         promo_text = (
             "💡 **هذا الأمر خاص بمشرفي المجموعة فقط.**\n\n"
             "✨ هل ترغب في استخدام بوت مخصص لإدارة مجموعتك وقنواتك بكفاءة عالية؟\n"
             f"👉 تواصل معنا: @RelaxMgr\n"
             f"🤖 البوت: @{context.bot.username}"
         )
-        # إرسال الرسالة في المجموعة أو بالخاص للتاجر/العضو العادي
         await context.bot.send_message(chat_id=chat_id, text=promo_text)
         try:
             await context.bot.send_message(chat_id=user_id, text=promo_text)
         except:
             pass
-        return  # إيقاف التنفيذ تماماً هنا لكي لا يتم تسجيل المجموعة باسم شخص عادي
+        return  # إيقاف التنفيذ لمنع الأعضاء العاديين
 
     # ══════════════════════════════════════════════════════════════
-    # 🔥 الخطوة الثانية: إذا كان مشرفاً أو مالكاً، يتم المتابعة والتسجيل بشكل طبيعي
+    # 🔥 المتابعة والتسجيل لمن يثبت أنه مشرف (حقيقي أو مخفي)
     # ══════════════════════════════════════════════════════════════
     await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
     await db_sync_group_admins(chat_id, context.bot, user_id)
@@ -10612,7 +10623,7 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
-    # تسجيل المشرف كمشرف مخفي وربطه
+    # تسجيل وتفعيل المجموعة للمشرف
     await db_add_hidden_admin(chat_id, user_id, user_id)
     await db_add_user_group_link(user_id, chat_id)
     await db_register_hidden_owner_group(chat_id, user_id)
