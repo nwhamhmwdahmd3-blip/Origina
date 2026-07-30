@@ -10562,21 +10562,13 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
-    is_authorized = await is_authorized_in_group(context.bot, chat_id, user_id)
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        is_real_admin = member.status in ['creator', 'administrator']
+    except:
+        is_real_admin = False
 
-    if not is_authorized:
-        try:
-            member = await context.bot.get_chat_member(chat_id, user_id)
-            is_real_admin = member.status in ['creator', 'administrator']
-        except:
-            is_real_admin = False
-
-        if is_real_admin:
-            await db_add_hidden_admin(chat_id, user_id, user_id)
-            await db_add_user_group_link(user_id, chat_id)
-            is_authorized = True
-
-    if is_authorized:
+    if is_real_admin:
         await db_register_hidden_owner_group(chat_id, user_id)
         invalidate_auth_cache(chat_id, user_id)
 
