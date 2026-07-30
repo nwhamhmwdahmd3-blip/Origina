@@ -10480,56 +10480,96 @@ async def language_command_handler(update: Update, context: ContextTypes.DEFAULT
 
 # ===================== الدالة المعدلة لـ /syncgroup =====================
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج أمر /syncgroup - فقط المشرفين الحقيقيين يمكنهم استخدامه."""
-    # التأكد من أن الأمر في مجموعة
+    """
+    معالج أمر /syncgroup
+    يسمح للمشرفين الحقيقيين، المالكين المخفيين، والمشرفين المخفيين باستخدام الأمر.
+    يمنع الأعضاء العاديين.
+    """
+    # التأكد من أن الأمر صادر من مجموعة (وليس من الخاص)
     if update.effective_chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "⚠️ هذا الأمر يعمل فقط في المجموعات!"
+        )
         return
 
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     chat_name = update.effective_chat.title or "بدون اسم"
 
-    # ===== التحقق من صلاحيات المستخدم الحقيقية =====
+    # ============================================================
+    # 1. التحقق من صلاحيات المستخدم الحقيقية (عبر API تيليجرام)
+    # ============================================================
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         is_real_admin = member.status in ['administrator', 'creator']
     except Exception as e:
-        await safe_send_markdown(context.bot, user_id, f"❌ فشل التحقق من صلاحيتك: {e}")
-        return
-
-    # ===== فقط المشرفين الحقيقيين =====
-    if not is_real_admin:
-        await context.bot.send_message(
-            chat_id,
-            "🔒 هذا الأمر مخصص للمشرفين الحقيقيين فقط!"
-        )
         await safe_send_markdown(
             context.bot,
             user_id,
-            "🔒 **غير مصرح!**\n\nأنت لست مشرفاً في هذه المجموعة.\nهذا الأمر مخصص للمشرفين فقط."
+            f"❌ فشل التحقق من صلاحيتك: {e}"
         )
         return
 
-    # ===== تسجيل المشرف الحقيقي =====
-    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
-    await db_sync_group_admins(chat_id, context.bot, user_id)
-    await db_register_hidden_owner_group(chat_id, user_id)
-    invalidate_auth_cache(chat_id, user_id)
+    # ============================================================
+    # 2. التحقق من الصلاحيات المخفية (من قاعدة البيانات)
+    # ============================================================
+    is_hidden_owner = await db_is_hidden_owner(chat_id, user_id)
+    is_hidden_admin = await db_is_hidden_admin(chat_id, user_id)
 
+    # ============================================================
+    # 3. السماح للمستخدمين المؤهلين
+    # ============================================================
+    if is_real_admin or is_hidden_owner or is_hidden_admin:
+        # تسجيل المجموعة (أو تحديثها) في جدول bot_groups
+        await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
+
+        # مزامنة قائمة المشرفين الحقيقيين مع قاعدة البيانات
+        await db_sync_group_admins(chat_id, context.bot, user_id)
+
+        # إذا كان المستخدم مشرفاً حقيقياً أو مالكاً مخفياً، نضمن تسجيله كمالك مخفي
+        # (المشرف المخفي لا يصبح مالكاً مخفياً، فقط ينفذ الأمر)
+        if is_real_admin or is_hidden_owner:
+            await db_register_hidden_owner_group(chat_id, user_id)
+            invalidate_auth_cache(chat_id, user_id)
+
+        # إرسال رسالة تأكيد للمستخدم على الخاص
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+            f"📌 اسم المجموعة: {chat_name}\n"
+            f"🆔 المعرف: {chat_id}\n"
+            f"👤 تم بواسطة: {user_id}\n\n"
+            f"🔐 استخدم /security لإعدادات الأمان\n"
+            f"🛠️ استخدم /panel للوحة التحكم"
+        )
+
+        # إرسال إشعار في المجموعة
+        await context.bot.send_message(
+            chat_id,
+            f"✅ تم تفعيل البوت في هذه المجموعة بواسطة `{user_id}`",
+            parse_mode="MarkdownV2"
+        )
+        return
+
+    # ============================================================
+    # 4. منع الأعضاء العاديين
+    # ============================================================
+    # رسالة في المجموعة
+    await context.bot.send_message(
+        chat_id,
+        "🔒 هذا الأمر مخصص للمشرفين فقط!"
+    )
+
+    # رسالة على الخاص توضح السبب
     await safe_send_markdown(
         context.bot,
         user_id,
-        f"✅ **تم تسجيلك كمالك مخفي!**\n\n"
-        f"📌 اسم المجموعة: {chat_name}\n"
-        f"🆔 المعرف: {chat_id}\n\n"
-        f"🔐 استخدم /security لإعدادات الأمان\n"
-        f"🛠️ استخدم /panel للوحة التحكم"
-    )
-
-    await context.bot.send_message(
-        chat_id,
-        f"✅ تم تفعيل البوت في هذه المجموعة بواسطة المشرف `{user_id}`"
+        "🔒 **غير مصرح!**\n\n"
+        "أنت لست مشرفاً في هذه المجموعة.\n"
+        "هذا الأمر مخصص للمشرفين الحقيقيين والمخفيين."
     )
 
 # ===================== باقي الأوامر =====================
