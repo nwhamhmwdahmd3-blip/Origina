@@ -11296,36 +11296,43 @@ async def get_all_bot_admins() -> List[int]:
 # ============================================================
 
 async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
+    """
+    التحقق من صلاحية المستخدم في المجموعة.
+    ═══════════════════════════════════════════════════════════════
+    ✅ المطور الأساسي (PRIMARY_OWNER_ID) → دائماً مصرح.
+    ✅ التحقق المباشر من تيليجرام → المشرفين الحقيقيين.
+    ✅ التحقق من قاعدة البيانات → المالكين والمشرفين المخفيين.
+    ❌ العضو العادي → ممنوع (حتى لو كان مسجلاً في قاعدة البيانات).
+    ═══════════════════════════════════════════════════════════════
+    """
+    # المطور الأساسي دائماً مصرح
     if user_id == PRIMARY_OWNER_ID:
         return True
 
-    cache_key = f"auth_{chat_id}_{user_id}"
-    if CACHETOOLS_AVAILABLE:
-        if cache_key in _auth_cache:
-            return _auth_cache[cache_key]
-    else:
-        if cache_key in _auth_cache:
-            cached_time, value = _auth_cache[cache_key]
-            if time_module.time() - cached_time < _AUTH_CACHE_TTL:
-                return value
+    # ══════════════════════════════════════════════════════════════
+    # 1️⃣ التحقق المباشر من تيليجرام (الأولوية القصوى)
+    # ══════════════════════════════════════════════════════════════
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        if member.status in ['creator', 'administrator']:
+            return True
+    except:
+        pass
 
-    authorized = False
-
+    # ══════════════════════════════════════════════════════════════
+    # 2️⃣ التحقق من قاعدة البيانات (للمالكين والمشرفين المخفيين)
+    # ══════════════════════════════════════════════════════════════
     if await db_is_real_admin(chat_id, user_id):
-        authorized = True
+        return True
 
-    if not authorized and await db_is_hidden_owner(chat_id, user_id):
-        authorized = True
+    if await db_is_hidden_owner(chat_id, user_id):
+        return True
 
-    if not authorized and await db_is_hidden_admin(chat_id, user_id):
-        authorized = True
+    if await db_is_hidden_admin(chat_id, user_id):
+        return True
 
-    if CACHETOOLS_AVAILABLE:
-        _auth_cache[cache_key] = authorized
-    else:
-        _auth_cache[cache_key] = (time_module.time(), authorized)
-
-    return authorized
+    # ❌ العضو العادي (غير مصرح)
+    return False
 
 def invalidate_auth_cache(chat_id: int = None, user_id: int = None):
     if chat_id is not None and user_id is not None:
