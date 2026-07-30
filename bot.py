@@ -502,11 +502,15 @@ except ImportError:
     _security_cache = {}
     _translation_cache = {}
     _auth_cache = {}
-    _auth_cache_time = {}  # ✅ تمت الإضافة
-    _ADMIN_CACHE_TTL = 60
-    _SECURITY_CACHE_TTL = 30
-    _TRANSLATION_CACHE_SIZE = 500
-    _AUTH_CACHE_TTL = 300
+
+# 👈 عرفه هنا بشكل دائم ليكون متاعاً في كل الحالات
+_auth_cache_time = {} 
+
+_ADMIN_CACHE_TTL = 60
+_SECURITY_CACHE_TTL = 30
+_TRANSLATION_CACHE_SIZE = 500
+_AUTH_CACHE_TTL = 300
+
 
 _security_cache_time = {}
 _security_cache_ttl = 30
