@@ -2926,58 +2926,66 @@ async def db_register_group(chat_id: int, chat_name: str, added_by: int, usernam
 async def db_get_user_groups(user_id: int):
     async def _get(conn):
         try:
+            # الحصول على جميع المجموعات التي يكون فيها المستخدم مشرفاً حقيقياً (من جدول group_admins)
             cur = await conn.execute("""
                 SELECT chat_id, chat_name, username, banned
                 FROM bot_groups
+                WHERE chat_id IN (
+                    SELECT chat_id FROM group_admins WHERE user_id = ?
+                )
                 ORDER BY chat_name
-            """)
-            all_groups = await cur.fetchall()
-
-            cur = await conn.execute("""
-                SELECT chat_id FROM hidden_owner_groups WHERE owner_id=?
             """, (user_id,))
-            hidden_owner_rows = await cur.fetchall()
-            hidden_owner_groups = {row[0] for row in hidden_owner_rows}
+            admin_groups = await cur.fetchall()
 
+            # الحصول على المجموعات التي هو مالك مخفي فيها (من hidden_owner_groups)
             cur = await conn.execute("""
-                SELECT chat_id FROM hidden_admins WHERE admin_id=?
+                SELECT bg.chat_id, bg.chat_name, bg.username, bg.banned
+                FROM bot_groups bg
+                JOIN hidden_owner_groups hog ON bg.chat_id = hog.chat_id
+                WHERE hog.owner_id = ?
+                ORDER BY bg.chat_name
             """, (user_id,))
-            hidden_admin_rows = await cur.fetchall()
-            hidden_admin_groups = {row[0] for row in hidden_admin_rows}
+            owner_groups = await cur.fetchall()
 
+            # الحصول على المجموعات التي هو مشرف مخفي فيها (من hidden_admins)
             cur = await conn.execute("""
-                SELECT chat_id FROM bot_groups WHERE added_by=?
-                UNION
-                SELECT chat_id FROM user_groups_link WHERE user_id=?
-            """, (user_id, user_id))
-            linked_rows = await cur.fetchall()
-            linked_groups = {row[0] for row in linked_rows}
-
-            cur = await conn.execute("""
-                SELECT chat_id FROM group_admins WHERE user_id=?
+                SELECT bg.chat_id, bg.chat_name, bg.username, bg.banned
+                FROM bot_groups bg
+                JOIN hidden_admins ha ON bg.chat_id = ha.chat_id
+                WHERE ha.admin_id = ?
+                ORDER BY bg.chat_name
             """, (user_id,))
-            admin_rows = await cur.fetchall()
-            admin_groups = {row[0] for row in admin_rows}
+            hidden_admin_groups = await cur.fetchall()
 
+            # دمج القوائم مع تجنب التكرار (استخدم set)
+            seen = set()
             visible_groups = []
-            for group in all_groups:
+
+            for group in admin_groups:
                 chat_id = group[0]
-                if chat_id in hidden_owner_groups:
+                if chat_id not in seen:
+                    seen.add(chat_id)
                     visible_groups.append(group)
-                elif chat_id in hidden_admin_groups:
-                    continue
-                elif chat_id in admin_groups:
+
+            for group in owner_groups:
+                chat_id = group[0]
+                if chat_id not in seen:
+                    seen.add(chat_id)
                     visible_groups.append(group)
-                elif chat_id in linked_groups:
+
+            for group in hidden_admin_groups:
+                chat_id = group[0]
+                if chat_id not in seen:
+                    seen.add(chat_id)
                     visible_groups.append(group)
-                else:
-                    continue
 
             return visible_groups
+
         except Exception as e:
             logger.error(f"خطأ في جلب مجموعات المستخدم {user_id}: {e}")
             return []
     return await execute_db(_get)
+
 
 async def db_get_user_groups_count(user_id: int) -> int:
     async def _get(conn):
@@ -6013,9 +6021,14 @@ async def my_full_stats_callback(update: Update, context: ContextTypes.DEFAULT_T
 async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
-        await query.answer()
+        try:
+            await query.answer()
+        except:
+            pass
+    
     uid = update.effective_user.id
 
+    # جلب المجموعات التي المستخدم مشرف فيها فقط
     groups = await db_get_user_groups(uid)
 
     if not groups:
@@ -6026,26 +6039,39 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ])
         msg = "📭 لا توجد مجموعات مسجلة\n\nأضف البوت إلى مجموعة وستظهر هنا."
         if query:
-            await safe_edit_markdown(query, msg, reply_markup=kb)
+            try:
+                await safe_edit_markdown(query, msg, reply_markup=kb)
+            except:
+                await query.edit_message_text(msg, reply_markup=kb)
         else:
             await safe_send_markdown(context.bot, uid, msg, reply_markup=kb)
         return
 
     keyboard = []
     for chat_id, chat_name, username, banned in groups:
+        # ✅ تحقق إضافي من الصلاحية الحقيقية قبل إضافة الأزرار
+        if not await is_authorized_in_group(context.bot, chat_id, uid):
+            continue  # تجاهل هذه المجموعة إذا لم يعد المستخدم مصرحاً
+
         display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
         status_icon = "⛔" if banned else "✅"
+        
+        # زر المجموعة الرئيسي
         keyboard.append([
             InlineKeyboardButton(
                 f"{status_icon} {display_name}",
                 callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}"
             )
         ])
+        
+        # أزرار الإجراءات
         keyboard.append([
             InlineKeyboardButton("🔐 الأمان", callback_data=f"{CallbackData.SECURITY_SELECT_GROUP}{chat_id}"),
             InlineKeyboardButton("📜 السجل", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}"),
             InlineKeyboardButton("⚙️ متقدم", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")
         ])
+        
+        # أزرار القفل والحذف
         is_locked = await is_chat_locked(chat_id)
         lock_label = "🔒 قفل" if not is_locked else "🔓 فتح"
         lock_callback = f"{CallbackData.PANEL_LOCK_PREFIX}{chat_id}" if not is_locked else f"{CallbackData.PANEL_UNLOCK_PREFIX}{chat_id}"
@@ -6055,16 +6081,26 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ])
         keyboard.append([InlineKeyboardButton("─" * 20, callback_data="noop")])
 
+    # أزرار عامة
     keyboard.append([
         InlineKeyboardButton("🔄 تحديث القائمة", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
         InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)
     ])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = "👥 **مجموعاتي**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر مجموعة للتحكم بها:\n\n✅ = نشطة  |  ⛔ = محظورة"
+    
     if query:
-        await safe_edit_markdown(query, text, reply_markup=reply_markup)
+        try:
+            await safe_edit_markdown(query, text, reply_markup=reply_markup)
+        except Exception as e:
+            try:
+                await query.edit_message_text(text, reply_markup=reply_markup)
+            except:
+                pass
     else:
         await safe_send_markdown(context.bot, uid, text, reply_markup=reply_markup)
+
 
 async def delete_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
