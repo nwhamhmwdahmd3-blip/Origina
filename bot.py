@@ -10542,52 +10542,55 @@ async def language_command_handler(update: Update, context: ContextTypes.DEFAULT
     await safe_send_markdown(context.bot, user_id, get_text(user_id, 'welcome'), reply_markup=keyboard)
 
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    ═══════════════════════════════════════════════════════════════
-    🚀 الأمر: /syncgroup
-    📌 الوظيفة: مزامنة المجموعة وتسجيل المالك المخفي
-    ✅ يُسمح للمشرفين الحقيقيين والمشرفين المخفيين المسجلين.
-    ❌ الأعضاء العاديين يُمنعون (يظهر لهم رسالة ترويجية).
-    ═══════════════════════════════════════════════════════════════
-    """
-    # ──────────────────────────────────────────────────────────────
-    # 1️⃣ التحقق من أن الأمر صادر من مجموعة
-    # ──────────────────────────────────────────────────────────────
     if update.effective_chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(
-            context.bot,
-            update.effective_user.id,
-            "⚠️ **هذا الأمر يعمل فقط داخل المجموعات!**"
-        )
+        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
         return
 
     chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
     chat_name = update.effective_chat.title or "بدون اسم"
-    username = update.effective_chat.username or ""
+    user_id = update.effective_user.id
 
-    # ──────────────────────────────────────────────────────────────
-    # 2️⃣ التحقق من صلاحيات المستخدم (حقيقي أو مخفي)
-    # ──────────────────────────────────────────────────────────────
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        is_real_admin = member.status in ['creator', 'administrator']
-    except Exception as e:
-        await context.bot.send_message(
-            chat_id,
-            f"❌ **فشل التحقق من صلاحيتك:**\n`{str(e)}`",
-            parse_mode="MarkdownV2"
+    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
+    await db_sync_group_admins(chat_id, context.bot, user_id)
+
+    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"⚠️ **تنبيه:**\n{bot_perms['reason']}\n\nيرجى منح البوت الصلاحيات المطلوبة."
         )
         return
 
-    # التحقق من الصلاحيات المخفية (المسجلة في قاعدة البيانات)
-    is_hidden_owner = await db_is_hidden_owner(chat_id, user_id)
-    is_hidden_admin = await db_is_hidden_admin(chat_id, user_id)
+    is_authorized = await is_authorized_in_group(context.bot, chat_id, user_id)
 
-    # ──────────────────────────────────────────────────────────────
-    # 3️⃣ العضو العادي → رسالة ترويجية
-    # ──────────────────────────────────────────────────────────────
-    if not (is_real_admin or is_hidden_owner or is_hidden_admin):
+    if not is_authorized:
+        try:
+            member = await context.bot.get_chat_member(chat_id, user_id)
+            is_real_admin = member.status in ['creator', 'administrator']
+        except:
+            is_real_admin = False
+
+        if is_real_admin:
+            await db_add_hidden_admin(chat_id, user_id, user_id)
+            await db_add_user_group_link(user_id, chat_id)
+            is_authorized = True
+
+    if is_authorized:
+        await db_register_hidden_owner_group(chat_id, user_id)
+        invalidate_auth_cache(chat_id, user_id)
+
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+            f"📌 اسم المجموعة: {chat_name}\n"
+            f"🆔 المعرف: {chat_id}\n"
+            f"👤 المضافة بواسطة: {user_id}\n\n"
+            f"🔐 استخدم /security لإعدادات الأمان\n"
+            f"🛠️ استخدم /panel للوحة التحكم"
+        )
+    else:
         promo_text = (
             "🌟 **مرحباً بك في مجموعتنا!**\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -10608,93 +10611,6 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
             await context.bot.send_message(chat_id=user_id, text=promo_text)
         except:
             pass
-        return
-
-    # ──────────────────────────────────────────────────────────────
-    # 4️⃣ تنفيذ المزامنة وتسجيل المالك المخفي
-    # ──────────────────────────────────────────────────────────────
-
-    # التحقق من صلاحيات البوت نفسه
-    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
-    if not bot_perms['can_act']:
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            f"⚠️ **تنبيه:**\n{bot_perms['reason']}\n\nيرجى منح البوت الصلاحيات المطلوبة."
-        )
-        return
-
-    # تسجيل المجموعة في قاعدة البيانات
-    await db_register_group(chat_id, chat_name, user_id, username)
-
-    # مزامنة المشرفين الحقيقيين
-    admins = await context.bot.get_chat_administrators(chat_id)
-    await db_sync_group_admins(chat_id, context.bot, user_id)
-
-    # تسجيل المستخدم الحالي كمالك مخفي (أو تحديثه)
-    await db_register_hidden_owner_group(chat_id, user_id)
-
-    # ══════════════════════════════════════════════════════════════
-    # ⭐ تسجيل جميع المشرفين الحقيقيين كمشرفين مخفيين تلقائياً
-    #    (حتى يتمكنوا لاحقاً من استخدام الأمر دون رسالة ترويجية)
-    # ══════════════════════════════════════════════════════════════
-    for admin in admins:
-        admin_id = admin.user.id
-        await db_add_hidden_admin(chat_id, admin_id, user_id)
-        await db_add_user_group_link(admin_id, chat_id)
-
-    # مزامنة المشرفين المخفيين المسجلين سابقاً (ربطهم بالمجموعة)
-    hidden_admins = await db_get_hidden_admins(chat_id)
-    for admin in hidden_admins:
-        await db_add_user_group_link(admin['admin_id'], chat_id)
-
-    # تحديث الكاش
-    invalidate_auth_cache(chat_id, user_id)
-
-    # ──────────────────────────────────────────────────────────────
-    # 5️⃣ عرض رسالة النجاح
-    # ──────────────────────────────────────────────────────────────
-    total_admins = len(admins)
-    creators = sum(1 for a in admins if a.status == 'creator')
-    normal_admins = total_admins - creators
-    anonymous = sum(1 for a in admins if getattr(a, 'is_anonymous', False))
-    hidden_admins_count = len(hidden_admins)
-
-    text = (
-        "✅ **تمت المزامنة والتسجيل بنجاح!**\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 **المجموعة:** `{chat_name}`\n"
-        f"🆔 **المعرف:** `{chat_id}`\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👑 **المالك المخفي:** `{user_id}` (أنت)\n"
-        f"🔄 **تم تسجيل جميع المشرفين الحقيقيين كمشرفين مخفيين تلقائياً.**\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🕵️ **المشرفون المخفيون المسجلون:** `{hidden_admins_count}`\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "👥 **المشرفون الحقيقيون:**\n"
-        f"   • الإجمالي: `{total_admins}`\n"
-        f"   • المالك: `{creators}`\n"
-        f"   • المشرفون: `{normal_admins}`\n"
-        f"   • مجهولون (Anonymous): `{anonymous}`\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📌 **ما الذي تغير؟**\n"
-        "✅ تم تسجيلك كمالك مخفي.\n"
-        "✅ تم تسجيل جميع المشرفين الحقيقيين كمشرفين مخفيين.\n"
-        "✅ ستظهر هذه المجموعة في قائمة 'مجموعاتي'.\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🔐 استخدم /security لإعدادات الأمان\n"
-        "🛠️ استخدم /panel للوحة التحكم"
-    )
-
-    await safe_send_markdown(context.bot, user_id, text)
-
-    # إشعار في المجموعة
-    await context.bot.send_message(
-        chat_id,
-        f"✅ **تم تفعيل البوت وتسجيل المشرفين تلقائياً**\n👤 بواسطة: `{user_id}`",
-        parse_mode="MarkdownV2"
-    )
-
 
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
