@@ -10410,45 +10410,64 @@ async def is_user_subscribed(bot, user_id, channel):
         return False
 
 async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not user:
+    """
+    دالة بداية التشغيل ومعالجة رابط تفعيل المجموعة للمشرفين المخفيين والحقيقيين.
+    """
+    user_id = update.effective_user.id
+
+    # معالجة طلب التفعيل القادم عبر الزر (sync_)
+    if context.args and context.args[0].startswith("sync_"):
+        try:
+            target_chat_id = int(context.args[0].replace("sync_", ""))
+            
+            # 1. فحص هل المستخدم مشرف حقيقي في المجموعة؟
+            is_real_admin = False
+            try:
+                member = await context.bot.get_chat_member(target_chat_id, user_id)
+                if member.status in ['creator', 'administrator']:
+                    is_real_admin = True
+            except Exception as e:
+                print(f"Error checking admin status: {e}")
+
+            if is_real_admin:
+                # 2. جلب معلومات المجموعة بأمان
+                chat_name = "مجموعة"
+                chat_username = None
+                try:
+                    chat_info = await context.bot.get_chat(target_chat_id)
+                    chat_name = chat_info.title or "بدون اسم"
+                    chat_username = chat_info.username
+                except Exception as e:
+                    print(f"Error getting chat info: {e}")
+                
+                # 3. حفظ البيانات في قاعدة البيانات
+                try:
+                    await db_register_group(target_chat_id, chat_name, user_id, chat_username)
+                    await db_add_hidden_admin(target_chat_id, user_id, user_id)
+                    await db_add_user_group_link(user_id, target_chat_id)
+                    await db_register_hidden_owner_group(target_chat_id, user_id)
+                except Exception as e:
+                    print(f"Database error during sync: {e}")
+                    await update.message.reply_text("❌ حدث خطأ في قاعدة البيانات أثناء حفظ البيانات.")
+                    return
+
+                await update.message.reply_text(
+                    f"✅ **تم التحقق من هويتك وتفعيل المجموعة بنجاح!**\n\n"
+                    f"📌 المجموعة: {chat_name}\n"
+                    f"🛠️ استخدم /panel للوحة التحكم.",
+                    parse_mode="Markdown"
+                )
+            else:
+                # إذا ضغط عضو عادي على الزر
+                await update.message.reply_text("⚠️ **عذراً:** لا يمكنك تفعيل هذه المجموعة لأنك لست مشرفاً فيها.")
+        except Exception as e:
+            print(f"Unhandled sync error: {e}")
+            await update.message.reply_text("❌ حدث خطأ غير متوقع أثناء محاولة تفعيل المجموعة، يرجى المحاولة مرة أخرى.")
         return
 
-    user_id = user.id
-    username = user.username or ""
-    first_name = user.first_name or ""
+    # الترحيب العادي في الخاص (ضع كود الـ /start الأصلي هنا إن وجد)
+    await update.message.reply_text("أهلاً بك! استخدم البوت لإدارة مجموعاتك بكفاءة.")
 
-    await db_register_user(user_id)
-    await db_update_user_cache(user_id, username, first_name)
-
-    if context.args and context.args[0].startswith('ref_'):
-        referral_code = context.args[0].replace('ref_', '')
-        referrer_id = await db_get_user_by_referral_code(referral_code)
-        if referrer_id and referrer_id != user_id:
-            success = await db_add_referral(referrer_id, user_id)
-            if success:
-                reward_days = await db_auto_reward_referral(referrer_id, user_id)
-                try:
-                    await context.bot.send_message(
-                        chat_id=referrer_id,
-                        text=f"🎉 **تهانينا!**\nقام {first_name} بالاشتراك باستخدام رابط إحالتك!\nتم إضافة {reward_days} أيام إلى اشتراكك 🎁",
-                        parse_mode="MarkdownV2"
-                    )
-                except:
-                    pass
-                welcome_points = await db_get_welcome_bonus_points()
-                if welcome_points > 0:
-                    level_data = await db_get_user_level(user_id)
-                    await db_update_user_level(user_id, level_data['points'] + welcome_points, level_data['level'])
-
-                achievement = await achievement_system(referrer_id, 'first_referral')
-                if achievement:
-                    try:
-                        await context.bot.send_message(chat_id=referrer_id, text=f"🏅 {achievement}")
-                    except:
-                        pass
-
-    await main_menu_callback(update, context)
 
 # ===================== معالج /sendcode مع مهلة 10 دقائق =====================
 async def sendcode_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
