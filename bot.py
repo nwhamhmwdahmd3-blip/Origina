@@ -10543,38 +10543,102 @@ async def language_command_handler(update: Update, context: ContextTypes.DEFAULT
 
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "⚠️ هذا الأمر يعمل فقط في المجموعات!"
+        )
         return
 
     chat_id = update.effective_chat.id
     chat_name = update.effective_chat.title or "بدون اسم"
     user_id = update.effective_user.id
 
-    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
-    await db_sync_group_admins(chat_id, context.bot, user_id)
-
-    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
-    if not bot_perms['can_act']:
+    try:
         await safe_send_markdown(
             context.bot,
             user_id,
-            f"⚠️ **تنبيه:**\n{bot_perms['reason']}\n\nيرجى منح البوت الصلاحيات المطلوبة."
+            "⏳ جاري التحقق من صلاحياتك في المجموعة..."
         )
-        return
+    except:
+        pass
 
-    if await is_authorized_in_group(context.bot, chat_id, user_id):
-        await db_register_hidden_owner_group(chat_id, user_id)
-        invalidate_auth_cache(chat_id, user_id)
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        try:
+            member = await context.bot.get_chat_member(chat_id, user_id)
+            if member.status not in ['administrator', 'creator']:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **غير مصرح!**\nهذا الأمر مخصص للمشرفين فقط."
+                )
+                return
+        except Exception as e:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"❌ حدث خطأ أثناء التحقق من صلاحياتك: {str(e)[:100]}"
+            )
+            return
 
-    await safe_send_markdown(
-        context.bot,
+    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
+
+    await db_sync_group_admins(chat_id, context.bot, owner_id=None)
+
+    async def _add_user_as_admin(conn):
+        await conn.execute(
+            "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
+            (chat_id, user_id)
+        )
+        await conn.execute(
+            "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?, ?)",
+            (user_id, chat_id)
+        )
+        await conn.commit()
+    await execute_db(_add_user_as_admin)
+
+    await db_register_hidden_owner_group(chat_id, user_id)
+    invalidate_auth_cache(chat_id, user_id)
+
+    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        try:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"⚠️ **تنبيه:**\n{bot_perms['reason']}\n\nيرجى منح البوت الصلاحيات المطلوبة."
+            )
+        except:
+            pass
+
+    try:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+            f"📌 اسم المجموعة: {chat_name}\n"
+            f"🆔 المعرف: {chat_id}\n"
+            f"👤 المضافة بواسطة: {user_id}\n\n"
+            f"🔐 استخدم /security لإعدادات الأمان\n"
+            f"🛠️ استخدم /panel للوحة التحكم"
+        )
+    except Exception as e:
+        logger.error(f"فشل إرسال رسالة التأكيد للمستخدم {user_id}: {e}")
+        try:
+            await safe_send_markdown(
+                context.bot,
+                chat_id,
+                f"✅ تم تفعيل المجموعة بواسطة `{user_id}`\n"
+                f"🔐 استخدم /security و /panel في الخاص مع البوت."
+            )
+        except Exception as e2:
+            logger.error(f"فشل الإرسال في المجموعة أيضاً: {e2}")
+
+    await security_audit.log(
+        "GROUP_SYNCED",
         user_id,
-        f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
-        f"📌 اسم المجموعة: {chat_name}\n"
-        f"🆔 المعرف: {chat_id}\n"
-        f"👤 المضافة بواسطة: {user_id}\n\n"
-        f"🔐 استخدم /security لإعدادات الأمان\n"
-        f"🛠️ استخدم /panel للوحة التحكم"
+        {"chat_id": chat_id, "chat_name": chat_name, "is_admin": True},
+        "INFO"
     )
 
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
