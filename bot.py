@@ -10562,47 +10562,20 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        is_real_admin = member.status in ['creator', 'administrator']
-    except:
-        is_real_admin = False
-
-    if is_real_admin:
+    if await is_authorized_in_group(context.bot, chat_id, user_id):
         await db_register_hidden_owner_group(chat_id, user_id)
         invalidate_auth_cache(chat_id, user_id)
 
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
-            f"📌 اسم المجموعة: {chat_name}\n"
-            f"🆔 المعرف: {chat_id}\n"
-            f"👤 المضافة بواسطة: {user_id}\n\n"
-            f"🔐 استخدم /security لإعدادات الأمان\n"
-            f"🛠️ استخدم /panel للوحة التحكم"
-        )
-    else:
-        promo_text = (
-            "🌟 **مرحباً بك في مجموعتنا!**\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "💎 **هل ترغب في الاستفادة من خدمات البوت المتقدمة؟**\n\n"
-            "✨ يمكنك الآن إدارة القنوات، جدولة المنشورات،\n"
-            "🔐 ضبط إعدادات الأمان، والحصول على إحصائيات دقيقة\n"
-            "📊 كل هذا وأكثر في مكان واحد!\n\n"
-            "📩 **للحصول على صلاحيات الإدارة في هذه المجموعة:**\n"
-            "• تواصل مع المطور: @RelaxMgr\n\n"
-            "💬 **استخدم البوت في الخاص لإدارة قنواتك الخاصة:**\n"
-            f"👉 @{context.bot.username}\n\n"
-            "🎁 **اشترك الآن واستمتع بالميزات الحصرية!**\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💡 نصيحة: اضغط على البوت أعلاه وابدأ رحلتك 🚀"
-        )
-        await context.bot.send_message(chat_id=chat_id, text=promo_text)
-        try:
-            await context.bot.send_message(chat_id=user_id, text=promo_text)
-        except:
-            pass
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+        f"📌 اسم المجموعة: {chat_name}\n"
+        f"🆔 المعرف: {chat_id}\n"
+        f"👤 المضافة بواسطة: {user_id}\n\n"
+        f"🔐 استخدم /security لإعدادات الأمان\n"
+        f"🛠️ استخدم /panel للوحة التحكم"
+    )
 
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
