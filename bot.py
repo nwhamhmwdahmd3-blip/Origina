@@ -10533,40 +10533,161 @@ async def language_command_handler(update: Update, context: ContextTypes.DEFAULT
     await safe_send_markdown(context.bot, user_id, get_text(user_id, 'welcome'), reply_markup=keyboard)
 
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════
+    🚀 الأمر: /syncgroup
+    📌 الوظيفة: مزامنة المجموعة مع البوت + تسجيل مالك مخفي
+    ═══════════════════════════════════════════════════════════════
+    ✅ يقوم بـ:
+        • تسجيل المجموعة في قاعدة البيانات.
+        • مزامنة جميع المشرفين الحقيقيين.
+        • تسجيل المستخدم كمالك مخفي.
+        • ربط المشرفين المخفيين بالمجموعة.
+        • عرض إحصائيات دقيقة عن المشرفين.
+    """
+    # ──────────────────────────────────────────────────────────────
+    # التحقق من أن الأمر صادر من مجموعة
+    # ──────────────────────────────────────────────────────────────
     if update.effective_chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
-        return
-
-    chat_id = update.effective_chat.id
-    chat_name = update.effective_chat.title or "بدون اسم"
-    user_id = update.effective_user.id
-
-    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
-    await db_sync_group_admins(chat_id, context.bot, user_id)
-
-    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
-    if not bot_perms['can_act']:
         await safe_send_markdown(
             context.bot,
-            user_id,
-            f"⚠️ **تنبيه:**\n{bot_perms['reason']}\n\nيرجى منح البوت الصلاحيات المطلوبة."
+            update.effective_user.id,
+            "⚠️ **هذا الأمر يعمل فقط داخل المجموعات!**"
         )
         return
 
-    if await is_authorized_in_group(context.bot, chat_id, user_id):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+    username = update.effective_chat.username or ""
+
+    # ──────────────────────────────────────────────────────────────
+    # إرسال رسالة "جاري المعالجة"
+    # ──────────────────────────────────────────────────────────────
+    processing_msg = await context.bot.send_message(
+        chat_id=user_id,
+        text="🔄 **جاري مزامنة المجموعة وتحديث قاعدة البيانات...**\n"
+             "⏳ يرجى الانتظار لحظة."
+    )
+
+    try:
+        # ══════════════════════════════════════════════════════════
+        # 1️⃣ تسجيل المجموعة في جدول bot_groups
+        # ══════════════════════════════════════════════════════════
+        await db_register_group(chat_id, chat_name, user_id, username)
+
+        # ══════════════════════════════════════════════════════════
+        # 2️⃣ مزامنة المشرفين الحقيقيين (من تيليجرام)
+        # ══════════════════════════════════════════════════════════
+        await db_sync_group_admins(chat_id, context.bot, user_id)
+
+        # ══════════════════════════════════════════════════════════
+        # 3️⃣ تسجيل المستخدم الحالي كمالك مخفي
+        #    (يتم تلقائياً ربطه بـ user_groups_link)
+        # ══════════════════════════════════════════════════════════
         await db_register_hidden_owner_group(chat_id, user_id)
+
+        # ══════════════════════════════════════════════════════════
+        # 4️⃣ مزامنة المشرفين المخفيين المسجلين سابقاً
+        #    (ربطهم بـ user_groups_link ليظهروا في القائمة)
+        # ══════════════════════════════════════════════════════════
+        hidden_admins = await db_get_hidden_admins(chat_id)
+        hidden_admins_count = len(hidden_admins)
+        for admin in hidden_admins:
+            async def _link(conn):
+                await conn.execute(
+                    "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?, ?)",
+                    (admin['admin_id'], chat_id)
+                )
+                await conn.commit()
+            await execute_db(_link)
+
+        # ══════════════════════════════════════════════════════════
+        # 5️⃣ تحديث الكاش (لظهور التغييرات فوراً)
+        # ══════════════════════════════════════════════════════════
         invalidate_auth_cache(chat_id, user_id)
 
-    await safe_send_markdown(
-        context.bot,
-        user_id,
-        f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
-        f"📌 اسم المجموعة: {chat_name}\n"
-        f"🆔 المعرف: {chat_id}\n"
-        f"👤 المضافة بواسطة: {user_id}\n\n"
-        f"🔐 استخدم /security لإعدادات الأمان\n"
-        f"🛠️ استخدم /panel للوحة التحكم"
-    )
+        # ══════════════════════════════════════════════════════════
+        # 6️⃣ جلب إحصائيات المشرفين الحقيقيين
+        # ══════════════════════════════════════════════════════════
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            total_admins = len(admins)
+            creators = sum(1 for a in admins if a.status == 'creator')
+            normal_admins = total_admins - creators
+            anonymous = sum(1 for a in admins if getattr(a, 'is_anonymous', False))
+        except:
+            total_admins = creators = normal_admins = anonymous = 0
+
+        # ══════════════════════════════════════════════════════════
+        # 7️⃣ إنشاء رسالة النجاح بتنسيق احترافي
+        # ══════════════════════════════════════════════════════════
+        text = (
+            "✅ **تمت المزامنة والتسجيل بنجاح!**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📌 **المجموعة:** `{chat_name}`\n"
+            f"🆔 **المعرف:** `{chat_id}`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "👑 **المالك المخفي:**\n"
+            f"   `{user_id}` (أنت)\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🕵️ **المشرفون المخفيون المسجلون:** `{hidden_admins_count}`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "👥 **المشرفون الحقيقيون:**\n"
+            f"   • الإجمالي: `{total_admins}`\n"
+            f"   • المالك: `{creators}`\n"
+            f"   • المشرفون: `{normal_admins}`\n"
+            f"   • مجهولون (Anonymous): `{anonymous}`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📌 **ما الذي تغير؟**\n"
+            "✅ تم تسجيلك كمالك مخفي.\n"
+            "✅ ستظهر هذه المجموعة في قائمة 'مجموعاتي'.\n"
+            "✅ تم ربط المشرفين المخفيين بالمجموعة.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔐 استخدم /security لإعدادات الأمان\n"
+            "🛠️ استخدم /panel للوحة التحكم"
+        )
+
+        # حذف رسالة "جاري المعالجة" وإرسال النتيجة
+        await processing_msg.delete()
+        await safe_send_markdown(context.bot, user_id, text)
+
+        # ──────────────────────────────────────────────────────────
+        # إشعار في المجموعة (اختياري)
+        # ──────────────────────────────────────────────────────────
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ **تم تفعيل البوت في هذه المجموعة**\n👤 بواسطة: `{user_id}`",
+            parse_mode="MarkdownV2"
+        )
+
+    # ──────────────────────────────────────────────────────────────
+    # معالجة الأخطاء بشكل احترافي
+    # ──────────────────────────────────────────────────────────────
+    except TelegramError as e:
+        await processing_msg.delete()
+        error_text = (
+            "❌ **حدث خطأ أثناء المزامنة!**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📌 **السبب:** `{str(e)[:200]}`\n\n"
+            "💡 **الحلول المقترحة:**\n"
+            "• تأكد من أن البوت مشرف في المجموعة.\n"
+            "• تأكد من منح البوت صلاحيات الحذف والحظر.\n"
+            "• حاول مرة أخرى بعد بضع ثوانٍ."
+        )
+        await safe_send_markdown(context.bot, user_id, error_text)
+
+    except Exception as e:
+        await processing_msg.delete()
+        error_text = (
+            "❌ **حدث خطأ غير متوقع!**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📌 **السبب:** `{str(e)[:200]}`\n\n"
+            "🔄 يرجى المحاولة مرة أخرى لاحقاً.\n"
+            "📞 إذا استمرت المشكلة، تواصل مع المطور."
+        )
+        await safe_send_markdown(context.bot, user_id, error_text)
+        logger.error(f"خطأ في /syncgroup للمستخدم {user_id} في المجموعة {chat_id}: {e}")
 
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
