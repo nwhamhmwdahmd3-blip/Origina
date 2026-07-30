@@ -10558,95 +10558,100 @@ async def language_command_handler(update: Update, context: ContextTypes.DEFAULT
     await safe_send_markdown(context.bot, user_id, get_text(user_id, 'welcome'), reply_markup=keyboard)
 
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # تعريف التخزين المؤقت محلياً لضمان عدم حدوث أي خطأ
+    """
+    معالجة أمر مزامنة وتفعيل المجموعة (Sync Group)
+    مطابق لأفضل معايير البوتات البرمجية الكبرى لضمان الأمان والصلاحيات.
+    """
     global _auth_cache_time
     if '_auth_cache_time' not in globals():
         _auth_cache_time = {}
 
-    if update.effective_chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+    chat = update.effective_chat
+    user = update.effective_user
+
+    # 1. التحقق من نطاق الاستخدام (مجموعات فقط)
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, user.id, "⚠️ **عذراً:** هذا الأمر مخصص للاستخدام داخل المجموعات فقط.")
         return
 
-    chat_id = update.effective_chat.id
-    chat_name = update.effective_chat.title or "بدون اسم"
-    user_id = update.effective_user.id
+    chat_id = chat.id
+    chat_name = chat.title or "بدون اسم"
+    user_id = user.id
 
-    # ══════════════════════════════════════════════════════════════
-    # 🔥 التحقق الذكي (شامل المشرفين العاديين والمخفيين)
-    # ══════════════════════════════════════════════════════════════
+    # 2. فحص رتبة المستخدم في تيليجرام (دعم المشرفين الأساسيين والمخفيين)
     is_admin = False
-    
-    # 1. التحقق المباشر من تيليجرام
     try:
-        member_check = await context.bot.get_chat_member(chat_id, user_id)
-        if member_check.status in ['creator', 'administrator']:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status in ['creator', 'administrator']:
             is_admin = True
-    except:
+    except Exception:
         pass
 
-    # 2. إذا لم يظهر في تيليجرام (بسبب إخفاء الهوية)، نتحقق هل هو مسجل مسبقاً كمشرف مخفي في قاعدة البيانات
+    # التحقق الاحتياطي للمشرفين المخفيين (Anonymous Admins) عبر قاعدة البيانات
     if not is_admin:
         try:
-            if 'db_is_hidden_admin' in globals() or 'db_is_hidden_admin' in locals():
+            if 'db_is_hidden_admin' in globals():
                 is_admin = await db_is_hidden_admin(chat_id, user_id)
-        except:
+        except Exception:
             pass
 
-    # 3. إذا لم يكن مشرفاً حقيقياً ولا مخفياً، امنعه فوراً!
+    # 3. منع الأعضاء العاديين وإرسال رسالة ترويجية مختصرة
     if not is_admin:
         promo_text = (
             "💡 **هذا الأمر خاص بمشرفي المجموعة فقط.**\n\n"
-            "✨ هل ترغب في استخدام بوت مخصص لإدارة مجموعتك وقنواتك بكفاءة عالية؟\n"
+            "✨ هل ترغب في تفعيل بوت متطور لإدارة مجموعتك وقنواتك بكفاءة عالية؟\n"
             f"👉 تواصل معنا: @RelaxMgr\n"
             f"🤖 البوت: @{context.bot.username}"
         )
-        await context.bot.send_message(chat_id=chat_id, text=promo_text)
         try:
-            await context.bot.send_message(chat_id=user_id, text=promo_text)
-        except:
-            pass
-        return  # إيقاف التنفيذ لمنع الأعضاء العاديين
-
-    # ══════════════════════════════════════════════════════════════
-    # 🔥 المتابعة والتسجيل لمن يثبت أنه مشرف (حقيقي أو مخفي)
-    # ══════════════════════════════════════════════════════════════
-    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
-    await db_sync_group_admins(chat_id, context.bot, user_id)
-
-    # التحقق من صلاحيات البوت الإدارية
-    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
-    if not bot_perms['can_act']:
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            f"⚠️ **تنبيه:**\n{bot_perms['reason']}\n\nيرجى منح البوت الصلاحيات المطلوبة."
-        )
+            await update.message.reply_text(promo_text, parse_mode="Markdown")
+        except Exception:
+            await context.bot.send_message(chat_id=chat_id, text=promo_text, parse_mode="Markdown")
         return
 
-    # تسجيل وتفعيل المجموعة للمشرف
-    await db_add_hidden_admin(chat_id, user_id, user_id)
-    await db_add_user_group_link(user_id, chat_id)
-    await db_register_hidden_owner_group(chat_id, user_id)
-    
-    # تنظيف الكاش
+    # 4. فحص صلاحيات البوت الإدارية داخل المجموعة
+    try:
+        bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
+        if not bot_perms.get('can_act', True):
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"⚠️ **تنبيه إداري:**\n{bot_perms.get('reason', 'يرجى منح البوت صلاحيات الإدارة الكاملة ليعمل بشكل صحيح.')}"
+            )
+            return
+    except Exception:
+        pass
+
+    # 5. تنفيذ عملية المزامنة وحفظ البيانات
+    try:
+        await db_register_group(chat_id, chat_name, user_id, chat.username)
+        await db_sync_group_admins(chat_id, context.bot, user_id)
+        await db_add_hidden_admin(chat_id, user_id, user_id)
+        await db_add_user_group_link(user_id, chat_id)
+        await db_register_hidden_owner_group(chat_id, user_id)
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, "❌ حدث خطأ أثناء الاتصال بقاعدة البيانات، يرجى المحاولة لاحقاً.")
+        return
+
+    # 6. تفريغ التخزين المؤقت (Cache) لتحديث الصلاحيات فوراً
     _auth_cache_time.pop((chat_id, user_id), None)
-    
     if 'invalidate_auth_cache' in globals():
         try:
             invalidate_auth_cache(chat_id, user_id)
-        except:
+        except Exception:
             pass
 
-    await safe_send_markdown(
-        context.bot,
-        user_id,
-        f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
-        f"📌 اسم المجموعة: {chat_name}\n"
-        f"🆔 المعرف: {chat_id}\n"
-        f"👤 المضافة بواسطة: {user_id}\n\n"
-        f"🔐 استخدم /security لإعدادات الأمان\n"
-        f"🛠️ استخدم /panel للوحة التحكم"
+    # 7. إرسال إشعار النجاح النهائي للمشرف
+    success_msg = (
+        f"✅ **تم مزامنة وتفعيل المجموعة بنجاح!**\n\n"
+        f"📌 **المجموعة:** {chat_name}\n"
+        f"🆔 **المعرف:** {chat_id}\n"
+        f"👤 **المسؤول:** {user.full_name}\n\n"
+        f"🔐 استخدم /security لضبط إعدادات الأمان\n"
+        f"🛠️ استخدم /panel للوحة التحكم الإدارية"
     )
+    await safe_send_markdown(context.bot, user_id, success_msg)
+
 
 
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
