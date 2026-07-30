@@ -10542,6 +10542,11 @@ async def language_command_handler(update: Update, context: ContextTypes.DEFAULT
     await safe_send_markdown(context.bot, user_id, get_text(user_id, 'welcome'), reply_markup=keyboard)
 
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    معالج الأمر /syncgroup - تفعيل المجموعة وربطها بالمستخدم
+    مع إرسال رسائل الرفض في المجموعة بدلاً من الخاص لضمان وصولها
+    """
+    # التحقق من أن الأمر صادر من مجموعة
     if update.effective_chat.type not in ['group', 'supergroup']:
         await safe_send_markdown(
             context.bot,
@@ -10554,37 +10559,34 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
     chat_name = update.effective_chat.title or "بدون اسم"
     user_id = update.effective_user.id
 
-    try:
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            "⏳ جاري التحقق من صلاحياتك في المجموعة..."
-        )
-    except:
-        pass
-
+    # التحقق من الصلاحيات مع استخدام التخزين المؤقت أولاً
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         try:
             member = await context.bot.get_chat_member(chat_id, user_id)
             if member.status not in ['administrator', 'creator']:
+                # إرسال رسالة الرفض في المجموعة (chat_id) بدلاً من الخاص (user_id)
                 await safe_send_markdown(
                     context.bot,
-                    user_id,
+                    chat_id,  # ← التغيير الجوهري
                     "❌ **غير مصرح!**\nهذا الأمر مخصص للمشرفين فقط."
                 )
                 return
         except Exception as e:
+            # إرسال رسالة الخطأ في المجموعة أيضاً
             await safe_send_markdown(
                 context.bot,
-                user_id,
+                chat_id,
                 f"❌ حدث خطأ أثناء التحقق من صلاحياتك: {str(e)[:100]}"
             )
             return
 
+    # تسجيل/تحديث المجموعة في قاعدة البيانات
     await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
 
+    # مزامنة المشرفين الحقيقيين من تيليجرام (دون إضافة المستخدم تلقائياً)
     await db_sync_group_admins(chat_id, context.bot, owner_id=None)
 
+    # إضافة المستخدم (بعد التأكد من كونه مشرفاً) إلى جداول الصلاحيات
     async def _add_user_as_admin(conn):
         await conn.execute(
             "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
@@ -10597,12 +10599,15 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         await conn.commit()
     await execute_db(_add_user_as_admin)
 
+    # تسجيل المستخدم كمالك مخفي (لضمان ظهوره في لوحة التحكم)
     await db_register_hidden_owner_group(chat_id, user_id)
     invalidate_auth_cache(chat_id, user_id)
 
+    # التحقق من صلاحيات البوت في المجموعة (تحذير فقط)
     bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
     if not bot_perms['can_act']:
         try:
+            # إرسال تحذير للمستخدم في الخاص (هذه رسالة تحذيرية، يمكن أن تصل أو لا)
             await safe_send_markdown(
                 context.bot,
                 user_id,
@@ -10611,6 +10616,7 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         except:
             pass
 
+    # إرسال رسالة التأكيد النهائية (في الخاص)
     try:
         await safe_send_markdown(
             context.bot,
@@ -10623,6 +10629,7 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
             f"🛠️ استخدم /panel للوحة التحكم"
         )
     except Exception as e:
+        # في حال فشل الإرسال في الخاص، نحاول الإرسال في المجموعة
         logger.error(f"فشل إرسال رسالة التأكيد للمستخدم {user_id}: {e}")
         try:
             await safe_send_markdown(
@@ -10634,12 +10641,14 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         except Exception as e2:
             logger.error(f"فشل الإرسال في المجموعة أيضاً: {e2}")
 
+    # تسجيل الحدث في سجل الأمان
     await security_audit.log(
         "GROUP_SYNCED",
         user_id,
         {"chat_id": chat_id, "chat_name": chat_name, "is_admin": True},
         "INFO"
     )
+
 
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
