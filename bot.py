@@ -6289,6 +6289,7 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         )
 
 # ===================== معالج /register_hidden_owner المحسن =====================
+# ✅ الكود الصحيح (الجديد)
 async def register_hidden_owner_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ['group', 'supergroup']:
         await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
@@ -6297,6 +6298,7 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
+    # ✅ الخطوة 1: التحقق من صلاحية البوت
     bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
     if not bot_perms['can_act']:
         await safe_send_markdown(
@@ -6307,6 +6309,7 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
         )
         return
 
+    # ✅ الخطوة 2: التحقق المباشر من تيليجرام (الطريقة الصحيحة)
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         is_creator = member.status == 'creator'
@@ -6319,7 +6322,9 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
         )
         return
 
+    # ✅ الخطوة 3: فقط المالك أو المشرف الحقيقي يمكنه التسجيل
     if is_creator or is_admin:
+        # ✅ منع التسجيل المكرر
         if await db_is_hidden_owner(chat_id, user_id):
             await safe_send_markdown(
                 context.bot,
@@ -6328,8 +6333,45 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
             )
             return
         
+        # ✅ التسجيل
         await db_register_hidden_owner_group(chat_id, user_id)
         
+        # ✅ تأكيد أنه مشرف حقيقي أيضاً (لضمان الصلاحية)
+        async def _add_real_admin(conn):
+            await conn.execute(
+                "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
+                (chat_id, user_id)
+            )
+            await conn.commit()
+        await execute_db(_add_real_admin)
+        
+        invalidate_auth_cache(chat_id, user_id)
+        
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم تسجيلك كمالك مخفي بنجاح!**\n\n"
+            f"🔐 يمكنك الآن استخدام جميع أوامر الإدارة:\n"
+            f"• `/security` - إعدادات الأمان\n"
+            f"• `/panel` - لوحة التحكم\n"
+            f"• `/lock` / `/unlock` - قفل وفتح المجموعة\n"
+            f"• أوامر الحظر والكتم والتحذير"
+        )
+        return
+    
+    # ❌ العضو العادي يصل إلى هنا
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        "❌ **غير مصرح!**\n\n"
+        "لتسجيل نفسك كمالك مخفي، يجب أن تكون:\n"
+        "• مالك المجموعة (creator)\n"
+        "• أو مشرفاً في المجموعة (administrator)\n\n"
+        "📌 إذا كنت تعتقد أنك مالك:\n"
+        "• تأكد من أن البوت مشرف\n"
+        "• تأكد من أنك المالك في تيليجرام"
+    )
+
         async def _add_real_admin(conn):
             await conn.execute(
                 "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
