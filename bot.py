@@ -1,17 +1,8 @@
-# ============================================================
-# ORIGINAL_OWNER: 8290212138
-# GENERATED_AT: 2026-07-31 01:50:27
-# SIGNATURE: a100dbf096b518af
-# ============================================================
-# ⚠️ تحذير: هذا الكود يحتوي على معلومات حساسة
-# لا تشاركه مع أي شخص غير موثوق
-# ============================================================
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.13 - النسخة المحسنة مع إصلاح صلاحيات المشرفين
+الإصدار: 20.0.14 - النسخة المحسنة مع إصلاح صلاحيات المشرفين نهائياً
 المطور: @RelaxMgr
 """
 
@@ -53,25 +44,7 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 import types
 import signal
-# ====== Supabase ======
-try:
-    from supabase import create_client, Client
-    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-    SUPABASE_KEY = os.getenv("SB_SECRET", "")
-    
-    if SUPABASE_URL and SUPABASE_KEY:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print("✅ تم الاتصال بـ Supabase بنجاح")
-        USE_SUPABASE = True
-    else:
-        print("⚠️ Supabase غير مهيأ (راجع SUPABASE_URL و SB_SECRET)")
-        USE_SUPABASE = False
-except ImportError:
-    print("⚠️ مكتبة supabase غير مثبتة، استخدم: pip install supabase")
-    USE_SUPABASE = False
-except Exception as e:
-    print(f"⚠️ فشل الاتصال بـ Supabase: {e}")
-    USE_SUPABASE = False
+
 # ===================== التحقق من إصدار بايثون =====================
 def check_python_version():
     required_version = (3, 8)
@@ -515,7 +488,6 @@ BACKUP_CIPHER = Fernet(BACKUP_ENCRYPTION_KEY)
 _background_tasks_started = False
 
 # ===================== تحسينات التخزين المؤقت =====================
-# ===================== تحسينات التخزين المؤقت =====================
 try:
     from cachetools import TTLCache, LRUCache
     CACHETOOLS_AVAILABLE = True
@@ -529,15 +501,11 @@ except ImportError:
     _security_cache = {}
     _translation_cache = {}
     _auth_cache = {}
-
-# 👈 عرفه هنا بشكل دائم ليكون متاعاً في كل الحالات
-_auth_cache_time = {} 
-
-_ADMIN_CACHE_TTL = 60
-_SECURITY_CACHE_TTL = 30
-_TRANSLATION_CACHE_SIZE = 500
-_AUTH_CACHE_TTL = 300
-
+    _auth_cache_time = {}  # ✅ أضف هذا السطر
+    _ADMIN_CACHE_TTL = 60
+    _SECURITY_CACHE_TTL = 30
+    _TRANSLATION_CACHE_SIZE = 500
+    _AUTH_CACHE_TTL = 300
 
 _security_cache_time = {}
 _security_cache_ttl = 30
@@ -2957,68 +2925,27 @@ async def db_register_group(chat_id: int, chat_name: str, added_by: int, usernam
     return await execute_db(_register)
 
 async def db_get_user_groups(user_id: int):
+    """إرجاع المجموعات التي يكون فيها المستخدم مشرفاً فقط (حقيقي أو مخفي)"""
     async def _get(conn):
         try:
-            # الحصول على جميع المجموعات التي يكون فيها المستخدم مشرفاً حقيقياً (من جدول group_admins)
+            # ✅ فقط المجموعات التي المستخدم مشرف فيها (من group_admins، hidden_owner_groups، hidden_admins)
             cur = await conn.execute("""
-                SELECT chat_id, chat_name, username, banned
-                FROM bot_groups
-                WHERE chat_id IN (
+                SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned
+                FROM bot_groups bg
+                WHERE bg.chat_id IN (
                     SELECT chat_id FROM group_admins WHERE user_id = ?
+                    UNION
+                    SELECT chat_id FROM hidden_owner_groups WHERE owner_id = ?
+                    UNION
+                    SELECT chat_id FROM hidden_admins WHERE admin_id = ?
                 )
-                ORDER BY chat_name
-            """, (user_id,))
-            admin_groups = await cur.fetchall()
-
-            # الحصول على المجموعات التي هو مالك مخفي فيها (من hidden_owner_groups)
-            cur = await conn.execute("""
-                SELECT bg.chat_id, bg.chat_name, bg.username, bg.banned
-                FROM bot_groups bg
-                JOIN hidden_owner_groups hog ON bg.chat_id = hog.chat_id
-                WHERE hog.owner_id = ?
                 ORDER BY bg.chat_name
-            """, (user_id,))
-            owner_groups = await cur.fetchall()
-
-            # الحصول على المجموعات التي هو مشرف مخفي فيها (من hidden_admins)
-            cur = await conn.execute("""
-                SELECT bg.chat_id, bg.chat_name, bg.username, bg.banned
-                FROM bot_groups bg
-                JOIN hidden_admins ha ON bg.chat_id = ha.chat_id
-                WHERE ha.admin_id = ?
-                ORDER BY bg.chat_name
-            """, (user_id,))
-            hidden_admin_groups = await cur.fetchall()
-
-            # دمج القوائم مع تجنب التكرار (استخدم set)
-            seen = set()
-            visible_groups = []
-
-            for group in admin_groups:
-                chat_id = group[0]
-                if chat_id not in seen:
-                    seen.add(chat_id)
-                    visible_groups.append(group)
-
-            for group in owner_groups:
-                chat_id = group[0]
-                if chat_id not in seen:
-                    seen.add(chat_id)
-                    visible_groups.append(group)
-
-            for group in hidden_admin_groups:
-                chat_id = group[0]
-                if chat_id not in seen:
-                    seen.add(chat_id)
-                    visible_groups.append(group)
-
-            return visible_groups
-
+            """, (user_id, user_id, user_id))
+            return await cur.fetchall()
         except Exception as e:
             logger.error(f"خطأ في جلب مجموعات المستخدم {user_id}: {e}")
             return []
     return await execute_db(_get)
-
 
 async def db_get_user_groups_count(user_id: int) -> int:
     async def _get(conn):
@@ -3516,7 +3443,13 @@ async def db_sync_group_admins(chat_id: int, bot, owner_id: int = None) -> int:
                 await conn.executemany("INSERT INTO group_admins (chat_id, user_id) VALUES (?, ?)", values)
                 await conn.commit()
             return len(admin_ids)
-        return await execute_db(_update)
+        count = await execute_db(_update)
+        
+        # مسح الكاش للمشرفين
+        for admin_id in admin_ids:
+            invalidate_auth_cache(chat_id, admin_id)
+        
+        return count
     except Exception as e:
         logger.error(f"خطأ في مزامنة مشرفي المجموعة {chat_id}: {e}")
         return 0
@@ -6061,10 +5994,16 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     uid = update.effective_user.id
 
-    # جلب المجموعات التي المستخدم مشرف فيها فقط
+    # ✅ جلب المجموعات التي المستخدم مشرف فيها (من قاعدة البيانات)
     groups = await db_get_user_groups(uid)
 
-    if not groups:
+    # ✅ فلترة إضافية: التحقق من الصلاحية الحقيقية
+    filtered_groups = []
+    for chat_id, chat_name, username, banned in groups:
+        if await is_authorized_in_group(context.bot, chat_id, uid):
+            filtered_groups.append((chat_id, chat_name, username, banned))
+
+    if not filtered_groups:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ أضف البوت", url=f"https://t.me/{BOT_USERNAME}?startgroup")],
             [InlineKeyboardButton("🔄 تحديث القائمة", callback_data=CallbackData.SECURITY_REFRESH_GROUPS)],
@@ -6081,15 +6020,10 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     keyboard = []
-    for chat_id, chat_name, username, banned in groups:
-        # ✅ تحقق إضافي من الصلاحية الحقيقية قبل إضافة الأزرار
-        if not await is_authorized_in_group(context.bot, chat_id, uid):
-            continue  # تجاهل هذه المجموعة إذا لم يعد المستخدم مصرحاً
-
+    for chat_id, chat_name, username, banned in filtered_groups:
         display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
         status_icon = "⛔" if banned else "✅"
         
-        # زر المجموعة الرئيسي
         keyboard.append([
             InlineKeyboardButton(
                 f"{status_icon} {display_name}",
@@ -6097,14 +6031,12 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
         ])
         
-        # أزرار الإجراءات
         keyboard.append([
             InlineKeyboardButton("🔐 الأمان", callback_data=f"{CallbackData.SECURITY_SELECT_GROUP}{chat_id}"),
             InlineKeyboardButton("📜 السجل", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}"),
             InlineKeyboardButton("⚙️ متقدم", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")
         ])
         
-        # أزرار القفل والحذف
         is_locked = await is_chat_locked(chat_id)
         lock_label = "🔒 قفل" if not is_locked else "🔓 فتح"
         lock_callback = f"{CallbackData.PANEL_LOCK_PREFIX}{chat_id}" if not is_locked else f"{CallbackData.PANEL_UNLOCK_PREFIX}{chat_id}"
@@ -6114,7 +6046,6 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ])
         keyboard.append([InlineKeyboardButton("─" * 20, callback_data="noop")])
 
-    # أزرار عامة
     keyboard.append([
         InlineKeyboardButton("🔄 تحديث القائمة", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
         InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)
@@ -6133,7 +6064,6 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 pass
     else:
         await safe_send_markdown(context.bot, uid, text, reply_markup=reply_markup)
-
 
 async def delete_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -7162,7 +7092,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.13
+📦 **الإصدار:** 20.0.14
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -10585,101 +10515,40 @@ async def language_command_handler(update: Update, context: ContextTypes.DEFAULT
     await safe_send_markdown(context.bot, user_id, get_text(user_id, 'welcome'), reply_markup=keyboard)
 
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    معالجة أمر مزامنة وتفعيل المجموعة (Sync Group)
-    مطابق لأفضل معايير البوتات البرمجية الكبرى لضمان الأمان والصلاحيات.
-    """
-    global _auth_cache_time
-    if '_auth_cache_time' not in globals():
-        _auth_cache_time = {}
-
-    chat = update.effective_chat
-    user = update.effective_user
-
-    # 1. التحقق من نطاق الاستخدام (مجموعات فقط)
-    if chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(context.bot, user.id, "⚠️ **عذراً:** هذا الأمر مخصص للاستخدام داخل المجموعات فقط.")
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
         return
 
-    chat_id = chat.id
-    chat_name = chat.title or "بدون اسم"
-    user_id = user.id
+    chat_id = update.effective_chat.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+    user_id = update.effective_user.id
 
-    # 2. فحص رتبة المستخدم في تيليجرام (دعم المشرفين الأساسيين والمخفيين)
-    is_admin = False
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        if member.status in ['creator', 'administrator']:
-            is_admin = True
-    except Exception:
-        pass
+    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
+    await db_sync_group_admins(chat_id, context.bot, user_id)
 
-    # التحقق الاحتياطي للمشرفين المخفيين (Anonymous Admins) عبر قاعدة البيانات
-    if not is_admin:
-        try:
-            if 'db_is_hidden_admin' in globals():
-                is_admin = await db_is_hidden_admin(chat_id, user_id)
-        except Exception:
-            pass
-
-    # 3. منع الأعضاء العاديين وإرسال رسالة ترويجية مختصرة
-    if not is_admin:
-        promo_text = (
-            "💡 **هذا الأمر خاص بمشرفي المجموعة فقط.**\n\n"
-            "✨ هل ترغب في تفعيل بوت متطور لإدارة مجموعتك وقنواتك بكفاءة عالية؟\n"
-            f"👉 تواصل معنا: @RelaxMgr\n"
-            f"🤖 البوت: @{context.bot.username}"
+    bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"⚠️ **تنبيه:**\n{bot_perms['reason']}\n\nيرجى منح البوت الصلاحيات المطلوبة."
         )
-        try:
-            await update.message.reply_text(promo_text, parse_mode="Markdown")
-        except Exception:
-            await context.bot.send_message(chat_id=chat_id, text=promo_text, parse_mode="Markdown")
         return
 
-    # 4. فحص صلاحيات البوت الإدارية داخل المجموعة
-    try:
-        bot_perms = await check_bot_admin_permissions(context.bot, chat_id)
-        if not bot_perms.get('can_act', True):
-            await safe_send_markdown(
-                context.bot,
-                user_id,
-                f"⚠️ **تنبيه إداري:**\n{bot_perms.get('reason', 'يرجى منح البوت صلاحيات الإدارة الكاملة ليعمل بشكل صحيح.')}"
-            )
-            return
-    except Exception:
-        pass
-
-    # 5. تنفيذ عملية المزامنة وحفظ البيانات
-    try:
-        await db_register_group(chat_id, chat_name, user_id, chat.username)
-        await db_sync_group_admins(chat_id, context.bot, user_id)
-        await db_add_hidden_admin(chat_id, user_id, user_id)
-        await db_add_user_group_link(user_id, chat_id)
+    if await is_authorized_in_group(context.bot, chat_id, user_id):
         await db_register_hidden_owner_group(chat_id, user_id)
-    except Exception as e:
-        await safe_send_markdown(context.bot, user_id, "❌ حدث خطأ أثناء الاتصال بقاعدة البيانات، يرجى المحاولة لاحقاً.")
-        return
+        invalidate_auth_cache(chat_id, user_id)
 
-    # 6. تفريغ التخزين المؤقت (Cache) لتحديث الصلاحيات فوراً
-    _auth_cache_time.pop((chat_id, user_id), None)
-    if 'invalidate_auth_cache' in globals():
-        try:
-            invalidate_auth_cache(chat_id, user_id)
-        except Exception:
-            pass
-
-    # 7. إرسال إشعار النجاح النهائي للمشرف
-    success_msg = (
-        f"✅ **تم مزامنة وتفعيل المجموعة بنجاح!**\n\n"
-        f"📌 **المجموعة:** {chat_name}\n"
-        f"🆔 **المعرف:** {chat_id}\n"
-        f"👤 **المسؤول:** {user.full_name}\n\n"
-        f"🔐 استخدم /security لضبط إعدادات الأمان\n"
-        f"🛠️ استخدم /panel للوحة التحكم الإدارية"
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+        f"📌 اسم المجموعة: {chat_name}\n"
+        f"🆔 المعرف: {chat_id}\n"
+        f"👤 المضافة بواسطة: {user_id}\n\n"
+        f"🔐 استخدم /security لإعدادات الأمان\n"
+        f"🛠️ استخدم /panel للوحة التحكم"
     )
-    await safe_send_markdown(context.bot, user_id, success_msg)
-
-
 
 async def security_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -11376,6 +11245,7 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
 
     # التحقق من الكاش العام
     cache_key = f"auth_{chat_id}_{user_id}"
+    
     if CACHETOOLS_AVAILABLE:
         if cache_key in _auth_cache:
             return _auth_cache[cache_key]
@@ -11410,18 +11280,24 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
 
 def invalidate_auth_cache(chat_id: int = None, user_id: int = None):
     """مسح الكاش الخاص بالصلاحيات"""
-    if chat_id is not None and user_id is not None:
-        key = f"auth_{chat_id}_{user_id}"
-        _auth_cache.pop(key, None)
-        _auth_cache_time.pop(key, None)
-    elif chat_id is not None:
-        for k in list(_auth_cache.keys()):
-            if k.startswith(f"auth_{chat_id}_"):
+    try:
+        if chat_id is not None and user_id is not None:
+            key = f"auth_{chat_id}_{user_id}"
+            _auth_cache.pop(key, None)
+            if not CACHETOOLS_AVAILABLE:
+                _auth_cache_time.pop(key, None)
+        elif chat_id is not None:
+            keys_to_remove = [k for k in list(_auth_cache.keys()) if k.startswith(f"auth_{chat_id}_")]
+            for k in keys_to_remove:
                 _auth_cache.pop(k, None)
-                _auth_cache_time.pop(k, None)
-    else:
-        _auth_cache.clear()
-        _auth_cache_time.clear()
+                if not CACHETOOLS_AVAILABLE:
+                    _auth_cache_time.pop(k, None)
+        else:
+            _auth_cache.clear()
+            if not CACHETOOLS_AVAILABLE:
+                _auth_cache_time.clear()
+    except Exception as e:
+        logger.error(f"خطأ في invalidate_auth_cache: {e}")
 
 # ============================================================
 # ===================== حلقة تحديث المشرفين الدورية =====================
@@ -12382,7 +12258,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.13</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.14</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13703,7 +13579,7 @@ async def main():
     # ====== حلقة تحديث المشرفين الدورية ======
     task_manager.create_task(refresh_group_admins_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.13 - النسخة المحسنة مع إصلاح صلاحيات المشرفين)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.14 - النسخة المحسنة مع إصلاح صلاحيات المشرفين)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ تحسين دالة is_authorized_in_group مع التحقق من صلاحية البوت")
     print("   • ✅ إضافة تخزين مؤقت ذكي للصلاحيات")
