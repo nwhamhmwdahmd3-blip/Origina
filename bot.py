@@ -6012,6 +6012,85 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await safe_send_markdown(context.bot, uid, text, reply_markup=reply_markup)
 
+# ===================== معالج حذف المجموعة =====================
+async def delete_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف مجموعة من قاعدة البيانات (للمشرفين فقط)"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('delete_group_id')
+    
+    if not chat_id:
+        return
+    
+    # ✅ التحقق من صلاحية المستخدم (مالك أو مشرف)
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("❌ غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "❌ غير مصرح")
+        return
+    
+    # ✅ حذف المجموعة من قاعدة البيانات
+    async def _delete_group(conn):
+        await conn.execute("DELETE FROM bot_groups WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM user_groups_link WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM group_security WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM chat_locks WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM moderation_log WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM group_admins WHERE chat_id = ?", (chat_id,))
+        await conn.commit()
+    
+    await execute_db(_delete_group)
+    
+    # ✅ مسح الكاش
+    invalidate_auth_cache(chat_id)
+    
+    if query:
+        await query.edit_message_text("✅ تم حذف المجموعة من قاعدة البيانات.")
+    else:
+        await safe_send_markdown(context.bot, uid, "✅ تم حذف المجموعة من قاعدة البيانات.")
+    
+    # ✅ تحديث قائمة المجموعات
+    await my_groups_callback(update, context)
+
+async def notify_group_admins(bot, chat_id: int, requester_id: int, chat_name: str):
+    """إرسال إشعار للمشرفين بطلب تفعيل البوت"""
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        if not admins:
+            try:
+                await bot.send_message(
+                    chat_id,
+                    f"📢 **طلب تفعيل البوت!**\n\n"
+                    f"👤 المستخدم: {requester_id}\n"
+                    f"📌 المجموعة: {chat_name}\n\n"
+                    f"لتفعيل البوت، استخدم:\n"
+                    f"`/syncgroup`"
+                )
+            except:
+                pass
+            return
+        for admin in admins:
+            if admin.user.id != requester_id:
+                try:
+                    await bot.send_message(
+                        admin.user.id,
+                        f"📢 **طلب تفعيل البوت!**\n\n"
+                        f"👤 المستخدم: {requester_id}\n"
+                        f"📌 المجموعة: {chat_name}\n"
+                        f"🆔 المعرف: `{chat_id}`\n\n"
+                        f"لتفعيل البوت، استخدم:\n"
+                        f"`/syncgroup` في المجموعة."
+                    )
+                    await asyncio.sleep(0.5)
+                except:
+                    pass
+    except Exception as e:
+        logger.error(f"فشل إشعار المشرفين: {e}")
+
 async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
@@ -6208,43 +6287,6 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
             f"🔹 تأكد من أن البوت مشرف في المجموعة\n"
             f"🔹 ثم حاول مرة أخرى."
         )
-
-# ===================== إشعار المشرفين =====================
-async def notify_group_admins(bot, chat_id: int, requester_id: int, chat_name: str):
-    try:
-        admins = await bot.get_chat_administrators(chat_id)
-        
-        if not admins:
-            try:
-                await bot.send_message(
-                    chat_id,
-                    f"📢 **طلب تفعيل البوت!**\n\n"
-                    f"👤 المستخدم: {requester_id}\n"
-                    f"📌 المجموعة: {chat_name}\n\n"
-                    f"لتفعيل البوت، استخدم:\n"
-                    f"`/syncgroup`"
-                )
-            except:
-                pass
-            return
-        
-        for admin in admins:
-            try:
-                if admin.user.id != requester_id:
-                    await bot.send_message(
-                        chat_id=admin.user.id,
-                        text=get_text(admin.user.id, 'activation_notification').format(
-                            requester_id,
-                            chat_name,
-                            chat_id
-                        )
-                    )
-                    await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.error(f"فشل إرسال إشعار للمشرف {admin.user.id}: {e}")
-                
-    except Exception as e:
-        logger.error(f"فشل إشعار المشرفين في {chat_id}: {e}")
 
 # ===================== معالج /register_hidden_owner المحسن =====================
 async def register_hidden_owner_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
