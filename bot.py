@@ -53,7 +53,25 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 import types
 import signal
-
+# ====== Supabase ======
+try:
+    from supabase import create_client, Client
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY = os.getenv("SB_SECRET", "")
+    
+    if SUPABASE_URL and SUPABASE_KEY:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ تم الاتصال بـ Supabase بنجاح")
+        USE_SUPABASE = True
+    else:
+        print("⚠️ Supabase غير مهيأ (راجع SUPABASE_URL و SB_SECRET)")
+        USE_SUPABASE = False
+except ImportError:
+    print("⚠️ مكتبة supabase غير مثبتة، استخدم: pip install supabase")
+    USE_SUPABASE = False
+except Exception as e:
+    print(f"⚠️ فشل الاتصال بـ Supabase: {e}")
+    USE_SUPABASE = False
 # ===================== التحقق من إصدار بايثون =====================
 def check_python_version():
     required_version = (3, 8)
