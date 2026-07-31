@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.16 - النسخة العالمية مع نظام صلاحيات محسن
+الإصدار: 20.0.17 - النسخة العالمية مع نظام صلاحيات محسن وآمن
 المطور: @RelaxMgr
 """
 
@@ -2981,8 +2981,10 @@ async def check_bot_admin_permissions_group(bot, chat_id: int) -> dict:
         return {'can_act': False, 'reason': str(e)}
 
 # ===================== حلقة تحديث المشرفين الدورية =====================
+# === تحسين: تم تغيير وقت التحديث إلى 60 ثانية ===
 async def refresh_group_admins_loop(bot):
     while True:
+        await asyncio.sleep(60)  # تم التعديل من 3600 إلى 60 ثانية
         try:
             async def _get_all_groups(conn):
                 cur = await conn.execute("SELECT chat_id FROM bot_groups WHERE banned=0")
@@ -2999,10 +3001,8 @@ async def refresh_group_admins_loop(bot):
             logger.info(f"✅ تم تحديث مشرفي {len(groups)} مجموعة")
         except Exception as e:
             logger.error(f"خطأ في حلقة تحديث المشرفين: {e}")
-        
-        await asyncio.sleep(3600)
 
-# ===================== التحقق المباشر من تيليجرام =====================
+# ===================== دالة is_currently_admin_in_group =====================
 async def is_currently_admin_in_group(bot, chat_id: int, user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id, user_id)
@@ -6289,9 +6289,9 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         )
 
 # ===================== معالج /register_hidden_owner المحسن =====================
-# ✅ الكود الصحيح (الجديد)
+# ✅ الكود الصحيح مع التحقق من الحظر العالمي
 async def register_hidden_owner_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تسجيل المالك المخفي للمجموعة - يعمل فقط للمشرفين الحقيقيين"""
+    """تسجيل المالك المخفي للمجموعة - يعمل فقط للمشرفين الحقيقيين وغير المحظورين"""
     if update.effective_chat.type not in ['group', 'supergroup']:
         await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
         return
@@ -6299,7 +6299,12 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
-    # ✅ التحقق من صلاحية البوت أولاً
+    # ✅ التحقق من الحظر العالمي
+    if await db_is_banned(user_id):
+        await safe_send_markdown(context.bot, user_id, "🚫 أنت محظور من استخدام البوت!")
+        return
+
+    # ✅ التحقق من صلاحية البوت
     bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
     if not bot_perms['can_act']:
         await safe_send_markdown(
@@ -6310,7 +6315,7 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
         )
         return
 
-    # ✅ التحقق المباشر من تيليجرام: هل المستخدم مالك أو مشرف؟
+    # ✅ التحقق المباشر من تيليجرام
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         is_creator = member.status == 'creator'
@@ -6323,9 +6328,7 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
         )
         return
 
-    # ✅ إذا كان مالكاً أو مشرفاً في تيليجرام
     if is_creator or is_admin:
-        # التحقق إذا كان مسجلاً مسبقاً
         if await db_is_hidden_owner(chat_id, user_id):
             await safe_send_markdown(
                 context.bot,
@@ -6333,11 +6336,9 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
                 get_text(user_id, 'hidden_owner_already')
             )
             return
-        
-        # تسجيل المالك المخفي
+
         await db_register_hidden_owner_group(chat_id, user_id)
         
-        # ✅ تأكيد أنه مشرف حقيقي أيضاً (مع التبويب الصحيح)
         async def _add_real_admin(conn):
             await conn.execute(
                 "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
@@ -6347,7 +6348,7 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
         await execute_db(_add_real_admin)
         
         invalidate_auth_cache(chat_id, user_id)
-        
+
         await safe_send_markdown(
             context.bot,
             user_id,
@@ -6359,8 +6360,7 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
             f"• أوامر الحظر والكتم والتحذير"
         )
         return
-    
-    # ❌ المستخدم ليس مشرفاً
+
     await safe_send_markdown(
         context.bot,
         user_id,
@@ -6375,6 +6375,7 @@ async def register_hidden_owner_handler(update: Update, context: ContextTypes.DE
 
 # ===================== معالج إضافة البوت إلى المجموعة =====================
 async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إضافة البوت إلى مجموعة - تسجيل المالك المخفي فقط إذا كان المضيف مشرفاً"""
     if not update.message or not update.message.new_chat_members:
         return
     
@@ -6393,48 +6394,52 @@ async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await db_register_group(chat.id, chat_name, added_by_id, chat.username)
             
-            owner_info = await detect_owner_type(context.bot, chat.id)
-            if owner_info.get('user_id'):
-                await db_register_hidden_owner_group(chat.id, owner_info['user_id'])
-                invalidate_auth_cache(chat.id, owner_info['user_id'])
-                logger.info(f"👑 تم تسجيل المالك الحقيقي {owner_info['user_id']} كمالك مخفي للمجموعة {chat.id}")
+            # ✅ التحقق من صلاحية المضيف قبل تسجيله كمالك مخفي
+            try:
+                member_info = await context.bot.get_chat_member(chat.id, added_by_id)
+                is_admin = member_info.status in ['administrator', 'creator']
+            except Exception as e:
+                logger.error(f"فشل التحقق من صلاحية المضيف {added_by_id}: {e}")
+                is_admin = False
             
-            if added_by_id and added_by_id != owner_info.get('user_id'):
+            if is_admin:
                 await db_register_hidden_owner_group(chat.id, added_by_id)
                 invalidate_auth_cache(chat.id, added_by_id)
-                logger.info(f"🔒 تم تسجيل المضيف {added_by_id} كمالك مخفي للمجموعة {chat.id}")
+                logger.info(f"🔒 تم تسجيل المضيف {added_by_id} كمالك مخفي (مشرف) للمجموعة {chat.id}")
+                
+                # محاولة تسجيل المالك الحقيقي أيضاً
+                owner_info = await detect_owner_type(context.bot, chat.id)
+                if owner_info.get('user_id') and owner_info['user_id'] != added_by_id:
+                    await db_register_hidden_owner_group(chat.id, owner_info['user_id'])
+                    invalidate_auth_cache(chat.id, owner_info['user_id'])
+                    logger.info(f"👑 تم تسجيل المالك الحقيقي {owner_info['user_id']} أيضاً كمالك مخفي للمجموعة {chat.id}")
+            else:
+                logger.info(f"ℹ️ المضيف {added_by_id} ليس مشرفاً، لم يتم تسجيله كمالك مخفي")
             
+            # مزامنة المشرفين
+            await db_sync_group_admins(chat.id, context.bot, added_by_id if is_admin else None)
+            
+            # إرسال تقرير للمضيف
+            await send_addition_report(context.bot, inviter, chat, chat_type_name, is_admin)
+            
+            # رسالة ترحيب في المجموعة
             try:
-                await db_sync_group_admins(chat.id, context.bot, added_by_id)
-            except Exception as e:
-                logger.warning(f"فشلت مزامنة المشرفين في {chat.id}: {e}")
-            
-            await send_addition_report(context.bot, inviter, chat, chat_type_name)
-            
-            try:
-                await context.bot.send_message(
-                    chat.id,
-                    "✅ **تم تفعيل البوت في المجموعة!**\n\n"
-                    "📌 استخدم /help لمعرفة الأوامر المتاحة.\n"
-                    "🔐 إذا كنت مشرفاً، استخدم /syncgroup لتفعيل الصلاحيات الكاملة."
-                )
+                if is_admin:
+                    msg = "✅ **تم تفعيل البوت في المجموعة**\n🔒 **تم تسجيلك كمالك مخفي** (بما أنك مشرف)"
+                else:
+                    msg = "✅ **تم إضافة البوت إلى المجموعة**\n⚠️ **أنت لست مشرفاً، لذلك لم تُمنح صلاحيات إدارية.**\nإذا كنت مشرفاً، استخدم `/syncgroup` لتفعيل الصلاحيات."
+                await safe_send_markdown(context.bot, chat.id, msg)
             except:
                 pass
             
             break
 
 # ===================== دوال الإشعارات =====================
-async def send_addition_report(bot, adder, chat, chat_type_name):
+async def send_addition_report(bot, adder, chat, chat_type_name, is_admin: bool = False):
+    """إرسال تقرير للمضيف عند إضافة البوت"""
     try:
         if not adder:
             return
-        
-        try:
-            member = await bot.get_chat_member(chat.id, adder.id)
-            is_admin = member.status in ['administrator', 'creator']
-        except Exception as e:
-            logger.error(f"فشل التحقق من صلاحية المستخدم {adder.id}: {e}")
-            is_admin = False
         
         if is_admin:
             await bot.send_message(
@@ -6444,7 +6449,7 @@ async def send_addition_report(bot, adder, chat, chat_type_name):
                     f"📌 الاسم: {chat.title}\n"
                     f"🆔 المعرف: {chat.id}\n"
                     f"👤 أضيف بواسطة: {adder.full_name or adder.first_name or adder.id}\n\n"
-                    f"🔒 **تم تسجيلك كمالك مخفي تلقائياً**\n"
+                    f"🔒 **تم تسجيلك كمالك مخفي تلقائياً** (بما أنك مشرف)\n"
                     f"🔐 استخدم /security لإعدادات الأمان\n"
                     f"🛠️ استخدم /panel للوحة التحكم\n\n"
                     f"📌 **ملاحظة:** إذا لم تظهر لك المجموعة، استخدم /syncgroup في المجموعة"
@@ -6465,8 +6470,9 @@ async def send_addition_report(bot, adder, chat, chat_type_name):
                 ),
                 parse_mode="MarkdownV2"
             )
+            logger.info(f"ℹ️ تم إرسال تقرير مبسط للعضو {adder.id} في {chat.title}")
     except Exception as e:
-        logger.error(f"خطأ في send_addition_report: {e}")
+        logger.error(f"❌ خطأ في send_addition_report: {e}")
 
 # ===================== معالج الأوامر الإدارية =====================
 async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7394,7 +7400,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.16
+📦 **الإصدار:** 20.0.17
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -11101,53 +11107,71 @@ async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAU
         return
 
 async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إضافة البوت إلى مجموعة - تسجيل المالك المخفي فقط إذا كان المضيف مشرفاً"""
     if not update.message or not update.message.new_chat_members:
         return
+    
     bot_id = context.bot.id
     chat = update.effective_chat
     inviter = update.effective_user
+    
     if chat.type not in ['group', 'supergroup']:
         return
+    
     for member in update.message.new_chat_members:
         if member.id == bot_id:
             added_by_id = inviter.id if inviter else 0
             chat_name = chat.title or "بدون اسم"
-            await db_register_group(chat.id, chat_name, added_by_id, chat.username)
             chat_type_name = "مجموعة" if chat.type == 'group' else "سوبر جروب"
-
-            await db_register_hidden_owner_group(chat.id, added_by_id)
-            invalidate_auth_cache(chat.id, added_by_id)
-            logger.info(f"🔒 تم تسجيل المضيف {added_by_id} كمالك مخفي للمجموعة {chat.id}")
-
-            await db_sync_group_admins(chat.id, context.bot, added_by_id)
-
-            owner_info = await detect_owner_type(context.bot, chat.id)
-            if owner_info.get('user_id') and owner_info['user_id'] != added_by_id:
-                await db_register_hidden_owner_group(chat.id, owner_info['user_id'])
-                invalidate_auth_cache(chat.id, owner_info['user_id'])
-                logger.info(f"👑 تم تسجيل المالك الحقيقي {owner_info['user_id']} أيضاً كمالك مخفي للمجموعة {chat.id}")
-
-            await send_addition_report(context.bot, inviter, chat, chat_type_name)
-
+            
+            await db_register_group(chat.id, chat_name, added_by_id, chat.username)
+            
+            # ✅ التحقق من صلاحية المضيف قبل تسجيله كمالك مخفي
             try:
-                msg = "✅ **تم تفعيل البوت في المجموعة**\n🔒 **تم تسجيلك كمالك مخفي تلقائياً**\n\n📌 استخدم /panel للوحة التحكم"
+                member_info = await context.bot.get_chat_member(chat.id, added_by_id)
+                is_admin = member_info.status in ['administrator', 'creator']
+            except Exception as e:
+                logger.error(f"فشل التحقق من صلاحية المضيف {added_by_id}: {e}")
+                is_admin = False
+            
+            if is_admin:
+                await db_register_hidden_owner_group(chat.id, added_by_id)
+                invalidate_auth_cache(chat.id, added_by_id)
+                logger.info(f"🔒 تم تسجيل المضيف {added_by_id} كمالك مخفي (مشرف) للمجموعة {chat.id}")
+                
+                # محاولة تسجيل المالك الحقيقي أيضاً
+                owner_info = await detect_owner_type(context.bot, chat.id)
+                if owner_info.get('user_id') and owner_info['user_id'] != added_by_id:
+                    await db_register_hidden_owner_group(chat.id, owner_info['user_id'])
+                    invalidate_auth_cache(chat.id, owner_info['user_id'])
+                    logger.info(f"👑 تم تسجيل المالك الحقيقي {owner_info['user_id']} أيضاً كمالك مخفي للمجموعة {chat.id}")
+            else:
+                logger.info(f"ℹ️ المضيف {added_by_id} ليس مشرفاً، لم يتم تسجيله كمالك مخفي")
+            
+            # مزامنة المشرفين
+            await db_sync_group_admins(chat.id, context.bot, added_by_id if is_admin else None)
+            
+            # إرسال تقرير للمضيف
+            await send_addition_report(context.bot, inviter, chat, chat_type_name, is_admin)
+            
+            # رسالة ترحيب في المجموعة
+            try:
+                if is_admin:
+                    msg = "✅ **تم تفعيل البوت في المجموعة**\n🔒 **تم تسجيلك كمالك مخفي** (بما أنك مشرف)"
+                else:
+                    msg = "✅ **تم إضافة البوت إلى المجموعة**\n⚠️ **أنت لست مشرفاً، لذلك لم تُمنح صلاحيات إدارية.**\nإذا كنت مشرفاً، استخدم `/syncgroup` لتفعيل الصلاحيات."
                 await safe_send_markdown(context.bot, chat.id, msg)
             except:
                 pass
+            
             break
 
-async def send_addition_report(bot, adder, chat, chat_type_name):
+async def send_addition_report(bot, adder, chat, chat_type_name, is_admin: bool = False):
+    """إرسال تقرير للمضيف عند إضافة البوت"""
     try:
         if not adder:
             return
-
-        try:
-            member = await bot.get_chat_member(chat.id, adder.id)
-            is_admin = member.status in ['administrator', 'creator']
-        except Exception as e:
-            logger.error(f"فشل التحقق من صلاحية المستخدم {adder.id} في {chat.id}: {e}")
-            is_admin = False
-
+        
         if is_admin:
             await bot.send_message(
                 chat_id=adder.id,
@@ -11156,14 +11180,13 @@ async def send_addition_report(bot, adder, chat, chat_type_name):
                     f"📌 الاسم: {chat.title}\n"
                     f"🆔 المعرف: {chat.id}\n"
                     f"👤 أضيف بواسطة: {adder.full_name or adder.first_name or adder.id}\n\n"
-                    f"🔒 **تم تسجيلك كمالك مخفي تلقائياً**\n"
+                    f"🔒 **تم تسجيلك كمالك مخفي تلقائياً** (بما أنك مشرف)\n"
                     f"🔐 استخدم /security لإعدادات الأمان\n"
                     f"🛠️ استخدم /panel للوحة التحكم\n\n"
                     f"📌 **ملاحظة:** إذا لم تظهر لك المجموعة، استخدم /syncgroup في المجموعة"
                 ),
                 parse_mode="MarkdownV2"
             )
-            logger.info(f"✅ تم إرسال تقرير التفعيل الكامل للمشرف {adder.id} في {chat.title}")
         else:
             await bot.send_message(
                 chat_id=adder.id,
@@ -11179,7 +11202,6 @@ async def send_addition_report(bot, adder, chat, chat_type_name):
                 parse_mode="MarkdownV2"
             )
             logger.info(f"ℹ️ تم إرسال تقرير مبسط للعضو {adder.id} في {chat.title}")
-
     except Exception as e:
         logger.error(f"❌ خطأ في send_addition_report: {e}")
 
@@ -11544,9 +11566,10 @@ def invalidate_auth_cache(chat_id: int = None, user_id: int = None):
     except Exception as e:
         logger.error(f"خطأ في invalidate_auth_cache: {e}")
 
-# ===================== حلقة تحديث المشرفين الدورية =====================
+# ===================== حلقة تحديث المشرفين الدورية (تم التعديل إلى 60 ثانية) =====================
 async def refresh_group_admins_loop(bot):
     while True:
+        await asyncio.sleep(60)  # تم التعديل من 3600 إلى 60 ثانية
         try:
             async def _get_all_groups(conn):
                 cur = await conn.execute("SELECT chat_id FROM bot_groups WHERE banned=0")
@@ -11561,7 +11584,6 @@ async def refresh_group_admins_loop(bot):
             logger.info(f"✅ تم تحديث مشرفي {len(groups)} مجموعة")
         except Exception as e:
             logger.error(f"خطأ في حلقة تحديث المشرفين: {e}")
-        await asyncio.sleep(3600)
 
 # ===================== معالج الرسائل الرئيسي =====================
 async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -12484,7 +12506,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.16</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.17</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13772,21 +13794,24 @@ async def main():
     task_manager.create_task(cleanup_points_cache())
     task_manager.create_task(memory_monitor())
     task_manager.create_task(auto_close_contests_loop(application.bot))
-    task_manager.create_task(refresh_group_admins_loop(application.bot))
+    task_manager.create_task(refresh_group_admins_loop(application.bot))  # تم التعديل إلى 60 ثانية داخل الدالة
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.16 - النسخة العالمية)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.17 - النسخة العالمية مع تصحيحات أمنية)")
     print("✅ جميع التحسينات العالمية تم تطبيقها:")
     print("   • ✅ نظام صلاحيات محسن: مالك مخفي > مشرف مخفي > مشرف حقيقي")
     print("   • ✅ معالج /syncgroup يعمل للمشرفين والأعضاء العاديين بشكل مختلف")
-    print("   • ✅ تسجيل تلقائي للمجموعة والمالك عند إضافة البوت")
+    print("   • ✅ تسجيل تلقائي للمجموعة والمالك عند إضافة البوت (فقط للمشرفين)")
     print("   • ✅ إشعار المشرفين عند طلب التفعيل من عضو عادي")
-    print("   • ✅ حلقة تحديث المشرفين التلقائية (كل ساعة)")
+    print("   • ✅ حلقة تحديث المشرفين التلقائية (كل 60 ثانية)")
     print("   • ✅ التحقق المباشر من تيليجرام عند الحاجة")
     print("   • ✅ كاش ذكي للصلاحيات لتسريع الأداء")
     print("   • ✅ 200 رد تلقائي للمجموعات مع أوزان")
     print("   • ✅ نظام ردود متقدم مع إعدادات لكل مجموعة")
     print("   • ✅ دعم المالك والمشرفين المخفيين المتعددين")
     print("   • ✅ نظام المسابقات المتكامل")
+    print("   • ✅ منع تسجيل المالك المخفي للعضوات غير المشرفين عند الإضافة")
+    print("   • ✅ التحقق من صلاحية المستهدف قبل إضافته كمشرف مخفي")
+    print("   • ✅ التحقق من الحظر العالمي قبل تسجيل المالك المخفي")
 
     try:
         await application.run_polling(
