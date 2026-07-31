@@ -13413,7 +13413,7 @@ async def main():
     application.add_handler(CommandHandler("start", start_command_handler))
     application.add_handler(CommandHandler("language", language_command_handler))
     application.add_handler(CommandHandler("syncgroup", syncgroup_command_handler))
-    application.add_handler(CommandHandler("security", security_command_handler))
+    application.add_handler(CommandHandler("security", security_select_group_callback))
     application.add_handler(CommandHandler("register_hidden_owner", register_hidden_owner_handler))
     application.add_handler(CommandHandler("add_hidden_admin", add_hidden_admin_command))
     application.add_handler(CommandHandler("remove_hidden_admin", remove_hidden_admin_command))
