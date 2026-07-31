@@ -10953,6 +10953,59 @@ async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 pass
             break
+async def send_addition_report(bot, adder, chat, chat_type_name):
+    """
+    إرسال تقرير إضافة البوت إلى المستخدم الذي أضافه
+    يتم إرسال التقرير الكامل فقط إذا كان المستخدم مشرفاً في المجموعة
+    """
+    try:
+        if not adder:
+            return
+
+        # ✅ التحقق من صلاحية المستخدم في المجموعة
+        try:
+            member = await bot.get_chat_member(chat.id, adder.id)
+            is_admin = member.status in ['administrator', 'creator']
+        except Exception as e:
+            logger.error(f"فشل التحقق من صلاحية المستخدم {adder.id} في {chat.id}: {e}")
+            is_admin = False
+
+        if is_admin:
+            # ✅ رسالة كاملة للمشرفين
+            await bot.send_message(
+                chat_id=adder.id,
+                text=(
+                    f"✅ **تم إضافة البوت إلى {chat_type_name}**\n\n"
+                    f"📌 الاسم: {chat.title}\n"
+                    f"🆔 المعرف: {chat.id}\n"
+                    f"👤 أضيف بواسطة: {adder.full_name or adder.first_name or adder.id}\n\n"
+                    f"🔒 **تم تسجيلك كمالك مخفي تلقائياً**\n"
+                    f"🔐 استخدم /security لإعدادات الأمان\n"
+                    f"🛠️ استخدم /panel للوحة التحكم\n\n"
+                    f"📌 **ملاحظة:** إذا لم تظهر لك المجموعة، استخدم /syncgroup في المجموعة"
+                ),
+                parse_mode="MarkdownV2"
+            )
+            logger.info(f"✅ تم إرسال تقرير التفعيل الكامل للمشرف {adder.id} في {chat.title}")
+        else:
+            # ❌ رسالة مختصرة للأعضاء العاديين
+            await bot.send_message(
+                chat_id=adder.id,
+                text=(
+                    f"✅ **تم إضافة البوت إلى {chat_type_name}**\n\n"
+                    f"📌 الاسم: {chat.title}\n"
+                    f"🆔 المعرف: {chat.id}\n\n"
+                    f"⚠️ **تنبيه:** أنت لست مشرفاً في هذه المجموعة.\n"
+                    f"🔹 لن تتمكن من استخدام أوامر الإدارة.\n"
+                    f"🔹 إذا كنت مشرفاً، استخدم `/syncgroup` في المجموعة لتفعيل الصلاحيات.\n\n"
+                    f"📌 للمساعدة: /help"
+                ),
+                parse_mode="MarkdownV2"
+            )
+            logger.info(f"ℹ️ تم إرسال تقرير مبسط للعضو {adder.id} في {chat.title}")
+
+    except Exception as e:
+        logger.error(f"❌ خطأ في send_addition_report: {e}")
 
 async def track_chat_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = update.my_chat_member
