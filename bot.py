@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 20.0.14 - النسخة المحسنة مع إصلاح صلاحيات المشرفين نهائياً
+الإصدار: 20.0.15 - النسخة المحسنة مع إصلاح صلاحيات المشرفين نهائياً ومنطقياً
 المطور: @RelaxMgr
 """
 
@@ -501,7 +501,7 @@ except ImportError:
     _security_cache = {}
     _translation_cache = {}
     _auth_cache = {}
-    _auth_cache_time = {}  # ✅ أضف هذا السطر
+    _auth_cache_time = {}
     _ADMIN_CACHE_TTL = 60
     _SECURITY_CACHE_TTL = 30
     _TRANSLATION_CACHE_SIZE = 500
@@ -567,7 +567,7 @@ MAX_POSTS_PER_SESSION = 50
 MAX_UNPUBLISHED_POSTS = 1000
 DB_TIMEOUT = 30
 MAX_CONNECTIONS = 20
-SESSION_TIMEOUT_SECONDS = 300  # 5 دقائق مهلة الجلسات
+SESSION_TIMEOUT_SECONDS = 300
 
 # ===================== معرف المستخدم المخفي (Anonymous Admin) =====================
 ANONYMOUS_ADMIN_ID = int(os.getenv("ANONYMOUS_ADMIN_ID", "1087968824"))
@@ -1672,10 +1672,8 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
     MAX_LEN = 4096
     try:
         escaped = escape_markdown_v2(clean_text)
-        # إزالة التكرار في الشرطات المائلة
         escaped = re.sub(r'\\{2,}', '\\\\', escaped)
         if len(escaped) > MAX_LEN:
-            # قطع النص بطريقة آمنة مع مراعاة تنسيق Markdown
             cut_point = MAX_LEN - 3
             while cut_point > 0 and escaped[cut_point - 1] in ('\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!', '@'):
                 cut_point -= 1
@@ -1688,7 +1686,6 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
             **kwargs
         )
     except Exception:
-        # المحاولة الثانية: HTML
         try:
             html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             if len(html_text) > MAX_LEN:
@@ -1701,7 +1698,6 @@ async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **
                 **kwargs
             )
         except Exception:
-            # المحاولة الثالثة: نص عادي
             try:
                 plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
                 if len(plain) > MAX_LEN:
@@ -1721,7 +1717,6 @@ async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
         return None
     current_text = query.message.text or ""
     current_reply_markup = query.message.reply_markup
-    # تجنب التعديل إذا لم يتغير شيء
     if current_text == text:
         if reply_markup is None and current_reply_markup is None:
             try:
@@ -2140,10 +2135,10 @@ def retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,)):
 class GlobalRateLimiter:
     def __init__(self):
         self.limits = {
-            'command': (5, 10),     # 5 لكل 10 ثواني
-            'callback': (10, 30),   # 10 لكل 30 ثانية
-            'message': (20, 60),    # 20 لكل دقيقة
-            'api': (30, 60),        # 30 لكل دقيقة
+            'command': (5, 10),
+            'callback': (10, 30),
+            'message': (20, 60),
+            'api': (30, 60),
         }
         self.records = defaultdict(list)
         self._lock = asyncio.Lock()
@@ -2154,7 +2149,6 @@ class GlobalRateLimiter:
             now = time_module.time()
             key = f"{user_id}:{action_type}"
             user_requests = self.records[key]
-            # تنظيف الطلبات القديمة
             user_requests = [t for t in user_requests if now - t < window]
             self.records[key] = user_requests
 
@@ -2924,24 +2918,66 @@ async def db_register_group(chat_id: int, chat_name: str, added_by: int, usernam
         return True
     return await execute_db(_register)
 
+# ===================== دوال المجموعات - المحسنة =====================
 async def db_get_user_groups(user_id: int):
-    """إرجاع المجموعات التي يكون فيها المستخدم مشرفاً فقط (حقيقي أو مخفي)"""
+    """إرجاع المجموعات التي يكون فيها المستخدم مشرفاً فعلاً (من جدول group_admins)"""
     async def _get(conn):
         try:
-            # ✅ فقط المجموعات التي المستخدم مشرف فيها (من group_admins، hidden_owner_groups، hidden_admins)
+            # ✅ فقط المجموعات التي المستخدم مشرف حقيقي فيها (من group_admins)
             cur = await conn.execute("""
                 SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned
                 FROM bot_groups bg
                 WHERE bg.chat_id IN (
                     SELECT chat_id FROM group_admins WHERE user_id = ?
-                    UNION
-                    SELECT chat_id FROM hidden_owner_groups WHERE owner_id = ?
-                    UNION
-                    SELECT chat_id FROM hidden_admins WHERE admin_id = ?
                 )
                 ORDER BY bg.chat_name
-            """, (user_id, user_id, user_id))
-            return await cur.fetchall()
+            """, (user_id,))
+            admin_groups = await cur.fetchall()
+            
+            # ✅ المجموعات التي هو مالك مخفي فيها
+            cur = await conn.execute("""
+                SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned
+                FROM bot_groups bg
+                INNER JOIN hidden_owner_groups hog ON bg.chat_id = hog.chat_id
+                WHERE hog.owner_id = ?
+                ORDER BY bg.chat_name
+            """, (user_id,))
+            owner_groups = await cur.fetchall()
+            
+            # ✅ المجموعات التي هو مشرف مخفي فيها
+            cur = await conn.execute("""
+                SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned
+                FROM bot_groups bg
+                INNER JOIN hidden_admins ha ON bg.chat_id = ha.chat_id
+                WHERE ha.admin_id = ?
+                ORDER BY bg.chat_name
+            """, (user_id,))
+            hidden_groups = await cur.fetchall()
+            
+            # دمج النتائج مع تجنب التكرار
+            result = []
+            seen = set()
+            
+            for group in admin_groups:
+                chat_id = group[0]
+                if chat_id not in seen:
+                    seen.add(chat_id)
+                    result.append(group)
+            
+            for group in owner_groups:
+                chat_id = group[0]
+                if chat_id not in seen:
+                    seen.add(chat_id)
+                    result.append(group)
+            
+            for group in hidden_groups:
+                chat_id = group[0]
+                if chat_id not in seen:
+                    seen.add(chat_id)
+                    result.append(group)
+            
+            return result
+            
         except Exception as e:
             logger.error(f"خطأ في جلب مجموعات المستخدم {user_id}: {e}")
             return []
@@ -5984,6 +6020,7 @@ async def my_full_stats_callback(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await safe_send_markdown(context.bot, uid, text, reply_markup=kb)
 
+# ===================== معالجات الكولباك للمجموعات - المحسنة =====================
 async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
@@ -5996,14 +6033,26 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # ✅ جلب المجموعات التي المستخدم مشرف فيها (من قاعدة البيانات)
     groups = await db_get_user_groups(uid)
-
-    # ✅ فلترة إضافية: التحقق من الصلاحية الحقيقية
-    filtered_groups = []
+    
+    # ✅ التحقق المنطقي: هل المستخدم مشرف فعلاً في تيليجرام؟
+    valid_groups = []
     for chat_id, chat_name, username, banned in groups:
-        if await is_authorized_in_group(context.bot, chat_id, uid):
-            filtered_groups.append((chat_id, chat_name, username, banned))
+        # تحقق من تيليجرام مباشرة
+        is_admin = await is_currently_admin_in_group(context.bot, chat_id, uid)
+        
+        # إذا كان مشرفاً في تيليجرام، أضف المجموعة
+        if is_admin:
+            valid_groups.append((chat_id, chat_name, username, banned))
+        else:
+            # ❌ إذا لم يكن مشرفاً في تيليجرام، قم بإزالته من قاعدة البيانات
+            async def _remove_admin(conn):
+                await conn.execute("DELETE FROM group_admins WHERE chat_id=? AND user_id=?", (chat_id, uid))
+                await conn.commit()
+            await execute_db(_remove_admin)
+            logger.info(f"🗑️ تم إزالة المستخدم {uid} من مشرفي المجموعة {chat_id} (لم يعد مشرفاً في تيليجرام)")
 
-    if not filtered_groups:
+    # ✅ إذا لم تكن هناك مجموعات صالحة
+    if not valid_groups:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ أضف البوت", url=f"https://t.me/{BOT_USERNAME}?startgroup")],
             [InlineKeyboardButton("🔄 تحديث القائمة", callback_data=CallbackData.SECURITY_REFRESH_GROUPS)],
@@ -6019,8 +6068,9 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await safe_send_markdown(context.bot, uid, msg, reply_markup=kb)
         return
 
+    # ✅ عرض المجموعات الصالحة فقط
     keyboard = []
-    for chat_id, chat_name, username, banned in filtered_groups:
+    for chat_id, chat_name, username, banned in valid_groups:
         display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
         status_icon = "⛔" if banned else "✅"
         
@@ -6064,6 +6114,16 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 pass
     else:
         await safe_send_markdown(context.bot, uid, text, reply_markup=reply_markup)
+
+# ===================== دالة التحقق المباشر من تيليجرام =====================
+async def is_currently_admin_in_group(bot, chat_id: int, user_id: int) -> bool:
+    """التحقق المباشر من تيليجرام إذا كان المستخدم مشرفاً الآن"""
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        return member.status in ['administrator', 'creator']
+    except Exception as e:
+        logger.error(f"خطأ في التحقق من مشرف {user_id} في {chat_id}: {e}")
+        return False
 
 async def delete_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -7092,7 +7152,7 @@ async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"""👑 **معلومات المطور**
 ━━━━━━━━━━━━━━━━━━━━━━
 🤖 **البوت:** {BOT_NAME}
-📦 **الإصدار:** 20.0.14
+📦 **الإصدار:** 20.0.15
 👨‍💻 **المطور:** @RelaxMgr
 
 🔐 **الميزات الأمنية المتقدمة:**
@@ -12258,7 +12318,7 @@ async def index_handler(request):
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
             <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-            <p style="color: #666; font-size: 12px;">الإصدار 20.0.14</p>
+            <p style="color: #666; font-size: 12px;">الإصدار 20.0.15</p>
         </body>
         </html>"""
     return web.Response(text=html_content, content_type="text/html", charset="utf-8")
@@ -13579,13 +13639,15 @@ async def main():
     # ====== حلقة تحديث المشرفين الدورية ======
     task_manager.create_task(refresh_group_admins_loop(application.bot))
 
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.14 - النسخة المحسنة مع إصلاح صلاحيات المشرفين)")
+    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.15 - النسخة المحسنة مع إصلاح صلاحيات المشرفين منطقياً)")
     print("✅ جميع التحسينات المطلوبة تم تطبيقها:")
     print("   • ✅ تحسين دالة is_authorized_in_group مع التحقق من صلاحية البوت")
     print("   • ✅ إضافة تخزين مؤقت ذكي للصلاحيات")
     print("   • ✅ حلقة تحديث المشرفين الدورية (كل ساعة)")
     print("   • ✅ تعزيز جميع نقاط التحقق في الأوامر والكولباك")
     print("   • ✅ معالجة الحالات التي يكون فيها البوت غير مشرف")
+    print("   • ✅ التحقق المباشر من تيليجرام قبل عرض المجموعات")
+    print("   • ✅ إزالة المستخدمين غير المشرفين من قاعدة البيانات تلقائياً")
 
     try:
         await application.run_polling(
