@@ -4204,6 +4204,59 @@ async def db_set_allowed_sendcode_user(user_id: int) -> None:
         await conn.execute("INSERT OR REPLACE INTO allowed_sendcode_user (id, user_id) VALUES (1, ?)", (user_id,))
         await conn.commit()
     return await execute_db(_set)
+# ===================== دوال الترجمة =====================
+user_translation_settings_cache = {}
+_user_translation_cache_lock = asyncio.Lock()
+
+async def get_user_translation_language(user_id: int) -> str:
+    """الحصول على لغة الترجمة المفضلة للمستخدم"""
+    async with _user_translation_cache_lock:
+        if user_id in user_translation_settings_cache:
+            return user_translation_settings_cache[user_id]
+    
+    async def _get(conn):
+        cur = await conn.execute("SELECT lang FROM user_translation WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 'off'
+    
+    lang = await execute_db(_get)
+    async with _user_translation_cache_lock:
+        user_translation_settings_cache[user_id] = lang
+    return lang
+
+async def set_user_translation_language(user_id: int, lang: str):
+    """تعيين لغة الترجمة المفضلة للمستخدم"""
+    async def _set(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_translation (user_id, lang) VALUES (?, ?)",
+            (user_id, lang)
+        )
+        await conn.commit()
+    await execute_db(_set)
+    async with _user_translation_cache_lock:
+        user_translation_settings_cache[user_id] = lang
+
+async def translate_text(text: str, target_lang: str) -> str:
+    """ترجمة النص باستخدام Google Translator مع تخزين مؤقت"""
+    if not text or target_lang == 'off' or target_lang == 'ar':
+        return text
+    
+    cache_key = f"{hashlib.md5(text.encode()).hexdigest()}_{target_lang}"
+    
+    cached = await _translation_cache.get(cache_key)
+    if cached:
+        return cached
+    
+    try:
+        translator = GoogleTranslator(source='auto', target=target_lang)
+        translated = translator.translate(text)
+        if translated:
+            await _translation_cache.set(cache_key, translated)
+            return translated
+    except Exception as e:
+        logger.error(f"فشل الترجمة: {e}")
+    
+    return text
 
 # ===================== دوال المسابقات =====================
 class ContestTypes(Enum):
