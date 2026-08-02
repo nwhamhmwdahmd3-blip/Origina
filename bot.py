@@ -13762,7 +13762,8 @@ async def main():
         BotCommand("declare_winner", "إعلان فائز"),
         BotCommand("set_rules", "تعيين قوانين المجموعة"),
         BotCommand("rules", "عرض قوانين المجموعة"),
-    await application.bot.set_my_commands(commands)
+    await application.bot.set_my_commands(commands),
+
 
     # ====== تشغيل المهام الخلفية ======
     task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "auto_publish"))
