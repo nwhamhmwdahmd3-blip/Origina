@@ -13854,17 +13854,16 @@ async def run_polling_safe(application):
     """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
     while True:
         try:
-            await application.run_polling(
-                drop_pending_updates=True,
-                poll_interval=POLL_INTERVAL
-            )
-        except asyncio.CancelledError:
-            logger.info("🛑 تم إلغاء polling")
-            break
-        except RuntimeError as e:
-            if "Cannot close a running event loop" in str(e):
-                logger.warning("⚠️ تم محاولة إغلاق حلقة الأحداث أثناء التشغيل، سيتم إعادة التشغيل...")
-                await asyncio.sleep(10)
+    print("🔄 بدء تشغيل polling...")  # 👈 التأكيد
+    await run_polling_safe(application)
+except KeyboardInterrupt:
+    logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
+except Exception as e:
+    logger.error(f"❌ خطأ في polling: {e}")
+finally:
+    await cleanup_resources()
+    await task_manager.cancel_all()
+
                 continue
             logger.error(f"❌ خطأ في Runtime: {e}")
             break
