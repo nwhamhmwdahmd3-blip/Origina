@@ -3147,16 +3147,32 @@ else:
 
 async def db_get_security_settings(chat_id: int, force_refresh: bool = False) -> Dict:
     default_settings = {
-        'links': False, 'mentions': False, 'warn': True, 'slow_mode': False,
-        'slow_mode_seconds': 5, 'welcome_enabled': False,
+        'delete_links': False,
+        'mentions': False,
+        'warn_message': True,
+        'slow_mode': False,
+        'slow_mode_seconds': 5,
+        'welcome_enabled': False,
         'welcome_text': "مرحباً {user} في {chat} 🤍",
-        'goodbye_enabled': False, 'goodbye_text': "وداعاً {user} 👋",
-        'delete_banned_words': False, 'auto_penalty': 'none', 'auto_mute_duration': 60,
-        'delete_videos': False, 'delete_audio': False, 'delete_animation': False,
-        'delete_service': False, 'delete_documents': False, 'delete_stickers': False,
-        'delete_penalty': 'none', 'delete_penalty_duration': 0
+        'goodbye_enabled': False,
+        'goodbye_text': "وداعاً {user} 👋",
+        'delete_banned_words': False,
+        'auto_penalty': 'none',
+        'auto_mute_duration': 60,
+        'delete_videos': False,
+        'delete_audio': False,
+        'delete_animation': False,
+        'delete_service': False,
+        'delete_documents': False,
+        'delete_stickers': False,
+        'delete_penalty': 'none',
+        'delete_penalty_duration': 0,
+        # إضافة مفاتيح الواجهة
+        'links': False,
+        'warn': True,
     }
 
+    # التحقق من التخزين المؤقت
     if not force_refresh:
         if CACHETOOLS_AVAILABLE:
             if chat_id in _security_cache:
@@ -3182,10 +3198,10 @@ async def db_get_security_settings(chat_id: int, force_refresh: bool = False) ->
                 settings = {}
                 for col in col_names:
                     value = row[col]
-                    if col in ['links', 'mentions', 'warn', 'slow_mode', 'welcome_enabled', 
-                              'goodbye_enabled', 'delete_banned_words', 'delete_videos',
-                              'delete_audio', 'delete_animation', 'delete_service',
-                              'delete_documents', 'delete_stickers']:
+                    if col in ['delete_links', 'mentions', 'warn_message', 'slow_mode', 
+                              'welcome_enabled', 'goodbye_enabled', 'delete_banned_words', 
+                              'delete_videos', 'delete_audio', 'delete_animation', 
+                              'delete_service', 'delete_documents', 'delete_stickers']:
                         settings[col] = value == 1
                     elif col in ['slow_mode_seconds', 'auto_mute_duration', 'delete_penalty_duration']:
                         settings[col] = value if value is not None else default_settings.get(col, 0)
@@ -3193,6 +3209,10 @@ async def db_get_security_settings(chat_id: int, force_refresh: bool = False) ->
                         settings[col] = value if value is not None else default_settings.get(col, '')
                     else:
                         settings[col] = value
+                
+                # ✅ إضافة مفاتيح الواجهة التي يستخدمها الكيبورد
+                settings['links'] = settings.get('delete_links', False)
+                settings['warn'] = settings.get('warn_message', True)
                 
                 # تخزين في الكاش
                 if CACHETOOLS_AVAILABLE:
@@ -3209,16 +3229,24 @@ async def db_get_security_settings(chat_id: int, force_refresh: bool = False) ->
             )
             await conn.commit()
             
+            # إرجاع الإعدادات الافتراضية مع مفاتيح الواجهة
+            result = default_settings.copy()
+            result['links'] = result.get('delete_links', False)
+            result['warn'] = result.get('warn_message', True)
+            
             if CACHETOOLS_AVAILABLE:
-                _security_cache[chat_id] = default_settings
+                _security_cache[chat_id] = result
             else:
-                _security_cache[chat_id] = (time_module.time(), default_settings)
-            return default_settings
+                _security_cache[chat_id] = (time_module.time(), result)
+            return result
             
         return await execute_db(_get)
     except Exception as e:
         advanced_logger.log_error("خطأ في db_get_security_settings", e, {"chat_id": chat_id})
-        return default_settings
+        result = default_settings.copy()
+        result['links'] = result.get('delete_links', False)
+        result['warn'] = result.get('warn_message', True)
+        return result
 
 async def db_set_security_settings(chat_id: int, **kwargs):
     try:
