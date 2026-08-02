@@ -13772,12 +13772,12 @@ async def main():
     task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(application.bot), "reminders"))
     task_manager.create_task(safe_loop(cleanup_expired_sessions_improved, "cleanup_sessions"))
    # تشغيل خادم الويب (مرة واحدة فقط)
-web_success = await start_web_server()
-if web_success:
+    web_success = await start_web_server()
+    if web_success:
     logger.info("✅ خادم الويب يعمل")
     task_manager.create_task(safe_loop(self_http_ping_loop, "http_ping"))
-else:
-    logger.warning("⚠️ خادم الويب لم يعمل، لكن البوت مستمر")
+    else:
+        logger.warning("⚠️ خادم الويب لم يعمل، لكن البوت مستمر")
 
     task_manager.create_task(safe_loop(self_ping_loop, "ping"))
     task_manager.create_task(safe_loop(broadcast_stats_periodically, "broadcast_stats"))
