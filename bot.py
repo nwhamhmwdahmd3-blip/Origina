@@ -13762,8 +13762,8 @@ async def main():
         BotCommand("declare_winner", "إعلان فائز"),
         BotCommand("set_rules", "تعيين قوانين المجموعة"),
         BotCommand("rules", "عرض قوانين المجموعة"),
-    await application.bot.set_my_commands(commands),
-
+    ]
+    await application.bot.set_my_commands(commands)
 
     # ====== تشغيل المهام الخلفية ======
     task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "auto_publish"))
@@ -13771,7 +13771,7 @@ async def main():
     task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
     task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(application.bot), "reminders"))
     task_manager.create_task(safe_loop(cleanup_expired_sessions_improved, "cleanup_sessions"))
-    
+
     # تشغيل خادم الويب (مرة واحدة فقط)
     web_success = await start_web_server_once()
     if web_success:
@@ -13779,7 +13779,7 @@ async def main():
         task_manager.create_task(safe_loop(self_http_ping_loop, "http_ping"))
     else:
         logger.warning("⚠️ خادم الويب لم يعمل، لكن البوت مستمر")
-    
+
     task_manager.create_task(safe_loop(self_ping_loop, "ping"))
     task_manager.create_task(safe_loop(broadcast_stats_periodically, "broadcast_stats"))
     task_manager.create_task(safe_loop(cleanup_points_cache, "cleanup_points"))
