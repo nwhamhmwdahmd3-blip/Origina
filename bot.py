@@ -1195,6 +1195,7 @@ class CallbackData:
     SUPPORT_HELP="support:help"
     SUPPORT_TICKET="support:ticket"
     SUPPORT_BACK="support:back"
+    BACK = "back" 
     TRIAL="trial"
     SUBSCRIBE_MENU="subscribe:menu"
     BUY_SUBSCRIPTION_1="buy:subscription_1"
