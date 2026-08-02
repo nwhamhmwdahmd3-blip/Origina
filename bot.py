@@ -13861,10 +13861,16 @@ async def run_polling_safe(application):
         except asyncio.CancelledError:
             logger.info("🛑 تم إلغاء polling")
             break
+        except RuntimeError as e:
+            if "Cannot close a running event loop" in str(e):
+                logger.warning("⚠️ تم محاولة إغلاق حلقة الأحداث أثناء التشغيل، سيتم إعادة التشغيل...")
+                await asyncio.sleep(10)
+                continue
+            logger.error(f"❌ خطأ في Runtime: {e}")
+            break
         except Exception as e:
             logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
             await asyncio.sleep(10)
-
 
 async def cleanup_resources():
     """تنظيف الموارد قبل الإغلاق"""
