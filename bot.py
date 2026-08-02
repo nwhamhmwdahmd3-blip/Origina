@@ -12360,7 +12360,7 @@ async def main():
     # تتبع المحادثات
     application.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_bot_added))
-    
+
     # تصفية الرسائل
     application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
@@ -12431,7 +12431,8 @@ async def main():
     task_manager.create_task(safe_loop(memory_monitor, "memory_monitor"))
     task_manager.create_task(safe_loop(lambda: auto_close_contests_loop(application.bot), "auto_close_contests"))
     task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "refresh_admins"))
-    task_manager.create_task(safe_loop(self_http_ping_loop, "http_ping"))
+    task_manager.create_task(safe_loop(self_http_ping_loop, "http_ping"))   # 👈 نبض HTTP لمنع النوم على Render
+
     print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.19 - النسخة العالمية مع إصلاحات الأمان)")
     print("✅ جميع التحسينات العالمية تم تطبيقها:")
     print("   • ✅ نظام صلاحيات محسن: مالك مخفي > مشرف مخفي > مشرف حقيقي")
@@ -12461,6 +12462,7 @@ async def main():
         await cleanup_resources()
         await task_manager.cancel_all()
 
+
 async def run_polling_safe(application):
     """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
     while True:
@@ -12476,6 +12478,7 @@ async def run_polling_safe(application):
             logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
             await asyncio.sleep(10)
 
+
 async def cleanup_resources():
     """تنظيف الموارد قبل الإغلاق"""
     try:
@@ -12489,36 +12492,68 @@ async def cleanup_resources():
     except:
         pass
 
-# ===================== تشغيل البوت =====================
 
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-            try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        if __name__ == "__main__":
+async def self_http_ping_loop():
+    """إرسال طلب HTTP إلى الخادم المحلي للحفاظ على نشاط Render"""
+    port = WEB_PORT_USED or int(os.getenv("PORT", 10000))
+    url = f"http://localhost:{port}/health"
+    while True:
+        await asyncio.sleep(120)  # كل دقيقتين
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=5) as resp:
+                    if resp.status == 200:
+                        logger.debug("✅ ping داخلي ناجح")
+                    else:
+                        logger.warning(f"⚠️ ping فشل: {resp.status}")
+        except Exception as e:
+            logger.error(f"❌ خطأ في ping: {e}")
+
+
+if __name__ == "__main__":
     """
     نقطة الدخول الرئيسية للبوت مع معالجة الأخطاء المتقدمة
     """
     try:
-        print("🚀 بدء تشغيل البوت...")
-        # تأكد من وجود المتغيرات الأساسية
+        print("🚀 بدء تشغيل البوت (الإصدار 20.0.19)...")
+        # التأكد من وجود المتغيرات الأساسية
         if not TOKEN:
-            raise ValueError("❌ BOT_TOKEN غير معرف")
+            raise ValueError("❌ BOT_TOKEN غير معرف في متغيرات البيئة")
         if not PRIMARY_OWNER_ID:
-            raise ValueError("❌ MAIN_ADMIN_ID غير معرف")
-        
+            raise ValueError("❌ MAIN_ADMIN_ID غير معرف في متغيرات البيئة")
+        print("✅ جميع المتغيرات الأساسية موجودة")
         # تشغيل البوت
         asyncio.run(main())
-        
     except KeyboardInterrupt:
-        print("\n🛑 تم إيقاف البوت بواسطة المستخدم")
+        print("\n🛑 تم إيقاف البوت بواسطة المستخدم (Ctrl+C)")
         sys.exit(0)
+    except ValueError as e:
+        print(f"❌ خطأ في التهيئة: {e}")
+        print("📌 تأكد من تعيين المتغيرات التالية في بيئة Render:")
+        print("   • BOT_TOKEN")
+        print("   • MAIN_ADMIN_ID")
+        print("   • (اختياري) DB_ENCRYPTION_PASSWORD")
+        sys.exit(1)
     except Exception as e:
-        print(f"❌ خطأ فادح: {type(e).__name__}: {e}")
+        print(f"❌ خطأ غير متوقع: {type(e).__name__}: {e}")
+        print("📌 تفاصيل الخطأ الكاملة:")
         import traceback
         traceback.print_exc()
+        # محاولة إرسال إشعار للمطور
+        try:
+            from telegram import Bot
+            bot = Bot(token=TOKEN) if TOKEN else None
+            if bot and PRIMARY_OWNER_ID:
+                error_msg = f"🚨 **خطأ في تشغيل البوت**\n\n"
+                error_msg += f"⚠️ {type(e).__name__}: {e}\n"
+                error_msg += f"📌 راجع سجلات Render للتفاصيل"
+                import asyncio
+                asyncio.run(bot.send_message(chat_id=PRIMARY_OWNER_ID, text=error_msg))
+                print("✅ تم إرسال إشعار الخطأ للمطور")
+        except:
+            print("⚠️ فشل إرسال إشعار الخطأ للمطور")
         sys.exit(1)
-
+    finally:
+        print("🧹 تنظيف الموارد قبل الإغلاق...")
+        print("✅ تم إغلاق البوت بشكل آمن")
 
