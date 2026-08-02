@@ -13810,14 +13810,29 @@ async def main():
     print("   • ✅ معالجة خطأ User_bot_to_bot_disabled")
     print("   • ✅ تحسين أمان أمر /sendcode (إزالة التوكن والمفاتيح)")
 
+async def cleanup_resources():
+    """تنظيف الموارد قبل الإغلاق - آمنة"""
     try:
-        await run_polling_safe(application)
-    except KeyboardInterrupt:
-        logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
-    finally:
-        await cleanup_resources()
-        await task_manager.cancel_all()
-
+        # التحقق من وجود event loop قبل الإغلاق
+        loop = asyncio.get_running_loop()
+        if loop.is_closed():
+            logger.debug("⏭️ حلقة الأحداث مغلقة بالفعل، تخطي التنظيف")
+            return
+        await db_pool.close()
+        logger.info("✅ تم إغلاق اتصال قاعدة البيانات")
+    except RuntimeError as e:
+        if "no running event loop" in str(e):
+            logger.debug("⏭️ لا توجد حلقة أحداث جارية، تخطي التنظيف")
+        else:
+            logger.error(f"❌ خطأ أثناء تنظيف قاعدة البيانات: {e}")
+    except Exception as e:
+        logger.error(f"❌ فشل إغلاق قاعدة البيانات: {e}")
+    try:
+        if lock_socket:
+            lock_socket.close()
+            logger.info("✅ تم إغلاق قفل التشغيل")
+    except:
+        pass
 
 async def run_polling_safe(application):
     """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
