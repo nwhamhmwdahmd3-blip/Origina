@@ -10921,6 +10921,133 @@ async def handle_sendcode_confirmation_handler(update: Update, context: ContextT
         context.user_data.pop('sendcode_temp_password', None)
         context.user_data.pop('sendcode_temp_timestamp', None)
         context.user_data.pop('state', None)
+# ===================================================================
+# الدوال المفقودة - أضفها جميعاً لضمان عمل البوت بدون أخطاء
+# ===================================================================
+
+async def is_user_bot(bot, user_id: int) -> bool:
+    """التحقق مما إذا كان المستخدم بوتاً"""
+    try:
+        chat = await bot.get_chat(user_id)
+        return chat.is_bot
+    except Exception:
+        return False
+
+async def safe_send_to_user_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    """إرسال رسالة بأمان إلى المستخدم أو المجموعة حسب نوع التحديث"""
+    try:
+        if update.callback_query:
+            await safe_edit_markdown(update.callback_query, text)
+        elif update.message:
+            await safe_send_markdown(context.bot, update.message.chat_id, text)
+        else:
+            await safe_send_markdown(context.bot, update.effective_user.id, text)
+    except Exception as e:
+        logger.error(f"فشل إرسال رسالة في safe_send_to_user_or_group: {e}")
+
+def parse_days_of_week_safe(days_str):
+    """تحويل نص أيام الأسبوع إلى قائمة"""
+    try:
+        return json.loads(days_str) if days_str else []
+    except:
+        return []
+
+def parse_dates_safe(dates_str):
+    """تحويل نص التواريخ إلى قائمة"""
+    try:
+        return json.loads(dates_str) if dates_str else []
+    except:
+        return []
+
+def contains_link(text):
+    """التحقق من وجود رابط في النص"""
+    patterns = [
+        r'https?://\S+',
+        r'www\.\S+',
+        r't\.me/\S+',
+        r'telegram\.me/\S+',
+        r'\b[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+\S*'
+    ]
+    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+
+def contains_mention(text):
+    """التحقق من وجود إشارة @ في النص"""
+    return bool(re.search(r'@\w+', text))
+
+async def invalidate_user_cache(user_id: int):
+    """إبطال الكاش الخاص بمستخدم معين"""
+    try:
+        if user_id in _admin_cache:
+            del _admin_cache[user_id]
+        keys_to_remove = [k for k in _admin_cache.keys() if str(user_id) in k]
+        for key in keys_to_remove:
+            del _admin_cache[key]
+    except:
+        pass
+
+def encrypt_file_stream(src: Path, dst: Path, cipher: Fernet, chunk_size: int = 64*1024):
+    """تشفير ملف بشكل متدفق"""
+    with open(src, 'rb') as f_in, open(dst, 'wb') as f_out:
+        while True:
+            chunk = f_in.read(chunk_size)
+            if not chunk:
+                break
+            encrypted_chunk = cipher.encrypt(chunk)
+            f_out.write(encrypted_chunk)
+
+def decrypt_file_stream(src: Path, dst: Path, cipher: Fernet, chunk_size: int = 64*1024):
+    """فك تشفير ملف بشكل متدفق"""
+    with open(src, 'rb') as f_in, open(dst, 'wb') as f_out:
+        while True:
+            chunk = f_in.read(chunk_size)
+            if not chunk:
+                break
+            decrypted_chunk = cipher.decrypt(chunk)
+            f_out.write(decrypted_chunk)
+
+def encrypt_db_backup() -> Path:
+    """تشفير قاعدة البيانات بالكامل للنسخ الاحتياطي"""
+    if not DB_ENCRYPTION:
+        return DB_PATH
+    cipher = Fernet(ENCRYPTION_KEY)
+    encrypted_path = DB_PATH.with_suffix('.enc')
+    encrypt_file_stream(DB_PATH, encrypted_path, cipher)
+    return encrypted_path
+
+def decrypt_db_backup(encrypted_path: Path) -> bytes:
+    """فك تشفير ملف النسخ الاحتياطي لقاعدة البيانات"""
+    if not DB_ENCRYPTION:
+        with open(encrypted_path, 'rb') as f:
+            return f.read()
+    cipher = Fernet(ENCRYPTION_KEY)
+    temp_decrypted = encrypted_path.with_suffix('.db.tmp')
+    decrypt_file_stream(encrypted_path, temp_decrypted, cipher)
+    with open(temp_decrypted, 'rb') as f:
+        data = f.read()
+    temp_decrypted.unlink()
+    return data
+
+def compress_backup(data: bytes) -> bytes:
+    """ضغط البيانات باستخدام ZSTD أو GZIP"""
+    if ZSTD_AVAILABLE:
+        try:
+            return ZSTD_COMPRESSOR.compress(data)
+        except:
+            pass
+    return gzip.compress(data)
+
+def decompress_backup(data: bytes) -> bytes:
+    """فك ضغط البيانات"""
+    if ZSTD_AVAILABLE:
+        try:
+            return ZSTD_DECOMPRESSOR.decompress(data)
+        except:
+            pass
+    return gzip.decompress(data)
+
+# ===================================================================
+# نهاية الدوال المفقودة
+# ===================================================================
 
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ['group', 'supergroup']:
