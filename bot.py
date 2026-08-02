@@ -8,6 +8,7 @@
 """
 
 import sys
+import aiosqlite
 import os
 from pathlib import Path
 import secrets
