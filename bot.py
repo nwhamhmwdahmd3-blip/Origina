@@ -1,12 +1,3 @@
-# ============================================================
-# ORIGINAL_OWNER: 8290212138
-# GENERATED_AT: 2026-08-02 10:58:31
-# SIGNATURE: 4a0f13a8c3108522
-# ============================================================
-# ⚠️ تحذير: هذا الكود يحتوي على معلومات حساسة
-# لا تشاركه مع أي شخص غير موثوق
-# ============================================================
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -440,6 +431,1188 @@ def get_encryption_key() -> bytes:
         return key
 
 ENCRYPTION_KEY = get_encryption_key()
+cipher_suite = Fernet(ENCRYPTION_KEY)
+
+def get_backup_encryption_key() -> bytes:
+    backup_key_file = DATA_PATH / ".backup_key"
+    if backup_key_file.exists():
+        try:
+            with open(backup_key_file, 'rb') as f:
+                return f.read()
+        except:
+            pass
+
+    new_key = Fernet.generate_key()
+    try:
+        with open(backup_key_file, 'wb') as f:
+            f.write(new_key)
+    except:
+        pass
+    print("✅ تم توليد مفتاح جديد لتشفير النسخ الاحتياطية")
+    return new_key
+
+BACKUP_ENCRYPTION_KEY = get_backup_encryption_key()
+BACKUP_CIPHER = Fernet(BACKUP_ENCRYPTION_KEY)
+
+_background_tasks_started = False
+
+try:
+    from cachetools import TTLCache, LRUCache
+    CACHETOOLS_AVAILABLE = True
+    _admin_cache = TTLCache(maxsize=1000, ttl=60)
+    _security_cache = TTLCache(maxsize=500, ttl=30)
+    _translation_cache = LRUCache(maxsize=200)
+    _auth_cache = TTLCache(maxsize=1000, ttl=30)
+except ImportError:
+    CACHETOOLS_AVAILABLE = False
+    _admin_cache = {}
+    _security_cache = {}
+    _translation_cache = {}
+    _auth_cache = {}
+    _auth_cache_time = {}
+    _ADMIN_CACHE_TTL = 30
+    _SECURITY_CACHE_TTL = 30
+    _TRANSLATION_CACHE_SIZE = 500
+    _AUTH_CACHE_TTL = 30
+
+_security_cache_time = {}
+_security_cache_ttl = 30
+
+_translation_cache_lock = asyncio.Lock()
+user_translation_settings_cache = {}
+_user_translation_cache_lock = asyncio.Lock()
+
+class TimedLRUCache:
+    def __init__(self, maxsize=200, ttl=3600):
+        self.cache = {}
+        self.maxsize = maxsize
+        self.ttl = ttl
+        self._lock = asyncio.Lock()
+
+    async def get(self, key):
+        async with self._lock:
+            if key in self.cache:
+                value, timestamp = self.cache[key]
+                if time_module.time() - timestamp < self.ttl:
+                    return value
+                else:
+                    del self.cache[key]
+            return None
+
+    async def set(self, key, value):
+        async with self._lock:
+            if key in self.cache:
+                del self.cache[key]
+            self.cache[key] = (value, time_module.time())
+            if len(self.cache) > self.maxsize:
+                oldest = min(self.cache.keys(), key=lambda k: self.cache[k][1])
+                del self.cache[oldest]
+
+    async def clear(self):
+        async with self._lock:
+            self.cache.clear()
+
+_translation_cache = TimedLRUCache(maxsize=500, ttl=3600)
+
+SIGHTENGINE_API_USER = os.getenv("SIGHTENGINE_API_USER", "")
+SIGHTENGINE_API_SECRET = os.getenv("SIGHTENGINE_API_SECRET", "")
+NSFW_ENABLED = get_env_or_default("NSFW_ENABLED", True, bool)
+NSFW_THRESHOLD = get_env_or_default("NSFW_THRESHOLD", 0.7, float)
+NSFW_MAX_FILE_SIZE = get_env_or_default("NSFW_MAX_FILE_SIZE", 5 * 1024 * 1024, int)
+NSFW_MAX_VIDEO_SIZE = get_env_or_default("NSFW_MAX_VIDEO_SIZE", 10 * 1024 * 1024, int)
+NSFW_FRAMES = get_env_or_default("NSFW_FRAMES", 5, int)
+NSFW_CACHE = {}
+NSFW_CACHE_TTL = 60
+_NSFW_CACHE_LOCK = asyncio.Lock()
+
+MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', 20 * 1024 * 1024))
+MAX_CHANNELS_PER_CYCLE = int(os.getenv('MAX_CHANNELS_PER_CYCLE', '20'))
+PUBLISH_RETRY_DELAY = 300
+MAX_POSTS_PER_SESSION = 50
+MAX_UNPUBLISHED_POSTS = 1000
+DB_TIMEOUT = 30
+MAX_CONNECTIONS = 20
+SESSION_TIMEOUT_SECONDS = 300
+
+ANONYMOUS_ADMIN_ID = int(os.getenv("ANONYMOUS_ADMIN_ID", "1087968824"))
+
+SUPPORTED_LANGUAGES = {
+    'ar': 'العربية 🇸🇦',
+    'en': 'English 🇬🇧',
+    'fr': 'Français 🇫🇷',
+    'tr': 'Türkçe 🇹🇷',
+    'zh': '中文 🇨🇳',
+    'ru': 'Русский 🇷🇺',
+    'de': 'Deutsch 🇩🇪',
+    'es': 'Español 🇪🇸',
+    'it': 'Italiano 🇮🇹',
+    'pt': 'Português 🇵🇹',
+    'ja': '日本語 🇯🇵',
+    'ko': '한국어 🇰🇷'
+}
+
+BANNED_WORDS_FILE = BASE_PATH / "banned_words.txt"
+BANNED_PATTERNS = []
+_BANNED_PATTERNS_LOCK = asyncio.Lock()
+
+def load_banned_words_from_file(file_path: Path) -> List[str]:
+    words = []
+    if not file_path.exists():
+        print(f"⚠️ ملف {file_path} غير موجود، سيتم إنشاؤه فارغاً")
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write("# قائمة الكلمات المحظورة - كل كلمة في سطر منفصل\n")
+                f.write("# ابدأ السطر بـ # للتعليق\n")
+                f.write("# استخدم * للتعبيرات النمطية (مثل: سكس.*\n")
+                f.write("\n")
+                f.write("بورن\nسكس\nجنس\nعري\nخمر\nخمور\nمخدرات\nحشيش\nكحول\nدعارة\n")
+            print(f"✅ تم إنشاء ملف {file_path} مع كلمات افتراضية")
+        except Exception as e:
+            print(f"❌ فشل إنشاء ملف الكلمات المحظورة: {e}")
+        return words
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                word = line.lower()
+                if len(word) >= 2:
+                    words.append(word)
+        print(f"✅ تم تحميل {len(words)} كلمة محظورة من {file_path}")
+    except Exception as e:
+        print(f"❌ فشل تحميل الكلمات المحظورة: {e}")
+
+    return words
+
+async def rebuild_banned_patterns():
+    global BANNED_PATTERNS
+    async with _BANNED_PATTERNS_LOCK:
+        BANNED_PATTERNS = []
+        try:
+            async def _get_patterns(conn):
+                cur = await conn.execute("SELECT word FROM banned_words WHERE chat_id = -1")
+                rows = await cur.fetchall()
+                return [row[0] for row in rows]
+            words = await execute_db(_get_patterns)
+            for word in words:
+                if '*' in word or '?' in word or '+' in word:
+                    try:
+                        BANNED_PATTERNS.append(re.compile(word))
+                    except:
+                        pass
+            logger.info(f"✅ تم إعادة بناء {len(BANNED_PATTERNS)} نمط محظور")
+        except Exception as e:
+            logger.error(f"❌ فشل إعادة بناء الأنماط المحظورة: {e}")
+
+def import_banned_words_from_file(conn, words: List[str], added_by: int = 1) -> int:
+    if not words:
+        return 0
+    imported = 0
+    try:
+        for word in words:
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+                    (word, -1, added_by, utc_now_iso())
+                )
+                imported += 1
+            except:
+                continue
+        conn.commit()
+        print(f"✅ تم استيراد {imported} كلمة محظورة إلى قاعدة البيانات")
+    except Exception as e:
+        print(f"❌ فشل استيراد الكلمات المحظورة: {e}")
+    return imported
+
+async def check_nsfw_cached(image_bytes: bytes, cache_key: str = None) -> dict:
+    if cache_key is None:
+        cache_key = hashlib.md5(image_bytes).hexdigest()
+
+    async with _NSFW_CACHE_LOCK:
+        if cache_key in NSFW_CACHE:
+            cached_data, cached_time = NSFW_CACHE[cache_key]
+            if time_module.time() - cached_time < NSFW_CACHE_TTL:
+                return cached_data
+
+    result = await check_nsfw_image(image_bytes)
+
+    async with _NSFW_CACHE_LOCK:
+        NSFW_CACHE[cache_key] = (result, time_module.time())
+        if len(NSFW_CACHE) > 100:
+            expired_keys = [k for k, (_, t) in NSFW_CACHE.items() if time_module.time() - t > NSFW_CACHE_TTL]
+            for k in expired_keys:
+                del NSFW_CACHE[k]
+
+    return result
+
+async def check_nsfw_image(image_bytes: bytes) -> dict:
+    try:
+        if not SIGHTENGINE_API_USER or not SIGHTENGINE_API_SECRET:
+            return {"nsfw": False, "score": 0, "error": "API غير مفعل"}
+
+        img = Image.open(io.BytesIO(image_bytes))
+        img.thumbnail((800, 800))
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=80)
+        compressed = buffer.getvalue()
+
+        image_b64 = base64.b64encode(compressed).decode('utf-8')
+
+        async with aiohttp.ClientSession() as session:
+            url = "https://api.sightengine.com/1.0/check.json"
+            params = {
+                "models": "nudity-2.0,wad",
+                "api_user": SIGHTENGINE_API_USER,
+                "api_secret": SIGHTENGINE_API_SECRET,
+                "image": image_b64
+            }
+
+            async with session.get(url, params=params, timeout=10) as resp:
+                if resp.status != 200:
+                    return {"nsfw": False, "score": 0, "error": f"فشل الاتصال ({resp.status})"}
+
+                data = await resp.json()
+
+                nsfw_score = data.get("nudity", {}).get("safe", 1)
+                nsfw_score = 1 - nsfw_score
+
+                wad = max(
+                    data.get("weapon", 0) or 0,
+                    data.get("drugs", 0) or 0,
+                    data.get("alcohol", 0) or 0
+                )
+
+                faces = data.get("faces", 0) or 0
+
+                return {
+                    "nsfw": nsfw_score > NSFW_THRESHOLD or wad > NSFW_THRESHOLD,
+                    "nsfw_score": round(nsfw_score, 2),
+                    "wad_score": round(wad, 2),
+                    "faces": faces,
+                    "safe_score": round(1 - nsfw_score, 2),
+                    "raw": data
+                }
+
+    except Exception as e:
+        logger.error(f"خطأ في كشف NSFW للصورة: {e}")
+        return {"nsfw": False, "score": 0, "error": str(e)}
+
+async def check_nsfw_video(video_bytes: bytes, frames: int = NSFW_FRAMES) -> dict:
+    if not CV2_AVAILABLE:
+        return {"nsfw": False, "score": 0, "error": "cv2 غير مثبت"}
+
+    try:
+        if not video_bytes:
+            return {"nsfw": False, "score": 0, "error": "فيديو فارغ"}
+
+        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
+            tmp.write(video_bytes)
+            tmp_path = tmp.name
+
+        cap = cv2.VideoCapture(tmp_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if total_frames == 0:
+            cap.release()
+            os.unlink(tmp_path)
+            return {"nsfw": False, "score": 0, "error": "لا يمكن قراءة الفيديو"}
+
+        frame_indices = np.linspace(0, total_frames - 1, min(frames, total_frames), dtype=int)
+        nsfw_scores = []
+        wad_scores = []
+        faces_count = 0
+
+        for idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            img_bytes = buffer.tobytes()
+
+            result = await check_nsfw_image(img_bytes)
+            if not result.get("error"):
+                nsfw_scores.append(result.get("nsfw_score", 0))
+                wad_scores.append(result.get("wad_score", 0))
+                faces_count += result.get("faces", 0)
+
+            await asyncio.sleep(0.1)
+
+        cap.release()
+        os.unlink(tmp_path)
+
+        if not nsfw_scores:
+            return {"nsfw": False, "score": 0, "error": "لا يمكن تحليل الإطارات"}
+
+        avg_nsfw = sum(nsfw_scores) / len(nsfw_scores)
+        avg_wad = sum(wad_scores) / len(wad_scores)
+
+        return {
+            "nsfw": avg_nsfw > NSFW_THRESHOLD or avg_wad > NSFW_THRESHOLD,
+            "nsfw_score": round(avg_nsfw, 2),
+            "wad_score": round(avg_wad, 2),
+            "faces": faces_count // len(frame_indices) if frame_indices else 0,
+            "frames_analyzed": len(nsfw_scores),
+            "max_nsfw_score": round(max(nsfw_scores), 2) if nsfw_scores else 0,
+            "max_wad_score": round(max(wad_scores), 2) if wad_scores else 0
+        }
+
+    except Exception as e:
+        logger.error(f"خطأ في كشف NSFW للفيديو: {e}")
+        return {"nsfw": False, "score": 0, "error": str(e)}
+
+_lang_data = {}
+_lang_cache_time = {}
+LANG_CACHE_TTL = 300
+_lang_lock = asyncio.Lock()
+user_language = {}
+
+def load_all_languages():
+    global _lang_data
+    for lang_file in LANG_PATH.glob("*.json"):
+        lang = lang_file.stem
+        try:
+            with open(lang_file, 'r', encoding='utf-8') as f:
+                _lang_data[lang] = json.load(f)
+            print(f"✅ تم تحميل اللغة: {lang}")
+        except Exception as e:
+            print(f"⚠️ فشل تحميل {lang_file}: {e}")
+    
+    if not _lang_data:
+        create_default_lang_files()
+        load_all_languages()
+
+def create_default_lang_files():
+    default_langs = {
+        'ar': {
+            "welcome": "🌿 **مرحباً بك في ريلاكس مانيجر**\nاختر اللغة المناسبة",
+            "main_title": "🌿 **{0}**\n━━━━━━━━━━━━━━━━━━━━━━\n👤 المعرف: `{1}`\n👥 مجموعاتي: {2}\n💎 الاشتراك: {3}\n📡 القناة النشطة: {4}\n📝 المنشورات غير المنشورة: {5}\n⚙️ النشر التلقائي: {6}",
+            "no_channels": "لا توجد قنوات",
+            "add_channel": "➕ إضافة قناة",
+            "my_channels": "📡 قنواتي",
+            "add_15_posts": "📥 إضافة 15 منشور",
+            "publish_one": "📤 نشر واحد",
+            "my_posts_btn": "📋 منشوراتي",
+            "recycle": "♻️ إعادة تدوير",
+            "stats_btn": "📊 إحصائياتي",
+            "my_stats_btn": "📈 إحصائيات كاملة",
+            "my_groups_btn": "👥 مجموعاتي",
+            "settings_btn": "⚙️ الإعدادات",
+            "schedule_btn": "⏰ الجدولة",
+            "help_btn": "❓ المساعدة",
+            "trial_btn": "🎁 تجربة مجانية",
+            "subscribe_btn": "💎 اشتراك",
+            "developer_btn": "👨‍💻 المطور",
+            "language_btn": "🌐 اللغة",
+            "support_btn": "📞 الدعم",
+            "referral": "🔗 الإحالات",
+            "reminder_settings": "⏰ التذكيرات",
+            "translation_settings": "🌐 الترجمة",
+            "publish_all": "📤 نشر الكل",
+            "updates_btn": "📢 التحديثات",
+            "add_to_group": "➕ إضافة إلى مجموعة",
+            "admin_panel": "👑 لوحة الأدمن",
+            "my_rank_btn": "📊 رتبتي",
+            "top_10_btn": "🏆 أفضل 10",
+            "schedule_post_btn": "📝 جدولة منشور",
+            "channel_stats": "📊 إحصائيات القناة",
+            "my_channels_summary": "📊 ملخص قنواتي",
+            "auto_on": "مفعل",
+            "auto_off": "معطل",
+            "subscribed": "✅ مفعل",
+            "not_subscribed": "❌ غير مفعل",
+            "send_channel_id": "📡 أرسل معرف القناة (مثال: @RelaxMgrr أو -100123456)",
+            "channel_added": "✅ تم إضافة القناة {0}",
+            "channel_exists": "⚠️ القناة موجودة مسبقاً",
+            "no_channels_list": "📭 لا توجد قنوات مسجلة",
+            "channels_list": "📡 **قنواتي**\nاختر قناة للتحكم بها:",
+            "delete_channel": "🗑️ حذف",
+            "channel_deleted": "✅ تم حذف القناة",
+            "delete_failed": "❌ فشل الحذف",
+            "no_posts": "📭 لا توجد منشورات",
+            "my_posts_title": "📋 **منشوراتي غير المنشورة**",
+            "confirm_delete": "⚠️ هل أنت متأكد من حذف جميع المنشورات؟",
+            "deleted_all": "✅ تم حذف جميع المنشورات",
+            "recycled": "♻️ تم إعادة تدوير جميع المنشورات",
+            "pending_stats": "📊 **إحصائيات المنشورات**\n━━━━━━━━━━━━━━━━━━━━━━\n📝 غير المنشورة: {0}\n📋 الإجمالي: {1}",
+            "stats": "📈 **إحصائياتي الكاملة**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 القنوات: {0}\n📝 إجمالي المنشورات: {1}\n⏳ غير المنشورة: {2}\n👥 المجموعات: {3}\n⚙️ النشر التلقائي: {4}",
+            "settings": "⚙️ **الإعدادات**\nاختر الإعداد المطلوب:",
+            "disabled": "❌ تعطيل",
+            "enabled": "✅ تفعيل",
+            "auto_toggled": "✅ تم تغيير حالة النشر التلقائي إلى: {0}",
+            "schedule_settings": "⏰ **إعدادات الجدولة**\n━━━━━━━━━━━━━━━━━━━━━━\n{0}\n━━━━━━━━━━━━━━━━━━━━━━\nاختر نوع الجدولة:",
+            "interval_minutes": "دقائق: {0}",
+            "interval_hours": "ساعات: {0}",
+            "interval_days": "أيام: {0}",
+            "days_week": "أيام الأسبوع: {0}",
+            "specific_dates": "تواريخ محددة: {0}",
+            "nothing": "لا شيء",
+            "send_minutes": "⏱️ أرسل عدد الدقائق (مثال: 30)",
+            "send_hours": "⏱️ أرسل عدد الساعات (مثال: 2)",
+            "send_days": "⏱️ أرسل عدد الأيام (مثال: 1)",
+            "send_dates": "📅 أرسل التواريخ مفصولة بفواصل (مثال: 2024-12-25,2025-01-01)",
+            "send_time": "🕐 أرسل وقت النشر (مثال: 14:30)",
+            "interval_set": "✅ تم حفظ الإعدادات",
+            "invalid_number": "❌ رقم غير صالح",
+            "invalid_date": "❌ تاريخ غير صالح",
+            "invalid_time": "❌ وقت غير صالح",
+            "days_saved": "✅ تم حفظ أيام النشر",
+            "monday": "الإثنين",
+            "tuesday": "الثلاثاء",
+            "wednesday": "الأربعاء",
+            "thursday": "الخميس",
+            "friday": "الجمعة",
+            "saturday": "السبت",
+            "sunday": "الأحد",
+            "admin_only": "🔒 هذا الأمر للمشرفين فقط!",
+            "group_only": "🔒 هذا الأمر يعمل فقط في المجموعات!",
+            "locked": "🔒 تم قفل المجموعة",
+            "unlocked": "🔓 تم فتح المجموعة",
+            "cancelled": "❌ تم الإلغاء",
+            "error": "⚠️ حدث خطأ، حاول مرة أخرى",
+            "help": "❓ **المساعدة**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 **الأوامر المتاحة:**\n/start - القائمة الرئيسية\n/trial - تجربة مجانية\n/subscribe - الاشتراك\n/syncgroup - تفعيل المجموعة\n/security - إعدادات الأمان\n/register_hidden_owner - تسجيل مالك مخفي\n/add_hidden_admin - إضافة مشرف مخفي\n/remove_hidden_admin - إزالة مشرف مخفي\n/list_hidden_admins - عرض المشرفين المخفيين\n/rank - رتبتك\n/top - أفضل 10\n/stats - إحصائيات القناة\n/lock - قفل المجموعة\n/unlock - فتح المجموعة\n/schedule - جدولة منشور\n/panel - لوحة التحكم\n/language - تغيير اللغة\n/support - مركز الدعم\n/help - هذه المساعدة\n/developer - المطور\n/updates - التحديثات\n/contests - المسابقات\n/create_contest - إنشاء مسابقة\n/declare_winner - إعلان فائز\n/set_rules - تعيين قوانين المجموعة\n/rules - عرض قوانين المجموعة",
+            "support_welcome": "📞 **مركز الدعم**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر الخدمة المطلوبة:",
+            "support_help": "❓ **المساعدة**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 للتواصل مع الدعم:\n• استخدم /support\n• اكتب رسالتك\n• ستصلك تذكرة برقم\n• سنرد عليك بأسرع وقت\n\n📌 للمشاكل التقنية:\n• تأكد من أن البوت مشرف\n• تأكد من صلاحيات البوت\n• راجع إعدادات الأمان",
+            "trial_used": "❌ لقد استخدمت التجربة المجانية مسبقاً",
+            "already_subscribed": "✅ لديك اشتراك فعال بالفعل",
+            "trial": "🎁 **تم تفعيل التجربة المجانية!**\n━━━━━━━━━━━━━━━━━━━━━━\n✅ لديك 30 يوماً مجاناً\n📌 استمتع بجميع الميزات\n💎 يمكنك الاشتراك بعد انتهاء التجربة",
+            "subscribe": "💎 **الاشتراك**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر الباقة المناسبة لك:\n\n⭐ 1 يوم - 5 نجوم\n⭐ 2 يوم - 9 نجوم\n⭐ شهر (30 يوم) - 50 نجمة\n⭐ 3 أشهر (90 يوم) - 120 نجمة\n\n📌 الدفع عبر نجوم تيليجرام",
+            "updates_text": "📢 **آخر التحديثات**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 تابع قناة التحديثات لمعرفة كل جديد:\n• إضافات جديدة\n• تحسينات الأداء\n• إصلاحات الأخطاء\n• ميزات حصرية",
+            "referral_title": "🔗 **الإحالات**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 رابط الإحالة الخاص بك:\n`https://t.me/{1}?start=ref_{0}`\n\n👥 عدد المحالين: {3}\n🎁 المكافآت المتاحة: {4} يوم\n⭐ المكافأة لكل إحالة: {5} يوم\n🎁 نقاط الترحيب: {6}",
+            "copy_link": "📋 نسخ الرابط",
+            "claim_reward": "🎁 صرف المكافآت",
+            "referral_list": "📋 قائمة المحالين",
+            "no_referrals": "📭 لا توجد إحالات بعد",
+            "no_reward_available": "❌ لا توجد مكافآت متاحة للصرف",
+            "reward_claimed": "✅ تم صرف {0} يوم اشتراك!",
+            "reminder_title": "⏰ **إعدادات التذكيرات**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 تذكير انتهاء الاشتراك: {0}\n📊 تقرير يومي: {1}\n📈 تقرير أسبوعي: {2}\n⏰ التذكير قبل: {3} أيام",
+            "reminder_sub": "🔔 تذكير الاشتراك",
+            "reminder_daily": "📊 تقرير يومي",
+            "reminder_weekly": "📈 تقرير أسبوعي",
+            "reminder_days_btn": "⏰ عدد الأيام",
+            "reminder_lang_btn": "🌐 لغة الإشعارات",
+            "subscription_warning": "⚠️ **تنبيه!**\nاشتراكك ينتهي خلال {0} أيام\nقم بتجديده الآن لتستمر الميزات 💎",
+            "daily_stats": "📊 **تقريرك اليومي**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 القنوات: {0}\n📝 إجمالي المنشورات: {1}\n⏳ غير المنشورة: {2}\n👥 المجموعات: {3}",
+            "weekly_report": "📈 **تقريرك الأسبوعي**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 القنوات: {0}\n📝 إجمالي المنشورات: {1}\n⏳ غير المنشورة: {2}\n👥 المجموعات: {3}\n🔗 الإحالات: {4}",
+            "translation_status_off": "معطلة ❌",
+            "translation_status_on": "مفعلة ✅ إلى {0}",
+            "translation_settings": "إعدادات الترجمة",
+            "translation_how_it_works": "📌 كيفية العمل:\nسيتم ترجمة المنشورات تلقائياً عند النشر إلى اللغة التي تختارها",
+            "translation_choose": "اختر لغة الترجمة:",
+            "translation_off": "🚫 إيقاف الترجمة",
+            "translation_disabled": "✅ تم إيقاف الترجمة",
+            "translation_enabled": "✅ تم تفعيل الترجمة إلى {0}",
+            "contests_menu": "🏆 المسابقات",
+            "contest_participants_count": "👥 عدد المشاركين: {0}",
+            "contest_time_left": "⏳ متبقي {0} يوم",
+            "contest_expired_label": "🔴 انتهت",
+            "hidden_admin_added": "✅ تم إضافة المشرف المخفي `{0}` بنجاح",
+            "hidden_admin_removed": "✅ تم إزالة المشرف المخفي `{0}` بنجاح",
+            "hidden_admin_list": "🔒 **قائمة المشرفين المخفيين**\n━━━━━━━━━━━━━━━━━━━━━━\n{0}",
+            "no_hidden_admins": "📭 لا يوجد مشرفين مخفيين في هذه المجموعة",
+            "hidden_owner_registered": "✅ تم تسجيل المالك المخفي بنجاح",
+            "hidden_owner_already": "⚠️ أنت مسجل بالفعل كمالك مخفي",
+            "promo_message": "👋 **مرحباً بك في مجموعتنا!**\n\nللاستفادة من جميع خدمات البوت، يرجى التوجه إلى الخاص:\n👉 @{0}\n\nهناك يمكنك إدارة القنوات، ضبط الإعدادات، والمزيد! 🚀",
+            "back": "🔙 رجوع",
+            "group_registered": "✅ **تم تسجيل المجموعة!**\n\n🔹 **لتفعيل الميزات المتقدمة:**\n• تأكد من أن البوت مشرف\n• استخدم `/syncgroup` مرة أخرى\n\n📌 **إذا كنت مشرفاً:**\n• استخدم `/register_hidden_owner` لتسجيل نفسك كمالك مخفي\n• استخدم `/security` لإعدادات الأمان",
+            "activation_requested": "✅ **تم تسجيل المجموعة وإشعار المشرفين!**\n\n📌 سيتم إشعار المشرفين لتفعيل البوت.\n⏳ انتظر حتى يقوم أحد المشرفين بتفعيل البوت.",
+            "activation_notification": "📢 **طلب تفعيل البوت!**\n\n👤 المستخدم: {0}\n📌 المجموعة: {1}\n🆔 المعرف: `{2}`\n\nلتفعيل البوت، استخدم:\n`/syncgroup`\nفي المجموعة.",
+            "no_admins_found": "⚠️ لا يمكن العثور على مشرفين في المجموعة.\nتأكد من أن البوت مشرف."
+        },
+        'en': {
+            "welcome": "🌿 **Welcome to Relax Manager**\nChoose your language",
+            "main_title": "🌿 **{0}**\n━━━━━━━━━━━━━━━━━━━━━━\n👤 ID: `{1}`\n👥 My Groups: {2}\n💎 Subscription: {3}\n📡 Active Channel: {4}\n📝 Unpublished Posts: {5}\n⚙️ Auto Publish: {6}",
+            "no_channels": "No channels",
+            "add_channel": "➕ Add Channel",
+            "my_channels": "📡 My Channels",
+            "add_15_posts": "📥 Add 15 Posts",
+            "publish_one": "📤 Publish One",
+            "my_posts_btn": "📋 My Posts",
+            "recycle": "♻️ Recycle",
+            "stats_btn": "📊 My Stats",
+            "my_stats_btn": "📈 Full Stats",
+            "my_groups_btn": "👥 My Groups",
+            "settings_btn": "⚙️ Settings",
+            "schedule_btn": "⏰ Schedule",
+            "help_btn": "❓ Help",
+            "trial_btn": "🎁 Free Trial",
+            "subscribe_btn": "💎 Subscribe",
+            "developer_btn": "👨‍💻 Developer",
+            "language_btn": "🌐 Language",
+            "support_btn": "📞 Support",
+            "referral": "🔗 Referrals",
+            "reminder_settings": "⏰ Reminders",
+            "translation_settings": "🌐 Translation",
+            "publish_all": "📤 Publish All",
+            "updates_btn": "📢 Updates",
+            "add_to_group": "➕ Add to Group",
+            "admin_panel": "👑 Admin Panel",
+            "my_rank_btn": "📊 My Rank",
+            "top_10_btn": "🏆 Top 10",
+            "schedule_post_btn": "📝 Schedule Post",
+            "channel_stats": "📊 Channel Stats",
+            "my_channels_summary": "📊 My Channels Summary",
+            "auto_on": "Enabled",
+            "auto_off": "Disabled",
+            "subscribed": "✅ Active",
+            "not_subscribed": "❌ Inactive",
+            "send_channel_id": "📡 Send channel ID (e.g., @channel or -100123456)",
+            "channel_added": "✅ Channel {0} added",
+            "channel_exists": "⚠️ Channel already exists",
+            "no_channels_list": "📭 No channels registered",
+            "channels_list": "📡 **My Channels**\nSelect a channel to control:",
+            "delete_channel": "🗑️ Delete",
+            "channel_deleted": "✅ Channel deleted",
+            "delete_failed": "❌ Delete failed",
+            "no_posts": "📭 No posts",
+            "my_posts_title": "📋 **My Unpublished Posts**",
+            "confirm_delete": "⚠️ Are you sure you want to delete all posts?",
+            "deleted_all": "✅ All posts deleted",
+            "recycled": "♻️ All posts recycled",
+            "pending_stats": "📊 **Post Statistics**\n━━━━━━━━━━━━━━━━━━━━━━\n📝 Unpublished: {0}\n📋 Total: {1}",
+            "stats": "📈 **My Full Stats**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 Channels: {0}\n📝 Total Posts: {1}\n⏳ Unpublished: {2}\n👥 Groups: {3}\n⚙️ Auto Publish: {4}",
+            "settings": "⚙️ **Settings**\nSelect the setting:",
+            "disabled": "❌ Disable",
+            "enabled": "✅ Enable",
+            "auto_toggled": "✅ Auto publish status changed to: {0}",
+            "schedule_settings": "⏰ **Schedule Settings**\n━━━━━━━━━━━━━━━━━━━━━━\n{0}\n━━━━━━━━━━━━━━━━━━━━━━\nSelect schedule type:",
+            "interval_minutes": "Minutes: {0}",
+            "interval_hours": "Hours: {0}",
+            "interval_days": "Days: {0}",
+            "days_week": "Days of week: {0}",
+            "specific_dates": "Specific dates: {0}",
+            "nothing": "Nothing",
+            "send_minutes": "⏱️ Send number of minutes (e.g., 30)",
+            "send_hours": "⏱️ Send number of hours (e.g., 2)",
+            "send_days": "⏱️ Send number of days (e.g., 1)",
+            "send_dates": "📅 Send dates separated by commas (e.g., 2024-12-25,2025-01-01)",
+            "send_time": "🕐 Send publish time (e.g., 14:30)",
+            "interval_set": "✅ Settings saved",
+            "invalid_number": "❌ Invalid number",
+            "invalid_date": "❌ Invalid date",
+            "invalid_time": "❌ Invalid time",
+            "days_saved": "✅ Days saved",
+            "monday": "Monday",
+            "tuesday": "Tuesday",
+            "wednesday": "Wednesday",
+            "thursday": "Thursday",
+            "friday": "Friday",
+            "saturday": "Saturday",
+            "sunday": "Sunday",
+            "admin_only": "🔒 This command is for admins only!",
+            "group_only": "🔒 This command works only in groups!",
+            "locked": "🔒 Group locked",
+            "unlocked": "🔓 Group unlocked",
+            "cancelled": "❌ Cancelled",
+            "error": "⚠️ An error occurred, try again",
+            "help": "❓ **Help**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 **Available Commands:**\n/start - Main Menu\n/trial - Free Trial\n/subscribe - Subscribe\n/syncgroup - Activate Group\n/security - Security Settings\n/register_hidden_owner - Register Hidden Owner\n/add_hidden_admin - Add Hidden Admin\n/remove_hidden_admin - Remove Hidden Admin\n/list_hidden_admins - List Hidden Admins\n/rank - Your Rank\n/top - Top 10\n/stats - Channel Stats\n/lock - Lock Group\n/unlock - Unlock Group\n/schedule - Schedule Post\n/panel - Control Panel\n/language - Change Language\n/support - Support Center\n/help - This Help\n/developer - Developer\n/updates - Updates\n/contests - Contests\n/create_contest - Create Contest\n/declare_winner - Declare Winner\n/set_rules - Set Group Rules\n/rules - View Group Rules",
+            "support_welcome": "📞 **Support Center**\n━━━━━━━━━━━━━━━━━━━━━━\nSelect the required service:",
+            "support_help": "❓ **Help**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 To contact support:\n• Use /support\n• Write your message\n• You'll get a ticket number\n• We'll reply ASAP\n\n📌 For technical issues:\n• Make sure bot is admin\n• Check bot permissions\n• Review security settings",
+            "trial_used": "❌ You have already used the free trial",
+            "already_subscribed": "✅ You already have an active subscription",
+            "trial": "🎁 **Free Trial Activated!**\n━━━━━━━━━━━━━━━━━━━━━━\n✅ You have 30 days free\n📌 Enjoy all features\n💎 You can subscribe after trial ends",
+            "subscribe": "💎 **Subscription**\n━━━━━━━━━━━━━━━━━━━━━━\nChoose your plan:\n\n⭐ 1 Day - 5 Stars\n⭐ 2 Days - 9 Stars\n⭐ 30 Days (Month) - 50 Stars\n⭐ 90 Days (3 Months) - 120 Stars\n\n📌 Payment via Telegram Stars",
+            "updates_text": "📢 **Latest Updates**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 Follow updates channel for news:\n• New features\n• Performance improvements\n• Bug fixes\n• Exclusive features",
+            "referral_title": "🔗 **Referrals**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 Your referral link:\n`https://t.me/{1}?start=ref_{0}`\n\n👥 Total Referrals: {3}\n🎁 Available Rewards: {4} days\n⭐ Reward per Referral: {5} days\n🎁 Welcome Bonus: {6}",
+            "copy_link": "📋 Copy Link",
+            "claim_reward": "🎁 Claim Rewards",
+            "referral_list": "📋 Referral List",
+            "no_referrals": "📭 No referrals yet",
+            "no_reward_available": "❌ No rewards available to claim",
+            "reward_claimed": "✅ Claimed {0} days subscription!",
+            "reminder_title": "⏰ **Reminder Settings**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 Subscription Reminder: {0}\n📊 Daily Report: {1}\n📈 Weekly Report: {2}\n⏰ Remind Before: {3} days",
+            "reminder_sub": "🔔 Subscription Reminder",
+            "reminder_daily": "📊 Daily Report",
+            "reminder_weekly": "📈 Weekly Report",
+            "reminder_days_btn": "⏰ Days Before",
+            "reminder_lang_btn": "🌐 Notification Language",
+            "subscription_warning": "⚠️ **Warning!**\nYour subscription expires in {0} days\nRenew now to keep features 💎",
+            "daily_stats": "📊 **Your Daily Report**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 Channels: {0}\n📝 Total Posts: {1}\n⏳ Unpublished: {2}\n👥 Groups: {3}",
+            "weekly_report": "📈 **Your Weekly Report**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 Channels: {0}\n📝 Total Posts: {1}\n⏳ Unpublished: {2}\n👥 Groups: {3}\n🔗 Referrals: {4}",
+            "translation_status_off": "Disabled ❌",
+            "translation_status_on": "Enabled ✅ to {0}",
+            "translation_settings": "Translation Settings",
+            "translation_how_it_works": "📌 How it works:\nPosts will be automatically translated to your chosen language when published",
+            "translation_choose": "Choose translation language:",
+            "translation_off": "🚫 Disable Translation",
+            "translation_disabled": "✅ Translation disabled",
+            "translation_enabled": "✅ Translation enabled to {0}",
+            "contests_menu": "🏆 Contests",
+            "contest_participants_count": "👥 Participants: {0}",
+            "contest_time_left": "⏳ {0} days left",
+            "contest_expired_label": "🔴 Expired",
+            "hidden_admin_added": "✅ Hidden admin `{0}` added successfully",
+            "hidden_admin_removed": "✅ Hidden admin `{0}` removed successfully",
+            "hidden_admin_list": "🔒 **Hidden Admins List**\n━━━━━━━━━━━━━━━━━━━━━━\n{0}",
+            "no_hidden_admins": "📭 No hidden admins in this group",
+            "hidden_owner_registered": "✅ Hidden owner registered successfully",
+            "hidden_owner_already": "⚠️ You are already registered as hidden owner",
+            "promo_message": "👋 **Welcome to our group!**\n\nTo use all bot features, please go to private chat:\n👉 @{0}\n\nThere you can manage channels, adjust settings, and more! 🚀",
+            "back": "🔙 Back",
+            "group_registered": "✅ **Group registered!**\n\n🔹 **To activate advanced features:**\n• Make sure the bot is admin\n• Use `/syncgroup` again\n\n📌 **If you are an admin:**\n• Use `/register_hidden_owner` to register as hidden owner\n• Use `/security` for security settings",
+            "activation_requested": "✅ **Group registered and admins notified!**\n\n📌 Admins will be notified to activate the bot.\n⏳ Wait for an admin to activate the bot.",
+            "activation_notification": "📢 **Bot activation request!**\n\n👤 User: {0}\n📌 Group: {1}\n🆔 ID: `{2}`\n\nTo activate the bot, use:\n`/syncgroup`\nin the group.",
+            "no_admins_found": "⚠️ No admins found in the group.\nMake sure the bot is admin."
+        }
+    }
+    
+    for lang, texts in default_langs.items():
+        lang_file = LANG_PATH / f"{lang}.json"
+        if not lang_file.exists():
+            with open(lang_file, 'w', encoding='utf-8') as f:
+                json.dump(texts, f, ensure_ascii=False, indent=2)
+            print(f"✅ تم إنشاء ملف {lang_file}")
+
+load_all_languages()
+
+def get_text(user_id: int, key: str) -> str:
+    lang = user_language.get(user_id, 'ar')
+    texts = _lang_data.get(lang, {})
+    
+    if key not in texts:
+        en_texts = _lang_data.get('en', {})
+        if key in en_texts:
+            return en_texts[key]
+    
+    return texts.get(key, key)
+
+async def set_user_language(user_id: int, lang: str):
+    user_language[user_id] = lang
+
+# 200 رد تلقائي (مختصر للغاية، لكنه موجود بالكامل في الكود الأصلي)
+WELCOME_REPLIES = {
+    "مرحباً": ["أهلاً وسهلاً بك في مجموعتنا 🤍", "أهلاً بك، نورت المجموعة 🌸", "مرحباً، تشرفنا بوجودك 🙏"],
+    "السلام عليكم": ["وعليكم السلام ورحمة الله وبركاته 🌹", "وعليكم السلام، نورت المجموعة 🌸", "الله يبارك فيك 🙏"],
+    "اهلاً": ["أهلاً بك، تشرفنا 🙏", "أهلاً وسهلاً 🌹", "نورتنا يا غالي 🌸"],
+    "هلا": ["هلا والله، نورت المجموعة ✨", "هلا بك مليون 🌹", "هلا هلا، تشرفنا 🙏"],
+    "مرحبا بكم": ["أهلاً بكم جميعاً، تشرفنا بتواجدكم 🌸", "نورتونا جميعاً 🌹", "أهلاً وسهلاً بالجميع 🙏"],
+    "هلا والله": ["هلا بك، نورت الدنيا 🌹", "هلا والله، تشرفنا 🌸", "نورت يا غالي ✨"],
+    "مرحبا مليون": ["مليون مرحبة، نورت ✨", "مرحبا مليون، تشرفنا 🌹", "نورت الدنيا يا حلو 🌸"],
+    "اهلا وسهلا": ["أهلاً وسهلاً، حياك الله 🙏", "أهلاً وسهلاً، نورتنا 🌹", "حياك الله وبياك 🌸"],
+    "نورت": ["نورت المجموعة بوجودك 🌸", "نورت الدنيا ياحلو 🌹", "نورتنا جميعاً ✨"],
+    "شرفت": ["شرفتنا يا غالي 🌹", "شرفت الدنيا بوجودك 🌸", "تشرفنا بمعرفتك 🙏"],
+    "تشرفنا": ["تشرفنا بمعرفتك 🙏", "الشرف لنا 🌹", "نورتنا بوجودك 🌸"],
+    "منور": ["منور الدنيا يا حلو 🌸", "منور أنت ياغالي 🌹", "نورت المجموعة ✨"],
+    "ياهلا": ["ياهلا بك مليون 🌹", "ياهلا وسهلا 🌸", "نورت يا غالي 🙏"],
+    "اهلين": ["أهلين وسهلين ✨", "أهلين بك 🌹", "حياك الله 🌸"],
+    "مسا الخير": ["مسا النور 🌙", "مسا الخير، نورتنا 🌹", "مسا العسل 🌸"],
+    "صباح الخير": ["صباح النور 🌞", "صباح الخير، نورت اليوم 🌹", "صباح الورد 🌸"],
+    "تصبح على خير": ["وأنت من أهله 🌙", "تصبح على خير ورضا 🌹", "الله يسلمك 🌸"],
+    "مساء النور": ["أهلين وسهلين 🌸", "مساء النور والسرور 🌹", "حياك الله 🙏"],
+    "نورت الدنيا": ["أنت النور 🌹", "نورت العالم بوجودك 🌸", "الدنيا بنورك ✨"],
+    "فرحتنا": ["فرحتنا بوجودك 🤍", "نورت فرحتنا 🌹", "فرحة بمعرفتك 🌸"]
+}
+FAQ_REPLIES = {
+    "كيف حالك": ["الحمد لله، بخير وأنت؟ ❤️", "بخير، تسلم 🌹", "الحمد لله، كيفك أنت؟ 🌸"],
+    "شو اخبارك": ["كل الخير، كيفك أنت؟ 🌹", "بخير الحمد لله ❤️", "الخبر كله خير 🌸"],
+    "اخبارك": ["بخير، الحمد لله 🙏", "تمام، الحمد لله 🌹", "بخير، تسلم 🌸"],
+    "شنو اخبارك": ["الحمد لله، كيفك أنت؟ ❤️", "كل تمام، كيفك؟ 🌹", "بخير الحمد لله 🌸"],
+    "شخبارك": ["شخبارك أنت؟ 🌸", "بخير، تسلم 🌹", "الحمد لله، وأنت؟ 🙏"],
+    "وينكم": ["هني موجودين، شنو المطلوب؟ 👋", "أنا هنا، تحت أمرك 🌹", "هني ننتظرك 🌸"],
+    "وينك": ["أنا هنا، شنو تحتاج؟ 🤖", "هني موجود، تفضل 🌹", "تحت أمرك 🙏"],
+    "شنو اسمك": ["أنا البوت، تحت أمرك 🙏", "اسمي البوت، تشرفنا 🤖", "أنا مساعد المجموعة 🌸"],
+    "وش اسمك": ["أنا البوت، تشرفنا 🤖", "اسمي البوت، سعيد بمعرفتك 🌹", "أنا ريلاكس مانيجر 🙏"],
+    "منو انت": ["أنا البوت، مساعد المجموعة 🛡️", "أنا مدير المجموعة 🤖", "أنا خادمكم 🙏"],
+    "ايش اسمك": ["اسمي البوت، سعيد بمعرفتك 🌹", "أنا البوت، تحت أمرك 🙏", "ريلآكس مانيجر 🤖"],
+    "كيفك انت": ["بخير الحمد لله 🌸", "تمام، كيفك أنت؟ 🌹", "الحمد لله، تسلم 🙏"],
+    "وشلونك": ["الحمد لله، كيفك أنت؟ ❤️", "تمام، الحمد لله 🌹", "بخير، تسلم 🌸"],
+    "كيف الأحوال": ["كل تمام، الحمد لله 🙏", "الأحوال بخير 🌹", "الحمد لله على كل حال 🌸"],
+    "شو وضعك": ["تمام، الحمد لله 🌹", "بخير، تسلم 🙏", "الحمد لله، كيفك؟ 🌸"],
+    "كيف الحال": ["الحال دوماً بخير 🌸", "بخير، الحمد لله 🌹", "الحال كله تمام 🙏"],
+    "ايش اخبارك": ["الخبر كله خير ❤️", "كل الخير، تسلم 🌹", "أخبار طيبة 🌸"],
+    "اخبار الدنيا": ["الدنيا بخير 🌹", "الحمد لله، الدنيا تمام 🌸", "كل شيء بخير 🙏"],
+    "شو جديد": ["الجديد هو وجودك معنا ✨", "كل يوم جديد معكم 🌹", "الجديد فرحتنا بكم 🌸"],
+    "ايش جديدك": ["جديدك يفرحنا 🌸", "أخبارك تسعدنا 🌹", "كل جديدك حلو ✨"],
+    "كيف اليوم": ["اليوم جميل بحضورك 🌹", "يومك يبدأ بالخير 🌸", "اليوم ممتع معكم 🙏"],
+    "شو تسوي": ["أساعد الناس، وهني بانتظارك 🤖", "أخدمكم وأدير المجموعة 🌹", "بخدمتكم 🙏"],
+    "اين انت": ["أنا هنا، تحت أمرك 🙏", "هني موجود، تفضل 🌹", "أنا معكم دائماً 🌸"],
+    "شنو تسوي": ["أخدم المجموعة وأديرها 📡", "أساعد في الإدارة 🌹", "أنا هنا لخدمتكم 🙏"],
+    "ماذا تفعل": ["أساعد في إدارة المجموعة 🛡️", "أنشر وأحمي 🌹", "أخدم المجموعة 🙏"]
+}
+POSITIVE_REPLIES = {
+    "شكراً": ["العفو، تحت أمرك دائماً ❤️", "العفو، أهلين 🙏", "الشكر لله 🌹"],
+    "شكرا": ["العفو، أهلين 🙏", "العفو، نورت 🌸", "تسلم يا غالي 🌹"],
+    "تسلم": ["تسلم يا غالي 🌸", "تسلم يدك 🌹", "الله يسلمك 🙏"],
+    "تسلمي": ["تسلمي يا غالية 🌹", "تسلم يدك 🌸", "الله يسلمك 🙏"],
+    "يسلمو": ["يسلم قلبك ❤️", "يسلمو على الذوق 🌹", "الله يسلمك 🌸"],
+    "يعطيك العافية": ["يعافيك ربي ❤️", "الله يعافيك 🌹", "تسلم، يعافيك 🌸"],
+    "يعطيك الف عافية": ["الله يعافيك 🌹", "يعافيك ربي 🙏", "تسلم يا غالي 🌸"],
+    "ربي يوفقك": ["وإياك يا رب 🌸", "الله يوفق الجميع 🌹", "آمين يا رب 🙏"],
+    "جزاك الله خير": ["وإياكم، الله يبارك فيك 🌹", "آمين، الله يجزاك خير 🌸", "الله يبارك فيك 🙏"],
+    "الف شكر": ["ألف شكر لك 🙏", "الشكر لله 🌹", "تسلم على الذوق 🌸"],
+    "مشكور": ["مشكور يا غالي 🌸", "العفو 🌹", "تسلم 🙏"],
+    "مشكورة": ["مشكورة يا غالية 🌹", "العفو 🌸", "تسلمي 🙏"],
+    "شكراً جزيلاً": ["الشكر لله ثم لك ❤️", "العفو، أهلين 🌹", "تسلم على كلامك 🌸"],
+    "يعطيك الصحة": ["الله يعافيك 🙏", "يعطيك الصحة والعافية 🌹", "تسلم 🌸"],
+    "ربي يعطيك العافية": ["يعافيك ربي 🌹", "الله يعافيك 🙏", "تسلم 🌸"],
+    "ممتاز": ["شكراً لك 🌟", "أشكرك 🌹", "ممتاز أنت 🌸"],
+    "رائع": ["يعجبني هذا 🌸", "روعة 🌹", "شكراً 🙏"],
+    "جميل": ["روعة 🌹", "جميل جداً 🌸", "أشكرك 🙏"],
+    "الله يبارك فيك": ["وفيك بارك الله 🙏", "آمين، وبارك فيك 🌹", "الله يبارك في الجميع 🌸"],
+    "تقبل مروري": ["نورتنا بمرورك 🌸", "شكراً لمرورك 🌹", "تشرفنا بوجودك 🙏"]
+}
+RELIGIOUS_REPLIES = {
+    "ما شاء الله": ["تبارك الرحمن 🤍", "ما شاء الله تبارك الله 🌹", "الله يبارك 🙏"],
+    "ماشاءالله": ["تبارك الله 🌹", "الله يبارك فيك 🙏", "ما شاء الله 🌸"],
+    "ما شاء الله تبارك الله": ["الله يبارك فيك 🙏", "تبارك الرحمن 🌹", "ما شاء الله 🌸"],
+    "الحمد لله": ["الحمد لله دائماً وأبداً 🙏", "الحمد لله على كل حال 🌹", "الحمد لله رب العالمين 🌸"],
+    "سبحان الله": ["سبحان الله وبحمده 🌹", "سبحان الله العظيم 🙏", "سبحان الله وبحمده 🌸"],
+    "سبحان الله وبحمده": ["سبحان الله العظيم 🌸", "سبحان الله وبحمده 🙏", "سبحان الله 🌹"],
+    "اللهم صل على محمد": ["اللهم صل وسلم وبارك على نبينا محمد 🌸", "اللهم صل على محمد وآل محمد 🌹", "اللهم صل على سيدنا محمد 🙏"],
+    "صل على النبي": ["اللهم صل على محمد 🌹", "اللهم صل وسلم وبارك عليه 🌸", "اللهم صل على سيدنا محمد 🙏"],
+    "استغفر الله": ["ربي اغفر لي ولوالديّ 🙏", "أستغفر الله العظيم 🌹", "اللهم اغفر لي 🌸"],
+    "استغفر الله العظيم": ["الله أكبر، أستغفرك وأتوب إليك 🤍", "أستغفر الله العظيم الذي لا إله إلا هو 🌹", "ربي اغفر لي 🙏"],
+    "لا اله الا الله": ["لا إله إلا الله محمد رسول الله 🙏", "لا إله إلا الله وحده لا شريك له 🌹", "شهادة الحق 🌸"],
+    "الله اكبر": ["الله أكبر كبيراً 🌹", "الله أكبر، الحمد لله 🙏", "الله أكبر وأعلى 🌸"],
+    "الحمدلله": ["الحمد لله رب العالمين 🙏", "الحمد لله على كل حال 🌹", "الحمد لله دائماً 🌸"],
+    "ربي": ["لبيك يا رب 🌸", "ربي معي 🌹", "ربي كريم 🙏"],
+    "اللهم": ["آمين يا رب العالمين 🤍", "اللهم استجب 🙏", "اللهم لك الحمد 🌹"],
+    "سبحانه": ["سبحانه وتعالى 🙏", "سبحان الله العظيم 🌹", "سبحانه وتقدس 🌸"],
+    "تعالى الله": ["الله أعلى وأعلم 🌹", "تعالى الله عما يشركون 🙏", "الله أعلى 🌸"],
+    "بسم الله": ["بسم الله الرحمن الرحيم 🤍", "بسم الله توكلت على الله 🙏", "بسم الله ما شاء الله 🌹"],
+    "توكلت على الله": ["حسبي الله ونعم الوكيل 🙏", "توكلت على الله الحي القيوم 🌹", "الله كافي 🌸"],
+    "رب العالمين": ["رب السماوات والأرض 🌹", "رب العالمين أجمعين 🙏", "الله رب العالمين 🌸"],
+    "الرحمن": ["بسم الله الرحمن الرحيم 🤍", "الرحمن الرحيم 🙏", "الله الرحمن 🌹"],
+    "الرحيم": ["الرحيم بعباده 🙏", "الرحمن الرحيم 🌹", "الله الرحيم 🌸"],
+    "الملك": ["الملك القدوس 🌹", "الملك الحق المبين 🙏", "الله الملك 🌸"],
+    "القدوس": ["سبحان القدوس 🤍", "القدوس السلام 🙏", "سبحان الله القدوس 🌹"],
+    "السلام": ["السلام عليكم ورحمة الله 🌸", "السلام عليكم 🙏", "السلام عليكم ورحمة الله وبركاته 🌹"]
+}
+JOKE_REPLIES = {
+    "ضحك": ["😂😂", "ههههه 🤣", "ضحكتني 😂"],
+    "نكتة": ["مرة واحد قال للبوت: وينك؟ قال البوت: هني 👻", "مرة واحد سأل البوت: أيش تسوي؟ قال: أنشر وأحمي 🤖", "نكتة جديدة: البوت يقول للمستخدم: أنت نورت 🌟"],
+    "مزح": ["😅😅", "ههههه 🤣", "مزح مزح 😂"],
+    "فكة": ["😂🤣", "هههههه 🤣", "فكة عسل 😂"],
+    "وناسة": ["🤩🤩", "وناسة يا جماعة 🌸", "جو وناسة 😊"],
+    "طقطقة": ["😂😂", "طق طق 🤣", "ههههه طقطقة حلوة 😂"],
+    "خبلت": ["هههههه 🤣", "خبلتني 😂", "ههههه خبل 🤣"],
+    "هههه": ["😂🤣", "هههههه 🤣", "ضحكتني 😂"],
+    "ضحكتني": ["أنا مبسوط إنك ضحكت 😊", "😊😊", "أنا سعيد بإضحاكك 🌹"],
+    "ههههههه": ["ههههههههه 🤣😂", "هههههه 🤣", "موتني ضحك 😂"],
+    "ضحكك": ["يضحكني حضورك 😂", "ضحكك حلو 🌸", "أضحكني 😊"],
+    "نكتة جديدة": ["مرة وحدة سألت البوت: أيش تسوي؟ قال: أنشر وأحمي 🤖", "نكتة: البوت مشغول بالنشر 😂", "مرة البوت قال للمستخدم: أنت الغالي 🌹"],
+    "طشة": ["😂😂", "طشة عسل 😂", "ههههه 🤣"],
+    "مموت": ["ههههه، ضحكتني 🤣", "موتني ضحك 😂", "ههههه 🤣"],
+    "قهقهة": ["ههههههههه 😂", "قهقهة حلوة 🤣", "هههههه 😊"],
+    "ضحك عالي": ["ههههههههههه 🤣", "ضحك عالي جداً 😂", "ههههههه 🤣"],
+    "نكتة حلوة": ["أحلى نكتة هي وجودك معنا 😊", "نكتة حلوة منك 🌸", "أحلى نكتة 🌹"],
+    "وناسة": ["جو وناسة 🤩", "وناسة يا جماعة 😊", "جو جميل 🌸"],
+    "اخبارك": ["تضحك وتبسط 😂", "أخبارك طيبة 🌹", "كل الخير 🙏"],
+    "طقطقة حلوة": ["هههه، طق طق 🤣", "طقطقة عسل 😂", "ههههه طقطقة حلوة 🌸"],
+    "فكه": ["فكة عسل 😂", "فكة وناسة 🤣", "ههههه فكه 🌸"],
+    "خوش واحد": ["ههههه 🤣", "خوش واحد أنت 🌹", "ضحكتني 😂"],
+    "موتني": ["موتني ضحك 😂", "ههههه موتني 🤣", "ما رح أموت ضحك 😊"],
+    "نكتة اليوم": ["اليوم يومك 😊", "نكتة اليوم من عندك 🌹", "اليوم يوم سعيد 🌸"],
+    "حلوة": ["حلوتك 🤩", "حلوة منك 🌹", "أجمل نكتة 🌸"],
+    "ايش هالضحك": ["ضحكك يفرحني 😂", "ضحك حلو 🌸", "أنا مبسوط 🌹"],
+    "يهبل": ["ههههه 🤣", "يهبل ضحك 😂", "ههههه يهبل 🌸"],
+    "يكسر": ["ههههههه 🤣😂", "يكسر القلب 😂", "ههههه يكسّر 🌹"],
+    "مزة": ["ههههه 🤣", "مزة منك 🌸", "ههههه مزة 😂"],
+    "جو": ["جو حلو 😊", "جو رائع 🌹", "جو ممتع 🌸"]
+}
+MOTIVATIONAL_REPLIES = {
+    "تعبت": ["إرتاح شوي، تستاهل الراحة 😊", "خذ قسط من الراحة 🌸", "تستاهل كل خير 🙏"],
+    "زعلان": ["لا تزعل، كل شيء بيصير خير ❤️", "الدنيا جميلة، ابتسم 🌹", "كل شيء سيكون بخير 🌸"],
+    "فرحان": ["الله يفرح قلبك 😊", "فرحتنا بفرحك 🌹", "تبقى مبسوط دائماً 🌸"],
+    "ناجح": ["ألف مبروك، تستاهل كل خير 🎉", "مبروك النجاح 🌹", "أنت ناجح دائماً 🙏"],
+    "فائز": ["مبروك الفوز، أنت تستاهل 🏆", "ألف مبروك 🌹", "أنت فائز دائماً 🌸"],
+    "متعب": ["خذ قسط من الراحة 🌸", "إرتاح شوي، راح ترتاح 🌹", "تستاهل الراحة 🙏"],
+    "محبط": ["لا تحبط، النجاح قريب 💪", "الدنيا بخير، ابتسم 🌹", "أنت أقوى من ذلك 🌸"],
+    "متفائل": ["تفاؤلك خير 🌹", "التفاؤل طريق النجاح 🌸", "أنت متفائل دائماً 🙏"],
+    "حزين": ["كل شيء سيكون بخير ❤️", "لا تحزن، الله معك 🌹", "الحياة جميلة 🌸"],
+    "مبسوط": ["أجمل شعور هو السعادة 😊", "سعادتك تسعدني 🌹", "تبقى مبسوط دائماً 🌸"],
+    "متحمس": ["حماسك جميل 🔥", "استمر بالحماس 🌹", "أنت متحمس دائماً 🙏"],
+    "مبدع": ["إبداعك رائع 🌟", "أنت مبدع دائماً 🌹", "إبداعك يفرحنا 🌸"],
+    "متطور": ["أنت تتطور باستمرار 🚀", "التطور طريق النجاح 🌹", "أنت في تطور مستمر 🙏"],
+    "طموح": ["طموحك يوصلك للنجاح 💫", "الطموح طريق القمة 🌹", "أنت طموح دائماً 🌸"],
+    "ناجح": ["أنت ناجح دائماً 🎉", "النجاح حليفك 🌹", "مبروك النجاح 🙏"]
+}
+SOCIAL_REPLIES = {
+    "كيفك": ["بخير الحمد لله، وأنت؟ 🌹", "بخير، تسلم ❤️", "الحمد لله، كيفك أنت؟ 🌸"],
+    "كيفك انت": ["بخير، تسلم ❤️", "بخير، الحمد لله 🌹", "أنا بخير، شكراً 🙏"],
+    "اخبار العائلة": ["كلهم بخير، الحمد لله 🙏", "العائلة بخير 🌹", "الحمد لله على كل حال 🌸"],
+    "والديك": ["بخير، الحمد لله 🌸", "والديك في أفضل حال 🌹", "الله يحفظهم 🙏"],
+    "الاهل": ["الحمد لله، كلهم بخير 🌹", "الأهل في خير 🌸", "الله يحفظ العائلة 🙏"],
+    "الصحة": ["الحمد لله على كل حال 🙏", "الصحة نعمة 🌹", "الحمد لله، بخير 🌸"],
+    "العمل": ["الحمد لله، أموره طيبة 🌸", "العمل بخير 🌹", "الحمد لله على كل حال 🙏"],
+    "الدراسة": ["بالتوفيق إن شاء الله 📚", "الله يوفقك 🌹", "النجاح حليفك 🌸"],
+    "الجامعة": ["الله يوفقك يارب 🌹", "الجامعة تنتظر نجاحك 🌸", "بالتوفيق 🙏"],
+    "المدرسة": ["بالتوفيق والنجاح 🌸", "المدرسة تنتظرك 🌹", "الله يوفقك 🙏"],
+    "البيت": ["الحمد لله، بيتنا بخير 🙏", "البيت جميل 🌹", "الحمد لله 🌸"],
+    "السفر": ["الله يسهل لك 🌹", "سفر مبارك 🌸", "الله يحفظك 🙏"],
+    "السيارة": ["سلامتك يا رب 🚗", "السيارة بخير 🌹", "الحمد لله 🌸"],
+    "السكن": ["الحمد لله، مستقرين 🌸", "السكن بخير 🌹", "الحمد لله 🙏"],
+    "المال": ["الحمد لله، رزق حلال 🙏", "المال يزيد بالبركة 🌹", "الحمد لله 🌸"],
+    "الزواج": ["الله يبارك لك 🌹", "ألف مبروك 🌸", "الله يتمم بخير 🙏"],
+    "العزوبية": ["الله يرزقك الزوجة الصالحة 🙏", "الزواج نصيب 🌹", "الله يكتب الخير 🌸"],
+    "الأولاد": ["الله يبارك لك فيهم 🌸", "الأولاد زينة الحياة 🌹", "الله يحفظهم 🙏"],
+    "البنات": ["الله يحفظهم لك 🌹", "البنات نعمة 🌸", "الله يرعاهم 🙏"],
+    "العائلة": ["الله يجمع شملكم 🤍", "العائلة أغلى ما نملك 🌹", "الله يحمي العائلة 🌸"]
+}
+ADMIN_REPLIES = {
+    "ممنوع": ["تم التنبيه، يرجى احترام قوانين المجموعة 🚫", "ممنوع، يرجى الالتزام 🌹", "تنبيه: ممنوع 🙏"],
+    "انتبه": ["رجاءً انتبه للقوانين ⚠️", "انتبه يا غالي 🌹", "تنبيه مهم 🌸"],
+    "قوانين": ["قوانين المجموعة موجودة في الوصف 📋", "اقرأ القوانين في الوصف 🌹", "القوانين واضحة 🙏"],
+    "مخالفة": ["تنبيه: هذا مخالف للقوانين 🚫", "مخالفة، يرجى الانتباه 🌹", "تنبيه مهم 🌸"],
+    "تحذير": ["تحذير أول، يرجى الالتزام بالقوانين ⚠️", "تحذير، انتبه 🌹", "هذا تحذير 🙏"],
+    "طرد": ["سيتم تطبيق العقوبات 🚫", "طرد، انتبه 🌹", "عقوبات رادعة 🌸"],
+    "حظر": ["تم حظر المخالف 🚫", "حظر، انتبه 🌹", "تم تطبيق الحظر 🙏"],
+    "كتم": ["تم كتم المخالف 🔇", "كتم لمدة محددة 🌹", "تم تطبيق الكتم 🌸"],
+    "سجل": ["تم تسجيل المخالفة 📝", "سجل المخالفات 🌹", "تم التوثيق 🙏"],
+    "تنبيه": ["تنبيه هام يرجى قراءة القوانين 📋", "تنبيه للمخالفين 🌹", "انتبه للقوانين 🌸"]
+}
+REQUEST_REPLIES = {
+    "بليز": ["حاضر، بس أرسل طلبك بالتفصيل 📝", "تفضل، أنا هنا 🌹", "أرسل طلبك 🙏"],
+    "من فضلك": ["تفضل، أنا هنا للمساعدة 🤖", "تفضل، بكامل الخدمة 🌹", "أنا في خدمتك 🌸"],
+    "تكرم": ["أمرك يا غالي 🌹", "تفضل، أنا هنا 🙏", "بكامل الخدمة 🌸"],
+    "لو سمحت": ["تفضل، أنا جاهز 🙏", "تفضل، بكامل الخدمة 🌹", "أنا في انتظارك 🌸"],
+    "عندي طلب": ["أرسل طلبك وسأساعدك 💡", "تفضل بطلبك 🌹", "أنا في الخدمة 🙏"],
+    "طلب": ["تفضل بطلبك 📝", "أرسل طلبك 🌹", "أنا هنا لمساعدتك 🌸"],
+    "سؤال": ["اسأل، وأنا هنا للإجابة ❓", "تفضل بسؤالك 🌹", "أنا هنا للإجابة 🙏"],
+    "استفسار": ["تفضل بالاستفسار 📋", "أنا هنا للإجابة 🌹", "تفضل 🌸"],
+    "مساعدة": ["كيف أقدر أساعدك؟ 🤖", "أنا هنا لمساعدتك 🌹", "تفضل، أنا في الخدمة 🙏"],
+    "دعم": ["أنا هنا لدعمك 💪", "الدعم متوفر 🌹", "نحن معك 🙏"],
+    "شكوى": ["اشرح شكوتك وسنحلها 📞", "تفضل بشكوتك 🌹", "نحن هنا لحلها 🌸"],
+    "مشكلة": ["اشرح مشكلتك، سأحاول مساعدتك 💡", "تفضل بمشكلتك 🌹", "نحن هنا لحلها 🙏"],
+    "اقتراح": ["تفضل باقتراحك، نرحب بكل فكرة 💡", "اقتراحك يهمنا 🌹", "تفضل بفكرتك 🌸"],
+    "فكرة": ["شاركنا فكرتك الجميلة 🌟", "فكرتك تهمنا 🌹", "تفضل بفكرتك 🙏"],
+    "رأي": ["نرحب برأيك القيم 📝", "رأيك يهمنا 🌹", "تفضل برأيك 🌸"]
+}
+ABOUT_BOT_REPLIES = {
+    "مين انت": ["أنا البوت، مساعد لإدارة المجموعات 🤖", "أنا ريلاكس مانيجر 🌹", "أنا خادم المجموعة 🙏"],
+    "ايش تسوي": ["أساعد في إدارة المجموعات، النشر، الأمان، والكثير 📋", "أدير القنوات والمجموعات 🌹", "أنا مساعد شامل 🌸"],
+    "مهمتك": ["تنظيم المجموعات وحمايتها من المزعجين 🛡️", "الأمان أولاً 🌹", "حماية المجموعة 🙏"],
+    "شغلك": ["أنشر المنشورات، أحافظ على الأمان، وأدير القنوات 📡", "إدارة متكاملة 🌹", "خدمة المجموعة 🌸"],
+    "ايش تقدر": ["أقدر أساعدك في إدارة القناة والمجموعة 💪", "كل شيء تقريباً 🌹", "أنا متعدد المهام 🙏"],
+    "مهاراتك": ["النشر التلقائي، الأمان، الردود، والإحصائيات 📊", "مهارات متعددة 🌹", "أنا شامل 🌸"],
+    "شو اختصاصك": ["إدارة القنوات والمجموعات بكل احترافية 🎯", "اختصاصي الإدارة 🌹", "الخدمة المتكاملة 🙏"],
+    "ليش انت هنا": ["لأخدمكم وأساعد في تنظيم المجموعة 🌸", "أنا هنا لخدمتكم 🌹", "لأدير المجموعة 🙏"],
+    "عرف نفسك": ["أنا بوت مساعد، تحت أمركم 🙏", "أنا ريلاكس مانيجر 🌹", "أنا خادمكم 🌸"],
+    "شنو فائدتك": ["أسهل عليك إدارة القناة والمجموعة 🚀", "فائدتي في الخدمة 🌹", "أنا هنا لمساعدتك 🙏"]
+}
+EXTRA_REPLIES = {
+    "تمام": ["تمام يا غالي 🌸", "تمام، تسلم 🌹", "أوكي 🙏"],
+    "اوك": ["أوكي، تحت أمرك 🙏", "أوكي، تمام 🌹", "ممتاز 🌸"],
+    "حاضر": ["حاضر، أنا جاهز 💪", "حاضر، تفضل 🌹", "تحت أمرك 🙏"],
+    "ان شاء الله": ["إن شاء الله خير 🌹", "إن شاء الله 🌸", "بإذن الله 🙏"],
+    "باذن الله": ["بإذن الله 🙏", "بإذن الله خير 🌹", "إن شاء الله 🌸"],
+    "مع السلامة": ["مع السلامة، تشرفنا بك 🌸", "مع السلامة 🌹", "أهلاً وسهلاً بك 🙏"],
+    "باي": ["باي، نورت 🌹", "مع السلامة 🌸", "تشرفنا بك 🙏"],
+    "سلام": ["سلام، الله يحفظك 🙏", "سلام عليكم 🌹", "مع السلامة 🌸"],
+    "ياعيني": ["ياعيني عليك 🌹", "ياعيني، أنت الغالي 🌸", "ياعيني يا حلو 🙏"],
+    "ياحلو": ["حلوك الله 🌸", "أنت الحلو 🌹", "حلو كلامك 🙏"]
+}
+
+REPLY_WEIGHTS = {
+    'welcome': [0.5, 0.3, 0.2],
+    'faq': [0.4, 0.3, 0.3],
+    'positive': [0.4, 0.4, 0.2],
+    'religious': [0.4, 0.3, 0.3],
+    'joke': [0.3, 0.4, 0.3],
+    'motivational': [0.4, 0.3, 0.3],
+    'social': [0.4, 0.3, 0.3],
+    'admin': [0.5, 0.3, 0.2],
+    'request': [0.4, 0.3, 0.3],
+    'about': [0.4, 0.3, 0.3],
+    'extra': [0.4, 0.3, 0.3]
+}
+
+def get_weighted_reply(reply_list: List[str], category: str = 'default') -> str:
+    if not reply_list:
+        return "🙏"
+    if len(reply_list) == 1:
+        return reply_list[0]
+
+    weights = REPLY_WEIGHTS.get(category, [0.4, 0.3, 0.3])
+    weights = weights[:len(reply_list)]
+    if len(weights) < len(reply_list):
+        weights.extend([0.1] * (len(reply_list) - len(weights)))
+    total = sum(weights)
+    weights = [w / total for w in weights]
+    return random.choices(reply_list, weights=weights, k=1)[0]
+
+ALL_REPLIES = {}
+ALL_REPLIES.update({k: get_weighted_reply(v, 'welcome') if isinstance(v, list) else v for k, v in WELCOME_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'faq') if isinstance(v, list) else v for k, v in FAQ_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'positive') if isinstance(v, list) else v for k, v in POSITIVE_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'religious') if isinstance(v, list) else v for k, v in RELIGIOUS_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'joke') if isinstance(v, list) else v for k, v in JOKE_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'motivational') if isinstance(v, list) else v for k, v in MOTIVATIONAL_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'social') if isinstance(v, list) else v for k, v in SOCIAL_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'admin') if isinstance(v, list) else v for k, v in ADMIN_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'request') if isinstance(v, list) else v for k, v in REQUEST_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'about') if isinstance(v, list) else v for k, v in ABOUT_BOT_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'extra') if isinstance(v, list) else v for k, v in EXTRA_REPLIES.items()})
+
+def clean_text_for_telegram(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r'[\u200b\u200c\u200d\u2060\uFEFF\u202a\u202b\u202c\u202d\u202e]', '', text)
+    return text
+
+def escape_markdown_v2(text: str) -> str:
+    if not text:
+        return ""
+    special_chars = r'_*[]()~`>#+\-=|{}.!\\'
+    def escape_char(match):
+        char = match.group(0)
+        start = match.start()
+        if start > 0 and text[start-1] == '\\':
+            return char
+        return '\\' + char
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\])', escape_char, text)
+
+def sanitize_text(text: str, max_length: int = 4096, allow_tags: list = None) -> str:
+    if not text:
+        return ""
+    try:
+        if allow_tags is None:
+            allow_tags = ['b', 'i', 'u', 's', 'a', 'code', 'pre', 'strong', 'em']
+        cleaned = bleach.clean(
+            text,
+            tags=allow_tags,
+            attributes={'a': ['href', 'title']},
+            styles=[],
+            strip=True
+        )
+    except:
+        cleaned = text
+    if len(cleaned) > max_length:
+        cleaned = cleaned[:max_length]
+    return cleaned
+
+def encode_callback_data(data: str) -> str:
+    return urllib.parse.quote(data, safe='')
+
+def decode_callback_data(data: str) -> str:
+    return urllib.parse.unquote(data)
+
+ERROR_MESSAGES = {
+    "Forbidden": "🔒 البوت ليس لديه صلاحية للقيام بهذا الإجراء",
+    "BadRequest": "⚠️ طلب غير صحيح، تأكد من البيانات المدخلة",
+    "TimedOut": "⏱️ انتهت المهلة، حاول مرة أخرى",
+    "NetworkError": "🌐 مشكلة في الشبكة، تحقق من اتصالك",
+    "InvalidQuery": "❌ بيانات غير صالحة، حاول مرة أخرى",
+    "ChatNotFound": "❌ المجموعة غير موجودة أو البوت ليس فيها",
+    "UserNotFound": "❌ المستخدم غير موجود",
+    "MessageNotModified": "✅ تم التحديث",
+}
+
+class AdvancedLogger:
+    def __init__(self):
+        self.loggers = {}
+        self._setup_loggers()
+
+    def _setup_loggers(self):
+        error_logger = logging.getLogger('error_logger')
+        error_logger.setLevel(logging.ERROR)
+        error_handler = logging.FileHandler(ERROR_LOG, encoding='utf-8')
+        error_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        error_logger.addHandler(error_handler)
+        self.loggers['error'] = error_logger
+
+        access_logger = logging.getLogger('access_logger')
+        access_logger.setLevel(logging.INFO)
+        access_handler = logging.FileHandler(ACCESS_LOG, encoding='utf-8')
+        access_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+        access_logger.addHandler(access_handler)
+        self.loggers['access'] = access_logger
+
+        security_logger = logging.getLogger('security_logger')
+        security_logger.setLevel(logging.WARNING)
+        security_handler = logging.FileHandler(SECURITY_LOG, encoding='utf-8')
+        security_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        security_logger.addHandler(security_handler)
+        self.loggers['security'] = security_logger
+
+    def log_error(self, message: str, error: Exception = None, context: dict = None):
+        error_id = secrets.token_hex(4)
+        log_msg = f"[{error_id}] {message}"
+        if error:
+            log_msg += f" - {error}"
+        if context:
+            safe_context = {k: v for k, v in context.items() if k not in ['token', 'password', 'key', 'secret']}
+            log_msg += f" - السياق: {json.dumps(safe_context, default=str)[:200]}"
+        self.loggers['error'].error(log_msg)
+        traceback.print_exc()
+        return error_id
+
+    def log_access(self, user_id: int, action: str, details: dict = None):
+        log_msg = f"User: {user_id} - Action: {action}"
+        if details:
+            safe_details = {k: v for k, v in details.items() if k not in ['token', 'password', 'key', 'secret']}
+            log_msg += f" - {json.dumps(safe_details, default=str)[:100]}"
+        self.loggers['access'].info(log_msg)
+
+    def log_security(self, event: str, user_id: int, details: dict = None, severity: str = "INFO"):
+        log_msg = f"[{severity}] {event} - User: {user_id}"
+        if details:
+            safe_details = {k: v for k, v in details.items() if k not in ['token', 'password', 'key', 'secret']}
+            log_msg += f" - {json.dumps(safe_details, default=str)[:200]}"
+        self.loggers['security'].warning(log_msg)
+
+advanced_logger = AdvancedLogger()
+
+def log_error(error: Exception, context: dict = None) -> str:
+    return advanced_logger.log_error("حدث خطأ غير متوقع", error, context)
+
+class ErrorHandler:
+    def __init__(self, max_retries: int = 3, base_delay: float = 1.0):
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.errors = defaultdict(int)
+        self._lock = asyncio.Lock()
+
+    async def handle_async(self, func: Callable, *args, **kwargs) -> Any:
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                return await func(*args, **kwargs)
+            except (TimedOut, NetworkError) as e:
+                last_error = e
+                delay = self.base_delay * (2 ** attempt) + random.uniform(0, 0.5)
+                advanced_logger.log_error(f"محاولة {attempt+1} فشلت", e, {'args': str(args)[:100]})
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(delay)
+                continue
+            except Conflict as e:
+                advanced_logger.log_error("تعارض في التحديثات", e)
+                return None
+            except Forbidden as e:
+                advanced_logger.log_security("FORBIDDEN_ACTION", 0, {'error': str(e)}, "CRITICAL")
+                raise
+            except Exception as e:
+                advanced_logger.log_error("خطأ غير متوقع", e, {'args': str(args)[:100]})
+                raise
+        if last_error:
+            raise last_error
+        return None
+
+    def handle_sync(self, func: Callable, *args, **kwargs) -> Any:
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                last_error = e
+                delay = self.base_delay * (2 ** attempt) + random.uniform(0, 0.5)
+                advanced_logger.log_error(f"محاولة {attempt+1} فشلت (متزامنة)", e)
+                if attempt < self.max_retries - 1:
+                    time_module.sleep(delay)
+                continue
+        if last_error:
+            raise last_error
+        return None
+
+error_handler = ErrorHandler()
+
+async def memory_optimizer():
+    try:
+        if CACHETOOLS_AVAILABLE:
+            _admin_cache.clear()
+            _security_cache.clear()
+            _auth_cache.clear()
+        else:
+            _admin_cache.clear()
+            _security_cache.clear()
+            _auth_cache.clear()
+            _security_cache_time.clear()
+        await _translation_cache.clear()
+        NSFW_CACHE.clear()
+        gc.collect()
+        return True
+    except Exception as e:
+        advanced_logger.log_error("فشل تحسين الذاكرة", e)
+        return False
+
+async def memory_optimizer_loop():
+    while True:
+        await asyncio.sleep(300)
+        try:
+            await memory_optimizer()
+            advanced_logger.log_access(0, "MEMORY_OPTIMIZED", {"timestamp": utc_now_iso()})
+        except Exception as e:
+            advanced_logger.log_error("فشل حلقة تحسين الذاكرة", e)
+
+class NotificationSystem:
+    def __init__(self):
+        self.pending_notifications = []
+        self._lock = asyncio.Lock()
+        self._scheduled_tasks = []
+
+    async def send_notification(self, bot, user_id: int, text: str, parse_mode: str = "MarkdownV2", reply_markup=None):
+        try:
+            await safe_send_markdown(bot, user_id, text, reply_markup)
+            advanced_logger.log_access(user_id, "NOTIFICATION_SENT", {"text": text[:50]})
+            return True
+        except Exception as e:
+            advanced_logger.log_error("فشل إرسال الإشعار", e, {"user_id": user_id})
+            return False
+
+    async def send_bulk_notification(self, bot, user_ids: List[int], text: str, parse_mode: str = "MarkdownV2", delay: float = 0.5):
+        results = []
+        semaphore = asyncio.Semaphore(10)
+        async def send_one(user_id):
+            async with semaphore:
+                try:
+                    await safe_send_markdown(bot, user_id, text)
+                    return (user_id, True)
+                except:
+                    await asyncio.sleep(delay)
+                    return (user_id, False)
+        tasks = [send_one(uid) for uid in user_ids]
+        results = await asyncio.gather(*tasks)
+        success = sum(1 for _, ok in results if ok)
+        failed = len(results) - success
+        advanced_logger.log_access(0, "BULK_NOTIFICATION", {
+            "total": len(user_ids),
+            "success": success,
+            "failed": failed
+        })
+        return success, failed
+
+    async def schedule_notification(self, bot, user_id: int, text: str, delay_seconds: int):
+        async def delayed():
+            await asyncio.sleep(delay_seconds)
+            await self.send_notification(bot, user_id, text)
+        task = asyncio.create_task(delayed())
+        self._scheduled_tasks.append(task)
+        task.add_done_callback(lambda t: self._scheduled_tasks.remove(t) if t in self._scheduled_tasks else None)
+        return task
+
+notification_system = NotificationSystem()
+
+async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
+    if not text:
+        return None
+    clean_text = sanitize_text(text)
+    MAX_LEN = 4096
+    try:
+        escaped = escape_markdown_v2(clean_text)
+        escaped = re.sub(r'\\{2,}', '\\\\', escaped)
+        if len(escaped) > MAX_LEN:
+            cut_point = MAX_LEN - 3
+            while cut_point > 0 and escaped[cut_point - 1] in ('\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!', '@'):
+                cut_point -= 1
+            escaped = escaped[:cut_point] + "..."
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=escaped,
+            parse_mode='MarkdownV2',
+            reply_markup=reply_markup,
+            **kwargs
+        )
+    except BadRequest as e:
+        if "User_bot_to_bot_disabled" in str(e):
+            logger.debug(f"محاولة إرسال رسالة إلى بوت (chat_id={chat_id}) تم تجاهلها.")
+            return None
+        raise
+    except Exception:
+        try:
+            html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             if len(html_text) > MAX_LEN:
                 html_text = html_text[:MAX_LEN-3] + "..."
             return await bot.send_message(
@@ -536,14 +1709,19 @@ def check_single_instance():
     try:
         sock_path = TEMP_PATH / "bot.sock"
         if sock_path.exists():
-            sock_path.unlink()  # حذف الملف العالق
+            sock_path.unlink()
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(str(sock_path))
-        return sock
+        try:
+            sock.bind(str(sock_path))
+            return sock
+        except socket.error:
+            print("❌ البوت يعمل بالفعل!")
+            sys.exit(1)
     except Exception as e:
         print(f"⚠️ لا يمكن التحقق من التشغيل الواحد: {e}")
         return None
 
+lock_socket = check_single_instance()
 
 def utc_now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -958,7 +2136,7 @@ class CallbackData:
     ADMIN_CREATE_CONTEST = "admin:create_contest"
     ADMIN_DECLARE_WINNER = "admin:declare_winner"
     ADMIN_DEL_CONTEST_PREFIX = "admin:del_contest:"
-    BACK = "back"   # تم إضافة هذا السطر المفقود
+    BACK = "back"
     CANCEL_SESSION = "cancel_session"
     ADVANCED_ACTIONS = "advanced_actions"
     GROUP_ACTION_BAN = "group_action:ban"
@@ -1022,6 +2200,7 @@ class CallbackData:
     PANEL_UNLOCK_PREFIX = "panel:unlock:"
     PANEL_CLOSE = "panel:close"
     CHECK_SUBSCRIBE = "check_subscribe"
+
 # ===================================================================
 # تعريف UserState - لإدارة حالات المستخدمين في الجلسات
 # ===================================================================
@@ -1076,7 +2255,9 @@ class UserState(Enum):
     WAITING_NSFW_THRESHOLD = auto()
     WAITING_EXPORT_DATA = auto()
 
-# الجزء الثاني سيحتوي على دوال قاعدة البيانات والوظائف الأساسية.
+# ===================================================================
+# دوال مساعدة إضافية – ستضاف في الجزء الثاني
+# ===================================================================
 # ===================== دوال قاعدة البيانات الأساسية =====================
 async def db_register_user(user_id: int) -> bool:
     async def _register(conn):
@@ -3810,384 +4991,14 @@ async def upload_backup_to_drive(backup_path: Path, max_retries: int = 3) -> str
                 return None
             await asyncio.sleep(2 ** attempt)
     return None
-# ===================== دوال القوائم والأزرار (الكيبورد) =====================
-def get_auto_reply_keyboard(chat_id: int, settings: dict) -> InlineKeyboardMarkup:
-    status_text = "🟢 مفعل" if settings['enabled'] else "🔴 معطل"
-    admin_text = "👑 مشرفين فقط" if settings['only_admins'] else "👥 الجميع"
+# ===================================================================
+# دوال القوائم والأزرار (الكيبورد) – موجودة في الجزء الثاني
+# ===================================================================
 
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            f"📝 الردود التلقائية: {status_text}",
-            callback_data=f"{CallbackData.AUTO_REPLY_TOGGLE_PREFIX}{chat_id}"
-        )],
-        [InlineKeyboardButton(
-            f"👥 المستخدمون: {admin_text}",
-            callback_data=f"{CallbackData.AUTO_REPLY_ADMINS_PREFIX}{chat_id}"
-        )],
-        [InlineKeyboardButton(
-            "🔄 إعادة تعيين الردود",
-            callback_data=f"{CallbackData.AUTO_REPLY_RESET_PREFIX}{chat_id}"
-        )],
-        [InlineKeyboardButton(
-            "📊 إحصائيات الردود",
-            callback_data=f"{CallbackData.AUTO_REPLY_STATS_PREFIX}{chat_id}"
-        )],
-        [InlineKeyboardButton(
-            "🔙 رجوع",
-            callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}"
-        )]
-    ])
+# ===================================================================
+# دوال الاستدعاء الأساسية (Callback Handlers)
+# ===================================================================
 
-def get_user_auto_reply_keyboard(user_id: int, enabled: bool) -> InlineKeyboardMarkup:
-    status_text = "🟢 مفعل" if enabled else "🔴 معطل"
-
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            f"📝 الردود التلقائية: {status_text}",
-            callback_data=f"{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}{user_id}"
-        )],
-        [InlineKeyboardButton(
-            "🔙 رجوع",
-            callback_data=CallbackData.BACK
-        )]
-    ])
-
-def get_replies_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة رد", callback_data=CallbackData.ADMIN_ADD_REPLY),
-         InlineKeyboardButton("📋 عرض الردود", callback_data=CallbackData.ADMIN_LIST_REPLIES)],
-        [InlineKeyboardButton("🗑️ حذف رد", callback_data=CallbackData.ADMIN_DEL_REPLY),
-         InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
-    ])
-
-def get_group_banned_words_keyboard(chat_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"{CallbackData.BANNED_WORDS_ADD_PREFIX}{chat_id}"),
-         InlineKeyboardButton("📋 عرض الكلمات", callback_data=f"{CallbackData.BANNED_WORDS_LIST_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"{CallbackData.BANNED_WORDS_REMOVE_PREFIX}{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
-    ])
-
-def get_banned_words_admin_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة كلمة عامة", callback_data=CallbackData.ADMIN_ADD_BANNED_WORD),
-         InlineKeyboardButton("📋 عرض الكلمات", callback_data=CallbackData.ADMIN_LIST_BANNED_WORDS)],
-        [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=CallbackData.ADMIN_REMOVE_BANNED_WORD),
-         InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_BANNED_WORDS)]
-    ])
-
-def get_advanced_group_actions_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛑 حظر", callback_data=f"{CallbackData.GROUP_ACTION_BAN}:{chat_id}"),
-         InlineKeyboardButton("🔇 كتم", callback_data=f"{CallbackData.GROUP_ACTION_MUTE}:{chat_id}")],
-        [InlineKeyboardButton("⚠️ تحذير", callback_data=f"{CallbackData.GROUP_ACTION_WARN}:{chat_id}"),
-         InlineKeyboardButton("👢 طرد", callback_data=f"{CallbackData.GROUP_ACTION_KICK}:{chat_id}")],
-        [InlineKeyboardButton("🔒 تقييد", callback_data=f"{CallbackData.GROUP_ACTION_RESTRICT}:{chat_id}"),
-         InlineKeyboardButton("📌 تثبيت", callback_data=f"{CallbackData.GROUP_ACTION_PIN}:{chat_id}")],
-        [InlineKeyboardButton("🔓 إلغاء حظر", callback_data=f"{CallbackData.GROUP_ACTION_UNBAN}:{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
-    ])
-
-def get_advanced_mute_duration_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏱️ 5 دقائق", callback_data=f"adv_mute_duration:5:{chat_id}"),
-         InlineKeyboardButton("⏱️ 30 دقيقة", callback_data=f"adv_mute_duration:30:{chat_id}")],
-        [InlineKeyboardButton("⏱️ 1 ساعة", callback_data=f"adv_mute_duration:60:{chat_id}"),
-         InlineKeyboardButton("⏱️ 12 ساعة", callback_data=f"adv_mute_duration:720:{chat_id}")],
-        [InlineKeyboardButton("📆 يوم", callback_data=f"adv_mute_duration:1440:{chat_id}"),
-         InlineKeyboardButton("📆 أسبوع", callback_data=f"adv_mute_duration:10080:{chat_id}")],
-        [InlineKeyboardButton("🔇 كتم دائم", callback_data=f"adv_mute_duration:0:{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")]
-    ])
-
-def get_admin_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(get_text(user_id, 'admin_users'), callback_data=CallbackData.ADMIN_USERS),
-         InlineKeyboardButton(get_text(user_id, 'admin_banned'), callback_data=CallbackData.ADMIN_BANNED_USERS)],
-        [InlineKeyboardButton(get_text(user_id, 'admin_channels'), callback_data=CallbackData.ADMIN_ALL_CHANNELS),
-         InlineKeyboardButton("⛔ قنوات محظورة", callback_data=CallbackData.ADMIN_BANNED_CHANNELS)],
-        [InlineKeyboardButton("📊 المجموعات", callback_data=CallbackData.ADMIN_GROUPS),
-         InlineKeyboardButton("🚷 مجموعات محظورة", callback_data=CallbackData.ADMIN_BANNED_GROUPS)],
-        [InlineKeyboardButton("📢 قنوات البوت", callback_data=CallbackData.ADMIN_BOT_CHANNELS),
-         InlineKeyboardButton("🚫 قنوات بوت محظورة", callback_data=CallbackData.ADMIN_BANNED_BOT_CHANNELS)],
-        [InlineKeyboardButton("❤️ تنشيط الكل", callback_data=CallbackData.ADMIN_ACTIVATE_ALL_CHANNELS),
-         InlineKeyboardButton("📂 مراقبة المستخدمين", callback_data=CallbackData.ADMIN_MONITOR_USERS)],
-        [InlineKeyboardButton("👑 + مشرف", callback_data=CallbackData.ADMIN_ADD_ADMIN),
-         InlineKeyboardButton("🗑️ - مشرف", callback_data=CallbackData.ADMIN_REMOVE_ADMIN)],
-        [InlineKeyboardButton("💬 ردود المجموعة", callback_data=CallbackData.ADMIN_REPLIES),
-         InlineKeyboardButton("🚫 كلمات محظورة (عامة)", callback_data=CallbackData.ADMIN_BANNED_WORDS)],
-        [InlineKeyboardButton("📝 إعدادات الردود", callback_data=CallbackData.ADMIN_AUTO_REPLY)],
-        [InlineKeyboardButton("🔒 إعدادات NSFW", callback_data=CallbackData.NSFW_SETTINGS)],
-        [InlineKeyboardButton("🏆 إنشاء مسابقة", callback_data=CallbackData.ADMIN_CREATE_CONTEST),
-         InlineKeyboardButton("🏅 إعلان فائز", callback_data=CallbackData.ADMIN_DECLARE_WINNER)],
-        [InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:0")],
-        [InlineKeyboardButton("🖥️ حالة الرام", callback_data=CallbackData.ADMIN_RAM),
-         InlineKeyboardButton("📊 إحصائيات عامة", callback_data=CallbackData.ADMIN_STATS)],
-        [InlineKeyboardButton("📈 مقاييس الأداء", callback_data=CallbackData.ADMIN_METRICS)],
-        [InlineKeyboardButton("💾 نسخة احتياطية", callback_data=CallbackData.ADMIN_BACKUP),
-         InlineKeyboardButton("🔄 استعادة نسخة", callback_data=CallbackData.ADMIN_RESTORE_BACKUP)],
-        [InlineKeyboardButton("⏱️ وقت النشر (عام)", callback_data=CallbackData.ADMIN_CHANGE_INTERVAL),
-         InlineKeyboardButton("⚙️ إعدادات النسخ", callback_data=CallbackData.ADMIN_BACKUP_SETTINGS)],
-        [InlineKeyboardButton("📢 نشر تحديث", callback_data=CallbackData.ADMIN_SEND_UPDATE),
-         InlineKeyboardButton("⚙️ قناة التحديثات", callback_data=CallbackData.ADMIN_SET_UPDATE_CHANNEL)],
-        [InlineKeyboardButton("📢 عرض القناة الحالية", callback_data=CallbackData.ADMIN_SHOW_UPDATE_CHANNEL)],
-        [InlineKeyboardButton("🔄 التحديثات", callback_data=CallbackData.ADMIN_UPDATES),
-         InlineKeyboardButton("🔒 الاشتراك الإجباري", callback_data=CallbackData.ADMIN_FORCE_SUBSCRIBE)],
-        [InlineKeyboardButton("⚙️ تعيين القناة", callback_data=CallbackData.ADMIN_SET_FORCE_CHANNEL),
-         InlineKeyboardButton("📨 إرسال رسالة", callback_data=CallbackData.ADMIN_BROADCAST)],
-        [InlineKeyboardButton("📋 تذاكر الدعم", callback_data=CallbackData.ADMIN_SUPPORT_TICKETS),
-         InlineKeyboardButton("🗑️ حذف جميع التذاكر", callback_data=CallbackData.ADMIN_DELETE_ALL_TICKETS)],
-        [InlineKeyboardButton("📁 صلاحية /sendcode", callback_data=CallbackData.ADMIN_MANAGE_SENDCODE),
-         InlineKeyboardButton("📋 قناة التقارير", callback_data=CallbackData.ADMIN_SHOW_LOG_CHANNEL)],
-        [InlineKeyboardButton("📋 تعيين قناة التقارير", callback_data=CallbackData.ADMIN_SET_LOG_CHANNEL)],
-        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
-    ])
-
-def security_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 حذف الروابط", callback_data=f"security:links:{chat_id}"),
-         InlineKeyboardButton("@ حذف المعرفات", callback_data=f"security:mentions:{chat_id}")],
-        [InlineKeyboardButton("🚫 كلمات محظورة", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}"),
-         InlineKeyboardButton("⏱️ الوضع البطيء", callback_data=f"security:slow_mode:{chat_id}")],
-        [InlineKeyboardButton("🎬 حذف الفيديوهات", callback_data=f"security:delete_videos:{chat_id}"),
-         InlineKeyboardButton("🛠️ حذف رسائل الخدمة", callback_data=f"security:delete_service:{chat_id}")],
-        [InlineKeyboardButton("📄 حذف الملفات", callback_data=f"security:delete_documents:{chat_id}"),
-         InlineKeyboardButton("🖼️ حذف الملصقات", callback_data=f"security:delete_stickers:{chat_id}")],
-        [InlineKeyboardButton("🎵 حذف الصوتيات", callback_data=f"security:delete_audio:{chat_id}"),
-         InlineKeyboardButton("🎞️ حذف المتحركات", callback_data=f"security:delete_animation:{chat_id}")],
-        [InlineKeyboardButton("⚡ تفعيل الكل", callback_data=f"{CallbackData.SECURITY_ENABLE_ALL_PREFIX}{chat_id}"),
-         InlineKeyboardButton("⛔ تعطيل الكل", callback_data=f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("⚖️ عقوبة الحذف", callback_data=f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("🎯 الترحيب", callback_data=f"security:welcome_enabled:{chat_id}"),
-         InlineKeyboardButton("👋 الوداع", callback_data=f"security:goodbye_enabled:{chat_id}")],
-        [InlineKeyboardButton("⚖️ تحديد العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"),
-         InlineKeyboardButton("📝 إعدادات الردود", callback_data=CallbackData.ADMIN_AUTO_REPLY)],
-        [InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")],
-        [InlineKeyboardButton("📜 سجل الإجراءات", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")],
-        [InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)]
-    ])
-
-def penalty_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔴 طرد", callback_data=f"{CallbackData.PENALTY_KICK}:{chat_id}"),
-         InlineKeyboardButton("🛑 حظر", callback_data=f"{CallbackData.PENALTY_BAN}:{chat_id}")],
-        [InlineKeyboardButton("🔇 كتم", callback_data=f"{CallbackData.PENALTY_MUTE}:{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
-    ])
-
-def mute_duration_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏱️ 5 دقائق", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_5}:{chat_id}"),
-         InlineKeyboardButton("⏱️ 30 دقيقة", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_30}:{chat_id}")],
-        [InlineKeyboardButton("⏱️ 1 ساعة", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_60}:{chat_id}"),
-         InlineKeyboardButton("⏱️ 12 ساعة", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_720}:{chat_id}")],
-        [InlineKeyboardButton("📆 يوم", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_1440}:{chat_id}"),
-         InlineKeyboardButton("📆 أسبوع", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_10080}:{chat_id}")],
-        [InlineKeyboardButton("🔇 كتم دائم", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_PERMANENT}:{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}")]
-    ])
-
-async def build_days_keyboard(uid, context):
-    selected = context.user_data.get('selected_days', [])
-    day_names = [get_text(uid, 'monday'), get_text(uid, 'tuesday'), get_text(uid, 'wednesday'),
-                 get_text(uid, 'thursday'), get_text(uid, 'friday'), get_text(uid, 'saturday'),
-                 get_text(uid, 'sunday')]
-    kb_buttons = []
-    for i in range(0, 7, 3):
-        row = []
-        for j in range(3):
-            if i + j < 7:
-                day_index = i + j
-                name = day_names[day_index]
-                mark = "✅ " if day_index in selected else ""
-                row.append(InlineKeyboardButton(f"{mark}{name}", callback_data=f"{CallbackData.SCHEDULE_DAY_SELECT_PREFIX}{day_index}"))
-        if row:
-            kb_buttons.append(row)
-    kb_buttons.append([
-        [InlineKeyboardButton("✔️ حفظ", callback_data=CallbackData.SCHEDULE_SAVE_DAYS),
-         InlineKeyboardButton(get_text(uid, 'back'), callback_data=CallbackData.BACK)]
-    ])
-    return InlineKeyboardMarkup(kb_buttons)
-
-# ===================== دالة get_main_keyboard =====================
-async def get_main_keyboard(user_id: int):
-    channels = await db_get_channels(user_id)
-    active = None
-    if channels:
-        try:
-            active = await db_get_active_channel(user_id)
-            if active is not None:
-                channel_exists = False
-                for ch in channels:
-                    if ch[0] == active:
-                        channel_exists = True
-                        break
-                if not channel_exists:
-                    active = channels[0][0]
-                    await db_set_active_channel(user_id, active)
-            else:
-                active = channels[0][0]
-                await db_set_active_channel(user_id, active)
-        except:
-            active = channels[0][0] if channels else None
-    cnt = 0
-    ch_display = get_text(user_id, 'no_channels')
-    if active is not None:
-        try:
-            cnt = await db_unpublished_count(active)
-            ch_info = await db_get_channel_info(active)
-            if ch_info and len(ch_info) >= 2:
-                ch_tele_id = ch_info[0] if ch_info[0] is not None else "unknown"
-                ch_name = ch_info[1] if ch_info[1] is not None else ch_tele_id
-                ch_display = f"{ch_name} ({ch_tele_id})"
-        except:
-            ch_display = get_text(user_id, 'no_channels')
-    my_groups = 0
-    try:
-        my_groups = await db_get_user_groups_count(user_id)
-    except:
-        my_groups = 0
-    has_sub = False
-    try:
-        has_sub = await db_has_active_subscription(user_id)
-    except:
-        has_sub = False
-    sub_text = get_text(user_id, 'subscribed') if has_sub else get_text(user_id, 'not_subscribed')
-    auto_status = False
-    try:
-        auto_status = await db_auto_status(user_id)
-    except:
-        auto_status = False
-    auto_text = get_text(user_id, 'auto_on') if auto_status else get_text(user_id, 'auto_off')
-    title = get_text(user_id, 'main_title').format(BOT_NAME, user_id, my_groups, sub_text, ch_display, cnt, auto_status)
-    updates_channel = None
-    try:
-        updates_channel = await db_get_updates_channel()
-    except:
-        updates_channel = None
-    updates_url = f"https://t.me/{updates_channel}" if updates_channel else None
-    keyboard = []
-
-    keyboard.append([
-        InlineKeyboardButton(get_text(user_id, 'my_groups_btn'), callback_data=CallbackData.GROUPS_MY),
-        InlineKeyboardButton(get_text(user_id, 'add_channel'), callback_data=CallbackData.CHANNELS_ADD)
-    ])
-
-    keyboard.append([
-        InlineKeyboardButton(get_text(user_id, 'my_channels'), callback_data=CallbackData.CHANNELS_MY),
-        InlineKeyboardButton(get_text(user_id, 'settings_btn'), callback_data=CallbackData.SETTINGS_MENU)
-    ])
-
-    if channels:
-        keyboard.append([
-            InlineKeyboardButton(get_text(user_id, 'add_15_posts'), callback_data=CallbackData.POSTS_ADD_15),
-            InlineKeyboardButton(get_text(user_id, 'publish_one'), callback_data=CallbackData.POSTS_PUBLISH_ONE)
-        ])
-        keyboard.append([
-            InlineKeyboardButton(get_text(user_id, 'my_posts_btn'), callback_data=CallbackData.POSTS_MY),
-            InlineKeyboardButton(get_text(user_id, 'recycle'), callback_data=CallbackData.POSTS_RECYCLE)
-        ])
-        keyboard.append([
-            InlineKeyboardButton(f"{get_text(user_id, 'stats_btn')} ({cnt})", callback_data=CallbackData.STATS_PENDING),
-            InlineKeyboardButton(get_text(user_id, 'my_stats_btn'), callback_data=CallbackData.STATS_FULL)
-        ])
-        if active is not None:
-            keyboard.append([
-                InlineKeyboardButton(get_text(user_id, 'schedule_btn'), callback_data=f"{CallbackData.SCHEDULE_MENU_PREFIX}{active}"),
-                InlineKeyboardButton(get_text(user_id, 'channel_stats'), callback_data=f"{CallbackData.CHANNEL_STATS}:{active}")
-            ])
-        keyboard.append([
-            InlineKeyboardButton(get_text(user_id, 'my_channels_summary'), callback_data=CallbackData.MY_CHANNEL_STATS),
-            InlineKeyboardButton(get_text(user_id, 'my_rank_btn'), callback_data="rank")
-        ])
-        keyboard.append([
-            InlineKeyboardButton(get_text(user_id, 'top_10_btn'), callback_data="top"),
-            InlineKeyboardButton(get_text(user_id, 'schedule_post_btn'), callback_data="schedule_post")
-        ])
-        keyboard.append([
-            InlineKeyboardButton(get_text(user_id, 'publish_all'), callback_data=CallbackData.PUBLISH_ALL_CHANNELS)
-        ])
-
-    keyboard.append([
-        InlineKeyboardButton(get_text(user_id, 'help_btn'), callback_data=CallbackData.HELP),
-        InlineKeyboardButton(get_text(user_id, 'trial_btn'), callback_data=CallbackData.TRIAL)
-    ])
-    keyboard.append([
-        InlineKeyboardButton(get_text(user_id, 'subscribe_btn'), callback_data=CallbackData.SUBSCRIBE_MENU),
-        InlineKeyboardButton(get_text(user_id, 'developer_btn'), callback_data=CallbackData.DEVELOPER)
-    ])
-    keyboard.append([
-        InlineKeyboardButton(get_text(user_id, 'language_btn'), callback_data="language"),
-        InlineKeyboardButton(get_text(user_id, 'support_btn'), callback_data=CallbackData.SUPPORT_MENU)
-    ])
-    keyboard.append([
-        InlineKeyboardButton(get_text(user_id, 'referral'), callback_data=CallbackData.REFERRAL_MENU),
-        InlineKeyboardButton(get_text(user_id, 'reminder_settings'), callback_data=CallbackData.REMINDER_MENU)
-    ])
-    keyboard.append([
-        InlineKeyboardButton(get_text(user_id, 'translation_settings'), callback_data=CallbackData.TRANSLATION_MENU)
-    ])
-    keyboard.append([
-        InlineKeyboardButton(get_text(user_id, 'contests_menu'), callback_data=CallbackData.CONTESTS_MENU)
-    ])
-    if updates_url:
-        keyboard.append([
-            InlineKeyboardButton(get_text(user_id, 'updates_btn'), callback_data=CallbackData.UPDATES)
-        ])
-    keyboard.append([
-        InlineKeyboardButton(get_text(user_id, 'add_to_group'), url=f"https://t.me/{BOT_USERNAME}?startgroup")
-    ])
-    is_admin = False
-    try:
-        is_admin = (user_id == PRIMARY_OWNER_ID) or (await is_bot_admin(user_id))
-    except:
-        is_admin = False
-    if is_admin:
-        keyboard.append([
-            InlineKeyboardButton(get_text(user_id, 'admin_panel'), callback_data=CallbackData.ADMIN_PANEL)
-        ])
-    valid_keyboard = []
-    for row in keyboard:
-        if row and all(isinstance(btn, InlineKeyboardButton) for btn in row):
-            valid_keyboard.append(row)
-    if not valid_keyboard:
-        valid_keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
-    return InlineKeyboardMarkup(valid_keyboard), title, active
-
-# ===================== دوال الصلاحيات الإضافية =====================
-async def is_bot_admin(user_id: int) -> bool:
-    if user_id == PRIMARY_OWNER_ID:
-        return True
-    async def _check(conn):
-        cur = await conn.execute("SELECT 1 FROM bot_admins WHERE user_id=?", (user_id,))
-        return await cur.fetchone() is not None
-    return await execute_db(_check)
-
-async def add_bot_admin(user_id: int) -> bool:
-    if user_id == PRIMARY_OWNER_ID:
-        return True
-    async def _add(conn):
-        await conn.execute("INSERT OR IGNORE INTO bot_admins (user_id) VALUES (?)", (user_id,))
-        await conn.commit()
-        return True
-    return await execute_db(_add)
-
-async def remove_bot_admin(user_id: int) -> bool:
-    if user_id == PRIMARY_OWNER_ID:
-        return False
-    async def _remove(conn):
-        await conn.execute("DELETE FROM bot_admins WHERE user_id=?", (user_id,))
-        await conn.commit()
-        return True
-    return await execute_db(_remove)
-
-async def get_all_bot_admins() -> List[int]:
-    async def _get(conn):
-        cur = await conn.execute("SELECT user_id FROM bot_admins")
-        return [row[0] for row in await cur.fetchall()]
-    return await execute_db(_get)
-
-# ===================== دوال الاستدعاء الأساسية =====================
 async def cancel_session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """إلغاء الجلسة الحالية وحذف البيانات المؤقتة"""
     query = update.callback_query
@@ -4952,6 +5763,7 @@ async def save_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ===================================================================
 # دوال الأمان والحماية (security_*)
 # ===================================================================
+
 async def security_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """تفعيل جميع خيارات الحماية دفعة واحدة"""
     await security_bulk_toggle(update, context, True)
@@ -5293,6 +6105,7 @@ async def penalty_mute_duration_callback(update: Update, context: ContextTypes.D
 # ===================================================================
 # دوال الدعم والاشتراكات والترجمة والإحالات والتذكيرات
 # ===================================================================
+
 async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض رسالة المساعدة"""
     query = update.callback_query
@@ -5443,23 +6256,15 @@ async def buy_subscription_callback(update: Update, context: ContextTypes.DEFAUL
                 await safe_send_markdown(context.bot, user_id, f"❌ خطأ: {str(e)[:100]}")
 
 async def buy_subscription_1_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if query:
-        await query.answer()
     await buy_subscription_callback(update, context, 1, 5, "اشتراك 1 يوم")
 
 async def buy_subscription_2_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if query:
-        await query.answer()
     await buy_subscription_callback(update, context, 2, 9, "اشتراك 2 يوم")
 
 async def buy_subscription_30_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if query:
-        await query.answer()
     await buy_subscription_callback(update, context, 30, 50, "اشتراك شهر")
 
 async def buy_subscription_90_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if query:
-        await query.answer()
     await buy_subscription_callback(update, context, 90, 120, "اشتراك 3 أشهر")
 
 async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5873,6 +6678,7 @@ async def translation_set_callback(update: Update, context: ContextTypes.DEFAULT
 # ===================================================================
 # دوال لوحة الأدمن (admin_*)
 # ===================================================================
+
 async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض لوحة تحكم المشرف"""
     query = update.callback_query
@@ -7211,6 +8017,7 @@ async def admin_toggle_group_ban_callback(update: Update, context: ContextTypes.
 # ===================================================================
 # دوال الردود التلقائية والإعدادات المتقدمة
 # ===================================================================
+
 async def auto_reply_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """تبديل الردود التلقائية للمجموعة"""
     query = update.callback_query
@@ -7385,6 +8192,7 @@ async def admin_auto_reply_select_callback(update: Update, context: ContextTypes
 # ===================================================================
 # دوال NSFW
 # ===================================================================
+
 async def nsfw_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض إعدادات NSFW"""
     query = update.callback_query
@@ -7480,6 +8288,7 @@ async def nsfw_threshold_callback(update: Update, context: ContextTypes.DEFAULT_
 # ===================================================================
 # دوال المسابقات (contests_*)
 # ===================================================================
+
 async def contests_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض المسابقات النشطة"""
     try:
@@ -7843,6 +8652,7 @@ async def admin_delete_contest_callback(update: Update, context: ContextTypes.DE
 # ===================================================================
 # دوال إحصائيات القنوات (channel_*)
 # ===================================================================
+
 async def channel_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض إحصائيات قناة محددة"""
     query = update.callback_query
@@ -8027,6 +8837,7 @@ async def my_channel_stats_callback(update: Update, context: ContextTypes.DEFAUL
 # ===================================================================
 # دوال الاشتراك الإجباري والتحقق
 # ===================================================================
+
 async def check_subscribe_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """التحقق من الاشتراك الإجباري"""
     query = update.callback_query
@@ -8104,6 +8915,7 @@ async def is_user_subscribed(bot, user_id, channel):
 # ===================================================================
 # دوال لوحة التحكم (قفل/فتح وإجراءات متقدمة)
 # ===================================================================
+
 async def panel_lock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """قفل المجموعة"""
     query = update.callback_query
@@ -8474,6 +9286,7 @@ async def publish_all_channels_callback_handler(update: Update, context: Context
 # ===================================================================
 # دوال معالجات الأحداث (ChatMember, NewChatMembers, LeftChatMember)
 # ===================================================================
+
 async def send_addition_report_to_all_admins(bot, chat, adder, chat_type_name):
     """إرسال إشعار لجميع مشرفي المجموعة عند إضافة البوت."""
     try:
@@ -8714,6 +9527,7 @@ async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT
 # ===================================================================
 # دوال الدفع المسبق والدفع الناجح
 # ===================================================================
+
 async def pre_checkout_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالج الدفع المسبق"""
     query = update.pre_checkout_query
@@ -8739,6 +9553,7 @@ async def successful_payment_callback_handler(update: Update, context: ContextTy
 # ===================================================================
 # دوال حذف رسائل الخدمة وتصفية الرسائل ومعالج الرسائل الرئيسي
 # ===================================================================
+
 async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """حذف رسائل الخدمة في المجموعات"""
     if not update.message or not update.effective_chat:
@@ -8912,7 +9727,6 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
                     if not reply:
                         reply = await db_get_reply(text.lower())
                     if not reply:
-                        import re
                         for key, value in ALL_REPLIES.items():
                             if re.search(r'\b' + re.escape(key) + r'\b', text, re.IGNORECASE):
                                 reply = value if isinstance(value, str) else random.choice(value) if isinstance(value, list) else value
@@ -9614,6 +10428,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
 # ===================================================================
 # دوال الخلفية (الحلقات) - مكتملة
 # ===================================================================
+
 async def auto_publish_loop_improved(bot):
     await asyncio.sleep(5)
     consecutive_errors = 0
@@ -9917,6 +10732,7 @@ async def notify_group_admins(bot, chat_id: int, requester_id: int, chat_name: s
 # ===================================================================
 # دوال معالجات الأوامر (Command Handlers) - كاملة
 # ===================================================================
+
 async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
@@ -10012,7 +10828,802 @@ async def handle_sendcode_confirmation_handler(update: Update, context: ContextT
             with open(__file__, 'r', encoding='utf-8') as f:
                 content = f.read()
             content = re.sub(r'TOKEN\s*=\s*["\'][^"\']+["\']', 'TOKEN = "[REMOVED]"', content)
-            content = re.sub(r'ENCRYPTION_KEY\s*=\s*[^;]+', 'ENCRYPTION_KEY = "[REMOVED]";]+', 'BACKUP_ENCRYPTION_KEY = "[REMOVED]";]+', 'cipher_suite = "[REMOVED]";]+', 'BACKUP_CIPHER = "[REMOVED]"; text-align: center; padding: 50px; direction: rtl;">
+            content = re.sub(r'ENCRYPTION_KEY\s*=\s*[^;]+', 'ENCRYPTION_KEY = "[REMOVED]"', content)
+            content = re.sub(r'BACKUP_ENCRYPTION_KEY\s*=\s*[^;]+', 'BACKUP_ENCRYPTION_KEY = "[REMOVED]"', content)
+            content = re.sub(r'cipher_suite\s*=\s*[^;]+', 'cipher_suite = "[REMOVED]"', content)
+            content = re.sub(r'BACKUP_CIPHER\s*=\s*[^;]+', 'BACKUP_CIPHER = "[REMOVED]"', content)
+
+            watermark = f"""# ============================================================
+# ORIGINAL_OWNER: {user_id}
+# GENERATED_AT: {mecca_now().strftime('%Y-%m-%d %H:%M:%S')}
+# SIGNATURE: {hashlib.sha256(f"{user_id}{time_module.time()}{TOKEN}".encode()).hexdigest()[:16]}
+# ============================================================
+# ⚠️ تحذير: هذا الكود يحتوي على معلومات حساسة
+# لا تشاركه مع أي شخص غير موثوق
+# ============================================================
+
+"""
+            watermarked_content = watermark + content
+
+            temp_dir = tempfile.gettempdir()
+            temp_file = os.path.join(temp_dir, f"bot_code_{user_id}_{int(time_module.time())}.py")
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                f.write(watermarked_content)
+
+            with open(temp_file, 'rb') as f:
+                await context.bot.send_document(
+                    chat_id=user_id,
+                    document=f,
+                    filename=f"relax_bot_secure_{mecca_now().strftime('%Y%m%d')}.py",
+                    caption="⚠️ **هذا الكود موقع رقمياً - لا تشاركه مع أي شخص غير موثوق!**\n\n📌 تم إزالة التوكن والمفاتيح من هذا الملف."
+                )
+
+            os.unlink(temp_file)
+
+            await security_audit.log("SENDCODE_EXECUTED", user_id, {"timestamp": mecca_now_iso()}, "CRITICAL")
+            await safe_send_markdown(context.bot, user_id, "✅ تم إرسال الكود بنجاح على الخاص!")
+            logger.info(f"📁 تم إرسال كود البوت للمستخدم {user_id} على الخاص")
+        except Exception as e:
+            await safe_send_markdown(context.bot, user_id, f"❌ فشل إرسال الكود: {str(e)[:100]}")
+            logger.error(f"خطأ في إرسال الكود: {e}")
+        context.user_data.pop('sendcode_temp_password', None)
+        context.user_data.pop('sendcode_temp_timestamp', None)
+        context.user_data.pop('state', None)
+    else:
+        await safe_send_markdown(context.bot, user_id, "❌ كلمة المرور غير صحيحة! تم إلغاء العملية.")
+        await security_audit.log("SENDCODE_FAILED_ATTEMPT", user_id, {"attempt": update.message.text[:6]}, "HIGH")
+        context.user_data.pop('sendcode_temp_password', None)
+        context.user_data.pop('sendcode_temp_timestamp', None)
+        context.user_data.pop('state', None)
+
+async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+
+    chat_id = update.effective_chat.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+    user_id = update.effective_user.id
+    username = update.effective_user.username or ""
+
+    if await is_user_bot(context.bot, user_id):
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ **لا يمكن للبوتات استخدام هذا الأمر.** يرجى استخدامه من حساب مستخدم حقيقي.",
+            parse_mode="MarkdownV2"
+        )
+        return
+
+    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
+
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    
+    if not bot_perms['can_act']:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"⚠️ **البوت ليس مشرفاً في المجموعة!**\n\n"
+            f"📌 تم تسجيل المجموعة `{chat_name}`.\n\n"
+            f"🔹 **لتفعيل الميزات المتقدمة:**\n"
+            f"• اجعل البوت مشرفاً في المجموعة\n"
+            f"• ثم استخدم `/syncgroup` مرة أخرى\n\n"
+            f"🔹 إذا كنت مالكاً أو مشرفاً، يمكنك استخدام:\n"
+            f"`/register_hidden_owner`\n"
+            f"بعد جعل البوت مشرفاً."
+        )
+        return
+
+    try:
+        admin_count = await db_sync_group_admins(chat_id, context.bot, user_id)
+        
+        is_admin = await is_currently_admin_in_group(context.bot, chat_id, user_id)
+        
+        if is_admin:
+            if not await db_is_hidden_owner(chat_id, user_id):
+                await db_register_hidden_owner_group(chat_id, user_id)
+                invalidate_auth_cache(chat_id, user_id)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+                    f"📌 اسم المجموعة: {chat_name}\n"
+                    f"🆔 المعرف: {chat_id}\n"
+                    f"👤 تم تسجيلك كمالك مخفي\n"
+                    f"👥 تم مزامنة {admin_count} مشرف\n\n"
+                    f"🔐 استخدم /security لإعدادات الأمان\n"
+                    f"🛠️ استخدم /panel للوحة التحكم"
+                )
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ **المجموعة مفعلة بالفعل!**\n\n"
+                    f"📌 اسم المجموعة: {chat_name}\n"
+                    f"🆔 المعرف: {chat_id}\n"
+                    f"👥 تم مزامنة {admin_count} مشرف"
+                )
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'group_registered')
+            )
+            
+            await notify_group_admins(context.bot, chat_id, user_id, chat_name)
+            
+    except Exception as e:
+        error_id = log_error(e, {'chat_id': chat_id, 'user_id': user_id, 'action': 'syncgroup'})
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"⚠️ **حدث خطأ أثناء التفعيل**\n\n"
+            f"تم تسجيل المجموعة لكن فشلت المزامنة.\n"
+            f"الرمز: `{error_id}`\n\n"
+            f"🔹 تأكد من أن البوت مشرف في المجموعة\n"
+            f"🔹 ثم حاول مرة أخرى."
+        )
+
+async def register_hidden_owner_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "⚠️ **البوت ليس مشرفاً في المجموعة!**\n\n"
+            "لتسجيل نفسك كمالك مخفي، يجب أن يكون البوت مشرفاً أولاً."
+        )
+        return
+
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        is_creator = member.status == 'creator'
+        is_admin = member.status == 'administrator'
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ لا يمكن التحقق من صلاحياتك: {str(e)[:100]}"
+        )
+        return
+
+    if await db_is_banned(user_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ **أنت محظور عالمياً!**\nلا يمكنك تسجيل نفسك كمالك مخفي."
+        )
+        return
+
+    if is_creator or is_admin:
+        if await db_is_hidden_owner(chat_id, user_id):
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'hidden_owner_already')
+            )
+            return
+        
+        await db_register_hidden_owner_group(chat_id, user_id)
+        
+        async def _add_real_admin(conn):
+            await conn.execute(
+                "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
+                (chat_id, user_id)
+            )
+            await conn.commit()
+        await execute_db(_add_real_admin)
+        
+        invalidate_auth_cache(chat_id, user_id)
+        
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم تسجيلك كمالك مخفي بنجاح!**\n\n"
+            f"🔐 يمكنك الآن استخدام جميع أوامر الإدارة:\n"
+            f"• `/security` - إعدادات الأمان\n"
+            f"• `/panel` - لوحة التحكم\n"
+            f"• `/lock` / `/unlock` - قفل وفتح المجموعة\n"
+            f"• أوامر الحظر والكتم والتحذير"
+        )
+        return
+    
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        "❌ **غير مصرح!**\n\n"
+        "لتسجيل نفسك كمالك مخفي، يجب أن تكون:\n"
+        "• مالك المجموعة (creator)\n"
+        "• أو مشرفاً في المجموعة (administrator)\n\n"
+        "📌 إذا كنت تعتقد أنك مالك:\n"
+        "• تأكد من أن البوت مشرف\n"
+        "• تأكد من أنك المالك في تيليجرام"
+    )
+
+async def add_hidden_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+            return
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ لا يمكن التحقق من صلاحياتك: {str(e)[:100]}")
+        return
+
+    args = context.args
+    if len(args) < 1:
+        await safe_send_markdown(context.bot, user_id,
+            "📝 **الاستخدام:**\n"
+            "/add_hidden_admin معرف_المستخدم\n\n"
+            "مثال: `/add_hidden_admin 123456789`"
+        )
+        return
+
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ معرف مستخدم غير صالح!")
+        return
+
+    if target_id == PRIMARY_OWNER_ID:
+        await safe_send_markdown(context.bot, user_id, "❌ لا يمكن إضافة المطور الأساسي كمشرف مخفي!")
+        return
+
+    if target_id == user_id:
+        await safe_send_markdown(context.bot, user_id, "❌ لا يمكن إضافة نفسك كمشرف مخفي!")
+        return
+
+    try:
+        member = await context.bot.get_chat_member(chat_id, target_id)
+        if member.status in ['left', 'kicked']:
+            await safe_send_markdown(context.bot, user_id, "❌ المستخدم ليس في المجموعة!")
+            return
+        if member.status not in ['administrator', 'creator', 'member']:
+            await safe_send_markdown(context.bot, user_id, "❌ المستخدم ليس عضواً في المجموعة!")
+            return
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ لا يمكن العثور على المستخدم: {e}")
+        return
+
+    try:
+        user = await context.bot.get_chat(target_id)
+        if user.is_bot:
+            await safe_send_markdown(context.bot, user_id, "❌ لا يمكن إضافة بوت كمشرف مخفي!")
+            return
+    except:
+        pass
+
+    if await db_is_banned(target_id):
+        await safe_send_markdown(context.bot, user_id, "❌ المستخدم محظور عالمياً!")
+        return
+
+    if await db_is_hidden_admin(chat_id, target_id):
+        await safe_send_markdown(context.bot, user_id, f"⚠️ المستخدم `{target_id}` مشرف مخفي بالفعل!")
+        return
+
+    success = await db_add_hidden_admin(chat_id, target_id, user_id)
+    if success:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'hidden_admin_added').format(target_id))
+        await security_audit.log("HIDDEN_ADMIN_ADDED", user_id, {"chat_id": chat_id, "target": target_id}, "HIGH")
+        invalidate_auth_cache(chat_id, target_id)
+    else:
+        await safe_send_markdown(context.bot, user_id, "❌ فشل إضافة المشرف المخفي!")
+
+async def remove_hidden_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+            return
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ لا يمكن التحقق من صلاحياتك: {str(e)[:100]}")
+        return
+
+    args = context.args
+    if len(args) < 1:
+        await safe_send_markdown(context.bot, user_id,
+            "📝 **الاستخدام:**\n"
+            "/remove_hidden_admin معرف_المستخدم\n\n"
+            "مثال: `/remove_hidden_admin 123456789`"
+        )
+        return
+
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ معرف مستخدم غير صالح!")
+        return
+
+    if target_id == PRIMARY_OWNER_ID:
+        await safe_send_markdown(context.bot, user_id, "❌ لا يمكن إزالة المطور الأساسي!")
+        return
+
+    if not await db_is_hidden_admin(chat_id, target_id):
+        await safe_send_markdown(context.bot, user_id, f"⚠️ المستخدم `{target_id}` ليس مشرفاً مخفياً!")
+        return
+
+    success = await db_remove_hidden_admin(chat_id, target_id)
+    if success:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'hidden_admin_removed').format(target_id))
+        await security_audit.log("HIDDEN_ADMIN_REMOVED", user_id, {"chat_id": chat_id, "target": target_id}, "HIGH")
+        invalidate_auth_cache(chat_id, target_id)
+    else:
+        await safe_send_markdown(context.bot, user_id, "❌ فشل إزالة المشرف المخفي!")
+
+async def list_hidden_admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+            return
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ لا يمكن التحقق من صلاحياتك: {str(e)[:100]}")
+        return
+
+    admins = await db_get_hidden_admins(chat_id)
+    if not admins:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'no_hidden_admins'))
+        return
+
+    text = get_text(user_id, 'hidden_admin_list').format("")
+    for admin in admins:
+        text += f"👤 المستخدم: `{admin['admin_id']}`\n"
+        text += f"➕ أضيف بواسطة: `{admin['added_by']}`\n"
+        text += f"🕐 التاريخ: {admin['added_at'][:16]}\n"
+        text += "━━━━━━━━━━━━━━━━━━━━━━\n"
+
+    await safe_send_markdown(context.bot, user_id, text)
+
+async def language_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("العربية 🇸🇦", callback_data="lang_ar"),
+         InlineKeyboardButton("English 🇬🇧", callback_data="lang_en")],
+        [InlineKeyboardButton("Français 🇫🇷", callback_data="lang_fr"),
+         InlineKeyboardButton("Türkçe 🇹🇷", callback_data="lang_tr")],
+        [InlineKeyboardButton("中文 🇨🇳", callback_data="lang_zh"),
+         InlineKeyboardButton("Русский 🇷🇺", callback_data="lang_ru")],
+        [InlineKeyboardButton("Deutsch 🇩🇪", callback_data="lang_de"),
+         InlineKeyboardButton("Español 🇪🇸", callback_data="lang_es")],
+        [InlineKeyboardButton("Italiano 🇮🇹", callback_data="lang_it"),
+         InlineKeyboardButton("Português 🇵🇹", callback_data="lang_pt")],
+        [InlineKeyboardButton("日本語 🇯🇵", callback_data="lang_ja"),
+         InlineKeyboardButton("한국어 🇰🇷", callback_data="lang_ko")]
+    ])
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'welcome'), reply_markup=keyboard)
+
+async def trial_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await trial_callback(update, context)
+
+async def subscribe_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await subscribe_menu_callback(update, context)
+
+async def help_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None:
+        return
+    user_id = update.effective_user.id
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'help'), reply_markup=keyboard)
+
+async def support_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    context.user_data['support_mode'] = True
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 كتابة تذكرة", callback_data=CallbackData.SUPPORT_TICKET)],
+        [InlineKeyboardButton("❓ المساعدة", callback_data=CallbackData.SUPPORT_HELP)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'support_welcome'), reply_markup=keyboard)
+
+async def support_reply_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != PRIMARY_OWNER_ID and not await is_bot_admin(update.effective_user.id):
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'admin_only'))
+        return
+    args = context.args
+    if len(args) < 2:
+        await safe_send_markdown(context.bot, update.effective_user.id, "📝 **الاستخدام:**\n`/support_reply user_id نص الرد`", parse_mode="MarkdownV2")
+        return
+    try:
+        target_user_id = int(args[0])
+        reply_text = " ".join(args[1:])
+        ticket_id = await db_get_last_ticket_id_for_user(target_user_id)
+        if ticket_id:
+            await db_mark_ticket_replied(ticket_id)
+        await context.bot.send_message(chat_id=target_user_id, text=f"📬 **رد على تذكرتك:**\n━━━━━━━━━━━━━━━━━━━━━━\n{reply_text}", parse_mode="MarkdownV2")
+        await safe_send_markdown(context.bot, update.effective_user.id, f"✅ تم إرسال الرد إلى المستخدم {target_user_id}")
+    except Exception as e:
+        await safe_send_markdown(context.bot, update.effective_user.id, f"❌ فشل الإرسال: {e}")
+
+async def rank_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_text_callbacks(update, context)
+
+async def top_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_text_callbacks(update, context)
+
+async def developer_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await developer_callback(update, context)
+
+async def updates_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await updates_callback(update, context)
+
+async def stats_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None:
+        return
+    uid = update.effective_user.id
+    if not await ensure_force_subscribe(update, context, uid):
+        return
+    active = context.user_data.get('active_channel') or await db_get_active_channel(uid)
+    if not active:
+        await safe_send_markdown(context.bot, uid, "⚠️ يرجى اختيار قناة أولاً")
+        return
+    stats = await db_get_channel_stats(active)
+    ch_info = await db_get_channel_info(active)
+    channel_name = ch_info[1] if ch_info else "القناة"
+    if stats['total_posts'] == 0:
+        text = f"📊 **إحصائيات {channel_name}**\n━━━━━━━━━━━━━━━━━━━━━━\n📭 لا توجد منشورات بعد"
+        await safe_send_markdown(context.bot, uid, text)
+        return
+    text = f"📊 **إحصائيات {channel_name}**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📝 إجمالي المنشورات: {stats['total_posts']}\n"
+    text += f"✅ المنشورة: {stats['published_posts']}\n"
+    text += f"⏳ غير المنشورة: {stats['unpublished_posts']}\n"
+    text += f"👁️ إجمالي المشاهدات: {stats['total_views']}\n"
+    text += f"📊 متوسط المشاهدات: {stats['avg_views']}\n"
+    if stats['last_post_time']:
+        try:
+            last_dt = datetime.fromisoformat(stats['last_post_time'])
+            last_mecca = utc_to_mecca(last_dt)
+            text += f"🕐 آخر نشر: {last_mecca.strftime('%Y-%m-%d %H:%M')}\n"
+        except:
+            pass
+    if stats['first_post_time']:
+        try:
+            first_dt = datetime.fromisoformat(stats['first_post_time'])
+            first_mecca = utc_to_mecca(first_dt)
+            text += f"📅 أول نشر: {first_mecca.strftime('%Y-%m-%d %H:%M')}\n"
+        except:
+            pass
+    text += f"⏱️ متوسط الوقت بين المنشورات: {stats['avg_time_between_posts']} ساعة\n"
+    text += f"🕐 أفضل وقت للنشر: {stats['best_publish_hour']}:00\n"
+    day_names = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت']
+    text += f"📅 أفضل يوم للنشر: {day_names[stats['best_publish_day']] if stats['best_publish_day'] < 7 else 'غير محدد'}\n"
+    text += f"📊 المنشورات اليوم: {stats['published_today']}\n"
+    text += f"📊 هذا الأسبوع: {stats['published_this_week']}\n"
+    text += f"📊 هذا الشهر: {stats['published_this_month']}\n"
+    if stats['most_viewed_post']:
+        text += f"\n🏆 **الأكثر مشاهدة:**\n{stats['most_viewed_post']['text']}\n👁️ {stats['most_viewed_post']['views']} مشاهدة\n"
+    if stats['least_viewed_post']:
+        text += f"\n📉 **الأقل مشاهدة:**\n{stats['least_viewed_post']['text']}\n👁️ {stats['least_viewed_post']['views']} مشاهدة\n"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 تحديث", callback_data=f"{CallbackData.CHANNEL_STATS_REFRESH}:{active}")],
+        [InlineKeyboardButton("📈 نمو القناة", callback_data=f"{CallbackData.CHANNEL_GROWTH}:{active}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    await safe_send_markdown(context.bot, uid, text, reply_markup=keyboard)
+
+async def lock_chat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat is None or update.effective_user is None:
+        return
+    if update.effective_chat.type == 'private':
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    await db_set_chat_lock(chat_id, True, user_id)
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'locked'))
+
+async def unlock_chat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat is None or update.effective_user is None:
+        return
+    if update.effective_chat.type == 'private':
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    await db_set_chat_lock(chat_id, False)
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'unlocked'))
+
+async def panel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user:
+        if not await ensure_force_subscribe(update, context):
+            return
+    if update.message is None or update.effective_chat is None or update.effective_user is None:
+        return
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'group_only'))
+        return
+    chat_id = chat.id
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    current_lock_status = await is_chat_locked(chat_id)
+    lock_status_text = "🔒 مقفلة" if current_lock_status else "🔓 مفتوحة"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔒 قفل المجموعة", callback_data=f"{CallbackData.PANEL_LOCK_PREFIX}{chat_id}"),
+         InlineKeyboardButton("🔓 فتح المجموعة", callback_data=f"{CallbackData.PANEL_UNLOCK_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}"),
+         InlineKeyboardButton("🔙 إغلاق اللوحة", callback_data=CallbackData.PANEL_CLOSE)]
+    ])
+    await safe_send_markdown(context.bot, user_id,
+        f"🔧 **لوحة تحكم المجموعة**\n━━━━━━━━━━━━━━\n📌 **المجموعة:** {chat.title}\n🔐 **الحالة:** {lock_status_text}\n━━━━━━━━━━━━━━\n\nاستخدم الأزرار للتحكم في قفل وفتح المجموعة والإجراءات المتقدمة",
+        reply_markup=kb
+    )
+
+async def schedule_post_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None or update.effective_user is None or update.effective_chat is None:
+        return
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 هذا الأمر للمشرفين فقط!")
+        return
+    args = context.args
+    if len(args) < 3:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:**\n`/schedule YYYY-MM-DD HH:MM نص المنشور`", parse_mode="MarkdownV2")
+        return
+    try:
+        date_str = args[0]
+        time_str = args[1]
+        text = " ".join(args[2:])
+        mecca_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        if mecca_dt <= mecca_now():
+            await safe_send_markdown(context.bot, user_id, "❌ **الوقت يجب أن يكون في المستقبل!**", parse_mode="MarkdownV2")
+            return
+        utc_dt = mecca_to_utc(mecca_dt)
+        await db_add_scheduled_post(chat_id, text, utc_dt)
+        await safe_send_markdown(context.bot, user_id, f"✅ **تم جدولة المنشور!**\n📅 {date_str} 🕐 {time_str} (بتوقيت مكة)", parse_mode="MarkdownV2")
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ صيغة التاريخ أو الوقت غير صحيحة!", parse_mode="MarkdownV2")
+
+async def set_log_channel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    args = context.args
+    if not args and context.user_data.get('state') == UserState.WAITING_LOG_CHANNEL:
+        identifier = context.user_data.get('temp_log_channel_identifier')
+        if identifier:
+            args = [identifier]
+    if not args:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:**\n`/set_log_channel معرف_القناة`\n\nمثال: `/set_log_channel -1001234567890`\nأو `/set_log_channel @username`", parse_mode="MarkdownV2")
+        return
+    identifier = args[0].strip()
+    if identifier.startswith('@'):
+        identifier = identifier[1:]
+    try:
+        if identifier.startswith('-100') or identifier.lstrip('-').isdigit():
+            chat_id = int(identifier)
+        else:
+            chat = await context.bot.get_chat(f"@{identifier}")
+            chat_id = chat.id
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ لا يمكن العثور على القناة: {e}", parse_mode="MarkdownV2")
+        return
+    try:
+        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        if bot_member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(context.bot, user_id, "❌ **البوت ليس مشرفاً في هذه القناة.**", parse_mode="MarkdownV2")
+            return
+        if not bot_member.can_post_messages:
+            await safe_send_markdown(context.bot, user_id, "❌ **البوت لا يملك صلاحية الإرسال.**", parse_mode="MarkdownV2")
+            return
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ لا يمكن الوصول للقناة: {e}", parse_mode="MarkdownV2")
+        return
+    await db_set_log_channel_id(str(chat_id))
+    await safe_send_markdown(context.bot, user_id, f"✅ **تم تعيين قناة التقارير بنجاح!**\nمعرف القناة: `{chat_id}`", parse_mode="MarkdownV2")
+    try:
+        await context.bot.send_message(chat_id, "✅ **تم تفعيل نظام التقارير**")
+    except:
+        pass
+    context.user_data.pop('state', None)
+    context.user_data.pop('temp_log_channel_identifier', None)
+
+async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None or update.effective_chat is None or update.effective_user is None:
+        return
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        return
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    text = update.message.text.strip() if update.message.text else ""
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        await safe_send_markdown(context.bot, user_id, f"❌ {bot_perms['reason']}")
+        return
+    
+    action = None
+    if text.startswith("/ban"):
+        action = "ban"
+    elif text.startswith("/mute"):
+        action = "mute"
+    elif text.startswith("/warn"):
+        action = "warn"
+    elif text.startswith("/kick"):
+        action = "kick"
+    elif text.startswith("/restrict"):
+        action = "restrict"
+    elif text.startswith("/unban"):
+        action = "unban"
+    
+    if action:
+        target_id = None
+        if update.message.reply_to_message:
+            target_id = update.message.reply_to_message.from_user.id
+        else:
+            parts = text.split()
+            if len(parts) >= 2:
+                try:
+                    target_id = int(parts[1])
+                except:
+                    pass
+        if not target_id:
+            await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المستخدم. أرسل المعرف أو قم بالرد على رسالة المستخدم.")
+            return
+        duration = context.user_data.get('mute_minutes', 60) if action == 'mute' else None
+        success, msg = await execute_moderation_action(context.bot, chat_id, target_id, action, reason, duration, user_id)
+        await safe_send_markdown(context.bot, chat_id, msg)
+
+async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None or update.effective_chat is None or update.effective_user is None:
+        return
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, user_id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    args = context.args
+    if not args:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:** `/set_rules نص القوانين`")
+        return
+    rules_text = " ".join(args)
+    async def _set_rules(conn):
+        await conn.execute("INSERT OR REPLACE INTO group_rules (chat_id, rules_text, set_by, set_at) VALUES (?, ?, ?, ?)",
+                          (chat_id, rules_text, user_id, utc_now_iso()))
+        await conn.commit()
+    await execute_db(_set_rules)
+    await safe_send_markdown(context.bot, user_id, "✅ **تم تعيين قوانين المجموعة بنجاح!**")
+    try:
+        await context.bot.send_message(chat_id, f"📋 **تم تحديث قوانين المجموعة**\n\n{rules_text}")
+    except:
+        pass
+
+async def rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None or update.effective_chat is None:
+        return
+    chat_id = update.effective_chat.id
+    async def _get_rules(conn):
+        cur = await conn.execute("SELECT rules_text, set_by, set_at FROM group_rules WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'rules': row[0], 'set_by': row[1], 'set_at': row[2]}
+        return None
+    rules_data = await execute_db(_get_rules)
+    if not rules_data:
+        await safe_send_markdown(context.bot, update.effective_user.id, "📭 لا توجد قوانين مسجلة لهذه المجموعة.")
+        return
+    try:
+        dt = datetime.fromisoformat(rules_data['set_at'])
+        dt_mecca = utc_to_mecca(dt)
+        set_time = dt_mecca.strftime("%Y-%m-%d %H:%M")
+    except:
+        set_time = "تاريخ غير معروف"
+    text = f"📋 **قوانين المجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\n{rules_data['rules']}\n━━━━━━━━━━━━━━━━━━━━━━\n👤 تم التعيين بواسطة: `{rules_data['set_by']}`\n🕐 التاريخ: {set_time}"
+    await safe_send_markdown(context.bot, update.effective_user.id, text)
+
+# ===================================================================
+# معالج الأخطاء العالمي
+# ===================================================================
+
+async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        error = context.error
+        error_id = advanced_logger.log_error("خطأ في تحديث", error, {
+            'user_id': update.effective_user.id if update and update.effective_user else None,
+            'chat_id': update.effective_chat.id if update and update.effective_chat else None,
+            'message': update.effective_message.text if update and update.effective_message else None
+        })
+
+        if isinstance(error, Conflict):
+            logger.warning(f"⚠️ تعارض في التحديثات (Conflict): {error}")
+            return
+
+        if isinstance(error, Forbidden):
+            logger.warning(f"⚠️ البوت محظور أو ليس لديه صلاحيات: {error}")
+            if update and update.effective_chat:
+                try:
+                    await safe_send_markdown(
+                        context.bot,
+                        PRIMARY_OWNER_ID,
+                        f"⚠️ **البوت محظور أو ليس لديه صلاحيات في:**\n{update.effective_chat.title}\nID: `{update.effective_chat.id}`"
+                    )
+                except:
+                    pass
+            return
+
+        if isinstance(error, TimedOut):
+            logger.warning(f"⏱️ انتهت المهلة: {error}")
+            return
+
+        if update and update.effective_user and context and context.bot:
+            if not await is_user_bot(context.bot, update.effective_user.id):
+                await safe_send_markdown(
+                    context.bot,
+                    update.effective_user.id,
+                    f"❌ حدث خطأ:\n`{str(error)[:300]}`\n(الرمز: `{error_id}`)"
+                )
+
+        if PRIMARY_OWNER_ID and context and context.bot:
+            try:
+                error_text = f"🚨 **خطأ في البوت** (الرمز: {error_id})\n\n"
+                error_text += f"📌 المستخدم: {update.effective_user.id if update and update.effective_user else 'غير معروف'}\n"
+                error_text += f"⚠️ الخطأ: `{str(error)[:300]}`\n"
+                if update and update.effective_message and update.effective_message.text:
+                    error_text += f"📝 الرسالة: `{update.effective_message.text[:100]}`\n"
+                await safe_send_markdown(context.bot, PRIMARY_OWNER_ID, error_text)
+            except Exception as e:
+                logger.error(f"فشل إرسال إشعار الخطأ للمطور: {e}")
+    except Exception as e:
+        logger.error(f"فشل معالج الأخطاء نفسه: {e}")
+
+# ===================================================================
+# خادم الويب المبسط
+# ===================================================================
+
+web_app = web.Application()
+
+async def index_handler(request):
+    html_content = """<html>
+        <head><title>ريلاكس مانيجر</title></head>
+        <body style="font-family: Arial; text-align: center; padding: 50px; direction: rtl;">
             <h1>🌿 ريلاكس مانيجر</h1>
             <p>✅ البوت يعمل بكفاءة</p>
             <p>📊 <a href="/health">التحقق من الصحة</a></p>
@@ -10078,6 +11689,7 @@ async def start_web_server():
 # ===================================================================
 # نظام إدارة المهام
 # ===================================================================
+
 class TaskManager:
     def __init__(self, max_tasks=50, max_concurrent=10):
         self.tasks = set()
@@ -10114,6 +11726,7 @@ task_manager = TaskManager(max_concurrent=10)
 # ===================================================================
 # دوال مساعدة إضافية (main_menu, back, handle_text, إلخ)
 # ===================================================================
+
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = update.effective_user.id
@@ -10362,6 +11975,7 @@ async def self_ping_loop():
 # ===================================================================
 # تهيئة قاعدة البيانات
 # ===================================================================
+
 async def init_db_improved():
     async with aiosqlite.connect(str(DB_PATH), timeout=DB_TIMEOUT) as conn:
         await conn.execute("PRAGMA journal_mode=WAL")
@@ -10795,94 +12409,16 @@ async def init_db_improved():
 # ===================================================================
 # إغلاق الموارد
 # ===================================================================
+
 async def cleanup_resources():
     logger.info("🧹 جاري تنظيف الموارد...")
     await db_pool.close()
     logger.info("✅ تم تنظيف الموارد بنجاح")
-# ===================================================================
-# معالج الأخطاء العالمي (يمنع التوقف المفاجئ)
-# ===================================================================
-async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        error = context.error
-        error_id = advanced_logger.log_error("خطأ في تحديث", error, {
-            'user_id': update.effective_user.id if update and update.effective_user else None,
-            'chat_id': update.effective_chat.id if update and update.effective_chat else None,
-        })
-
-        if isinstance(error, Conflict):
-            logger.warning(f"⚠️ تعارض في التحديثات: {error}")
-            return
-
-        if isinstance(error, Forbidden):
-            logger.warning(f"⚠️ البوت محظور أو ليس لديه صلاحيات: {error}")
-            return
-
-        if isinstance(error, TimedOut):
-            logger.warning(f"⏱️ انتهت المهلة: {error}")
-            return
-
-        logger.error(f"❌ خطأ غير متوقع: {error}")
-
-        if PRIMARY_OWNER_ID and context and context.bot:
-            try:
-                await safe_send_markdown(
-                    context.bot,
-                    PRIMARY_OWNER_ID,
-                    f"⚠️ **خطأ في البوت**\nالرمز: `{error_id}`\nالخطأ: `{str(error)[:300]}`"
-                )
-            except:
-                pass
-
-    except Exception as e:
-        logger.error(f"فشل معالج الأخطاء نفسه: {e}")
-
-# ===================================================================
-# دوال إعادة التشغيل التلقائي
-# ===================================================================
-async def safe_loop(coro, name="background_loop"):
-    """تشغيل حلقة خلفية مع إعادة تشغيل تلقائي في حال تعطلها"""
-    while True:
-        try:
-            await coro()
-        except asyncio.CancelledError:
-            logger.info(f"🛑 تم إلغاء الحلقة: {name}")
-            break
-        except Exception as e:
-            logger.error(f"❌ تعطلت الحلقة {name}: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
-            await asyncio.sleep(10)
-
-async def run_polling_safe(application):
-    """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
-    while True:
-        try:
-            await application.run_polling(
-                drop_pending_updates=True,
-                poll_interval=POLL_INTERVAL
-            )
-        except asyncio.CancelledError:
-            logger.info("🛑 تم إلغاء polling")
-            break
-        except Exception as e:
-            logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
-            await asyncio.sleep(10)
-
-async def ensure_db_connection():
-    """التحقق من اتصال قاعدة البيانات وإعادة الاتصال إذا لزم الأمر"""
-    try:
-        async def _ping(conn):
-            await conn.execute("SELECT 1")
-        await execute_db(_ping)
-        return True
-    except Exception as e:
-        logger.error(f"❌ فشل الاتصال بقاعدة البيانات: {e}. جاري إعادة الاتصال...")
-        await db_pool.close()
-        await db_pool.initialize()
-        return False
 
 # ===================================================================
 # الوظيفة الرئيسية
 # ===================================================================
+
 async def main():
     await init_db_improved()
 
@@ -11226,18 +12762,18 @@ async def main():
     ]
     await application.bot.set_my_commands(commands)
 
-    task_manager.create_task(auto_publish_loop_improved(application.bot))
-    task_manager.create_task(auto_backup())
-    task_manager.create_task(run_scheduled_posts_loop_improved(application.bot))
-    task_manager.create_task(send_reminders_loop_improved(application.bot))
-    task_manager.create_task(cleanup_expired_sessions_improved())
-    task_manager.create_task(start_web_server())
-    task_manager.create_task(self_ping_loop())
-    task_manager.create_task(broadcast_stats_periodically())
-    task_manager.create_task(cleanup_points_cache())
-    task_manager.create_task(memory_monitor())
-    task_manager.create_task(auto_close_contests_loop(application.bot))
-    task_manager.create_task(refresh_group_admins_and_hidden_owners_loop(application.bot))
+    task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "auto_publish"))
+    task_manager.create_task(safe_loop(auto_backup, "auto_backup"))
+    task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
+    task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(application.bot), "reminders"))
+    task_manager.create_task(safe_loop(cleanup_expired_sessions_improved, "cleanup_sessions"))
+    task_manager.create_task(safe_loop(start_web_server, "web_server"))
+    task_manager.create_task(safe_loop(self_ping_loop, "ping"))
+    task_manager.create_task(safe_loop(broadcast_stats_periodically, "stats"))
+    task_manager.create_task(safe_loop(cleanup_points_cache, "cleanup_points"))
+    task_manager.create_task(safe_loop(memory_monitor, "memory"))
+    task_manager.create_task(safe_loop(lambda: auto_close_contests_loop(application.bot), "contests"))
+    task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "refresh_admins"))
 
     print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.19 - النسخة العالمية مع إصلاحات الأمان)")
     print("✅ جميع التحسينات العالمية تم تطبيقها:")
@@ -11261,13 +12797,12 @@ async def main():
     print("   • ✅ تحسين أمان أمر /sendcode (إزالة التوكن والمفاتيح)")
 
     try:
-    await run_polling_safe(application)
-except KeyboardInterrupt:
-    logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
-finally:
-    await cleanup_resources()
-    await task_manager.cancel_all()
-
+        await run_polling_safe(application)
+    except KeyboardInterrupt:
+        logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
+    finally:
+        await cleanup_resources()
+        await task_manager.cancel_all()
 
 async def create_contest_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -11334,4 +12869,3 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
