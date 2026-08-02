@@ -4176,11 +4176,12 @@ async def db_update_user_level(user_id: int, points: int, level: int):
     return await execute_db(_update)
 
 async def add_points(user_id: int, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None):
+    """إضافة نقاط للمستخدم مع تحديد سرعة الإضافة (1 نقطة لكل ساعة بحد أقصى 20 نقطة)"""
     now = utc_now()
     count, last_timestamp = await user_points_tracker.get(user_id)
     
     if last_timestamp > 0:
-        last_time = datetime.fromtimestamp(last_timestamp)
+        last_time = datetime.fromtimestamp(last_timestamp, tz=timezone.utc)
         if (now - last_time).total_seconds() < 3600:
             if count >= 20:
                 return
@@ -4214,7 +4215,7 @@ async def add_points(user_id: int, update: Update = None, context: ContextTypes.
             pass
     
     await db_update_user_level(user_id, points, level)
-
+ 
 async def get_rank(user_id: int) -> dict:
     return await db_get_user_level(user_id)
 
