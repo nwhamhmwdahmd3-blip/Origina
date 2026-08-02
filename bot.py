@@ -13762,7 +13762,6 @@ async def main():
         BotCommand("declare_winner", "إعلان فائز"),
         BotCommand("set_rules", "تعيين قوانين المجموعة"),
         BotCommand("rules", "عرض قوانين المجموعة"),
-    ]
     await application.bot.set_my_commands(commands)
 
     # ====== تشغيل المهام الخلفية ======
@@ -13771,21 +13770,21 @@ async def main():
     task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
     task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(application.bot), "reminders"))
     task_manager.create_task(safe_loop(cleanup_expired_sessions_improved, "cleanup_sessions"))
-   # تشغيل خادم الويب (مرة واحدة فقط)
-    web_success = await start_web_server()
+    
+    # تشغيل خادم الويب (مرة واحدة فقط)
+    web_success = await start_web_server_once()
     if web_success:
-    logger.info("✅ خادم الويب يعمل")
-    task_manager.create_task(safe_loop(self_http_ping_loop, "http_ping"))
+        logger.info("✅ خادم الويب يعمل")
+        task_manager.create_task(safe_loop(self_http_ping_loop, "http_ping"))
     else:
         logger.warning("⚠️ خادم الويب لم يعمل، لكن البوت مستمر")
-
+    
     task_manager.create_task(safe_loop(self_ping_loop, "ping"))
     task_manager.create_task(safe_loop(broadcast_stats_periodically, "broadcast_stats"))
     task_manager.create_task(safe_loop(cleanup_points_cache, "cleanup_points"))
     task_manager.create_task(safe_loop(memory_monitor, "memory_monitor"))
     task_manager.create_task(safe_loop(lambda: auto_close_contests_loop(application.bot), "auto_close_contests"))
     task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "refresh_admins"))
-    task_manager.create_task(safe_loop(self_http_ping_loop, "http_ping"))   # 👈 نبض HTTP لمنع النوم على Render
 
     print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.19 - النسخة العالمية مع إصلاحات الأمان)")
     print("✅ جميع التحسينات العالمية تم تطبيقها:")
@@ -13847,36 +13846,73 @@ async def cleanup_resources():
         pass
 
 
+async def start_web_server_once():
+    """تشغيل خادم الويب مرة واحدة فقط على المنفذ الصحيح"""
+    try:
+        port = int(os.getenv("PORT", WEB_PORT))
+        runner = web.AppRunner(web_app)
+        await runner.setup()
+        site = web.TCPSite(runner, WEB_HOST, port)
+        await site.start()
+        logger.info(f"✅ خادم الويب يعمل على http://{WEB_HOST}:{port}")
+        global WEB_PORT_USED
+        WEB_PORT_USED = port
+        return True
+    except OSError as e:
+        if "address already in use" in str(e):
+            logger.warning(f"⚠️ المنفذ {port} مشغول - قد يكون البوت يعمل بالفعل")
+        else:
+            logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
+        return False
+
+
 async def self_http_ping_loop():
-    """إرسال طلب HTTP إلى الخادم المحلي للحفاظ على نشاط Render"""
-    port = WEB_PORT_USED or int(os.getenv("PORT", 10000))
+    """إرسال ping داخلي للحفاظ على نشاط Render (فقط إذا كان الخادم يعمل)"""
+    port = int(os.getenv("PORT", 10000))
     url = f"http://localhost:{port}/health"
+    # تحقق أولي
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5) as resp:
+                if resp.status != 200:
+                    logger.warning("⚠️ خادم الويب لا يستجيب، إلغاء ping")
+                    return
+    except:
+        logger.warning("⚠️ خادم الويب غير متاح، إلغاء ping")
+        return
+
     while True:
-        await asyncio.sleep(120)  # كل دقيقتين
+        await asyncio.sleep(120)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=5) as resp:
                     if resp.status == 200:
                         logger.debug("✅ ping داخلي ناجح")
-                    else:
-                        logger.warning(f"⚠️ ping فشل: {resp.status}")
+        except Exception:
+            pass  # طبيعي
+
+
+async def self_ping_loop():
+    """الحفاظ على تشغيل البوت عن طريق ping الذاتي"""
+    while True:
+        await asyncio.sleep(300)  # كل 5 دقائق
+        try:
+            await ensure_db_connection()
         except Exception as e:
-            logger.error(f"❌ خطأ في ping: {e}")
+            logger.error(f"خطأ في ping الذاتي: {e}")
 
 
 if __name__ == "__main__":
-    """
-    نقطة الدخول الرئيسية للبوت مع معالجة الأخطاء المتقدمة
-    """
     try:
         print("🚀 بدء تشغيل البوت (الإصدار 20.0.19)...")
-        # التأكد من وجود المتغيرات الأساسية
         if not TOKEN:
             raise ValueError("❌ BOT_TOKEN غير معرف في متغيرات البيئة")
         if not PRIMARY_OWNER_ID:
             raise ValueError("❌ MAIN_ADMIN_ID غير معرف في متغيرات البيئة")
         print("✅ جميع المتغيرات الأساسية موجودة")
-        # تشغيل البوت
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n🛑 تم إيقاف البوت بواسطة المستخدم (Ctrl+C)")
