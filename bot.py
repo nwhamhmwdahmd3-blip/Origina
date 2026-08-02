@@ -13420,52 +13420,12 @@ async def init_db_improved():
 # ===================== دالة main - تشغيل البوت =====================
 
 async def main():
+    """الدالة الرئيسية لتشغيل البوت"""
     print("1️⃣ بدء main()...")
     
     # تهيئة قاعدة البيانات
     await init_db_improved()
     print("2️⃣ تم تهيئة قاعدة البيانات...")
-    
-    # ... باقي الكود (استيراد الكلمات، تحميل اللغات، إلخ) ...
-    
-    print("3️⃣ قبل إعداد application...")
-    # إعداد الـ HTTPX Request
-    if USE_PROXY:
-        # ...
-    else:
-        # ...
-    application = Application.builder().token(TOKEN).request(request).build()
-    print("4️⃣ تم إنشاء application...")
-    
-    application.add_error_handler(global_error_handler)
-    print("5️⃣ تم إضافة معالج الأخطاء...")
-    
-    # ... إضافة الـ Handlers ...
-    
-    print("6️⃣ قبل set_my_commands...")
-    await application.bot.set_my_commands(commands)
-    print("7️⃣ بعد set_my_commands...")
-    
-    # ====== تشغيل المهام الخلفية ======
-    print("8️⃣ قبل تشغيل المهام الخلفية...")
-    task_manager.create_task(safe_loop(...))
-    # ... باقي المهام ...
-    print("9️⃣ بعد تشغيل المهام الخلفية...")
-    
-    print("🔟 قبل try...")
-    try:
-        print("🔄 بدء تشغيل polling...")
-        await run_polling_safe(application)
-    except KeyboardInterrupt:
-        logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
-    except Exception as e:
-        logger.error(f"❌ خطأ في polling: {e}")
-    finally:
-        await cleanup_resources()
-        await task_manager.cancel_all()
-    """الدالة الرئيسية لتشغيل البوت"""
-    # تهيئة قاعدة البيانات
-    await init_db_improved()
 
     # استيراد الكلمات المحظورة من ملف
     try:
@@ -13493,8 +13453,10 @@ async def main():
     # تحميل اللغات والردود
     load_all_languages()
     load_replies_from_file()
+    print("3️⃣ تم تحميل اللغات والردود...")
 
     # إعداد الـ HTTPX Request
+    print("4️⃣ قبل إعداد application...")
     if USE_PROXY:
         request_kwargs = {
             'proxy_url': PROXY_URL,
@@ -13518,6 +13480,7 @@ async def main():
         application = Application.builder().token(TOKEN).request(request).build()
 
     application.add_error_handler(global_error_handler)
+    print("5️⃣ تم إنشاء application وإضافة معالج الأخطاء...")
 
     # ========== Command Handlers ==========
     application.add_handler(CommandHandler("start", start_command_handler))
@@ -13824,9 +13787,12 @@ async def main():
         BotCommand("set_rules", "تعيين قوانين المجموعة"),
         BotCommand("rules", "عرض قوانين المجموعة"),
     ]
+    print("6️⃣ قبل set_my_commands...")
     await application.bot.set_my_commands(commands)
+    print("7️⃣ بعد set_my_commands...")
 
     # ====== تشغيل المهام الخلفية ======
+    print("8️⃣ قبل تشغيل المهام الخلفية...")
     task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "auto_publish"))
     task_manager.create_task(safe_loop(auto_backup, "auto_backup"))
     task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
@@ -13847,6 +13813,7 @@ async def main():
     task_manager.create_task(safe_loop(memory_monitor, "memory_monitor"))
     task_manager.create_task(safe_loop(lambda: auto_close_contests_loop(application.bot), "auto_close_contests"))
     task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "refresh_admins"))
+    print("9️⃣ بعد تشغيل المهام الخلفية...")
 
     print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.19 - النسخة العالمية مع إصلاحات الأمان)")
     print("✅ جميع التحسينات العالمية تم تطبيقها:")
@@ -13869,29 +13836,18 @@ async def main():
     print("   • ✅ معالجة خطأ User_bot_to_bot_disabled")
     print("   • ✅ تحسين أمان أمر /sendcode (إزالة التوكن والمفاتيح)")
 
-async def cleanup_resources():
-    """تنظيف الموارد قبل الإغلاق - آمنة"""
+    print("🔟 قبل try...")
     try:
-        # التحقق من وجود event loop قبل الإغلاق
-        loop = asyncio.get_running_loop()
-        if loop.is_closed():
-            logger.debug("⏭️ حلقة الأحداث مغلقة بالفعل، تخطي التنظيف")
-            return
-        await db_pool.close()
-        logger.info("✅ تم إغلاق اتصال قاعدة البيانات")
-    except RuntimeError as e:
-        if "no running event loop" in str(e):
-            logger.debug("⏭️ لا توجد حلقة أحداث جارية، تخطي التنظيف")
-        else:
-            logger.error(f"❌ خطأ أثناء تنظيف قاعدة البيانات: {e}")
+        print("🔄 بدء تشغيل polling...")
+        await run_polling_safe(application)
+    except KeyboardInterrupt:
+        logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
     except Exception as e:
-        logger.error(f"❌ فشل إغلاق قاعدة البيانات: {e}")
-    try:
-        if lock_socket:
-            lock_socket.close()
-            logger.info("✅ تم إغلاق قفل التشغيل")
-    except:
-        pass
+        logger.error(f"❌ خطأ في polling: {e}")
+    finally:
+        await cleanup_resources()
+        await task_manager.cancel_all()
+
 
 async def run_polling_safe(application):
     """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
@@ -13914,6 +13870,8 @@ async def run_polling_safe(application):
         except Exception as e:
             logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
             await asyncio.sleep(10)
+
+
 async def cleanup_resources():
     """تنظيف الموارد قبل الإغلاق"""
     try:
@@ -14011,21 +13969,4 @@ if __name__ == "__main__":
         print("📌 تفاصيل الخطأ الكاملة:")
         import traceback
         traceback.print_exc()
-        # محاولة إرسال إشعار للمطور
-        try:
-            from telegram import Bot
-            bot = Bot(token=TOKEN) if TOKEN else None
-            if bot and PRIMARY_OWNER_ID:
-                error_msg = f"🚨 **خطأ في تشغيل البوت**\n\n"
-                error_msg += f"⚠️ {type(e).__name__}: {e}\n"
-                error_msg += f"📌 راجع سجلات Render للتفاصيل"
-                import asyncio
-                asyncio.run(bot.send_message(chat_id=PRIMARY_OWNER_ID, text=error_msg))
-                print("✅ تم إرسال إشعار الخطأ للمطور")
-        except:
-            print("⚠️ فشل إرسال إشعار الخطأ للمطور")
         sys.exit(1)
-    finally:
-        print("🧹 تنظيف الموارد قبل الإغلاق...")
-        print("✅ تم إغلاق البوت بشكل آمن")
-
