@@ -1152,6 +1152,7 @@ global_rate_limiter=GlobalRateLimiter()
 class CallbackData:
     MAIN_MENU="main_menu"
     CHANNELS_MY="channels:my_channels"
+    CANCEL_SESSION = "cancel_session"
     CHANNELS_ADD="channels:add"
     CHANNELS_DELETE_PREFIX="channels:delete:"
     CHANNELS_SELECT_PREFIX="channels:select:"
