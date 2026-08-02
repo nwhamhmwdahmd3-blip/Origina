@@ -182,12 +182,8 @@ STATIC_PATH = get_writable_path(BASE_PATH, "static")
 TEMPLATES_PATH = get_writable_path(BASE_PATH, "templates")
 LANG_PATH = BASE_PATH / "lang"
 REPLIES_FILE = DATA_PATH / "replies.json"  # ✅ تم التعديل: نقل إلى DATA_PATH
-# ===================== المسارات الأساسية =====================
-...
-REPLIES_FILE = DATA_PATH / "replies.json"
-BANNED_WORDS_FILE = BASE_PATH / "assets" / "banned_words.txt"   # 👈 تم التعديل هنا
-...
-
+# ===================== المسارات الأساسية ================
+BANNED_WORDS_FILE = BANNED_WORDS_FILES[0]  # المسار الافتراضي
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 DATA_PATH.mkdir(parents=True, exist_ok=True)
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
