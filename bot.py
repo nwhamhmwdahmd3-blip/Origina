@@ -29,8 +29,6 @@ import random
 import asyncio
 import socket
 import subprocess
-from replies import ALL_REPLIES, get_weighted_reply
-
 import gc
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -49,6 +47,7 @@ from concurrent.futures import ThreadPoolExecutor
 import types
 import signal
 import numpy as np  # ✅ تمت الإضافة لاستخدامه في check_nsfw_video
+from replies import ALL_REPLIES, get_weighted_reply
 
 # ===================== التحقق من إصدار بايثون =====================
 def check_python_version():
