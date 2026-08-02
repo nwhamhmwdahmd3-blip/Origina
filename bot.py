@@ -702,36 +702,44 @@ load_replies_from_file()
 BANNED_PATTERNS = []
 _BANNED_PATTERNS_LOCK = asyncio.Lock()
 
-def load_banned_words_from_file(file_path: Path) -> List[str]:
-    words = []
-    if not file_path.exists():
-        print(f"⚠️ ملف {file_path} غير موجود، سيتم إنشاؤه فارغاً")
-        try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write("# قائمة الكلمات المحظورة - كل كلمة في سطر منفصل\n")
-                f.write("# ابدأ السطر بـ # للتعليق\n")
-                f.write("# استخدم * للتعبيرات النمطية (مثل: سكس.*\n")
-                f.write("\n")
-                f.write("بورن\nسكس\nجنس\nعري\nخمر\nخمور\nمخدرات\nحشيش\nكحول\nدعارة\n")
-            print(f"✅ تم إنشاء ملف {file_path} مع كلمات افتراضية")
-        except Exception as e:
-            print(f"❌ فشل إنشاء ملف الكلمات المحظورة: {e}")
-        return words
+def load_banned_words_from_file(file_paths: list) -> List[str]:
+    """تحميل الكلمات المحظورة من أول ملف موجود في قائمة المسارات"""
+    for file_path in file_paths:
+        if file_path.exists():
+            print(f"✅ تم العثور على ملف الكلمات المحظورة: {file_path}")
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    words = []
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        word = line.lower()
+                        if len(word) >= 2:
+                            words.append(word)
+                    print(f"✅ تم تحميل {len(words)} كلمة محظورة من {file_path}")
+                    return words
+            except Exception as e:
+                print(f"❌ فشل تحميل {file_path}: {e}")
+                continue
 
+    # إذا لم يوجد أي ملف، أنشئ ملفاً افتراضياً في المسار الأول
+    default_path = file_paths[0]
+    print(f"⚠️ لم يتم العثور على ملف الكلمات المحظورة، سيتم إنشاؤه في {default_path}")
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                word = line.lower()
-                if len(word) >= 2:
-                    words.append(word)
-        print(f"✅ تم تحميل {len(words)} كلمة محظورة من {file_path}")
+        # أنشئ المجلد إذا لم يكن موجوداً
+        default_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(default_path, 'w', encoding='utf-8') as f:
+            f.write("# قائمة الكلمات المحظورة - كل كلمة في سطر منفصل\n")
+            f.write("# ابدأ السطر بـ # للتعليق\n")
+            f.write("# استخدم * للتعبيرات النمطية (مثل: سكس.*\n")
+            f.write("\n")
+            f.write("بورن\nسكس\nجنس\nعري\nخمر\nخمور\nمخدرات\nحشيش\nكحول\nدعارة\n")
+        print(f"✅ تم إنشاء ملف {default_path} مع كلمات افتراضية")
+        return ["بورن", "سكس", "جنس", "عري", "خمر", "خمور", "مخدرات", "حشيش", "كحول", "دعارة"]
     except Exception as e:
-        print(f"❌ فشل تحميل الكلمات المحظورة: {e}")
-
-    return words
+        print(f"❌ فشل إنشاء الملف الافتراضي: {e}")
+        return []
 
 async def rebuild_banned_patterns():
     global BANNED_PATTERNS
