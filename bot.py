@@ -29,6 +29,8 @@ import random
 import asyncio
 import socket
 import subprocess
+from replies import ALL_REPLIES, get_weighted_reply
+
 import gc
 import sqlite3
 from datetime import datetime, timedelta, timezone
