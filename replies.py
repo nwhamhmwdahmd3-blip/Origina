@@ -268,57 +268,48 @@ def get_weighted_reply(reply_list: Union[List[str], str], category: str = 'defau
     Returns:
         str: الرد المختار
     """
-    # إذا كان الرد نصاً وليس قائمة
     if isinstance(reply_list, str):
         return reply_list
     
-    # إذا كانت القائمة فارغة
     if not reply_list:
         return "🙏"
     
-    # إذا كانت القائمة تحتوي على عنصر واحد
     if len(reply_list) == 1:
         return reply_list[0]
 
-    # اختيار الأوزان المناسبة للفئة
     weights = REPLY_WEIGHTS.get(category, [0.4, 0.3, 0.3])
     weights = weights[:len(reply_list)]
     
-    # ضبط الأوزان إذا كانت القائمة أطول من الأوزان المتاحة
     if len(weights) < len(reply_list):
         remaining = len(reply_list) - len(weights)
         weights.extend([0.1] * remaining)
     
-    # تطبيع الأوزان (جعل مجموعها = 1)
     total = sum(weights)
     if total > 0:
         weights = [w / total for w in weights]
     else:
         weights = [1.0 / len(reply_list)] * len(reply_list)
     
-    # اختيار رد عشوائي حسب الأوزان
     return random.choices(reply_list, weights=weights, k=1)[0]
 
 # ===================== بناء قاموس الردود الكامل =====================
 
 ALL_REPLIES = {}
 
-# دمج جميع الردود في قاموس واحد مع تطبيق الأوزان
-ALL_REPLIES.update({k: get_weighted_reply(v, 'welcome') if isinstance(v, list) else v for k, v in WELCOME_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'faq') if isinstance(v, list) else v for k, v in FAQ_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'positive') if isinstance(v, list) else v for k, v in POSITIVE_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'religious') if isinstance(v, list) else v for k, v in RELIGIOUS_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'joke') if isinstance(v, list) else v for k, v in JOKE_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'motivational') if isinstance(v, list) else v for k, v in MOTIVATIONAL_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'social') if isinstance(v, list) else v for k, v in SOCIAL_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'admin') if isinstance(v, list) else v for k, v in ADMIN_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'request') if isinstance(v, list) else v for k, v in REQUEST_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'about') if isinstance(v, list) else v for k, v in ABOUT_BOT_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'extra') if isinstance(v, list) else v for k, v in EXTRA_REPLIES.items()})
+ALL_REPLIES.update(WELCOME_REPLIES)
+ALL_REPLIES.update(FAQ_REPLIES)
+ALL_REPLIES.update(POSITIVE_REPLIES)
+ALL_REPLIES.update(RELIGIOUS_REPLIES)
+ALL_REPLIES.update(JOKE_REPLIES)
+ALL_REPLIES.update(MOTIVATIONAL_REPLIES)
+ALL_REPLIES.update(SOCIAL_REPLIES)
+ALL_REPLIES.update(ADMIN_REPLIES)
+ALL_REPLIES.update(REQUEST_REPLIES)
+ALL_REPLIES.update(ABOUT_BOT_REPLIES)
+ALL_REPLIES.update(EXTRA_REPLIES)
 
 # ===================== تصدير العناصر المطلوبة =====================
 
-# القواميس الأساسية (للاستخدام المباشر إن لزم)
 __all__ = [
     'ALL_REPLIES',
     'get_weighted_reply',
