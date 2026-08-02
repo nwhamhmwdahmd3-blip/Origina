@@ -1197,6 +1197,8 @@ class CallbackData:
     SUPPORT_TICKET="support:ticket"
     SUPPORT_BACK="support:back"
     BACK = "back" 
+    SECURITY_ENABLE_ALL_PREFIX = "security:enable_all:"
+    SECURITY_DISABLE_ALL_PREFIX = "security:disable_all:"
     TRIAL="trial"
     SUBSCRIBE_MENU="subscribe:menu"
     BUY_SUBSCRIPTION_1="buy:subscription_1"
