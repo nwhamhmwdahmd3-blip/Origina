@@ -13854,7 +13854,7 @@ async def run_polling_safe(application):
     """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
     while True:
         try:
-    print("🔄 بدء تشغيل polling...")  # 👈 التأكيد
+    print("🔄 بدء تشغيل polling...")
     await run_polling_safe(application)
 except KeyboardInterrupt:
     logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
@@ -13863,7 +13863,6 @@ except Exception as e:
 finally:
     await cleanup_resources()
     await task_manager.cancel_all()
-
                 continue
             logger.error(f"❌ خطأ في Runtime: {e}")
             break
