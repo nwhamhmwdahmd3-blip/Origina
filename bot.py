@@ -1937,6 +1937,59 @@ class CallbackData:
     PANEL_UNLOCK_PREFIX = "panel:unlock:"
     PANEL_CLOSE = "panel:close"
     CHECK_SUBSCRIBE = "check_subscribe"
+# ===================================================================
+# تعريف UserState - لإدارة حالات المستخدمين في الجلسات
+# ===================================================================
+
+class UserState(Enum):
+    NONE = auto()
+    ADDING_POSTS = auto()
+    WAITING_CHANNEL_ID = auto()
+    WAITING_INTERVAL_MINUTES = auto()
+    WAITING_INTERVAL_HOURS = auto()
+    WAITING_INTERVAL_DAYS = auto()
+    WAITING_DATES = auto()
+    WAITING_PUBLISH_TIME = auto()
+    SELECTING_DAYS = auto()
+    WAITING_ADMIN_ID_ADD = auto()
+    WAITING_ADMIN_ID_REMOVE = auto()
+    WAITING_BROADCAST = auto()
+    WAITING_UPDATE_TEXT = auto()
+    WAITING_UPDATE_CHANNEL = auto()
+    WAITING_FORCE_CHANNEL = auto()
+    WAITING_SENDCODE_CONFIRM = auto()
+    WAITING_SENDCODE_PASSWORD = auto()
+    WAITING_REMINDER_DAYS = auto()
+    WAITING_SCHEDULE_POST = auto()
+    WAITING_BAN_USER = auto()
+    WAITING_MUTE_USER = auto()
+    WAITING_WARN_USER = auto()
+    WAITING_KICK_USER = auto()
+    WAITING_RESTRICT_USER = auto()
+    WAITING_UNBAN_USER = auto()
+    WAITING_PIN_MESSAGE = auto()
+    WAITING_GROUP_BANNED_WORD = auto()
+    WAITING_REMOVE_GROUP_BANNED_WORD = auto()
+    WAITING_GLOBAL_BANNED_WORD = auto()
+    WAITING_REMOVE_GLOBAL_BANNED_WORD = auto()
+    WAITING_KEYWORD = auto()
+    WAITING_REPLY = auto()
+    WAITING_SENDCODE_USER = auto()
+    WAITING_LOG_CHANNEL = auto()
+    WAITING_2FA = auto()
+    SUPPORT_MODE = auto()
+    WAITING_CONTEST_TITLE = auto()
+    WAITING_CONTEST_DESCRIPTION = auto()
+    WAITING_CONTEST_PRIZE = auto()
+    WAITING_CONTEST_END_DATE = auto()
+    WAITING_CONTEST_ANSWER = auto()
+    WAITING_DELETE_CONTEST = auto()
+    WAITING_GROUP_SECURITY = auto()
+    WAITING_HIDDEN_ADMIN_ADD = auto()
+    WAITING_HIDDEN_ADMIN_REMOVE = auto()
+    WAITING_AUTO_REPLY_MENU = auto()
+    WAITING_NSFW_THRESHOLD = auto()
+    WAITING_EXPORT_DATA = auto()
 
 # الجزء الثاني سيحتوي على دوال قاعدة البيانات والوظائف الأساسية.
 # ===================== دوال قاعدة البيانات الأساسية =====================
