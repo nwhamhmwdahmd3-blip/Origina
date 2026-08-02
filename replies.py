@@ -1,18 +1,13 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-قوائم الردود التلقائية للمجموعات - النسخة المصححة
-- الاحتفاظ بجميع الردود كقوائم للاختيار العشوائي عند الاستخدام
-- دمج المفاتيح المكررة من جميع الفئات
-- دالة تطبيع النصوص لتوحيد الهمزات والتشكيل
-- اختيار عشوائي في كل مرة (وليس عند التحميل)
+ملف الردود التلقائية - يمكن تعديله بسهولة دون المساس بالكود الأساسي
 """
 
 import random
-import re
+from typing import List, Union
 
-# ===================== ردود الترحيب =====================
+# ===================== قواميس الردود =====================
+
 WELCOME_REPLIES = {
     "مرحباً": ["أهلاً وسهلاً بك في مجموعتنا 🤍", "أهلاً بك، نورت المجموعة 🌸", "مرحباً، تشرفنا بوجودك 🙏"],
     "السلام عليكم": ["وعليكم السلام ورحمة الله وبركاته 🌹", "وعليكم السلام، نورت المجموعة 🌸", "الله يبارك فيك 🙏"],
@@ -36,7 +31,6 @@ WELCOME_REPLIES = {
     "فرحتنا": ["فرحتنا بوجودك 🤍", "نورت فرحتنا 🌹", "فرحة بمعرفتك 🌸"]
 }
 
-# ===================== ردود الأسئلة الشائعة =====================
 FAQ_REPLIES = {
     "كيف حالك": ["الحمد لله، بخير وأنت؟ ❤️", "بخير، تسلم 🌹", "الحمد لله، كيفك أنت؟ 🌸"],
     "شو اخبارك": ["كل الخير، كيفك أنت؟ 🌹", "بخير الحمد لله ❤️", "الخبر كله خير 🌸"],
@@ -65,7 +59,6 @@ FAQ_REPLIES = {
     "ماذا تفعل": ["أساعد في إدارة المجموعة 🛡️", "أنشر وأحمي 🌹", "أخدم المجموعة 🙏"]
 }
 
-# ===================== ردود إيجابية =====================
 POSITIVE_REPLIES = {
     "شكراً": ["العفو، تحت أمرك دائماً ❤️", "العفو، أهلين 🙏", "الشكر لله 🌹"],
     "شكرا": ["العفو، أهلين 🙏", "العفو، نورت 🌸", "تسلم يا غالي 🌹"],
@@ -89,7 +82,6 @@ POSITIVE_REPLIES = {
     "تقبل مروري": ["نورتنا بمرورك 🌸", "شكراً لمرورك 🌹", "تشرفنا بوجودك 🙏"]
 }
 
-# ===================== ردود دينية =====================
 RELIGIOUS_REPLIES = {
     "ما شاء الله": ["تبارك الرحمن 🤍", "ما شاء الله تبارك الله 🌹", "الله يبارك 🙏"],
     "ماشاءالله": ["تبارك الله 🌹", "الله يبارك فيك 🙏", "ما شاء الله 🌸"],
@@ -118,7 +110,6 @@ RELIGIOUS_REPLIES = {
     "السلام": ["السلام عليكم ورحمة الله 🌸", "السلام عليكم 🙏", "السلام عليكم ورحمة الله وبركاته 🌹"]
 }
 
-# ===================== ردود نكت =====================
 JOKE_REPLIES = {
     "ضحك": ["😂😂", "ههههه 🤣", "ضحكتني 😂"],
     "نكتة": ["مرة واحد قال للبوت: وينك؟ قال البوت: هني 👻", "مرة واحد سأل البوت: أيش تسوي؟ قال: أنشر وأحمي 🤖", "نكتة جديدة: البوت يقول للمستخدم: أنت نورت 🌟"],
@@ -152,7 +143,6 @@ JOKE_REPLIES = {
     "جو": ["جو حلو 😊", "جو رائع 🌹", "جو ممتع 🌸"]
 }
 
-# ===================== ردود تحفيزية =====================
 MOTIVATIONAL_REPLIES = {
     "تعبت": ["إرتاح شوي، تستاهل الراحة 😊", "خذ قسط من الراحة 🌸", "تستاهل كل خير 🙏"],
     "زعلان": ["لا تزعل، كل شيء بيصير خير ❤️", "الدنيا جميلة، ابتسم 🌹", "كل شيء سيكون بخير 🌸"],
@@ -171,7 +161,6 @@ MOTIVATIONAL_REPLIES = {
     "ناجح": ["أنت ناجح دائماً 🎉", "النجاح حليفك 🌹", "مبروك النجاح 🙏"]
 }
 
-# ===================== ردود اجتماعية =====================
 SOCIAL_REPLIES = {
     "كيفك": ["بخير الحمد لله، وأنت؟ 🌹", "بخير، تسلم ❤️", "الحمد لله، كيفك أنت؟ 🌸"],
     "كيفك انت": ["بخير، تسلم ❤️", "بخير، الحمد لله 🌹", "أنا بخير، شكراً 🙏"],
@@ -195,7 +184,6 @@ SOCIAL_REPLIES = {
     "العائلة": ["الله يجمع شملكم 🤍", "العائلة أغلى ما نملك 🌹", "الله يحمي العائلة 🌸"]
 }
 
-# ===================== ردود إدارية =====================
 ADMIN_REPLIES = {
     "ممنوع": ["تم التنبيه، يرجى احترام قوانين المجموعة 🚫", "ممنوع، يرجى الالتزام 🌹", "تنبيه: ممنوع 🙏"],
     "انتبه": ["رجاءً انتبه للقوانين ⚠️", "انتبه يا غالي 🌹", "تنبيه مهم 🌸"],
@@ -209,7 +197,6 @@ ADMIN_REPLIES = {
     "تنبيه": ["تنبيه هام يرجى قراءة القوانين 📋", "تنبيه للمخالفين 🌹", "انتبه للقوانين 🌸"]
 }
 
-# ===================== ردود الطلبات =====================
 REQUEST_REPLIES = {
     "بليز": ["حاضر، بس أرسل طلبك بالتفصيل 📝", "تفضل، أنا هنا 🌹", "أرسل طلبك 🙏"],
     "من فضلك": ["تفضل، أنا هنا للمساعدة 🤖", "تفضل، بكامل الخدمة 🌹", "أنا في خدمتك 🌸"],
@@ -228,7 +215,6 @@ REQUEST_REPLIES = {
     "رأي": ["نرحب برأيك القيم 📝", "رأيك يهمنا 🌹", "تفضل برأيك 🌸"]
 }
 
-# ===================== ردود عن البوت =====================
 ABOUT_BOT_REPLIES = {
     "مين انت": ["أنا البوت، مساعد لإدارة المجموعات 🤖", "أنا ريلاكس مانيجر 🌹", "أنا خادم المجموعة 🙏"],
     "ايش تسوي": ["أساعد في إدارة المجموعات، النشر، الأمان، والكثير 📋", "أدير القنوات والمجموعات 🌹", "أنا مساعد شامل 🌸"],
@@ -242,7 +228,6 @@ ABOUT_BOT_REPLIES = {
     "شنو فائدتك": ["أسهل عليك إدارة القناة والمجموعة 🚀", "فائدتي في الخدمة 🌹", "أنا هنا لمساعدتك 🙏"]
 }
 
-# ===================== ردود إضافية =====================
 EXTRA_REPLIES = {
     "تمام": ["تمام يا غالي 🌸", "تمام، تسلم 🌹", "أوكي 🙏"],
     "اوك": ["أوكي، تحت أمرك 🙏", "أوكي، تمام 🌹", "ممتاز 🌸"],
@@ -256,59 +241,97 @@ EXTRA_REPLIES = {
     "ياحلو": ["حلوك الله 🌸", "أنت الحلو 🌹", "حلو كلامك 🙏"]
 }
 
-# ===================== بناء القاموس الموحد مع دمج المفاتيح المكررة =====================
-_all_reply_lists = {}
+# ===================== نظام الأوزان والاختيار =====================
 
-all_categories = [
-    WELCOME_REPLIES, FAQ_REPLIES, POSITIVE_REPLIES, RELIGIOUS_REPLIES,
-    JOKE_REPLIES, MOTIVATIONAL_REPLIES, SOCIAL_REPLIES, ADMIN_REPLIES,
-    REQUEST_REPLIES, ABOUT_BOT_REPLIES, EXTRA_REPLIES
+REPLY_WEIGHTS = {
+    'welcome': [0.5, 0.3, 0.2],
+    'faq': [0.4, 0.3, 0.3],
+    'positive': [0.4, 0.4, 0.2],
+    'religious': [0.4, 0.3, 0.3],
+    'joke': [0.3, 0.4, 0.3],
+    'motivational': [0.4, 0.3, 0.3],
+    'social': [0.4, 0.3, 0.3],
+    'admin': [0.5, 0.3, 0.2],
+    'request': [0.4, 0.3, 0.3],
+    'about': [0.4, 0.3, 0.3],
+    'extra': [0.4, 0.3, 0.3]
+}
+
+def get_weighted_reply(reply_list: Union[List[str], str], category: str = 'default') -> str:
+    """
+    اختيار رد عشوائي من القائمة مع الأوزان
+    
+    Args:
+        reply_list: قائمة الردود أو نص واحد
+        category: فئة الرد لتحديد الأوزان المناسبة
+    
+    Returns:
+        str: الرد المختار
+    """
+    # إذا كان الرد نصاً وليس قائمة
+    if isinstance(reply_list, str):
+        return reply_list
+    
+    # إذا كانت القائمة فارغة
+    if not reply_list:
+        return "🙏"
+    
+    # إذا كانت القائمة تحتوي على عنصر واحد
+    if len(reply_list) == 1:
+        return reply_list[0]
+
+    # اختيار الأوزان المناسبة للفئة
+    weights = REPLY_WEIGHTS.get(category, [0.4, 0.3, 0.3])
+    weights = weights[:len(reply_list)]
+    
+    # ضبط الأوزان إذا كانت القائمة أطول من الأوزان المتاحة
+    if len(weights) < len(reply_list):
+        remaining = len(reply_list) - len(weights)
+        weights.extend([0.1] * remaining)
+    
+    # تطبيع الأوزان (جعل مجموعها = 1)
+    total = sum(weights)
+    if total > 0:
+        weights = [w / total for w in weights]
+    else:
+        weights = [1.0 / len(reply_list)] * len(reply_list)
+    
+    # اختيار رد عشوائي حسب الأوزان
+    return random.choices(reply_list, weights=weights, k=1)[0]
+
+# ===================== بناء قاموس الردود الكامل =====================
+
+ALL_REPLIES = {}
+
+# دمج جميع الردود في قاموس واحد مع تطبيق الأوزان
+ALL_REPLIES.update({k: get_weighted_reply(v, 'welcome') if isinstance(v, list) else v for k, v in WELCOME_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'faq') if isinstance(v, list) else v for k, v in FAQ_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'positive') if isinstance(v, list) else v for k, v in POSITIVE_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'religious') if isinstance(v, list) else v for k, v in RELIGIOUS_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'joke') if isinstance(v, list) else v for k, v in JOKE_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'motivational') if isinstance(v, list) else v for k, v in MOTIVATIONAL_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'social') if isinstance(v, list) else v for k, v in SOCIAL_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'admin') if isinstance(v, list) else v for k, v in ADMIN_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'request') if isinstance(v, list) else v for k, v in REQUEST_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'about') if isinstance(v, list) else v for k, v in ABOUT_BOT_REPLIES.items()})
+ALL_REPLIES.update({k: get_weighted_reply(v, 'extra') if isinstance(v, list) else v for k, v in EXTRA_REPLIES.items()})
+
+# ===================== تصدير العناصر المطلوبة =====================
+
+# القواميس الأساسية (للاستخدام المباشر إن لزم)
+__all__ = [
+    'ALL_REPLIES',
+    'get_weighted_reply',
+    'WELCOME_REPLIES',
+    'FAQ_REPLIES',
+    'POSITIVE_REPLIES',
+    'RELIGIOUS_REPLIES',
+    'JOKE_REPLIES',
+    'MOTIVATIONAL_REPLIES',
+    'SOCIAL_REPLIES',
+    'ADMIN_REPLIES',
+    'REQUEST_REPLIES',
+    'ABOUT_BOT_REPLIES',
+    'EXTRA_REPLIES',
+    'REPLY_WEIGHTS'
 ]
-
-for category in all_categories:
-    for key, replies in category.items():
-        if key not in _all_reply_lists:
-            _all_reply_lists[key] = []
-        if isinstance(replies, list):
-            _all_reply_lists[key].extend(replies)
-        else:
-            _all_reply_lists[key].append(replies)
-
-# ===================== دالة تطبيع النص لتوحيد الهمزات والتشكيل =====================
-def normalize_text(text: str) -> str:
-    """
-    توحيد النص لتسهيل المطابقة:
-    - إزالة التشكيل (الحركات)
-    - توحيد الهمزات (أ، إ، آ → ا)
-    - توحيد التاء المربوطة (ة → ه)
-    - إزالة المسافات الزائدة
-    """
-    text = re.sub(r'[\u064b-\u0652]', '', text)
-    text = text.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا')
-    text = text.replace('ة', 'ه')
-    text = text.replace('ى', 'ي')
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-# ===================== الدالة الأساسية للبحث عن رد عشوائي =====================
-def get_random_reply(user_text: str) -> str:
-    """
-    إرجاع رد عشوائي من قائمة الردود المطابقة للنص المدخل.
-    إذا لم يتم العثور على تطابق، تُرجع None.
-    """
-    if not user_text:
-        return None
-    
-    normalized = normalize_text(user_text.strip())
-    
-    if normalized in _all_reply_lists:
-        return random.choice(_all_reply_lists[normalized])
-    
-    for key, replies in _all_reply_lists.items():
-        if key in normalized:
-            return random.choice(replies)
-    
-    return None
-
-# ===================== متغير للتوافق مع الكود القديم =====================
-ALL_REPLIES = _all_reply_lists.copy()
