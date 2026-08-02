@@ -439,7 +439,7 @@ def get_encryption_key() -> bytes:
             pass
         return key
 
-ENCRYPTION_KEY = "[REMOVED]";").replace("<", "&lt;").replace(">", "&gt;")
+ENCRYPTION_KEY = get_encryption_key()
             if len(html_text) > MAX_LEN:
                 html_text = html_text[:MAX_LEN-3] + "..."
             return await bot.send_message(
