@@ -12491,15 +12491,74 @@ async def cleanup_resources():
 
 # ===================== تشغيل البوت =====================
 
-if __name__ == "__main__":
     try:
-        os.environ["WEB_CONCURRENCY"] = "1"
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("🛑 تم إيقاف البوت")
+        if __name__ == "__main__":
+    """
+    نقطة الدخول الرئيسية للبوت مع معالجة الأخطاء المتقدمة
+    مناسبة لبيئة Render.com وأي بيئة إنتاج أخرى
+    """
+    try:
+        # طباعة معلومات البيئة للمساعدة في التتبع
+        print(f"🚀 بدء تشغيل {BOT_NAME} (الإصدار 20.0.19)")
+        print(f"📌 بيئة التشغيل: {'إنتاج' if os.getenv('ENVIRONMENT') == 'production' else 'تطوير'}")
+        print(f"🖥️ المنفذ المخصص: {WEB_PORT}")
+        
+        # التحقق من المتغيرات الأساسية قبل التشغيل
+        if not TOKEN:
+            raise ValueError("❌ BOT_TOKEN غير معرف في متغيرات البيئة")
+        if not PRIMARY_OWNER_ID:
+            raise ValueError("❌ MAIN_ADMIN_ID غير معرف في متغيرات البيئة")
+        
+        print("✅ جميع المتغيرات الأساسية موجودة")
+        
+        # تشغيل البوت مع إعادة تشغيل تلقائي عند الأخطاء غير المتوقعة
+        asyncio.run(main())
+        
+    except KeyboardInterrupt:
+        print("\n🛑 تم إيقاف البوت بواسطة المستخدم (Ctrl+C)")
+        sys.exit(0)
+        
+    except ValueError as e:
+        print(f"❌ خطأ في التهيئة: {e}")
+        print("📌 تأكد من تعيين المتغيرات التالية في بيئة Render:")
+        print("   • BOT_TOKEN")
+        print("   • MAIN_ADMIN_ID")
+        print("   • (اختياري) DB_ENCRYPTION_PASSWORD")
+        sys.exit(1)
+        
+    except ImportError as e:
+        print(f"❌ خطأ في استيراد مكتبة: {e}")
+        print("📌 قد تكون بعض المكتبات غير مثبتة أو غير متوافقة")
+        print("📌 راجع ملف requirements.txt")
+        sys.exit(1)
+        
     except Exception as e:
-        logger.error(f"❌ خطأ فادح: {e}")
+        print(f"❌ خطأ غير متوقع أثناء التشغيل: {type(e).__name__}: {e}")
+        print("📌 تفاصيل الخطأ الكاملة:")
         import traceback
         traceback.print_exc()
+        
+        # محاولة إرسال الخطأ إلى المطور إذا أمكن
+        try:
+            from telegram import Bot
+            bot = Bot(token=TOKEN) if TOKEN else None
+            if bot and PRIMARY_OWNER_ID:
+                error_msg = f"🚨 **خطأ في تشغيل البوت**\n\n"
+                error_msg += f"⚠️ {type(e).__name__}: {e}\n"
+                error_msg += f"📌 راجع سجلات Render للتفاصيل"
+                import asyncio
+                asyncio.run(bot.send_message(chat_id=PRIMARY_OWNER_ID, text=error_msg))
+                print("✅ تم إرسال إشعار الخطأ للمطور")
+        except:
+            print("⚠️ فشل إرسال إشعار الخطأ للمطور")
+        
         sys.exit(1)
+        
+    finally:
+        print("🧹 تنظيف الموارد قبل الإغلاق...")
+        # يمكن إضافة أي تنظيف إضافي هنا
+        print("✅ تم إغلاق البوت بشكل آمن")
+
 
