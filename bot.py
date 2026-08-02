@@ -5727,6 +5727,400 @@ def get_auto_reply_keyboard(chat_id: int, settings: dict) -> InlineKeyboardMarku
             callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}"
         )]
     ])
+# ===================== معالجات الأوامر =====================
+
+async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /start"""
+    user_id = update.effective_user.id
+    await db_register_user(user_id)
+    if update.effective_user.username:
+        await db_update_user_cache(user_id, update.effective_user.username, update.effective_user.first_name)
+    await main_menu_callback(update, context)
+
+
+async def help_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /help"""
+    user_id = update.effective_user.id
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]])
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'help'), reply_markup=keyboard)
+
+
+async def trial_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /trial"""
+    await trial_callback(update, context)
+
+
+async def subscribe_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /subscribe"""
+    await subscribe_menu_callback(update, context)
+
+
+async def support_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /support"""
+    await support_menu_callback(update, context)
+
+
+async def support_reply_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /support_reply"""
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 هذا الأمر للمشرفين فقط!")
+        return
+    
+    args = context.args
+    if len(args) < 2:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:**\n`/support_reply معرف_المستخدم نص_الرد`")
+        return
+    
+    target_id = int(args[0])
+    reply_text = " ".join(args[1:])
+    
+    try:
+        await context.bot.send_message(chat_id=target_id, text=f"📩 **رد الدعم:**\n\n{reply_text}")
+        ticket_id = await db_get_last_ticket_id_for_user(target_id)
+        if ticket_id:
+            await db_mark_ticket_replied(ticket_id)
+        await safe_send_markdown(context.bot, user_id, f"✅ تم إرسال الرد إلى المستخدم `{target_id}`")
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ فشل الإرسال: {str(e)[:100]}")
+
+
+async def rank_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /rank"""
+    await handle_text_callbacks(update, context)
+
+
+async def top_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /top"""
+    await handle_text_callbacks(update, context)
+
+
+async def developer_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /developer"""
+    await developer_callback(update, context)
+
+
+async def updates_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /updates"""
+    await updates_callback(update, context)
+
+
+async def stats_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /stats"""
+    user_id = update.effective_user.id
+    channels = await db_get_channels(user_id)
+    if not channels:
+        await safe_send_markdown(context.bot, user_id, "📭 لا توجد قنوات مسجلة.")
+        return
+    
+    total_posts = 0
+    for ch in channels:
+        total_posts += await db_get_posts_count(ch['id'])
+    
+    text = f"📊 **إحصائياتك**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 عدد القنوات: {len(channels)}\n📝 إجمالي المنشورات: {total_posts}"
+    await safe_send_markdown(context.bot, user_id, text)
+
+
+async def sendcode_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /sendcode"""
+    user_id = update.effective_user.id
+    allowed_user = await db_get_allowed_sendcode_user()
+    if user_id != PRIMARY_OWNER_ID and user_id != allowed_user:
+        await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح!")
+        return
+    
+    if context.args:
+        # إرسال كود إلى قناة
+        channel_id = context.args[0]
+        code_text = " ".join(context.args[1:]) if len(context.args) > 1 else "رمز التحقق"
+        try:
+            await context.bot.send_message(chat_id=channel_id, text=code_text)
+            await safe_send_markdown(context.bot, user_id, f"✅ تم إرسال الكود إلى `{channel_id}`")
+        except Exception as e:
+            await safe_send_markdown(context.bot, user_id, f"❌ فشل الإرسال: {str(e)[:100]}")
+    else:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:**\n`/sendcode معرف_القناة نص_الكود`")
+
+
+async def lock_chat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /lock"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    await db_set_chat_lock(chat_id, True, user_id)
+    await safe_send_markdown(context.bot, chat_id, get_text(user_id, 'locked'))
+
+
+async def unlock_chat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /unlock"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    await db_set_chat_lock(chat_id, False)
+    await safe_send_markdown(context.bot, chat_id, get_text(user_id, 'unlocked'))
+
+
+async def schedule_post_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /schedule"""
+    await handle_text_callbacks(update, context)
+
+
+async def panel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /panel"""
+    await admin_panel_callback(update, context)
+
+
+async def set_log_channel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /set_log_channel"""
+    await admin_set_log_channel_callback(update, context)
+
+
+async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أوامر الإدارة (ban, mute, warn, kick, restrict, pin, unban)"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "🔒 هذا الأمر يعمل فقط في المجموعات!")
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    command = update.message.text.split()[0][1:]  # اسم الأمر
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح!")
+        return
+    
+    # استخراج المستخدم المستهدف
+    if not update.message.reply_to_message:
+        await safe_send_markdown(context.bot, user_id, "📌 **الاستخدام:** أضف رداً على رسالة المستخدم.")
+        return
+    
+    target_id = update.message.reply_to_message.from_user.id
+    if target_id == context.bot.id:
+        await safe_send_markdown(context.bot, user_id, "❌ لا يمكن تنفيذ هذا الإجراء على البوت!")
+        return
+    
+    reason = " ".join(context.args) if context.args else ""
+    
+    # تنفيذ الإجراء
+    if command in ['ban', 'kick', 'mute', 'warn', 'restrict', 'unban']:
+        success, msg = await execute_moderation_action(context.bot, chat_id, target_id, command, reason, None, user_id)
+        await safe_send_markdown(context.bot, user_id, msg)
+    elif command == 'pin':
+        if update.message.reply_to_message:
+            success, msg = await execute_pin(context.bot, chat_id, update.message.reply_to_message.message_id)
+            await safe_send_markdown(context.bot, user_id, msg)
+    else:
+        await safe_send_markdown(context.bot, user_id, f"❌ أمر غير معروف: /{command}")
+
+
+async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /set_rules"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "🔒 هذا الأمر يعمل فقط في المجموعات!")
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح!")
+        return
+    
+    if not context.args:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:**\n`/set_rules نص القوانين`")
+        return
+    
+    rules_text = " ".join(context.args)
+    async def _set_rules(conn):
+        await conn.execute("INSERT OR REPLACE INTO group_rules (chat_id, rules_text, set_by, set_at) VALUES (?, ?, ?, ?)",
+                          (chat_id, rules_text, user_id, utc_now_iso()))
+        await conn.commit()
+    await execute_db(_set_rules)
+    await safe_send_markdown(context.bot, chat_id, "✅ تم تعيين قوانين المجموعة بنجاح!")
+
+
+async def rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /rules"""
+    if not update.effective_chat:
+        return
+    
+    chat_id = update.effective_chat.id
+    async def _get_rules(conn):
+        cur = await conn.execute("SELECT rules_text FROM group_rules WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    rules = await execute_db(_get_rules)
+    
+    if rules:
+        await safe_send_markdown(context.bot, chat_id, f"📋 **قوانين المجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\n{rules}")
+    else:
+        await safe_send_markdown(context.bot, chat_id, "📋 لا توجد قوانين مسجلة لهذه المجموعة.")
+
+
+async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /syncgroup"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "🔒 هذا الأمر يعمل فقط في المجموعات!")
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+    
+    # تسجيل المجموعة
+    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
+    
+    # التحقق من أن المستخدم مشرف
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status in ['administrator', 'creator']:
+            await db_register_hidden_owner_group(chat_id, user_id)
+            await db_sync_group_admins(chat_id, context.bot, user_id)
+            await invalidate_auth_cache(chat_id, user_id)
+            await safe_send_markdown(context.bot, chat_id, get_text(user_id, 'group_registered'))
+        else:
+            # إشعار المشرفين
+            await notify_group_admins(context.bot, chat_id, user_id, chat_name)
+            await safe_send_markdown(context.bot, chat_id, get_text(user_id, 'activation_requested'))
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ خطأ: {str(e)[:100]}")
+
+
+async def language_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /language"""
+    await handle_text_callbacks(update, context)
+
+
+async def register_hidden_owner_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /register_hidden_owner"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "🔒 هذا الأمر يعمل فقط في المجموعات!")
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(context.bot, user_id, "❌ يجب أن تكون مشرفاً في المجموعة لتسجيل نفسك كمالك مخفي!")
+            return
+        
+        if await db_is_hidden_owner(chat_id, user_id):
+            await safe_send_markdown(context.bot, user_id, "⚠️ أنت مسجل بالفعل كمالك مخفي!")
+            return
+        
+        await db_register_hidden_owner_group(chat_id, user_id)
+        await invalidate_auth_cache(chat_id, user_id)
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'hidden_owner_registered'))
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ فشل التسجيل: {str(e)[:100]}")
+
+
+async def add_hidden_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /add_hidden_admin"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "🔒 هذا الأمر يعمل فقط في المجموعات!")
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if not await db_is_hidden_owner(chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 يجب أن تكون مالكاً مخفياً!")
+        return
+    
+    args = context.args
+    if not args:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:**\n`/add_hidden_admin معرف_المستخدم`")
+        return
+    
+    try:
+        new_admin_id = int(args[0])
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ معرف غير صحيح!")
+        return
+    
+    if await db_is_hidden_owner(chat_id, new_admin_id):
+        await safe_send_markdown(context.bot, user_id, "⚠️ هذا المستخدم مالك مخفي بالفعل!")
+        return
+    
+    if await db_add_hidden_admin(chat_id, new_admin_id, user_id):
+        await invalidate_auth_cache(chat_id, new_admin_id)
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'hidden_admin_added').format(new_admin_id))
+    else:
+        await safe_send_markdown(context.bot, user_id, "❌ فشل إضافة المشرف المخفي")
+
+
+async def remove_hidden_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /remove_hidden_admin"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "🔒 هذا الأمر يعمل فقط في المجموعات!")
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if not await db_is_hidden_owner(chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 يجب أن تكون مالكاً مخفياً!")
+        return
+    
+    args = context.args
+    if not args:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:**\n`/remove_hidden_admin معرف_المستخدم`")
+        return
+    
+    try:
+        admin_id = int(args[0])
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ معرف غير صحيح!")
+        return
+    
+    if await db_remove_hidden_admin(chat_id, admin_id):
+        await invalidate_auth_cache(chat_id, admin_id)
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'hidden_admin_removed').format(admin_id))
+    else:
+        await safe_send_markdown(context.bot, user_id, "❌ فشل إزالة المشرف المخفي")
+
+
+async def list_hidden_admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /list_hidden_admins"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "🔒 هذا الأمر يعمل فقط في المجموعات!")
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if not await db_is_hidden_owner(chat_id, user_id) and not await db_is_hidden_admin(chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح!")
+        return
+    
+    admins = await db_get_hidden_admins(chat_id)
+    if not admins:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'no_hidden_admins'))
+        return
+    
+    text = get_text(user_id, 'hidden_admin_list').format(
+        "\n".join([f"• `{a['admin_id']}` (أضيف بواسطة `{a['added_by']}`)" for a in admins])
+    )
+    await safe_send_markdown(context.bot, user_id, text)
 
 def get_user_auto_reply_keyboard(user_id: int, enabled: bool) -> InlineKeyboardMarkup:
     """إنشاء كيبورد إعدادات الردود التلقائية للمستخدم"""
