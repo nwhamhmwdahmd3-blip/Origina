@@ -6121,6 +6121,955 @@ async def list_hidden_admins_command(update: Update, context: ContextTypes.DEFAU
         "\n".join([f"• `{a['admin_id']}` (أضيف بواسطة `{a['added_by']}`)" for a in admins])
     )
     await safe_send_markdown(context.bot, user_id, text)
+# ===================== معالجات الكولباك =====================
+
+async def cancel_session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إلغاء الجلسة الحالية"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    context.user_data.clear()
+    if query:
+        await query.edit_message_text("❌ تم الإلغاء.")
+    await main_menu_callback(update, context)
+
+
+async def add_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إضافة قناة جديدة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    context.user_data['state'] = UserState.WAITING_CHANNEL_ID
+    await safe_edit_markdown(query, "📡 أرسل معرف القناة (مثال: @channel أو -100123456)")
+
+
+async def my_channels_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قنوات المستخدم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    channels = await db_get_channels(user_id)
+    if not channels:
+        await safe_edit_markdown(query, "📭 لا توجد قنوات مسجلة.")
+        return
+    keyboard = []
+    for ch in channels:
+        status = "⛔" if ch['banned'] else "✅"
+        keyboard.append([InlineKeyboardButton(f"{status} {ch['channel_name']}", callback_data=f"{CallbackData.CHANNELS_SELECT_PREFIX}{ch['id']}")])
+        keyboard.append([InlineKeyboardButton("🗑️ حذف", callback_data=f"{CallbackData.CHANNELS_DELETE_PREFIX}{ch['id']}")])
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+    await safe_edit_markdown(query, "📡 **قنواتي**\nاختر قناة للتحكم بها:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def delete_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف قناة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    success = await db_delete_channel_by_id(user_id, channel_db_id)
+    if success:
+        await query.answer("✅ تم حذف القناة", show_alert=True)
+    else:
+        await query.answer("❌ فشل الحذف", show_alert=True)
+    await my_channels_callback(update, context)
+
+
+async def select_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار قناة نشطة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    await db_set_active_channel(user_id, channel_db_id)
+    context.user_data['active_channel'] = channel_db_id
+    await query.answer("✅ تم تحديد القناة", show_alert=True)
+    await main_menu_callback(update, context)
+
+
+async def add_15_posts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إضافة 15 منشور"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    active = context.user_data.get('active_channel')
+    if not active:
+        active = await db_get_active_channel(user_id)
+        if not active:
+            await safe_edit_markdown(query, "⚠️ لا توجد قناة نشطة. أضف قناة أولاً.")
+            return
+        context.user_data['active_channel'] = active
+    context.user_data['state'] = UserState.ADDING_POSTS
+    context.user_data['post_count'] = 0
+    context.user_data['max_posts'] = 15
+    await safe_edit_markdown(query, "📝 **أضف 15 منشوراً**\nأرسل المنشور الأول (نص، صورة، فيديو، مستند، صوت، إلخ).")
+
+
+async def publish_one_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نشر منشور واحد"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    active = context.user_data.get('active_channel')
+    if not active:
+        active = await db_get_active_channel(user_id)
+        if not active:
+            await safe_edit_markdown(query, "⚠️ لا توجد قناة نشطة.")
+            return
+        context.user_data['active_channel'] = active
+    ch_info = await db_get_channel_info(active)
+    if not ch_info:
+        await safe_edit_markdown(query, "❌ القناة غير موجودة.")
+        return
+    try:
+        channel_id = ch_info['channel_id']
+        post = await db_get_next_post(active)
+        if not post:
+            await safe_edit_markdown(query, "📭 لا توجد منشورات غير منشورة.")
+            return
+        # محاولة النشر
+        success = False
+        try:
+            if post['media_type'] == 'photo' and post['media_file_id']:
+                await context.bot.send_photo(channel_id, post['media_file_id'], caption=post['text'] or None)
+            elif post['media_type'] == 'video' and post['media_file_id']:
+                await context.bot.send_video(channel_id, post['media_file_id'], caption=post['text'] or None)
+            elif post['media_type'] == 'document' and post['media_file_id']:
+                await context.bot.send_document(channel_id, post['media_file_id'], caption=post['text'] or None)
+            elif post['media_type'] == 'audio' and post['media_file_id']:
+                await context.bot.send_audio(channel_id, post['media_file_id'], caption=post['text'] or None)
+            elif post['media_type'] == 'voice' and post['media_file_id']:
+                await context.bot.send_voice(channel_id, post['media_file_id'], caption=post['text'] or None)
+            elif post['media_type'] == 'animation' and post['media_file_id']:
+                await context.bot.send_animation(channel_id, post['media_file_id'], caption=post['text'] or None)
+            else:
+                await context.bot.send_message(channel_id, post['text'] or "منشور")
+            success = True
+        except Exception as e:
+            await safe_edit_markdown(query, f"❌ فشل النشر: {str(e)[:100]}")
+            return
+        if success:
+            await db_mark_published(post['id'])
+            await safe_edit_markdown(query, "✅ تم نشر المنشور بنجاح!")
+    except Exception as e:
+        await safe_edit_markdown(query, f"❌ خطأ: {str(e)[:100]}")
+
+
+async def my_posts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض المنشورات غير المنشورة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    active = context.user_data.get('active_channel')
+    if not active:
+        active = await db_get_active_channel(user_id)
+        if not active:
+            await safe_edit_markdown(query, "⚠️ لا توجد قناة نشطة.")
+            return
+        context.user_data['active_channel'] = active
+    posts = await db_get_user_posts_for_channel(active, limit=20)
+    if not posts:
+        await safe_edit_markdown(query, "📭 لا توجد منشورات غير منشورة.")
+        return
+    text = "📋 **منشوراتي غير المنشورة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    keyboard = []
+    for idx, post in enumerate(posts[:10], 1):
+        preview = post['text'][:30] + "..." if post['text'] and len(post['text']) > 30 else post['text'] or "بدون نص"
+        text += f"{idx}. {preview}\n"
+        keyboard.append([InlineKeyboardButton(f"🗑️ حذف {idx}", callback_data=f"{CallbackData.POSTS_DELETE_SINGLE_PREFIX}{post['id']}")])
+    keyboard.append([InlineKeyboardButton("🗑️ حذف الكل", callback_data=f"{CallbackData.POSTS_CONFIRM_CLEAR_ALL_PREFIX}{active}")])
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+    await safe_edit_markdown(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def delete_single_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف منشور واحد"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    post_id = int(query.data.split(":")[-1])
+    active = context.user_data.get('active_channel')
+    if not active:
+        active = await db_get_active_channel(user_id)
+    if active:
+        await db_delete_single_post(post_id, user_id, active)
+    await my_posts_callback(update, context)
+
+
+async def confirm_clear_all_posts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد حذف جميع المنشورات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    active = int(query.data.split(":")[-1])
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم", callback_data=f"{CallbackData.POSTS_CLEAR_ALL_PREFIX}{active}")],
+        [InlineKeyboardButton("❌ لا", callback_data=CallbackData.POSTS_MY)]
+    ])
+    await safe_edit_markdown(query, "⚠️ **تأكيد حذف جميع المنشورات**\nهل أنت متأكد؟", reply_markup=keyboard)
+
+
+async def clear_all_posts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف جميع المنشورات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    active = int(query.data.split(":")[-1])
+    async def _clear(conn):
+        await conn.execute("DELETE FROM posts WHERE channel_db_id=?", (active,))
+        await conn.commit()
+    await execute_db(_clear)
+    await safe_edit_markdown(query, "✅ تم حذف جميع المنشورات.")
+    await my_posts_callback(update, context)
+
+
+async def recycle_posts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعادة تدوير المنشورات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    active = context.user_data.get('active_channel')
+    if not active:
+        active = await db_get_active_channel(user_id)
+        if not active:
+            await safe_edit_markdown(query, "⚠️ لا توجد قناة نشطة.")
+            return
+        context.user_data['active_channel'] = active
+    await db_reset_posts_to_unpublished(active, user_id)
+    await safe_edit_markdown(query, "♻️ تم إعادة تدوير جميع المنشورات.")
+
+
+async def my_pending_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إحصائيات المنشورات غير المنشورة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    active = context.user_data.get('active_channel')
+    if not active:
+        active = await db_get_active_channel(user_id)
+        if not active:
+            await safe_edit_markdown(query, "⚠️ لا توجد قناة نشطة.")
+            return
+        context.user_data['active_channel'] = active
+    unpublished = await db_unpublished_count(active)
+    total = await db_get_posts_count(active)
+    text = get_text(user_id, 'pending_stats').format(unpublished, total)
+    await safe_edit_markdown(query, text)
+
+
+async def my_full_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إحصائيات كاملة للمستخدم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    channels = await db_get_channels(user_id)
+    total_posts = 0
+    unpublished = 0
+    for ch in channels:
+        total_posts += await db_get_posts_count(ch['id'])
+        unpublished += await db_unpublished_count(ch['id'])
+    groups = await db_get_user_groups_count(user_id)
+    auto = await db_auto_status(user_id)
+    text = get_text(user_id, 'stats').format(len(channels), total_posts, unpublished, groups, "مفعل" if auto else "معطل")
+    await safe_edit_markdown(query, text)
+
+
+async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض مجموعات المستخدم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    groups = await db_get_user_groups(user_id)
+    if not groups:
+        await safe_edit_markdown(query, "📭 لا توجد مجموعات مسجلة.")
+        return
+    keyboard = []
+    for g in groups:
+        chat_name = g['chat_name'] or str(g['chat_id'])
+        status = "⛔" if g['banned'] else "✅"
+        keyboard.append([InlineKeyboardButton(f"{status} {chat_name}", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{g['chat_id']}")])
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+    await safe_edit_markdown(query, "👥 **مجموعاتي**\nاختر مجموعة للتحكم بها:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعدادات المجموعة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    # التحقق من الصلاحية
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔐 الأمان", callback_data=f"{CallbackData.SECURITY_SELECT_GROUP}{chat_id}")],
+        [InlineKeyboardButton("📝 الردود التلقائية", callback_data=f"{CallbackData.ADMIN_AUTO_REPLY_SELECT_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("🚫 الكلمات المحظورة", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")],
+        [InlineKeyboardButton("📜 سجل الإجراءات", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.GROUPS_MY)]
+    ])
+    await safe_edit_markdown(query, "⚙️ **إعدادات المجموعة**\nاختر الإعداد المطلوب:", reply_markup=keyboard)
+
+
+async def settings_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة الإعدادات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    auto = await db_auto_status(user_id)
+    auto_recycle = await db_get_auto_recycle(user_id)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🔄 النشر التلقائي: {'مفعل' if auto else 'معطل'}", callback_data=CallbackData.SETTINGS_TOGGLE_AUTO_PUBLISH)],
+        [InlineKeyboardButton(f"♻️ إعادة التدوير: {'مفعل' if auto_recycle else 'معطل'}", callback_data=CallbackData.SETTINGS_TOGGLE_AUTO_RECYCLE)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    await safe_edit_markdown(query, get_text(user_id, 'settings'), reply_markup=keyboard)
+
+
+async def toggle_auto_publish_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل النشر التلقائي"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    current = await db_auto_status(user_id)
+    new_status = not current
+    await db_set_auto(user_id, new_status)
+    await settings_menu_callback(update, context)
+
+
+async def toggle_auto_recycle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل إعادة التدوير التلقائي"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    current = await db_get_auto_recycle(user_id)
+    new_status = not current
+    await db_set_auto_recycle(user_id, new_status)
+    await settings_menu_callback(update, context)
+
+
+async def schedule_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة الجدولة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    context.user_data['schedule_channel_id'] = channel_db_id
+    schedule = await db_get_schedule(channel_db_id)
+    text = f"⏰ **إعدادات الجدولة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"النوع: {schedule['type']}\n"
+    if schedule['type'] == 'interval_minutes':
+        text += f"الفاصل: {schedule['interval_minutes']} دقيقة"
+    elif schedule['type'] == 'interval_hours':
+        text += f"الفاصل: {schedule['interval_hours']} ساعة"
+    elif schedule['type'] == 'interval_days':
+        text += f"الفاصل: {schedule['interval_days']} يوم"
+    elif schedule['type'] == 'days':
+        days = json.loads(schedule.get('days_of_week', '[]'))
+        day_names = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت']
+        text += f"الأيام: {', '.join([day_names[d] for d in days])}"
+    elif schedule['type'] == 'dates':
+        dates = json.loads(schedule.get('specific_dates', '[]'))
+        text += f"التواريخ: {', '.join(dates[:3])}{'...' if len(dates)>3 else ''}"
+    elif schedule['type'] == 'cron':
+        text += f"CRON: {schedule.get('cron_expression', 'غير محدد')}"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏱️ دقائق", callback_data=f"{CallbackData.SCHEDULE_SET_INTERVAL_MINUTES_PREFIX}{channel_db_id}")],
+        [InlineKeyboardButton("⏱️ ساعات", callback_data=f"{CallbackData.SCHEDULE_SET_INTERVAL_HOURS_PREFIX}{channel_db_id}")],
+        [InlineKeyboardButton("⏱️ أيام", callback_data=f"{CallbackData.SCHEDULE_SET_INTERVAL_DAYS_PREFIX}{channel_db_id}")],
+        [InlineKeyboardButton("📅 أيام الأسبوع", callback_data=f"{CallbackData.SCHEDULE_SET_DAYS_PREFIX}{channel_db_id}")],
+        [InlineKeyboardButton("📅 تواريخ محددة", callback_data=f"{CallbackData.SCHEDULE_SET_DATES_PREFIX}{channel_db_id}")],
+        [InlineKeyboardButton("🕐 وقت النشر", callback_data=f"{CallbackData.SCHEDULE_SET_PUBLISH_TIME_PREFIX}{channel_db_id}")],
+        [InlineKeyboardButton("⏰ CRON", callback_data=f"schedule:set_cron:{channel_db_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    await safe_edit_markdown(query, text, reply_markup=keyboard)
+
+
+async def set_interval_minutes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين الفاصل بالدقائق"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    context.user_data['schedule_channel_id'] = channel_db_id
+    context.user_data['state'] = UserState.WAITING_INTERVAL_MINUTES
+    await safe_edit_markdown(query, "⏱️ أرسل عدد الدقائق (مثال: 30)")
+
+
+async def set_interval_hours_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين الفاصل بالساعات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    context.user_data['schedule_channel_id'] = channel_db_id
+    context.user_data['state'] = UserState.WAITING_INTERVAL_HOURS
+    await safe_edit_markdown(query, "⏱️ أرسل عدد الساعات (مثال: 2)")
+
+
+async def set_interval_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين الفاصل بالأيام"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    context.user_data['schedule_channel_id'] = channel_db_id
+    context.user_data['state'] = UserState.WAITING_INTERVAL_DAYS
+    await safe_edit_markdown(query, "⏱️ أرسل عدد الأيام (مثال: 1)")
+
+
+async def set_cron_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين تعبير CRON"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    context.user_data['schedule_channel_id'] = channel_db_id
+    context.user_data['state'] = UserState.WAITING_PUBLISH_TIME  # سنستخدم نفس الحالة
+    await safe_edit_markdown(query, "⏰ أرسل تعبير CRON (مثال: 0 12 * * *)")
+
+
+async def set_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار أيام الأسبوع"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    context.user_data['schedule_channel_id'] = channel_db_id
+    context.user_data['selected_days'] = []
+    keyboard = await build_days_keyboard(user_id, context)
+    await safe_edit_markdown(query, "📅 اختر أيام النشر:", reply_markup=keyboard)
+
+
+async def set_dates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين تواريخ محددة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    context.user_data['schedule_channel_id'] = channel_db_id
+    context.user_data['state'] = UserState.WAITING_DATES
+    await safe_edit_markdown(query, "📅 أرسل التواريخ مفصولة بفواصل (مثال: 2024-12-25,2025-01-01)")
+
+
+async def set_publish_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين وقت النشر"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1])
+    context.user_data['schedule_channel_id'] = channel_db_id
+    context.user_data['state'] = UserState.WAITING_PUBLISH_TIME
+    await safe_edit_markdown(query, "🕐 أرسل وقت النشر (مثال: 14:30)")
+
+
+async def day_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار يوم من أيام الأسبوع"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    day_index = int(query.data.split(":")[-1])
+    selected = context.user_data.get('selected_days', [])
+    if day_index in selected:
+        selected.remove(day_index)
+    else:
+        selected.append(day_index)
+    context.user_data['selected_days'] = sorted(selected)
+    keyboard = await build_days_keyboard(user_id, context)
+    await safe_edit_markdown(query, "📅 اختر أيام النشر:", reply_markup=keyboard)
+
+
+async def save_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حفظ أيام الأسبوع"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = context.user_data.get('schedule_channel_id')
+    selected = context.user_data.get('selected_days', [])
+    if not selected:
+        await safe_edit_markdown(query, "⚠️ لم تختر أي أيام.")
+        return
+    days_json = json.dumps(selected)
+    await db_save_schedule(channel_db_id, 'days', days_of_week=days_json)
+    await safe_edit_markdown(query, "✅ تم حفظ أيام النشر.")
+    await schedule_menu_callback(update, context)
+
+
+async def advanced_actions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """الإجراءات المتقدمة للمجموعة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if chat_id == 0:
+        # إذا كان 0، نطلب اختيار مجموعة
+        groups = await db_get_user_groups(user_id)
+        if not groups:
+            await safe_edit_markdown(query, "📭 لا توجد مجموعات.")
+            return
+        keyboard = []
+        for g in groups:
+            keyboard.append([InlineKeyboardButton(g['chat_name'], callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{g['chat_id']}")])
+        keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)])
+        await safe_edit_markdown(query, "🛠️ **اختر مجموعة للإجراءات المتقدمة:**", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    keyboard = get_advanced_group_actions_keyboard(chat_id)
+    await safe_edit_markdown(query, "🛠️ **الإجراءات المتقدمة**\nاختر الإجراء:", reply_markup=keyboard)
+
+
+async def advanced_mute_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار مدة الكتم من الإجراءات المتقدمة"""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")
+    duration = int(parts[1])
+    chat_id = int(parts[2])
+    user_id = update.effective_user.id
+    context.user_data['mute_duration'] = duration
+    context.user_data['mute_chat_id'] = chat_id
+    await safe_edit_markdown(query, f"⏱️ تم اختيار {duration} دقيقة.\nالآن أرسل معرف المستخدم (user_id) أو قم بالرد على رسالته.")
+
+
+async def group_action_ban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حظر مستخدم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    context.user_data['moderation_action'] = 'ban'
+    context.user_data['moderation_chat_id'] = chat_id
+    await safe_edit_markdown(query, "🛑 أرسل معرف المستخدم (user_id) أو قم بالرد على رسالته لحظره.")
+
+
+async def group_action_mute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """كتم مستخدم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    # عرض خيارات المدة
+    keyboard = get_advanced_mute_duration_keyboard(chat_id)
+    await safe_edit_markdown(query, "🔇 **اختر مدة الكتم:**", reply_markup=keyboard)
+
+
+async def group_action_warn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحذير مستخدم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    context.user_data['moderation_action'] = 'warn'
+    context.user_data['moderation_chat_id'] = chat_id
+    await safe_edit_markdown(query, "⚠️ أرسل معرف المستخدم (user_id) أو قم بالرد على رسالته لتحذيره.")
+
+
+async def group_action_kick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طرد مستخدم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    context.user_data['moderation_action'] = 'kick'
+    context.user_data['moderation_chat_id'] = chat_id
+    await safe_edit_markdown(query, "👢 أرسل معرف المستخدم (user_id) أو قم بالرد على رسالته لطرده.")
+
+
+async def group_action_restrict_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تقييد مستخدم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    context.user_data['moderation_action'] = 'restrict'
+    context.user_data['moderation_chat_id'] = chat_id
+    await safe_edit_markdown(query, "🔒 أرسل معرف المستخدم (user_id) أو قم بالرد على رسالته لتقييده.")
+
+
+async def group_action_pin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تثبيت رسالة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    context.user_data['moderation_action'] = 'pin'
+    context.user_data['moderation_chat_id'] = chat_id
+    await safe_edit_markdown(query, "📌 قم بالرد على الرسالة التي تريد تثبيتها.")
+
+
+async def group_action_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض سجل الإجراءات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    log_text = await get_moderation_log(chat_id, limit=20)
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]])
+    await safe_edit_markdown(query, log_text, reply_markup=keyboard)
+
+
+async def group_action_unban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إلغاء حظر مستخدم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    context.user_data['moderation_action'] = 'unban'
+    context.user_data['moderation_chat_id'] = chat_id
+    await safe_edit_markdown(query, "🔓 أرسل معرف المستخدم (user_id) لإلغاء حظره.")
+
+
+async def auto_reply_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل الردود التلقائية للمجموعة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    new_status = await db_toggle_auto_reply(chat_id)
+    settings = await db_get_auto_reply_settings(chat_id)
+    keyboard = get_auto_reply_keyboard(chat_id, settings)
+    await safe_edit_markdown(query, f"✅ تم تغيير حالة الردود التلقائية إلى: {'مفعل' if new_status else 'معطل'}", reply_markup=keyboard)
+
+
+async def auto_reply_admins_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل وضع المشرفين فقط في الردود التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    settings = await db_get_auto_reply_settings(chat_id)
+    new_only_admins = not settings['only_admins']
+    await db_set_auto_reply_only_admins(chat_id, new_only_admins)
+    settings = await db_get_auto_reply_settings(chat_id)
+    keyboard = get_auto_reply_keyboard(chat_id, settings)
+    await safe_edit_markdown(query, f"✅ تم تغيير وضع الردود إلى: {'مشرفين فقط' if new_only_admins else 'الجميع'}", reply_markup=keyboard)
+
+
+async def auto_reply_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعادة تعيين الردود التلقائية (تأكيد)"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم", callback_data=f"{CallbackData.AUTO_REPLY_CONFIRM_RESET_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("❌ لا", callback_data=f"{CallbackData.AUTO_REPLY_CANCEL_PREFIX}{chat_id}")]
+    ])
+    await safe_edit_markdown(query, "⚠️ **تأكيد إعادة تعيين الردود**\nسيتم حذف جميع الردود المخصصة لهذه المجموعة.", reply_markup=keyboard)
+
+
+async def auto_reply_confirm_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد إعادة تعيين الردود التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    async def _reset(conn):
+        await conn.execute("DELETE FROM group_replies WHERE keyword LIKE ?", (f"{chat_id}:%",))
+        await conn.commit()
+    await execute_db(_reset)
+    settings = await db_get_auto_reply_settings(chat_id)
+    keyboard = get_auto_reply_keyboard(chat_id, settings)
+    await safe_edit_markdown(query, "✅ تم إعادة تعيين جميع الردود المخصصة لهذه المجموعة.", reply_markup=keyboard)
+
+
+async def auto_reply_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إلغاء إعادة تعيين الردود"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    settings = await db_get_auto_reply_settings(chat_id)
+    keyboard = get_auto_reply_keyboard(chat_id, settings)
+    await safe_edit_markdown(query, "❌ تم الإلغاء.", reply_markup=keyboard)
+
+
+async def auto_reply_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إحصائيات الردود التلقائية للمجموعة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    async def _count(conn):
+        cur = await conn.execute("SELECT COUNT(*) FROM group_replies WHERE keyword LIKE ?", (f"{chat_id}:%",))
+        return (await cur.fetchone())[0]
+    count = await execute_db(_count)
+    settings = await db_get_auto_reply_settings(chat_id)
+    keyboard = get_auto_reply_keyboard(chat_id, settings)
+    await safe_edit_markdown(query, f"📊 **إحصائيات الردود التلقائية**\n━━━━━━━━━━━━━━━━━━━━━━\nعدد الردود المخصصة: {count}\nالحالة: {'مفعلة' if settings['enabled'] else 'معطلة'}\nالوضع: {'مشرفين فقط' if settings['only_admins'] else 'الجميع'}", reply_markup=keyboard)
+
+
+async def user_auto_reply_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل الردود التلقائية للمستخدم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = int(query.data.split(":")[-1])
+    current = await db_get_user_auto_reply_status(user_id)
+    new_status = not current
+    await db_set_user_auto_reply_status(user_id, new_status)
+    keyboard = get_user_auto_reply_keyboard(user_id, new_status)
+    await safe_edit_markdown(query, f"✅ تم تغيير حالة الردود التلقائية إلى: {'مفعل' if new_status else 'معطل'}", reply_markup=keyboard)
+
+
+async def admin_auto_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لوحة إدارة الردود التلقائية (اختيار مجموعة)"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    groups = await db_get_user_groups(user_id)
+    if not groups:
+        await safe_edit_markdown(query, "📭 لا توجد مجموعات.")
+        return
+    keyboard = []
+    for g in groups:
+        keyboard.append([InlineKeyboardButton(g['chat_name'], callback_data=f"{CallbackData.ADMIN_AUTO_REPLY_SELECT_PREFIX}{g['chat_id']}")])
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)])
+    await safe_edit_markdown(query, "📝 **اختر مجموعة لإدارة الردود التلقائية:**", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def admin_auto_reply_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة الردود التلقائية لمجموعة محددة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    settings = await db_get_auto_reply_settings(chat_id)
+    keyboard = get_auto_reply_keyboard(chat_id, settings)
+    await safe_edit_markdown(query, f"📝 **إعدادات الردود التلقائية للمجموعة**\nاختر الإجراء:", reply_markup=keyboard)
+
+
+async def panel_lock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قفل المجموعة من لوحة التحكم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    await db_set_chat_lock(chat_id, True, user_id)
+    await query.answer("🔒 تم قفل المجموعة", show_alert=True)
+    await group_settings_callback(update, context)
+
+
+async def panel_unlock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """فتح المجموعة من لوحة التحكم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    await db_set_chat_lock(chat_id, False)
+    await query.answer("🔓 تم فتح المجموعة", show_alert=True)
+    await group_settings_callback(update, context)
+
+
+async def panel_close_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إغلاق لوحة التحكم"""
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+
+
+async def publish_all_channels_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نشر جميع المنشورات في جميع القنوات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    channels = await db_get_channels(user_id)
+    if not channels:
+        await safe_edit_markdown(query, "📭 لا توجد قنوات.")
+        return
+    published = 0
+    failed = 0
+    for ch in channels:
+        ch_info = await db_get_channel_info(ch['id'])
+        if not ch_info:
+            continue
+        channel_id = ch_info['channel_id']
+        while True:
+            post = await db_get_next_post(ch['id'])
+            if not post:
+                break
+            try:
+                if post['media_type'] == 'photo' and post['media_file_id']:
+                    await context.bot.send_photo(channel_id, post['media_file_id'], caption=post['text'] or None)
+                elif post['media_type'] == 'video' and post['media_file_id']:
+                    await context.bot.send_video(channel_id, post['media_file_id'], caption=post['text'] or None)
+                else:
+                    await context.bot.send_message(channel_id, post['text'] or "منشور")
+                await db_mark_published(post['id'])
+                published += 1
+            except:
+                failed += 1
+    await safe_edit_markdown(query, f"✅ تم النشر: {published} منشور\n❌ فشل: {failed}")
+
+
+async def delete_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف مجموعة من قائمة المجموعات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    async def _delete(conn):
+        await conn.execute("DELETE FROM bot_groups WHERE chat_id=?", (chat_id,))
+        await conn.execute("DELETE FROM group_admins WHERE chat_id=?", (chat_id,))
+        await conn.execute("DELETE FROM hidden_admins WHERE chat_id=?", (chat_id,))
+        await conn.execute("DELETE FROM hidden_owner_groups WHERE chat_id=?", (chat_id,))
+        await conn.execute("DELETE FROM group_security WHERE chat_id=?", (chat_id,))
+        await conn.execute("DELETE FROM chat_locks WHERE chat_id=?", (chat_id,))
+        await conn.commit()
+    await execute_db(_delete)
+    await query.answer("✅ تم حذف المجموعة", show_alert=True)
+    await my_groups_callback(update, context)
+
+
+async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الرسائل في الخاص"""
+    if update.message is None or update.effective_user is None:
+        return
+    user_id = update.effective_user.id
+    text = update.message.text or update.message.caption or ""
+    state = context.user_data.get('state', UserState.NONE)
+
+    # معالجة حالات المستخدم
+    if state == UserState.WAITING_CHANNEL_ID:
+        channel_id = text.strip()
+        if channel_id:
+            channel_name = channel_id
+            try:
+                chat = await context.bot.get_chat(channel_id)
+                channel_name = chat.title or channel_id
+            except:
+                pass
+            result = await db_add_channel(user_id, channel_id, channel_name)
+            if result:
+                await safe_send_markdown(context.bot, user_id, get_text(user_id, 'channel_added').format(channel_name))
+                await main_menu_callback(update, context)
+            else:
+                await safe_send_markdown(context.bot, user_id, get_text(user_id, 'channel_exists'))
+        context.user_data['state'] = UserState.NONE
+        return
+
+    elif state == UserState.ADDING_POSTS:
+        post_count = context.user_data.get('post_count', 0)
+        max_posts = context.user_data.get('max_posts', 15)
+        active = context.user_data.get('active_channel')
+        if not active:
+            active = await db_get_active_channel(user_id)
+            if not active:
+                await safe_send_markdown(context.bot, user_id, "⚠️ لا توجد قناة نشطة.")
+                context.user_data['state'] = UserState.NONE
+                return
+            context.user_data['active_channel'] = active
+
+        # حفظ المنشور
+        media_type = "text"
+        media_file_id = None
+        if update.message.photo:
+            media_type = "photo"
+            media_file_id = update.message.photo[-1].file_id
+        elif update.message.video:
+            media_type = "video"
+            media_file_id = update.message.video.file_id
+        elif update.message.document:
+            media_type = "document"
+            media_file_id = update.message.document.file_id
+        elif update.message.audio:
+            media_type = "audio"
+            media_file_id = update.message.audio.file_id
+        elif update.message.voice:
+            media_type = "voice"
+            media_file_id = update.message.voice.file_id
+        elif update.message.animation:
+            media_type = "animation"
+            media_file_id = update.message.animation.file_id
+
+        if text or media_file_id:
+            await db_save_posts(active, [(text, media_type, media_file_id)])
+            post_count += 1
+            context.user_data['post_count'] = post_count
+            remaining = max_posts - post_count
+            if remaining <= 0:
+                context.user_data['state'] = UserState.NONE
+                await safe_send_markdown(context.bot, user_id, f"✅ تم إضافة {max_posts} منشورات بنجاح!")
+                await main_menu_callback(update, context)
+            else:
+                await safe_send_markdown(context.bot, user_id, f"✅ تم حفظ المنشور {post_count}/{max_posts}\nأرسل المنشور التالي (متبقي {remaining}) أو اضغط /cancel للإلغاء.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "⚠️ أرسل محتوى صالح (نص، صورة، فيديو، إلخ).")
+        return
+
+    # الردود التلقائية في الخاص
+    if state != UserState.NONE:
+        return
+
+    # ردود تلقائية عامة
+    reply = get_reply_for_keyword(text)
+    if reply:
+        await update.message.reply_text(reply)
 
 def get_user_auto_reply_keyboard(user_id: int, enabled: bool) -> InlineKeyboardMarkup:
     """إنشاء كيبورد إعدادات الردود التلقائية للمستخدم"""
