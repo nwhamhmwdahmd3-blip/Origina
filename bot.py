@@ -13426,7 +13426,7 @@ async def main():
 
     # استيراد الكلمات المحظورة من ملف
     try:
-        words = load_banned_words_from_file(BANNED_WORDS_FILE)
+        words = load_banned_words_from_file([BANNED_WORDS_FILE])
         if words:
             async def _import(conn):
                 imported = 0
