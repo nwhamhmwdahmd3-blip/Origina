@@ -12474,27 +12474,23 @@ web_app.router.add_get('/index.html', index_handler)
 web_app.router.add_get('/health', health_check_handler)
 
 async def start_web_server():
-    """تشغيل خادم الويب على المنفذ الصحيح فقط"""
+    """تشغيل خادم الويب على المنفذ الصحيح (مرة واحدة فقط)"""
     try:
-        # المنفذ الصحيح من Render
         port = int(os.getenv("PORT", WEB_PORT))
-        
-        # إذا كان المنفذ غير متاح، حاول مرة واحدة فقط
-        try:
-            runner = web.AppRunner(web_app)
-            await runner.setup()
-            site = web.TCPSite(runner, WEB_HOST, port)
-            await site.start()
-            logger.info(f"✅ خادم الويب يعمل على http://{WEB_HOST}:{port}")
-            global WEB_PORT_USED
-            WEB_PORT_USED = port
-            return True
-        except OSError as e:
-            if "address already in use" in str(e):
-                logger.warning(f"⚠️ المنفذ {port} مشغول، قد يكون البوت يعمل بالفعل")
-                return False
-            else:
-                raise
+        runner = web.AppRunner(web_app)
+        await runner.setup()
+        site = web.TCPSite(runner, WEB_HOST, port)
+        await site.start()
+        logger.info(f"✅ خادم الويب يعمل على http://{WEB_HOST}:{port}")
+        global WEB_PORT_USED
+        WEB_PORT_USED = port
+        return True
+    except OSError as e:
+        if "address already in use" in str(e):
+            logger.warning(f"⚠️ المنفذ {port} مشغول - قد يكون البوت يعمل بالفعل")
+        else:
+            logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
+        return False
     except Exception as e:
         logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
         return False
@@ -12900,13 +12896,20 @@ async def check_bot_permissions(bot, channel_id):
     except Exception as e:
         return False, f"خطأ في التحقق: {str(e)[:100]}"
 async def self_http_ping_loop():
-    """إرسال ping داخلي للحفاظ على نشاط Render"""
+    """إرسال ping داخلي للحفاظ على نشاط Render (فقط إذا كان الخادم يعمل)"""
     port = int(os.getenv("PORT", 10000))
     url = f"http://localhost:{port}/health"
-    
-    # انتظر حتى يبدأ الخادم
-    await asyncio.sleep(5)
-    
+    # تحقق أولي
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5) as resp:
+                if resp.status != 200:
+                    logger.warning("⚠️ خادم الويب لا يستجيب، إلغاء ping")
+                    return
+    except:
+        logger.warning("⚠️ خادم الويب غير متاح، إلغاء ping")
+        return
+
     while True:
         await asyncio.sleep(120)
         try:
@@ -12914,10 +12917,8 @@ async def self_http_ping_loop():
                 async with session.get(url, timeout=5) as resp:
                     if resp.status == 200:
                         logger.debug("✅ ping داخلي ناجح")
-                    else:
-                        logger.warning(f"⚠️ ping فشل: {resp.status}")
-        except Exception as e:
-            logger.debug(f"ping غير متاح (طبيعي): {e}")
+        except Exception:
+            pass  # طبيعي
 
 async def notify_group_admins(bot, chat_id: int, requester_id: int, chat_name: str):
     """إشعار مشرفي المجموعة بطلب التفعيل"""
@@ -13770,7 +13771,14 @@ async def main():
     task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
     task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(application.bot), "reminders"))
     task_manager.create_task(safe_loop(cleanup_expired_sessions_improved, "cleanup_sessions"))
-    task_manager.create_task(safe_loop(start_web_server, "web_server"))
+   # تشغيل خادم الويب (مرة واحدة فقط)
+web_success = await start_web_server()
+if web_success:
+    logger.info("✅ خادم الويب يعمل")
+    task_manager.create_task(safe_loop(self_http_ping_loop, "http_ping"))
+else:
+    logger.warning("⚠️ خادم الويب لم يعمل، لكن البوت مستمر")
+
     task_manager.create_task(safe_loop(self_ping_loop, "ping"))
     task_manager.create_task(safe_loop(broadcast_stats_periodically, "broadcast_stats"))
     task_manager.create_task(safe_loop(cleanup_points_cache, "cleanup_points"))
