@@ -12474,32 +12474,30 @@ web_app.router.add_get('/index.html', index_handler)
 web_app.router.add_get('/health', health_check_handler)
 
 async def start_web_server():
-    """تشغيل خادم الويب"""
+    """تشغيل خادم الويب على المنفذ الصحيح فقط"""
     try:
-        render_port = int(os.getenv("PORT", "0"))
-        ports_to_try = []
-        if render_port > 0:
-            ports_to_try.append(render_port)
-        ports_to_try.extend([WEB_PORT, 8080, 10000, 8081, 8082, 8083])
-
-        for port in ports_to_try:
-            try:
-                runner = web.AppRunner(web_app)
-                await runner.setup()
-                site = web.TCPSite(runner, WEB_HOST, port)
-                await site.start()
-                logger.info(f"✅ خادم الويب يعمل على http://{WEB_HOST}:{port}")
-                global WEB_PORT_USED
-                WEB_PORT_USED = port
-                return
-            except OSError as e:
-                if "address already in use" in str(e):
-                    logger.warning(f"⚠️ المنفذ {port} مشغول، جرب المنفذ التالي...")
-                    continue
+        # المنفذ الصحيح من Render
+        port = int(os.getenv("PORT", WEB_PORT))
+        
+        # إذا كان المنفذ غير متاح، حاول مرة واحدة فقط
+        try:
+            runner = web.AppRunner(web_app)
+            await runner.setup()
+            site = web.TCPSite(runner, WEB_HOST, port)
+            await site.start()
+            logger.info(f"✅ خادم الويب يعمل على http://{WEB_HOST}:{port}")
+            global WEB_PORT_USED
+            WEB_PORT_USED = port
+            return True
+        except OSError as e:
+            if "address already in use" in str(e):
+                logger.warning(f"⚠️ المنفذ {port} مشغول، قد يكون البوت يعمل بالفعل")
+                return False
+            else:
                 raise
-        logger.error("❌ لا يمكن العثور على منفذ متاح لخادم الويب")
     except Exception as e:
         logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
+        return False
 
 # ===================== نظام إدارة المهام =====================
 
@@ -12902,11 +12900,15 @@ async def check_bot_permissions(bot, channel_id):
     except Exception as e:
         return False, f"خطأ في التحقق: {str(e)[:100]}"
 async def self_http_ping_loop():
-    """إرسال طلب HTTP إلى الخادم المحلي للحفاظ على نشاط Render"""
-    port = WEB_PORT_USED or int(os.getenv("PORT", 10000))
+    """إرسال ping داخلي للحفاظ على نشاط Render"""
+    port = int(os.getenv("PORT", 10000))
     url = f"http://localhost:{port}/health"
+    
+    # انتظر حتى يبدأ الخادم
+    await asyncio.sleep(5)
+    
     while True:
-        await asyncio.sleep(120)  # كل دقيقتين
+        await asyncio.sleep(120)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=5) as resp:
@@ -12915,7 +12917,7 @@ async def self_http_ping_loop():
                     else:
                         logger.warning(f"⚠️ ping فشل: {resp.status}")
         except Exception as e:
-            logger.error(f"❌ خطأ في ping: {e}")
+            logger.debug(f"ping غير متاح (طبيعي): {e}")
 
 async def notify_group_admins(bot, chat_id: int, requester_id: int, chat_name: str):
     """إشعار مشرفي المجموعة بطلب التفعيل"""
