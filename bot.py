@@ -13420,6 +13420,49 @@ async def init_db_improved():
 # ===================== دالة main - تشغيل البوت =====================
 
 async def main():
+    print("1️⃣ بدء main()...")
+    
+    # تهيئة قاعدة البيانات
+    await init_db_improved()
+    print("2️⃣ تم تهيئة قاعدة البيانات...")
+    
+    # ... باقي الكود (استيراد الكلمات، تحميل اللغات، إلخ) ...
+    
+    print("3️⃣ قبل إعداد application...")
+    # إعداد الـ HTTPX Request
+    if USE_PROXY:
+        # ...
+    else:
+        # ...
+    application = Application.builder().token(TOKEN).request(request).build()
+    print("4️⃣ تم إنشاء application...")
+    
+    application.add_error_handler(global_error_handler)
+    print("5️⃣ تم إضافة معالج الأخطاء...")
+    
+    # ... إضافة الـ Handlers ...
+    
+    print("6️⃣ قبل set_my_commands...")
+    await application.bot.set_my_commands(commands)
+    print("7️⃣ بعد set_my_commands...")
+    
+    # ====== تشغيل المهام الخلفية ======
+    print("8️⃣ قبل تشغيل المهام الخلفية...")
+    task_manager.create_task(safe_loop(...))
+    # ... باقي المهام ...
+    print("9️⃣ بعد تشغيل المهام الخلفية...")
+    
+    print("🔟 قبل try...")
+    try:
+        print("🔄 بدء تشغيل polling...")
+        await run_polling_safe(application)
+    except KeyboardInterrupt:
+        logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
+    except Exception as e:
+        logger.error(f"❌ خطأ في polling: {e}")
+    finally:
+        await cleanup_resources()
+        await task_manager.cancel_all()
     """الدالة الرئيسية لتشغيل البوت"""
     # تهيئة قاعدة البيانات
     await init_db_improved()
