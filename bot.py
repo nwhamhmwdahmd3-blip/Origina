@@ -188,6 +188,10 @@ BANNED_WORDS_FILES = [
     DATA_PATH / "banned_words.txt",
     BASE_PATH / "assets" / "banned_words.txt",
 ]
+# ===================== المسارات الأساسية =====================
+...
+REPLIES_FILE = DATA_PATH / "replies.json"
+BANNED_WORDS_FILE = DATA_PATH / "banned_words.txt"
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 DATA_PATH.mkdir(parents=True, exist_ok=True)
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
