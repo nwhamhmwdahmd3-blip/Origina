@@ -6111,10 +6111,12 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_group:{chat_id}")
         ])
         keyboard.append([InlineKeyboardButton("─" * 20, callback_data="noop")])
+    # ===== الإصلاح هنا =====
     keyboard.append([
-        [InlineKeyboardButton("🔄 تحديث القائمة", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
-         InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        InlineKeyboardButton("🔄 تحديث القائمة", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
+        InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)
     ])
+    # =====================
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = "👥 **مجموعاتي**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر مجموعة للتحكم بها:\n\n✅ = نشطة  |  ⛔ = محظورة"
     if query:
@@ -6127,7 +6129,7 @@ async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 pass
     else:
         await safe_send_markdown(context.bot, uid, text, reply_markup=reply_markup)
-
+ 
 async def delete_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """حذف مجموعة من قاعدة البيانات (للمشرفين فقط)"""
     query = update.callback_query
