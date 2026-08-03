@@ -51,7 +51,12 @@ import numpy as np  # ✅ تمت الإضافة لاستخدامه في check_ns
 from replies import ALL_REPLIES, get_weighted_reply
 import logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-
+import sys, traceback
+def log_uncaught(exc_type, exc_value, exc_tb):
+    with open("crash.log", "a") as f:
+        f.write(f"{datetime.now()} - UNCAUGHT:\n")
+        traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+sys.excepthook = log_uncaught
 # ===================== التحقق من إصدار بايثون =====================
 def check_python_version():
     required_version = (3, 8)
