@@ -13451,23 +13451,19 @@ async def init_db_improved():
         logger.info("✅ تم تهيئة قاعدة البيانات بنجاح!")
         
         await execute_db(_init)
-# ====================================================================================
-#                      الدالة الرئيسية النهائية المُصححة (ضعها في آخر الملف)
-# ====================================================================================
-
 async def main():
-    """🚀 التشغيل الرئيسي للبوت - Webhook مع بروكسي (حل مشكلة 409)"""
+    """🚀 التشغيل الرئيسي للبوت - نسخة Polling مع نبض قوي لمنع السكون"""
     print("=" * 60)
-    print("🌿 ريلاكس مانيجر - الإصدار 20.0.19 (Webhook + Proxy)")
-    print("🔒 حل مشكلة Conflict 409 نهائياً")
+    print("🌿 ريلاكس مانيجر - الإصدار 20.0.19 (Polling + Keep Alive)")
+    print("🔒 حل مشكلة السكون في Render")
     print("=" * 60)
     
     # ===================== 1. قاعدة البيانات =====================
-    print("📌 [1/9] تهيئة قاعدة البيانات...")
+    print("📌 [1/8] تهيئة قاعدة البيانات...")
     await init_db_improved()
     
     # ===================== 2. الكلمات المحظورة =====================
-    print("📌 [2/9] تحميل الكلمات المحظورة...")
+    print("📌 [2/8] تحميل الكلمات المحظورة...")
     try:
         words = load_banned_words_from_file([BANNED_WORDS_FILE])
         if words:
@@ -13485,29 +13481,41 @@ async def main():
         print(f"⚠️ فشل استيراد الكلمات: {e}")
     
     # ===================== 3. اللغات والردود =====================
-    print("📌 [3/9] تحميل اللغات والردود...")
+    print("📌 [3/8] تحميل اللغات والردود...")
     load_all_languages()
     load_replies_from_file()
     
-    # ===================== 4. إعداد التطبيق (بدون HTTPXRequest) =====================
-    print("📌 [4/9] إعداد التطبيق...")
+    # ===================== 4. إعداد التطبيق =====================
+    print("📌 [4/8] إعداد التطبيق...")
     
-    # بناء التطبيق بالطريقة الافتراضية (تتجنب خطأ HTTPXRequest)
-    application = Application.builder().token(TOKEN).build()
-    application.add_error_handler(global_error_handler)
-    
-    # إعداد البروكسي عبر متغيرات البيئة
     if USE_PROXY:
-        os.environ["HTTP_PROXY"] = PROXY_URL
-        os.environ["HTTPS_PROXY"] = PROXY_URL
+        request_kwargs = {
+            'proxy_url': PROXY_URL,
+            'read_timeout': 60.0,
+            'write_timeout': 30.0,
+            'connect_timeout': 30.0,
+            'pool_timeout': 10.0,
+            'connection_pool_size': MAX_CONNECTIONS
+        }
+        request = HTTPXRequest(**request_kwargs)
+        application = Application.builder().token(TOKEN).request(request).build()
         print(f"🌐 استخدام بروكسي: {PROXY_URL}")
     else:
-        os.environ.pop("HTTP_PROXY", None)
-        os.environ.pop("HTTPS_PROXY", None)
+        request_kwargs = {
+            'read_timeout': 60.0,
+            'write_timeout': 30.0,
+            'connect_timeout': 30.0,
+            'pool_timeout': 10.0,
+            'connection_pool_size': MAX_CONNECTIONS
+        }
+        request = HTTPXRequest(**request_kwargs)
+        application = Application.builder().token(TOKEN).request(request).build()
         print("ℹ️ اتصال مباشر (بدون بروكسي)")
     
+    application.add_error_handler(global_error_handler)
+    
     # ===================== 5. الأوامر =====================
-    print("📌 [5/9] تسجيل الأوامر...")
+    print("📌 [5/8] تسجيل الأوامر...")
     for cmd, handler in [
         ("start", start_command_handler),
         ("help", help_command_handler),
@@ -13548,27 +13556,18 @@ async def main():
     ]:
         application.add_handler(CommandHandler(cmd, handler))
     
-    # ===================== 6. الأزرار (CallbackQuery) =====================
-    print("📌 [6/9] تسجيل الأزرار...")
+    # ===================== 6. الأزرار =====================
+    print("📌 [6/8] تسجيل الأزرار...")
     
-    # اللغة
     application.add_handler(CallbackQueryHandler(lang_callback_handler, pattern="^lang_"))
-    
-    # النصوص
     application.add_handler(CallbackQueryHandler(handle_text_callbacks, pattern="^(rank|top|schedule_post|language)$"))
-    
-    # القوائم الأساسية
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
     application.add_handler(CallbackQueryHandler(back_callback, pattern=f"^{CallbackData.BACK}$"))
     application.add_handler(CallbackQueryHandler(cancel_session_callback, pattern=f"^{CallbackData.CANCEL_SESSION}$"))
-    
-    # القنوات
     application.add_handler(CallbackQueryHandler(add_channel_callback, pattern=f"^{CallbackData.CHANNELS_ADD}$"))
     application.add_handler(CallbackQueryHandler(my_channels_callback, pattern=f"^{CallbackData.CHANNELS_MY}$"))
     application.add_handler(CallbackQueryHandler(delete_channel_callback, pattern=f"^{CallbackData.CHANNELS_DELETE_PREFIX}"))
     application.add_handler(CallbackQueryHandler(select_channel_callback, pattern=f"^{CallbackData.CHANNELS_SELECT_PREFIX}"))
-    
-    # المنشورات
     application.add_handler(CallbackQueryHandler(add_15_posts_callback, pattern=f"^{CallbackData.POSTS_ADD_15}$"))
     application.add_handler(CallbackQueryHandler(publish_one_callback, pattern=f"^{CallbackData.POSTS_PUBLISH_ONE}$"))
     application.add_handler(CallbackQueryHandler(my_posts_callback, pattern=f"^{CallbackData.POSTS_MY}$"))
@@ -13576,22 +13575,13 @@ async def main():
     application.add_handler(CallbackQueryHandler(delete_single_post_callback, pattern=f"^{CallbackData.POSTS_DELETE_SINGLE_PREFIX}"))
     application.add_handler(CallbackQueryHandler(confirm_clear_all_posts_callback, pattern=f"^{CallbackData.POSTS_CONFIRM_CLEAR_ALL_PREFIX}"))
     application.add_handler(CallbackQueryHandler(clear_all_posts_callback, pattern=f"^{CallbackData.POSTS_CLEAR_ALL_PREFIX}"))
-    
-    # الإحصائيات
     application.add_handler(CallbackQueryHandler(my_pending_stats_callback, pattern=f"^{CallbackData.STATS_PENDING}$"))
     application.add_handler(CallbackQueryHandler(my_full_stats_callback, pattern=f"^{CallbackData.STATS_FULL}$"))
-    
-    # المجموعات
     application.add_handler(CallbackQueryHandler(my_groups_callback, pattern=f"^{CallbackData.GROUPS_MY}$"))
     application.add_handler(CallbackQueryHandler(group_settings_callback, pattern=f"^{CallbackData.GROUPS_SETTINGS_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(delete_group_callback, pattern="^delete_group:"))
-    
-    # الإعدادات
     application.add_handler(CallbackQueryHandler(settings_menu_callback, pattern=f"^{CallbackData.SETTINGS_MENU}$"))
     application.add_handler(CallbackQueryHandler(toggle_auto_publish_callback, pattern=f"^{CallbackData.SETTINGS_TOGGLE_AUTO_PUBLISH}$"))
     application.add_handler(CallbackQueryHandler(toggle_auto_recycle_callback, pattern=f"^{CallbackData.SETTINGS_TOGGLE_AUTO_RECYCLE}$"))
-    
-    # الجدولة
     application.add_handler(CallbackQueryHandler(schedule_menu_callback, pattern=f"^{CallbackData.SCHEDULE_MENU_PREFIX}"))
     application.add_handler(CallbackQueryHandler(set_interval_minutes_callback, pattern=f"^{CallbackData.SCHEDULE_SET_INTERVAL_MINUTES_PREFIX}"))
     application.add_handler(CallbackQueryHandler(set_interval_hours_callback, pattern=f"^{CallbackData.SCHEDULE_SET_INTERVAL_HOURS_PREFIX}"))
@@ -13602,8 +13592,6 @@ async def main():
     application.add_handler(CallbackQueryHandler(set_publish_time_callback, pattern=f"^{CallbackData.SCHEDULE_SET_PUBLISH_TIME_PREFIX}"))
     application.add_handler(CallbackQueryHandler(day_select_callback, pattern=f"^{CallbackData.SCHEDULE_DAY_SELECT_PREFIX}"))
     application.add_handler(CallbackQueryHandler(save_days_callback, pattern=f"^{CallbackData.SCHEDULE_SAVE_DAYS}$"))
-    
-    # الأمان
     application.add_handler(CallbackQueryHandler(security_enable_all_callback, pattern=f"^{CallbackData.SECURITY_ENABLE_ALL_PREFIX}"))
     application.add_handler(CallbackQueryHandler(security_disable_all_callback, pattern=f"^{CallbackData.SECURITY_DISABLE_ALL_PREFIX}"))
     application.add_handler(CallbackQueryHandler(security_delete_penalty_callback, pattern=f"^{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}"))
@@ -13614,13 +13602,10 @@ async def main():
     application.add_handler(CallbackQueryHandler(security_close_callback, pattern=f"^{CallbackData.SECURITY_CLOSE}$"))
     application.add_handler(CallbackQueryHandler(security_select_group_callback, pattern=f"^{CallbackData.SECURITY_SELECT_GROUP}"))
     application.add_handler(CallbackQueryHandler(security_refresh_groups_callback, pattern=f"^{CallbackData.SECURITY_REFRESH_GROUPS}$"))
-    
-    # الكلمات المحظورة
     application.add_handler(CallbackQueryHandler(banned_words_add_callback, pattern=f"^{CallbackData.BANNED_WORDS_ADD_PREFIX}"))
     application.add_handler(CallbackQueryHandler(banned_words_list_callback, pattern=f"^{CallbackData.BANNED_WORDS_LIST_PREFIX}"))
     application.add_handler(CallbackQueryHandler(banned_words_remove_callback, pattern=f"^{CallbackData.BANNED_WORDS_REMOVE_PREFIX}"))
     
-    # العقوبات - مدة الكتم
     mute_durations = [
         ("5", "GROUP_MUTE_DURATION_5"),
         ("30", "GROUP_MUTE_DURATION_30"),
@@ -13640,8 +13625,6 @@ async def main():
     application.add_handler(CallbackQueryHandler(penalty_kick_callback, pattern=f"^{CallbackData.PENALTY_KICK}:"))
     application.add_handler(CallbackQueryHandler(penalty_ban_callback, pattern=f"^{CallbackData.PENALTY_BAN}:"))
     application.add_handler(CallbackQueryHandler(penalty_mute_callback, pattern=f"^{CallbackData.PENALTY_MUTE}:"))
-    
-    # الدعم والاشتراكات
     application.add_handler(CallbackQueryHandler(help_callback, pattern=f"^{CallbackData.HELP}$"))
     application.add_handler(CallbackQueryHandler(support_menu_callback, pattern=f"^{CallbackData.SUPPORT_MENU}$"))
     application.add_handler(CallbackQueryHandler(support_help_callback, pattern=f"^{CallbackData.SUPPORT_HELP}$"))
@@ -13655,14 +13638,10 @@ async def main():
     application.add_handler(CallbackQueryHandler(buy_subscription_90_callback, pattern=f"^{CallbackData.BUY_SUBSCRIPTION_90}$"))
     application.add_handler(CallbackQueryHandler(developer_callback, pattern=f"^{CallbackData.DEVELOPER}$"))
     application.add_handler(CallbackQueryHandler(updates_callback, pattern=f"^{CallbackData.UPDATES}$"))
-    
-    # الإحالات
     application.add_handler(CallbackQueryHandler(referral_menu_callback, pattern=f"^{CallbackData.REFERRAL_MENU}$"))
     application.add_handler(CallbackQueryHandler(referral_copy_link_callback, pattern=f"^{CallbackData.REFERRAL_COPY_LINK_PREFIX}"))
     application.add_handler(CallbackQueryHandler(referral_claim_reward_callback, pattern=f"^{CallbackData.REFERRAL_CLAIM_REWARD}$"))
     application.add_handler(CallbackQueryHandler(referral_list_callback, pattern=f"^{CallbackData.REFERRAL_LIST}$"))
-    
-    # التذكيرات
     application.add_handler(CallbackQueryHandler(reminder_menu_callback, pattern=f"^{CallbackData.REMINDER_MENU}$"))
     application.add_handler(CallbackQueryHandler(reminder_toggle_sub_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_SUB}$"))
     application.add_handler(CallbackQueryHandler(reminder_toggle_daily_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_DAILY}$"))
@@ -13670,13 +13649,9 @@ async def main():
     application.add_handler(CallbackQueryHandler(reminder_set_days_callback, pattern=f"^{CallbackData.REMINDER_SET_DAYS}$"))
     application.add_handler(CallbackQueryHandler(reminder_set_lang_callback, pattern=f"^{CallbackData.REMINDER_SET_LANG}$"))
     application.add_handler(CallbackQueryHandler(reminder_lang_callback, pattern=f"^{CallbackData.REMINDER_LANG_PREFIX}"))
-    
-    # الترجمة
     application.add_handler(CallbackQueryHandler(translation_menu_callback, pattern=f"^{CallbackData.TRANSLATION_MENU}$"))
     application.add_handler(CallbackQueryHandler(translation_off_callback, pattern=f"^{CallbackData.TRANSLATION_OFF}$"))
     application.add_handler(CallbackQueryHandler(translation_set_callback, pattern=f"^{CallbackData.TRANSLATION_SET_PREFIX}"))
-    
-    # ===================== لوحة الأدمن =====================
     application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=f"^{CallbackData.ADMIN_PANEL}$"))
     application.add_handler(CallbackQueryHandler(admin_users_callback, pattern=f"^{CallbackData.ADMIN_USERS}$"))
     application.add_handler(CallbackQueryHandler(admin_banned_users_callback, pattern=f"^{CallbackData.ADMIN_BANNED_USERS}$"))
@@ -13727,8 +13702,6 @@ async def main():
     application.add_handler(CallbackQueryHandler(admin_list_banned_words_callback, pattern=f"^{CallbackData.ADMIN_LIST_BANNED_WORDS}$"))
     application.add_handler(CallbackQueryHandler(admin_remove_banned_word_callback, pattern=f"^{CallbackData.ADMIN_REMOVE_BANNED_WORD}$"))
     application.add_handler(CallbackQueryHandler(admin_del_banned_word_callback, pattern="^admin_del_banned_word_"))
-    
-    # ===================== الردود التلقائية =====================
     application.add_handler(CallbackQueryHandler(auto_reply_toggle_callback, pattern=f"^{CallbackData.AUTO_REPLY_TOGGLE_PREFIX}"))
     application.add_handler(CallbackQueryHandler(auto_reply_admins_callback, pattern=f"^{CallbackData.AUTO_REPLY_ADMINS_PREFIX}"))
     application.add_handler(CallbackQueryHandler(auto_reply_reset_callback, pattern=f"^{CallbackData.AUTO_REPLY_RESET_PREFIX}"))
@@ -13738,13 +13711,9 @@ async def main():
     application.add_handler(CallbackQueryHandler(user_auto_reply_toggle_callback, pattern=f"^{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}"))
     application.add_handler(CallbackQueryHandler(admin_auto_reply_callback, pattern=f"^{CallbackData.ADMIN_AUTO_REPLY}$"))
     application.add_handler(CallbackQueryHandler(admin_auto_reply_select_callback, pattern=f"^{CallbackData.ADMIN_AUTO_REPLY_SELECT_PREFIX}"))
-    
-    # ===================== NSFW =====================
     application.add_handler(CallbackQueryHandler(nsfw_settings_callback, pattern=f"^{CallbackData.NSFW_SETTINGS}$"))
     application.add_handler(CallbackQueryHandler(nsfw_toggle_callback, pattern=f"^{CallbackData.NSFW_TOGGLE}$"))
     application.add_handler(CallbackQueryHandler(nsfw_threshold_callback, pattern=f"^{CallbackData.NSFW_THRESHOLD_SET}$"))
-    
-    # ===================== المسابقات =====================
     application.add_handler(CallbackQueryHandler(contests_menu_callback, pattern=f"^{CallbackData.CONTESTS_MENU}$"))
     application.add_handler(CallbackQueryHandler(contest_join_callback, pattern=f"^{CallbackData.CONTEST_JOIN_PREFIX}"))
     application.add_handler(CallbackQueryHandler(contest_winners_callback, pattern=f"^{CallbackData.CONTEST_WINNERS}$"))
@@ -13752,26 +13721,16 @@ async def main():
     application.add_handler(CallbackQueryHandler(admin_create_contest_callback, pattern=f"^{CallbackData.ADMIN_CREATE_CONTEST}$"))
     application.add_handler(CallbackQueryHandler(admin_declare_winner_callback, pattern=f"^{CallbackData.ADMIN_DECLARE_WINNER}$"))
     application.add_handler(CallbackQueryHandler(admin_delete_contest_callback, pattern=f"^{CallbackData.ADMIN_DEL_CONTEST_PREFIX}"))
-    
-    # ===================== تبديل الحظر =====================
     application.add_handler(CallbackQueryHandler(admin_toggle_channel_ban_callback, pattern=f"^{CallbackData.ADMIN_TOGGLE_CHANNEL_BAN_PREFIX}"))
     application.add_handler(CallbackQueryHandler(admin_toggle_group_ban_callback, pattern=f"^{CallbackData.ADMIN_TOGGLE_GROUP_BAN_PREFIX}"))
-    
-    # ===================== إحصائيات القنوات =====================
     application.add_handler(CallbackQueryHandler(channel_stats_callback, pattern=f"^{CallbackData.CHANNEL_STATS}:"))
     application.add_handler(CallbackQueryHandler(channel_growth_callback, pattern=f"^{CallbackData.CHANNEL_GROWTH}:"))
     application.add_handler(CallbackQueryHandler(channel_stats_refresh_callback, pattern=f"^{CallbackData.CHANNEL_STATS_REFRESH}:"))
     application.add_handler(CallbackQueryHandler(my_channel_stats_callback, pattern=f"^{CallbackData.MY_CHANNEL_STATS}$"))
-    
-    # ===================== اشتراك إجباري =====================
     application.add_handler(CallbackQueryHandler(check_subscribe_callback_handler, pattern=f"^{CallbackData.CHECK_SUBSCRIBE}$"))
-    
-    # ===================== لوحة التحكم =====================
     application.add_handler(CallbackQueryHandler(panel_lock_callback_handler, pattern=f"^{CallbackData.PANEL_LOCK_PREFIX}"))
     application.add_handler(CallbackQueryHandler(panel_unlock_callback_handler, pattern=f"^{CallbackData.PANEL_UNLOCK_PREFIX}"))
     application.add_handler(CallbackQueryHandler(panel_close_callback_handler, pattern=f"^{CallbackData.PANEL_CLOSE}$"))
-    
-    # ===================== إجراءات متقدمة =====================
     application.add_handler(CallbackQueryHandler(advanced_actions_callback, pattern=f"^{CallbackData.ADVANCED_ACTIONS}:"))
     application.add_handler(CallbackQueryHandler(group_action_ban_callback, pattern=f"^{CallbackData.GROUP_ACTION_BAN}:"))
     application.add_handler(CallbackQueryHandler(group_action_mute_callback, pattern=f"^{CallbackData.GROUP_ACTION_MUTE}:"))
@@ -13785,7 +13744,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(publish_all_channels_callback_handler, pattern=f"^{CallbackData.PUBLISH_ALL_CHANNELS}$"))
     
     # ===================== 7. الأحداث =====================
-    print("📌 [7/9] تسجيل الأحداث...")
+    print("📌 [7/8] تسجيل الأحداث...")
     application.add_handler(ChatJoinRequestHandler(chat_join_request_handler))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members_handler))
     application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
@@ -13810,8 +13769,8 @@ async def main():
         delete_service_messages
     ))
     
-    # ===================== 10. تعيين قائمة الأوامر (داخل الدالة) =====================
-    print("📌 [8/9] تعيين القائمة...")
+    # ===================== 10. تعيين قائمة الأوامر =====================
+    print("📌 [8/8] تعيين القائمة...")
     await application.bot.set_my_commands([
         BotCommand("start", "بدء البوت"),
         BotCommand("trial", "تجربة مجانية"),
@@ -13851,31 +13810,33 @@ async def main():
         BotCommand("rules", "عرض قوانين المجموعة"),
     ])
     
-    # ===================== 11. Webhook =====================
-    print("📌 [9/9] إعداد Webhook...")
-    await application.bot.delete_webhook(drop_pending_updates=True)
+    # ===================== 11. تشغيل خادم الويب =====================
+    print("📌 تشغيل خادم الويب...")
+    port = int(os.getenv("PORT", WEB_PORT))
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, WEB_HOST, port)
+    await site.start()
+    print(f"✅ خادم الويب: http://{WEB_HOST}:{port}")
     
-    host = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
-    webhook_url = f"https://{host}/webhook"
-    await application.bot.set_webhook(url=webhook_url)
-    print(f"✅ Webhook: {webhook_url}")
+    # ===================== 12. المهام الخلفية =====================
+    print("📌 تشغيل المهام الخلفية...")
     
-    # ===================== 12. معالج Webhook =====================
-    async def webhook_handler(request):
-        try:
-            data = await request.json()
-            update = Update.de_json(data, application.bot)
-            await application.process_update(update)
-            return web.Response(status=200)
-        except Exception as e:
-            logger.error(f"خطأ Webhook: {e}")
-            return web.Response(status=500)
+    # نبض قوي لمنع السكون (جديد)
+    async def strong_keep_alive():
+        url = f"http://localhost:{port}/health"
+        while True:
+            await asyncio.sleep(240)
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=10) as resp:
+                        if resp.status == 200:
+                            logger.debug("💓 نبض داخلي ناجح")
+            except Exception as e:
+                logger.warning(f"⚠️ فشل النبض الداخلي: {e}")
     
-    # إضافة المسار
-    web_app.router.add_post('/webhook', webhook_handler)
+    task_manager.create_task(safe_loop(strong_keep_alive, "keep_alive"))
     
-    # ===================== 13. المهام الخلفية =====================
-    print("📌 تشغيل المهام...")
     task_manager.create_task(safe_loop(memory_monitor, "memory_monitor"))
     task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "auto_publish"))
     task_manager.create_task(safe_loop(auto_backup, "auto_backup"))
@@ -13888,56 +13849,39 @@ async def main():
     task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "refresh_admins"))
     task_manager.create_task(safe_loop(self_ping_loop, "ping"))
     
-    # ===================== 14. خادم الويب =====================
-    port = int(os.getenv("PORT", WEB_PORT))
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    site = web.TCPSite(runner, WEB_HOST, port)
-    await site.start()
-    print(f"✅ خادم الويب: http://{WEB_HOST}:{port}")
-    
-    # ===================== 15. تشغيل البوت =====================
+    # ===================== 13. تشغيل البوت =====================
     print("=" * 60)
-    print(f"🚀 البوت يعمل عبر Webhook")
-    print(f"🔗 {webhook_url}")
-    print("✅ تم حل مشكلة 409 نهائياً")
+    print("🚀 البوت يعمل عبر Polling مع نبض قوي")
+    print("✅ لن يدخل في سكون في Render")
     print("=" * 60)
     
     try:
-        await application.run_webhook(
-            listen=WEB_HOST,
-            port=port,
-            url_path="/webhook",
-            webhook_url=webhook_url,
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
-        )
+        await run_polling_safe(application)
     except KeyboardInterrupt:
         print("🛑 تم الإيقاف")
     finally:
-        await application.bot.delete_webhook()
         await db_pool.close()
         await task_manager.cancel_all()
         print("🧹 تنظيف الموارد")
 
 
 # ====================================================================================
-#                      دالة الحلقات الآمنة
+#                      دالة تشغيل Polling الآمن
 # ====================================================================================
 
-async def safe_loop(coro_func, name="background"):
-    """تشغيل حلقة مع إعادة تشغيل تلقائي"""
+async def run_polling_safe(application):
+    """تشغيل Polling مع إعادة تشغيل تلقائي عند الفشل"""
     while True:
         try:
-            if asyncio.iscoroutinefunction(coro_func):
-                await coro_func()
-            else:
-                await coro_func()
+            await application.run_polling(
+                drop_pending_updates=True,
+                poll_interval=POLL_INTERVAL
+            )
         except asyncio.CancelledError:
-            print(f"🛑 إلغاء: {name}")
+            logger.info("🛑 تم إلغاء polling")
             break
         except Exception as e:
-            print(f"❌ خطأ في {name}: {e}")
+            logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
             await asyncio.sleep(10)
 
 
@@ -13960,3 +13904,4 @@ if __name__ == "__main__":
         print(f"❌ خطأ: {e}")
         traceback.print_exc()
         sys.exit(1)
+
