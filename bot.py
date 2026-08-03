@@ -13489,34 +13489,23 @@ async def main():
     load_all_languages()
     load_replies_from_file()
     
-    # ===================== 4. إعداد الاتصال (بنفس الطريقة القديمة) =====================
-    print("📌 [4/9] إعداد الاتصال...")
-    
-    # نفس الكود القديم لـ HTTPXRequest
-    if USE_PROXY:
-        request_kwargs = {
-            'proxy_url': PROXY_URL,
-            'read_timeout': 60.0,
-            'write_timeout': 30.0,
-            'connect_timeout': 30.0,
-            'pool_timeout': 10.0,
-            'connection_pool_size': MAX_CONNECTIONS
-        }
-        print(f"🌐 استخدام بروكسي: {PROXY_URL}")
-    else:
-        request_kwargs = {
-            'read_timeout': 60.0,
-            'write_timeout': 30.0,
-            'connect_timeout': 30.0,
-            'pool_timeout': 10.0,
-            'connection_pool_size': MAX_CONNECTIONS
-        }
-        print("ℹ️ اتصال مباشر (بدون بروكسي)")
-    
-    request = HTTPXRequest(**request_kwargs)
-    application = Application.builder().token(TOKEN).request(request).build()
-    application.add_error_handler(global_error_handler)
-    
+    # ===================== 4. إعداد التطبيق =====================
+print("📌 [4/9] إعداد التطبيق...")
+
+# بناء التطبيق بالطريقة الافتراضية (تتجنب خطأ HTTPXRequest)
+application = Application.builder().token(TOKEN).build()
+application.add_error_handler(global_error_handler)
+
+# إعداد البروكسي عبر متغيرات البيئة
+if USE_PROXY:
+    os.environ["HTTP_PROXY"] = PROXY_URL
+    os.environ["HTTPS_PROXY"] = PROXY_URL
+    print(f"🌐 استخدام بروكسي: {PROXY_URL}")
+else:
+    os.environ.pop("HTTP_PROXY", None)
+    os.environ.pop("HTTPS_PROXY", None)
+    print("ℹ️ اتصال مباشر (بدون بروكسي)")
+
     # ===================== 5. الأوامر =====================
     print("📌 [5/9] تسجيل الأوامر...")
     for cmd, handler in [
