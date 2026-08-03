@@ -1,4 +1,4 @@
-#t##xt",
+
 #]#!/usr/bin/env python3#احدث نسخةة
 # -*- coding: utf-8 -*-
 """
@@ -13818,6 +13818,13 @@ async def main():
     print("6️⃣ قبل set_my_commands...")
     await application.bot.set_my_commands(commands)
     print("7️⃣ بعد set_my_commands...")
+    import psutil
+
+    async def memory_logger():
+        while True:
+          await asyncio.sleep(60)
+          mem = psutil.virtual_memory()
+          logger.info(f"🧠 الذاكرة: {mem.percent}% مستخدمة، {mem.available // (1024**2)} ميجابايت متاحة")
 
     # ====== تشغيل المهام الخلفية ======
     print("8️⃣ قبل تشغيل المهام الخلفية...")
