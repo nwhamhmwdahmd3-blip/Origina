@@ -13460,6 +13460,10 @@ async def init_db_improved():
 #                      الدالة الرئيسية النهائية المُصححة (ضعها في آخر الملف)
 # ====================================================================================
 
+# ====================================================================================
+#                      الدالة الرئيسية النهائية المُصححة (ضعها في آخر الملف)
+# ====================================================================================
+
 async def main():
     """🚀 التشغيل الرئيسي للبوت - Webhook مع بروكسي (حل مشكلة 409)"""
     print("=" * 60)
@@ -13494,50 +13498,49 @@ async def main():
     load_all_languages()
     load_replies_from_file()
     
-    # ===================== 4. إعداد الاتصال =====================
     # ===================== 4. إعداد الاتصال (مع HTTPXRequest) =====================
-print("📌 [4/9] إعداد الاتصال...")
-
-# إعدادات الطلب
-kwargs = {
-    'read_timeout': 60.0,
-    'write_timeout': 30.0,
-    'connect_timeout': 30.0,
-    'pool_timeout': 10.0,
-    'connection_pool_size': MAX_CONNECTIONS
-}
-
-if USE_PROXY:
-    kwargs['proxy_url'] = PROXY_URL
-    print(f"🌐 استخدام بروكسي: {PROXY_URL}")
-else:
-    print("ℹ️ اتصال مباشر (بدون بروكسي)")
-
-# ✅ تهيئة HTTPXRequest بشكل صحيح (مع إنشاء عميل داخلي)
-import httpx
-
-# إنشاء عميل httpx مع الإعدادات المطلوبة
-timeout = httpx.Timeout(kwargs['read_timeout'], connect=kwargs['connect_timeout'])
-limits = httpx.Limits(max_connections=kwargs['connection_pool_size'])
-
-# إذا كان البروكسي مفعلاً، نضيفه إلى العميل
-proxy = kwargs.get('proxy_url') if kwargs.get('proxy_url') else None
-
-# إنشاء العميل
-client = httpx.AsyncClient(
-    timeout=timeout,
-    limits=limits,
-    proxy=proxy
-)
-
-# استخدام العميل في HTTPXRequest
-request = HTTPXRequest(client=client)
-
-# ===================== 5. بناء التطبيق =====================
-print("📌 [5/9] بناء التطبيق...")
-app = Application.builder().token(TOKEN).request(request).build()
-app.add_error_handler(global_error_handler)
-
+    print("📌 [4/9] إعداد الاتصال...")
+    
+    # إعدادات الطلب
+    kwargs = {
+        'read_timeout': 60.0,
+        'write_timeout': 30.0,
+        'connect_timeout': 30.0,
+        'pool_timeout': 10.0,
+        'connection_pool_size': MAX_CONNECTIONS
+    }
+    
+    if USE_PROXY:
+        kwargs['proxy_url'] = PROXY_URL
+        print(f"🌐 استخدام بروكسي: {PROXY_URL}")
+    else:
+        print("ℹ️ اتصال مباشر (بدون بروكسي)")
+    
+    # ✅ تهيئة HTTPXRequest بشكل صحيح (مع إنشاء عميل داخلي)
+    import httpx
+    
+    # إنشاء عميل httpx مع الإعدادات المطلوبة
+    timeout = httpx.Timeout(kwargs['read_timeout'], connect=kwargs['connect_timeout'])
+    limits = httpx.Limits(max_connections=kwargs['connection_pool_size'])
+    
+    # إذا كان البروكسي مفعلاً، نضيفه إلى العميل
+    proxy = kwargs.get('proxy_url') if kwargs.get('proxy_url') else None
+    
+    # إنشاء العميل
+    client = httpx.AsyncClient(
+        timeout=timeout,
+        limits=limits,
+        proxy=proxy
+    )
+    
+    # استخدام العميل في HTTPXRequest
+    request = HTTPXRequest(client=client)
+    
+    # ===================== 5. بناء التطبيق =====================
+    print("📌 [5/9] بناء التطبيق...")
+    app = Application.builder().token(TOKEN).request(request).build()
+    app.add_error_handler(global_error_handler)
+    
     # ===================== 6. الأوامر =====================
     print("📌 [6/9] تسجيل الأوامر...")
     for cmd, handler in [
@@ -13992,3 +13995,4 @@ if __name__ == "__main__":
         print(f"❌ خطأ: {e}")
         traceback.print_exc()
         sys.exit(1)
+
