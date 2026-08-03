@@ -13452,12 +13452,6 @@ async def init_db_improved():
         
     await execute_db(_init)
 
-# ===================== دالة main - تشغيل البوت =====================
-
-# ====================================================================================
-#                      الدالة الرئيسية النهائية (ضعها في آخر الملف)
-# ====================================================================================
-
 # ====================================================================================
 #                      الدالة الرئيسية النهائية المُصححة (ضعها في آخر الملف)
 # ====================================================================================
@@ -13630,18 +13624,28 @@ async def main():
     app.add_handler(CallbackQueryHandler(banned_words_list_callback, pattern=f"^{CallbackData.BANNED_WORDS_LIST_PREFIX}"))
     app.add_handler(CallbackQueryHandler(banned_words_remove_callback, pattern=f"^{CallbackData.BANNED_WORDS_REMOVE_PREFIX}"))
     
-    # العقوبات
+    # ===================== العقوبات - مدة الكتم (مُصححة نهائياً) =====================
+    # ✅ التصحيح: استخدام PERMANENT بدلاً من permanent
+    mute_durations = [
+        ("5", "GROUP_MUTE_DURATION_5"),
+        ("30", "GROUP_MUTE_DURATION_30"),
+        ("60", "GROUP_MUTE_DURATION_60"),
+        ("720", "GROUP_MUTE_DURATION_720"),
+        ("1440", "GROUP_MUTE_DURATION_1440"),
+        ("10080", "GROUP_MUTE_DURATION_10080"),
+        ("PERMANENT", "GROUP_MUTE_DURATION_PERMANENT"),
+    ]
+    for value, attr_name in mute_durations:
+        app.add_handler(CallbackQueryHandler(
+            penalty_mute_duration_callback,
+            pattern=f"^{getattr(CallbackData, attr_name)}$"
+        ))
+    
+    # العقوبات الأخرى
     app.add_handler(CallbackQueryHandler(penalty_menu_callback, pattern=f"^{CallbackData.PENALTY_MENU}:"))
     app.add_handler(CallbackQueryHandler(penalty_kick_callback, pattern=f"^{CallbackData.PENALTY_KICK}:"))
     app.add_handler(CallbackQueryHandler(penalty_ban_callback, pattern=f"^{CallbackData.PENALTY_BAN}:"))
     app.add_handler(CallbackQueryHandler(penalty_mute_callback, pattern=f"^{CallbackData.PENALTY_MUTE}:"))
-    
-    # ✅ التصحيح: كتابة حلقة العقوبات بشكل صحيح
-    for d in ["5", "30", "60", "720", "1440", "10080", "permanent"]:
-        app.add_handler(CallbackQueryHandler(
-            penalty_mute_duration_callback,
-            pattern=f"^{getattr(CallbackData, f'GROUP_MUTE_DURATION_{d}')}$"
-        ))
     
     # الدعم والاشتراكات
     app.add_handler(CallbackQueryHandler(help_callback, pattern=f"^{CallbackData.HELP}$"))
