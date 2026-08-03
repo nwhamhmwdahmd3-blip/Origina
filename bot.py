@@ -13489,23 +13489,23 @@ async def main():
     load_all_languages()
     load_replies_from_file()
     
-    # ===================== 4. إعداد التطبيق =====================
-print("📌 [4/9] إعداد التطبيق...")
-
-# بناء التطبيق بالطريقة الافتراضية (تتجنب خطأ HTTPXRequest)
-application = Application.builder().token(TOKEN).build()
-application.add_error_handler(global_error_handler)
-
-# إعداد البروكسي عبر متغيرات البيئة
-if USE_PROXY:
-    os.environ["HTTP_PROXY"] = PROXY_URL
-    os.environ["HTTPS_PROXY"] = PROXY_URL
-    print(f"🌐 استخدام بروكسي: {PROXY_URL}")
-else:
-    os.environ.pop("HTTP_PROXY", None)
-    os.environ.pop("HTTPS_PROXY", None)
-    print("ℹ️ اتصال مباشر (بدون بروكسي)")
-
+    # ===================== 4. إعداد التطبيق (بدون HTTPXRequest) =====================
+    print("📌 [4/9] إعداد التطبيق...")
+    
+    # بناء التطبيق بالطريقة الافتراضية (تتجنب خطأ HTTPXRequest)
+    application = Application.builder().token(TOKEN).build()
+    application.add_error_handler(global_error_handler)
+    
+    # إعداد البروكسي عبر متغيرات البيئة
+    if USE_PROXY:
+        os.environ["HTTP_PROXY"] = PROXY_URL
+        os.environ["HTTPS_PROXY"] = PROXY_URL
+        print(f"🌐 استخدام بروكسي: {PROXY_URL}")
+    else:
+        os.environ.pop("HTTP_PROXY", None)
+        os.environ.pop("HTTPS_PROXY", None)
+        print("ℹ️ اتصال مباشر (بدون بروكسي)")
+    
     # ===================== 5. الأوامر =====================
     print("📌 [5/9] تسجيل الأوامر...")
     for cmd, handler in [
@@ -13603,7 +13603,7 @@ else:
     application.add_handler(CallbackQueryHandler(day_select_callback, pattern=f"^{CallbackData.SCHEDULE_DAY_SELECT_PREFIX}"))
     application.add_handler(CallbackQueryHandler(save_days_callback, pattern=f"^{CallbackData.SCHEDULE_SAVE_DAYS}$"))
     
-    # ===================== الأمان =====================
+    # الأمان
     application.add_handler(CallbackQueryHandler(security_enable_all_callback, pattern=f"^{CallbackData.SECURITY_ENABLE_ALL_PREFIX}"))
     application.add_handler(CallbackQueryHandler(security_disable_all_callback, pattern=f"^{CallbackData.SECURITY_DISABLE_ALL_PREFIX}"))
     application.add_handler(CallbackQueryHandler(security_delete_penalty_callback, pattern=f"^{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}"))
@@ -13615,12 +13615,12 @@ else:
     application.add_handler(CallbackQueryHandler(security_select_group_callback, pattern=f"^{CallbackData.SECURITY_SELECT_GROUP}"))
     application.add_handler(CallbackQueryHandler(security_refresh_groups_callback, pattern=f"^{CallbackData.SECURITY_REFRESH_GROUPS}$"))
     
-    # ===================== الكلمات المحظورة =====================
+    # الكلمات المحظورة
     application.add_handler(CallbackQueryHandler(banned_words_add_callback, pattern=f"^{CallbackData.BANNED_WORDS_ADD_PREFIX}"))
     application.add_handler(CallbackQueryHandler(banned_words_list_callback, pattern=f"^{CallbackData.BANNED_WORDS_LIST_PREFIX}"))
     application.add_handler(CallbackQueryHandler(banned_words_remove_callback, pattern=f"^{CallbackData.BANNED_WORDS_REMOVE_PREFIX}"))
     
-    # ===================== العقوبات - مدة الكتم =====================
+    # العقوبات - مدة الكتم
     mute_durations = [
         ("5", "GROUP_MUTE_DURATION_5"),
         ("30", "GROUP_MUTE_DURATION_30"),
@@ -13641,7 +13641,7 @@ else:
     application.add_handler(CallbackQueryHandler(penalty_ban_callback, pattern=f"^{CallbackData.PENALTY_BAN}:"))
     application.add_handler(CallbackQueryHandler(penalty_mute_callback, pattern=f"^{CallbackData.PENALTY_MUTE}:"))
     
-    # ===================== الدعم والاشتراكات =====================
+    # الدعم والاشتراكات
     application.add_handler(CallbackQueryHandler(help_callback, pattern=f"^{CallbackData.HELP}$"))
     application.add_handler(CallbackQueryHandler(support_menu_callback, pattern=f"^{CallbackData.SUPPORT_MENU}$"))
     application.add_handler(CallbackQueryHandler(support_help_callback, pattern=f"^{CallbackData.SUPPORT_HELP}$"))
@@ -13656,13 +13656,13 @@ else:
     application.add_handler(CallbackQueryHandler(developer_callback, pattern=f"^{CallbackData.DEVELOPER}$"))
     application.add_handler(CallbackQueryHandler(updates_callback, pattern=f"^{CallbackData.UPDATES}$"))
     
-    # ===================== الإحالات =====================
+    # الإحالات
     application.add_handler(CallbackQueryHandler(referral_menu_callback, pattern=f"^{CallbackData.REFERRAL_MENU}$"))
     application.add_handler(CallbackQueryHandler(referral_copy_link_callback, pattern=f"^{CallbackData.REFERRAL_COPY_LINK_PREFIX}"))
     application.add_handler(CallbackQueryHandler(referral_claim_reward_callback, pattern=f"^{CallbackData.REFERRAL_CLAIM_REWARD}$"))
     application.add_handler(CallbackQueryHandler(referral_list_callback, pattern=f"^{CallbackData.REFERRAL_LIST}$"))
     
-    # ===================== التذكيرات =====================
+    # التذكيرات
     application.add_handler(CallbackQueryHandler(reminder_menu_callback, pattern=f"^{CallbackData.REMINDER_MENU}$"))
     application.add_handler(CallbackQueryHandler(reminder_toggle_sub_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_SUB}$"))
     application.add_handler(CallbackQueryHandler(reminder_toggle_daily_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_DAILY}$"))
@@ -13671,7 +13671,7 @@ else:
     application.add_handler(CallbackQueryHandler(reminder_set_lang_callback, pattern=f"^{CallbackData.REMINDER_SET_LANG}$"))
     application.add_handler(CallbackQueryHandler(reminder_lang_callback, pattern=f"^{CallbackData.REMINDER_LANG_PREFIX}"))
     
-    # ===================== الترجمة =====================
+    # الترجمة
     application.add_handler(CallbackQueryHandler(translation_menu_callback, pattern=f"^{CallbackData.TRANSLATION_MENU}$"))
     application.add_handler(CallbackQueryHandler(translation_off_callback, pattern=f"^{CallbackData.TRANSLATION_OFF}$"))
     application.add_handler(CallbackQueryHandler(translation_set_callback, pattern=f"^{CallbackData.TRANSLATION_SET_PREFIX}"))
@@ -13810,7 +13810,7 @@ else:
         delete_service_messages
     ))
     
-    # ===================== 10. قائمة الأوامر =====================
+    # ===================== 10. تعيين قائمة الأوامر (داخل الدالة) =====================
     print("📌 [8/9] تعيين القائمة...")
     await application.bot.set_my_commands([
         BotCommand("start", "بدء البوت"),
@@ -13960,3 +13960,4 @@ if __name__ == "__main__":
         print(f"❌ خطأ: {e}")
         traceback.print_exc()
         sys.exit(1)
+
