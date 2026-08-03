@@ -49,6 +49,8 @@ import types
 import signal
 import numpy as np  # ✅ تمت الإضافة لاستخدامه في check_nsfw_video
 from replies import ALL_REPLIES, get_weighted_reply
+import logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # ===================== التحقق من إصدار بايثون =====================
 def check_python_version():
