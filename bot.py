@@ -1701,10 +1701,10 @@ def check_single_instance():
         print(f"⚠️ لا يمكن التحقق من التشغيل الواحد: {e}")
         return None
 
-lock_fd = check_single_instance()
-if lock_fd is None:
-    print("⚠️ بوت آخر يعمل بالفعل! جاري الخروج...")
-    sys.exit(1)
+#lock_fd = check_single_instance()
+#if lock_fd is None:
+ #   print("⚠️ بوت آخر يعمل بالفعل! جاري الخروج...")
+  #  sys.exit(1)
 
 # ===================== دوال الوقت =====================
 def utc_now():
@@ -13454,337 +13454,301 @@ async def init_db_improved():
 
 # ===================== دالة main - تشغيل البوت =====================
 
-async def main():
-    """الدالة الرئيسية لتشغيل البوت"""
-    print("1️⃣ بدء main()...")
-    
-    # تهيئة قاعدة البيانات
-    await init_db_improved()
-    print("2️⃣ تم تهيئة قاعدة البيانات...")
+# ====================================================================================
+#                      الدالة الرئيسية النهائية (ضعها في آخر الملف)
+# ====================================================================================
 
-    # استيراد الكلمات المحظورة من ملف
+async def main():
+    """🚀 التشغيل الرئيسي للبوت - Webhook مع بروكسي (حل مشكلة 409)"""
+    print("=" * 60)
+    print("🌿 ريلاكس مانيجر - الإصدار 20.0.19 (Webhook + Proxy)")
+    print("🔒 حل مشكلة Conflict 409 نهائياً")
+    print("=" * 60)
+    
+    # ===================== 1. قاعدة البيانات =====================
+    print("📌 [1/9] تهيئة قاعدة البيانات...")
+    await init_db_improved()
+    
+    # ===================== 2. الكلمات المحظورة =====================
+    print("📌 [2/9] تحميل الكلمات المحظورة...")
     try:
         words = load_banned_words_from_file([BANNED_WORDS_FILE])
         if words:
-            async def _import(conn):
-                imported = 0
-                for word in words:
-                    try:
-                        await conn.execute(
-                            "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)",
-                            (word, -1, PRIMARY_OWNER_ID, utc_now_iso())
-                        )
-                        imported += 1
-                    except:
-                        continue
+            async def add_banned(conn):
+                for w in words:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+                        (w, -1, PRIMARY_OWNER_ID, utc_now_iso())
+                    )
                 await conn.commit()
-                return imported
-            imported_count = await execute_db(_import)
-            logger.info(f"✅ تم استيراد {imported_count} كلمة محظورة من {BANNED_WORDS_FILE}")
+            await execute_db(add_banned)
             await rebuild_banned_patterns()
+            print(f"✅ تم استيراد {len(words)} كلمة محظورة")
     except Exception as e:
-        logger.error(f"❌ فشل استيراد الكلمات المحظورة: {e}")
-
-    # تحميل اللغات والردود
+        print(f"⚠️ فشل استيراد الكلمات: {e}")
+    
+    # ===================== 3. اللغات والردود =====================
+    print("📌 [3/9] تحميل اللغات والردود...")
     load_all_languages()
     load_replies_from_file()
-    print("3️⃣ تم تحميل اللغات والردود...")
-
-    # إعداد الـ HTTPX Request
-    print("4️⃣ قبل إعداد application...")
+    
+    # ===================== 4. إعداد الاتصال =====================
+    print("📌 [4/9] إعداد الاتصال...")
+    kwargs = {
+        'read_timeout': 60.0,
+        'write_timeout': 30.0,
+        'connect_timeout': 30.0,
+        'pool_timeout': 10.0,
+        'connection_pool_size': MAX_CONNECTIONS
+    }
     if USE_PROXY:
-        request_kwargs = {
-            'proxy_url': PROXY_URL,
-            'read_timeout': 60.0,
-            'write_timeout': 30.0,
-            'connect_timeout': 30.0,
-            'pool_timeout': 10.0,
-            'connection_pool_size': MAX_CONNECTIONS
-        }
-        request = HTTPXRequest(**request_kwargs)
-        application = Application.builder().token(TOKEN).request(request).build()
+        kwargs['proxy_url'] = PROXY_URL
+        print(f"🌐 استخدام بروكسي: {PROXY_URL}")
     else:
-        request_kwargs = {
-            'read_timeout': 60.0,
-            'write_timeout': 30.0,
-            'connect_timeout': 30.0,
-            'pool_timeout': 10.0,
-            'connection_pool_size': MAX_CONNECTIONS
-        }
-        request = HTTPXRequest(**request_kwargs)
-        application = Application.builder().token(TOKEN).request(request).build()
-
-    application.add_error_handler(global_error_handler)
-    print("5️⃣ تم إنشاء application وإضافة معالج الأخطاء...")
-
-    # ========== Command Handlers ==========
-    application.add_handler(CommandHandler("start", start_command_handler))
-    application.add_handler(CommandHandler("language", language_command_handler))
-    application.add_handler(CommandHandler("syncgroup", syncgroup_command_handler))
-    application.add_handler(CommandHandler("security", security_select_group_callback))
-    application.add_handler(CommandHandler("register_hidden_owner", register_hidden_owner_handler))
-    application.add_handler(CommandHandler("add_hidden_admin", add_hidden_admin_command))
-    application.add_handler(CommandHandler("remove_hidden_admin", remove_hidden_admin_command))
-    application.add_handler(CommandHandler("list_hidden_admins", list_hidden_admins_command))
-    application.add_handler(CommandHandler("trial", trial_command_handler))
-    application.add_handler(CommandHandler("subscribe", subscribe_command_handler))
-    application.add_handler(CommandHandler("help", help_command_handler))
-    application.add_handler(CommandHandler("support", support_command_handler))
-    application.add_handler(CommandHandler("support_reply", support_reply_command_handler))
-    application.add_handler(CommandHandler("rank", rank_command_handler))
-    application.add_handler(CommandHandler("top", top_command_handler))
-    application.add_handler(CommandHandler("developer", developer_command_handler))
-    application.add_handler(CommandHandler("updates", updates_command_handler))
-    application.add_handler(CommandHandler("stats", stats_command_handler))
-    application.add_handler(CommandHandler("sendcode", sendcode_command_handler))
-    application.add_handler(CommandHandler("lock", lock_chat_command_handler))
-    application.add_handler(CommandHandler("unlock", unlock_chat_command_handler))
-    application.add_handler(CommandHandler("schedule", schedule_post_command_handler))
-    application.add_handler(CommandHandler("panel", panel_command_handler))
-    application.add_handler(CommandHandler("set_log_channel", set_log_channel_command_handler))
-    application.add_handler(CommandHandler("ban", handle_moderation_commands))
-    application.add_handler(CommandHandler("mute", handle_moderation_commands))
-    application.add_handler(CommandHandler("warn", handle_moderation_commands))
-    application.add_handler(CommandHandler("kick", handle_moderation_commands))
-    application.add_handler(CommandHandler("restrict", handle_moderation_commands))
-    application.add_handler(CommandHandler("pin", handle_moderation_commands))
-    application.add_handler(CommandHandler("unban", handle_moderation_commands))
-    application.add_handler(CommandHandler("contests", contests_command_handler))
-    application.add_handler(CommandHandler("create_contest", create_contest_command_handler))
-    application.add_handler(CommandHandler("declare_winner", declare_winner_command_handler))
-    application.add_handler(CommandHandler("set_rules", set_rules_command_handler))
-    application.add_handler(CommandHandler("rules", rules_command_handler))
-
-    # ========== CallbackQuery Handlers ==========
-    application.add_handler(CallbackQueryHandler(lang_callback_handler, pattern="^lang_"))
-    application.add_handler(CallbackQueryHandler(handle_text_callbacks, pattern="^(rank|top|schedule_post|language)$"))
-    application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
-    application.add_handler(CallbackQueryHandler(back_callback, pattern=f"^{CallbackData.BACK}$"))
-    application.add_handler(CallbackQueryHandler(cancel_session_callback, pattern=f"^{CallbackData.CANCEL_SESSION}$"))
-    application.add_handler(CallbackQueryHandler(add_channel_callback, pattern=f"^{CallbackData.CHANNELS_ADD}$"))
-    application.add_handler(CallbackQueryHandler(my_channels_callback, pattern=f"^{CallbackData.CHANNELS_MY}$"))
-    application.add_handler(CallbackQueryHandler(delete_channel_callback, pattern=f"^{CallbackData.CHANNELS_DELETE_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(select_channel_callback, pattern=f"^{CallbackData.CHANNELS_SELECT_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(add_15_posts_callback, pattern=f"^{CallbackData.POSTS_ADD_15}$"))
-    application.add_handler(CallbackQueryHandler(publish_one_callback, pattern=f"^{CallbackData.POSTS_PUBLISH_ONE}$"))
-    application.add_handler(CallbackQueryHandler(my_posts_callback, pattern=f"^{CallbackData.POSTS_MY}$"))
-    application.add_handler(CallbackQueryHandler(recycle_posts_callback, pattern=f"^{CallbackData.POSTS_RECYCLE}$"))
-    application.add_handler(CallbackQueryHandler(delete_single_post_callback, pattern=f"^{CallbackData.POSTS_DELETE_SINGLE_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(confirm_clear_all_posts_callback, pattern=f"^{CallbackData.POSTS_CONFIRM_CLEAR_ALL_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(clear_all_posts_callback, pattern=f"^{CallbackData.POSTS_CLEAR_ALL_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(my_pending_stats_callback, pattern=f"^{CallbackData.STATS_PENDING}$"))
-    application.add_handler(CallbackQueryHandler(my_full_stats_callback, pattern=f"^{CallbackData.STATS_FULL}$"))
-    application.add_handler(CallbackQueryHandler(my_groups_callback, pattern=f"^{CallbackData.GROUPS_MY}$"))
-    application.add_handler(CallbackQueryHandler(group_settings_callback, pattern=f"^{CallbackData.GROUPS_SETTINGS_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(settings_menu_callback, pattern=f"^{CallbackData.SETTINGS_MENU}$"))
-    application.add_handler(CallbackQueryHandler(toggle_auto_publish_callback, pattern=f"^{CallbackData.SETTINGS_TOGGLE_AUTO_PUBLISH}$"))
-    application.add_handler(CallbackQueryHandler(toggle_auto_recycle_callback, pattern=f"^{CallbackData.SETTINGS_TOGGLE_AUTO_RECYCLE}$"))
-    application.add_handler(CallbackQueryHandler(schedule_menu_callback, pattern=f"^{CallbackData.SCHEDULE_MENU_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(set_interval_minutes_callback, pattern=f"^{CallbackData.SCHEDULE_SET_INTERVAL_MINUTES_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(set_interval_hours_callback, pattern=f"^{CallbackData.SCHEDULE_SET_INTERVAL_HOURS_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(set_interval_days_callback, pattern=f"^{CallbackData.SCHEDULE_SET_INTERVAL_DAYS_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(set_cron_callback, pattern="^schedule:set_cron:"))
-    application.add_handler(CallbackQueryHandler(set_days_callback, pattern=f"^{CallbackData.SCHEDULE_SET_DAYS_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(set_dates_callback, pattern=f"^{CallbackData.SCHEDULE_SET_DATES_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(set_publish_time_callback, pattern=f"^{CallbackData.SCHEDULE_SET_PUBLISH_TIME_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(day_select_callback, pattern=f"^{CallbackData.SCHEDULE_DAY_SELECT_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(save_days_callback, pattern=f"^{CallbackData.SCHEDULE_SAVE_DAYS}$"))
-
-    # أمان
-    application.add_handler(CallbackQueryHandler(security_enable_all_callback, pattern=f"^{CallbackData.SECURITY_ENABLE_ALL_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(security_disable_all_callback, pattern=f"^{CallbackData.SECURITY_DISABLE_ALL_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(security_delete_penalty_callback, pattern=f"^{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(set_delete_penalty_callback, pattern="^set_delete_penalty:"))
-    application.add_handler(CallbackQueryHandler(confirm_enable_all_callback, pattern="^confirm_enable_all:"))
-    application.add_handler(CallbackQueryHandler(security_banned_words_menu_callback, pattern=f"^{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(advanced_mute_duration_callback, pattern="^adv_mute_duration:"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_5}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_30}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_60}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_720}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_1440}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_10080}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_PERMANENT}"))
-    application.add_handler(CallbackQueryHandler(universal_security_toggle, pattern="^security:"))
-    application.add_handler(CallbackQueryHandler(security_close_callback, pattern=f"^{CallbackData.SECURITY_CLOSE}$"))
-    application.add_handler(CallbackQueryHandler(security_select_group_callback, pattern=f"^{CallbackData.SECURITY_SELECT_GROUP}"))
-    application.add_handler(CallbackQueryHandler(security_refresh_groups_callback, pattern=f"^{CallbackData.SECURITY_REFRESH_GROUPS}$"))
-    application.add_handler(CallbackQueryHandler(banned_words_add_callback, pattern=f"^{CallbackData.BANNED_WORDS_ADD_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(banned_words_list_callback, pattern=f"^{CallbackData.BANNED_WORDS_LIST_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(banned_words_remove_callback, pattern=f"^{CallbackData.BANNED_WORDS_REMOVE_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(penalty_menu_callback, pattern=f"^{CallbackData.PENALTY_MENU}:"))
-    application.add_handler(CallbackQueryHandler(penalty_kick_callback, pattern=f"^{CallbackData.PENALTY_KICK}:"))
-    application.add_handler(CallbackQueryHandler(penalty_ban_callback, pattern=f"^{CallbackData.PENALTY_BAN}:"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_callback, pattern=f"^{CallbackData.PENALTY_MUTE}:"))
-
-    # دعم واشتراكات
-    application.add_handler(CallbackQueryHandler(help_callback, pattern=f"^{CallbackData.HELP}$"))
-    application.add_handler(CallbackQueryHandler(support_menu_callback, pattern=f"^{CallbackData.SUPPORT_MENU}$"))
-    application.add_handler(CallbackQueryHandler(support_help_callback, pattern=f"^{CallbackData.SUPPORT_HELP}$"))
-    application.add_handler(CallbackQueryHandler(support_ticket_callback, pattern=f"^{CallbackData.SUPPORT_TICKET}$"))
-    application.add_handler(CallbackQueryHandler(support_back_callback, pattern=f"^{CallbackData.SUPPORT_BACK}$"))
-    application.add_handler(CallbackQueryHandler(trial_callback, pattern=f"^{CallbackData.TRIAL}$"))
-    application.add_handler(CallbackQueryHandler(subscribe_menu_callback, pattern=f"^{CallbackData.SUBSCRIBE_MENU}$"))
-    application.add_handler(CallbackQueryHandler(buy_subscription_1_callback, pattern=f"^{CallbackData.BUY_SUBSCRIPTION_1}$"))
-    application.add_handler(CallbackQueryHandler(buy_subscription_2_callback, pattern=f"^{CallbackData.BUY_SUBSCRIPTION_2}$"))
-    application.add_handler(CallbackQueryHandler(buy_subscription_30_callback, pattern=f"^{CallbackData.BUY_SUBSCRIPTION_30}$"))
-    application.add_handler(CallbackQueryHandler(buy_subscription_90_callback, pattern=f"^{CallbackData.BUY_SUBSCRIPTION_90}$"))
-    application.add_handler(CallbackQueryHandler(developer_callback, pattern=f"^{CallbackData.DEVELOPER}$"))
-    application.add_handler(CallbackQueryHandler(updates_callback, pattern=f"^{CallbackData.UPDATES}$"))
-    application.add_handler(CallbackQueryHandler(referral_menu_callback, pattern=f"^{CallbackData.REFERRAL_MENU}$"))
-    application.add_handler(CallbackQueryHandler(referral_copy_link_callback, pattern=f"^{CallbackData.REFERRAL_COPY_LINK_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(referral_claim_reward_callback, pattern=f"^{CallbackData.REFERRAL_CLAIM_REWARD}$"))
-    application.add_handler(CallbackQueryHandler(referral_list_callback, pattern=f"^{CallbackData.REFERRAL_LIST}$"))
-    application.add_handler(CallbackQueryHandler(reminder_menu_callback, pattern=f"^{CallbackData.REMINDER_MENU}$"))
-    application.add_handler(CallbackQueryHandler(reminder_toggle_sub_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_SUB}$"))
-    application.add_handler(CallbackQueryHandler(reminder_toggle_daily_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_DAILY}$"))
-    application.add_handler(CallbackQueryHandler(reminder_toggle_weekly_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_WEEKLY}$"))
-    application.add_handler(CallbackQueryHandler(reminder_set_days_callback, pattern=f"^{CallbackData.REMINDER_SET_DAYS}$"))
-    application.add_handler(CallbackQueryHandler(reminder_set_lang_callback, pattern=f"^{CallbackData.REMINDER_SET_LANG}$"))
-    application.add_handler(CallbackQueryHandler(reminder_lang_callback, pattern=f"^{CallbackData.REMINDER_LANG_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(translation_menu_callback, pattern=f"^{CallbackData.TRANSLATION_MENU}$"))
-    application.add_handler(CallbackQueryHandler(translation_off_callback, pattern=f"^{CallbackData.TRANSLATION_OFF}$"))
-    application.add_handler(CallbackQueryHandler(translation_set_callback, pattern=f"^{CallbackData.TRANSLATION_SET_PREFIX}"))
-
+        print("ℹ️ اتصال مباشر (بدون بروكسي)")
+    
+    # ===================== 5. بناء التطبيق =====================
+    print("📌 [5/9] بناء التطبيق...")
+    app = Application.builder().token(TOKEN).request(HTTPXRequest(**kwargs)).build()
+    app.add_error_handler(global_error_handler)
+    
+    # ===================== 6. الأوامر =====================
+    print("📌 [6/9] تسجيل الأوامر...")
+    for cmd, handler in [
+        ("start", start_command_handler),
+        ("help", help_command_handler),
+        ("trial", trial_command_handler),
+        ("subscribe", subscribe_command_handler),
+        ("support", support_command_handler),
+        ("syncgroup", syncgroup_command_handler),
+        ("security", security_select_group_callback),
+        ("register_hidden_owner", register_hidden_owner_handler),
+        ("add_hidden_admin", add_hidden_admin_command),
+        ("remove_hidden_admin", remove_hidden_admin_command),
+        ("list_hidden_admins", list_hidden_admins_command),
+        ("rank", rank_command_handler),
+        ("top", top_command_handler),
+        ("stats", stats_command_handler),
+        ("lock", lock_chat_command_handler),
+        ("unlock", unlock_chat_command_handler),
+        ("schedule", schedule_post_command_handler),
+        ("panel", panel_command_handler),
+        ("ban", handle_moderation_commands),
+        ("mute", handle_moderation_commands),
+        ("warn", handle_moderation_commands),
+        ("kick", handle_moderation_commands),
+        ("restrict", handle_moderation_commands),
+        ("pin", handle_moderation_commands),
+        ("unban", handle_moderation_commands),
+        ("contests", contests_command_handler),
+        ("create_contest", create_contest_command_handler),
+        ("declare_winner", declare_winner_command_handler),
+        ("set_rules", set_rules_command_handler),
+        ("rules", rules_command_handler),
+        ("developer", developer_command_handler),
+        ("updates", updates_command_handler),
+        ("sendcode", sendcode_command_handler),
+        ("set_log_channel", set_log_channel_command_handler),
+        ("language", language_command_handler),
+        ("support_reply", support_reply_command_handler),
+    ]:
+        app.add_handler(CommandHandler(cmd, handler))
+    
+    # ===================== 7. الأزرار (CallbackQuery) =====================
+    print("📌 [7/9] تسجيل الأزرار...")
+    # اللغة
+    app.add_handler(CallbackQueryHandler(lang_callback_handler, pattern="^lang_"))
+    # النصوص
+    app.add_handler(CallbackQueryHandler(handle_text_callbacks, pattern="^(rank|top|schedule_post|language)$"))
+    # القوائم الأساسية
+    app.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
+    app.add_handler(CallbackQueryHandler(back_callback, pattern=f"^{CallbackData.BACK}$"))
+    app.add_handler(CallbackQueryHandler(cancel_session_callback, pattern=f"^{CallbackData.CANCEL_SESSION}$"))
+    # القنوات
+    app.add_handler(CallbackQueryHandler(add_channel_callback, pattern=f"^{CallbackData.CHANNELS_ADD}$"))
+    app.add_handler(CallbackQueryHandler(my_channels_callback, pattern=f"^{CallbackData.CHANNELS_MY}$"))
+    app.add_handler(CallbackQueryHandler(delete_channel_callback, pattern=f"^{CallbackData.CHANNELS_DELETE_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(select_channel_callback, pattern=f"^{CallbackData.CHANNELS_SELECT_PREFIX}"))
+    # المنشورات
+    app.add_handler(CallbackQueryHandler(add_15_posts_callback, pattern=f"^{CallbackData.POSTS_ADD_15}$"))
+    app.add_handler(CallbackQueryHandler(publish_one_callback, pattern=f"^{CallbackData.POSTS_PUBLISH_ONE}$"))
+    app.add_handler(CallbackQueryHandler(my_posts_callback, pattern=f"^{CallbackData.POSTS_MY}$"))
+    app.add_handler(CallbackQueryHandler(recycle_posts_callback, pattern=f"^{CallbackData.POSTS_RECYCLE}$"))
+    app.add_handler(CallbackQueryHandler(delete_single_post_callback, pattern=f"^{CallbackData.POSTS_DELETE_SINGLE_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(confirm_clear_all_posts_callback, pattern=f"^{CallbackData.POSTS_CONFIRM_CLEAR_ALL_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(clear_all_posts_callback, pattern=f"^{CallbackData.POSTS_CLEAR_ALL_PREFIX}"))
+    # الإحصائيات
+    app.add_handler(CallbackQueryHandler(my_pending_stats_callback, pattern=f"^{CallbackData.STATS_PENDING}$"))
+    app.add_handler(CallbackQueryHandler(my_full_stats_callback, pattern=f"^{CallbackData.STATS_FULL}$"))
+    # المجموعات
+    app.add_handler(CallbackQueryHandler(my_groups_callback, pattern=f"^{CallbackData.GROUPS_MY}$"))
+    app.add_handler(CallbackQueryHandler(group_settings_callback, pattern=f"^{CallbackData.GROUPS_SETTINGS_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(delete_group_callback, pattern="^delete_group:"))
+    # الإعدادات
+    app.add_handler(CallbackQueryHandler(settings_menu_callback, pattern=f"^{CallbackData.SETTINGS_MENU}$"))
+    app.add_handler(CallbackQueryHandler(toggle_auto_publish_callback, pattern=f"^{CallbackData.SETTINGS_TOGGLE_AUTO_PUBLISH}$"))
+    app.add_handler(CallbackQueryHandler(toggle_auto_recycle_callback, pattern=f"^{CallbackData.SETTINGS_TOGGLE_AUTO_RECYCLE}$"))
+    # الجدولة
+    app.add_handler(CallbackQueryHandler(schedule_menu_callback, pattern=f"^{CallbackData.SCHEDULE_MENU_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(set_interval_minutes_callback, pattern=f"^{CallbackData.SCHEDULE_SET_INTERVAL_MINUTES_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(set_interval_hours_callback, pattern=f"^{CallbackData.SCHEDULE_SET_INTERVAL_HOURS_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(set_interval_days_callback, pattern=f"^{CallbackData.SCHEDULE_SET_INTERVAL_DAYS_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(set_cron_callback, pattern="^schedule:set_cron:"))
+    app.add_handler(CallbackQueryHandler(set_days_callback, pattern=f"^{CallbackData.SCHEDULE_SET_DAYS_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(set_dates_callback, pattern=f"^{CallbackData.SCHEDULE_SET_DATES_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(set_publish_time_callback, pattern=f"^{CallbackData.SCHEDULE_SET_PUBLISH_TIME_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(day_select_callback, pattern=f"^{CallbackData.SCHEDULE_DAY_SELECT_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(save_days_callback, pattern=f"^{CallbackData.SCHEDULE_SAVE_DAYS}$"))
+    # الأمان
+    app.add_handler(CallbackQueryHandler(security_enable_all_callback, pattern=f"^{CallbackData.SECURITY_ENABLE_ALL_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(security_disable_all_callback, pattern=f"^{CallbackData.SECURITY_DISABLE_ALL_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(security_delete_penalty_callback, pattern=f"^{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(set_delete_penalty_callback, pattern="^set_delete_penalty:"))
+    app.add_handler(CallbackQueryHandler(confirm_enable_all_callback, pattern="^confirm_enable_all:"))
+    app.add_handler(CallbackQueryHandler(security_banned_words_menu_callback, pattern=f"^{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(universal_security_toggle, pattern="^security:"))
+    app.add_handler(CallbackQueryHandler(security_close_callback, pattern=f"^{CallbackData.SECURITY_CLOSE}$"))
+    app.add_handler(CallbackQueryHandler(security_select_group_callback, pattern=f"^{CallbackData.SECURITY_SELECT_GROUP}"))
+    app.add_handler(CallbackQueryHandler(security_refresh_groups_callback, pattern=f"^{CallbackData.SECURITY_REFRESH_GROUPS}$"))
+    # الكلمات المحظورة
+    app.add_handler(CallbackQueryHandler(banned_words_add_callback, pattern=f"^{CallbackData.BANNED_WORDS_ADD_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(banned_words_list_callback, pattern=f"^{CallbackData.BANNED_WORDS_LIST_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(banned_words_remove_callback, pattern=f"^{CallbackData.BANNED_WORDS_REMOVE_PREFIX}"))
+    # العقوبات
+    app.add_handler(CallbackQueryHandler(penalty_menu_callback, pattern=f"^{CallbackData.PENALTY_MENU}:"))
+    app.add_handler(CallbackQueryHandler(penalty_kick_callback, pattern=f"^{CallbackData.PENALTY_KICK}:"))
+    app.add_handler(CallbackQueryHandler(penalty_ban_callback, pattern=f"^{CallbackData.PENALTY_BAN}:"))
+    app.add_handler(CallbackQueryHandler(penalty_mute_callback, pattern=f"^{CallbackData.PENALTY_MUTE}:"))
+    for d in ["5", "30", "60", "720", "1440", "10080", "permanent"]:
+        app.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_{d}$"))
+    # الدعم والاشتراكات
+    app.add_handler(CallbackQueryHandler(help_callback, pattern=f"^{CallbackData.HELP}$"))
+    app.add_handler(CallbackQueryHandler(support_menu_callback, pattern=f"^{CallbackData.SUPPORT_MENU}$"))
+    app.add_handler(CallbackQueryHandler(support_help_callback, pattern=f"^{CallbackData.SUPPORT_HELP}$"))
+    app.add_handler(CallbackQueryHandler(support_ticket_callback, pattern=f"^{CallbackData.SUPPORT_TICKET}$"))
+    app.add_handler(CallbackQueryHandler(support_back_callback, pattern=f"^{CallbackData.SUPPORT_BACK}$"))
+    app.add_handler(CallbackQueryHandler(trial_callback, pattern=f"^{CallbackData.TRIAL}$"))
+    app.add_handler(CallbackQueryHandler(subscribe_menu_callback, pattern=f"^{CallbackData.SUBSCRIBE_MENU}$"))
+    for c in ["1", "2", "30", "90"]:
+        app.add_handler(CallbackQueryHandler(
+            buy_subscription_1_callback if c == "1" else
+            buy_subscription_2_callback if c == "2" else
+            buy_subscription_30_callback if c == "30" else
+            buy_subscription_90_callback,
+            pattern=f"^{getattr(CallbackData, f'BUY_SUBSCRIPTION_{c}')}$"
+        ))
+    app.add_handler(CallbackQueryHandler(developer_callback, pattern=f"^{CallbackData.DEVELOPER}$"))
+    app.add_handler(CallbackQueryHandler(updates_callback, pattern=f"^{CallbackData.UPDATES}$"))
+    # الإحالات
+    app.add_handler(CallbackQueryHandler(referral_menu_callback, pattern=f"^{CallbackData.REFERRAL_MENU}$"))
+    app.add_handler(CallbackQueryHandler(referral_copy_link_callback, pattern=f"^{CallbackData.REFERRAL_COPY_LINK_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(referral_claim_reward_callback, pattern=f"^{CallbackData.REFERRAL_CLAIM_REWARD}$"))
+    app.add_handler(CallbackQueryHandler(referral_list_callback, pattern=f"^{CallbackData.REFERRAL_LIST}$"))
+    # التذكيرات
+    app.add_handler(CallbackQueryHandler(reminder_menu_callback, pattern=f"^{CallbackData.REMINDER_MENU}$"))
+    app.add_handler(CallbackQueryHandler(reminder_toggle_sub_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_SUB}$"))
+    app.add_handler(CallbackQueryHandler(reminder_toggle_daily_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_DAILY}$"))
+    app.add_handler(CallbackQueryHandler(reminder_toggle_weekly_callback, pattern=f"^{CallbackData.REMINDER_TOGGLE_WEEKLY}$"))
+    app.add_handler(CallbackQueryHandler(reminder_set_days_callback, pattern=f"^{CallbackData.REMINDER_SET_DAYS}$"))
+    app.add_handler(CallbackQueryHandler(reminder_set_lang_callback, pattern=f"^{CallbackData.REMINDER_SET_LANG}$"))
+    app.add_handler(CallbackQueryHandler(reminder_lang_callback, pattern=f"^{CallbackData.REMINDER_LANG_PREFIX}"))
+    # الترجمة
+    app.add_handler(CallbackQueryHandler(translation_menu_callback, pattern=f"^{CallbackData.TRANSLATION_MENU}$"))
+    app.add_handler(CallbackQueryHandler(translation_off_callback, pattern=f"^{CallbackData.TRANSLATION_OFF}$"))
+    app.add_handler(CallbackQueryHandler(translation_set_callback, pattern=f"^{CallbackData.TRANSLATION_SET_PREFIX}"))
     # لوحة الأدمن
-    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=f"^{CallbackData.ADMIN_PANEL}$"))
-    application.add_handler(CallbackQueryHandler(admin_users_callback, pattern=f"^{CallbackData.ADMIN_USERS}$"))
-    application.add_handler(CallbackQueryHandler(admin_banned_users_callback, pattern=f"^{CallbackData.ADMIN_BANNED_USERS}$"))
-    application.add_handler(CallbackQueryHandler(admin_unban_all_users_callback, pattern=f"^{CallbackData.ADMIN_UNBAN_ALL_USERS}$"))
-    application.add_handler(CallbackQueryHandler(admin_all_channels_callback, pattern=f"^{CallbackData.ADMIN_ALL_CHANNELS}$"))
-    application.add_handler(CallbackQueryHandler(admin_banned_channels_callback, pattern=f"^{CallbackData.ADMIN_BANNED_CHANNELS}$"))
-    application.add_handler(CallbackQueryHandler(admin_activate_all_channels_callback, pattern=f"^{CallbackData.ADMIN_ACTIVATE_ALL_CHANNELS}$"))
-    application.add_handler(CallbackQueryHandler(admin_groups_callback, pattern=f"^{CallbackData.ADMIN_GROUPS}$"))
-    application.add_handler(CallbackQueryHandler(admin_banned_groups_callback, pattern=f"^{CallbackData.ADMIN_BANNED_GROUPS}$"))
-    application.add_handler(CallbackQueryHandler(admin_unban_all_groups_callback, pattern=f"^{CallbackData.ADMIN_UNBAN_ALL_GROUPS}$"))
-    application.add_handler(CallbackQueryHandler(admin_bot_channels_callback, pattern=f"^{CallbackData.ADMIN_BOT_CHANNELS}$"))
-    application.add_handler(CallbackQueryHandler(admin_banned_bot_channels_callback, pattern=f"^{CallbackData.ADMIN_BANNED_BOT_CHANNELS}$"))
-    application.add_handler(CallbackQueryHandler(admin_unban_all_bot_channels_callback, pattern=f"^{CallbackData.ADMIN_UNBAN_ALL_BOT_CHANNELS}$"))
-    application.add_handler(CallbackQueryHandler(admin_monitor_users_callback, pattern=f"^{CallbackData.ADMIN_MONITOR_USERS}$"))
-    application.add_handler(CallbackQueryHandler(admin_add_admin_callback, pattern=f"^{CallbackData.ADMIN_ADD_ADMIN}$"))
-    application.add_handler(CallbackQueryHandler(admin_remove_admin_callback, pattern=f"^{CallbackData.ADMIN_REMOVE_ADMIN}$"))
-    application.add_handler(CallbackQueryHandler(admin_ram_callback, pattern=f"^{CallbackData.ADMIN_RAM}$"))
-    application.add_handler(CallbackQueryHandler(admin_stats_callback, pattern=f"^{CallbackData.ADMIN_STATS}$"))
-    application.add_handler(CallbackQueryHandler(admin_metrics_callback, pattern=f"^{CallbackData.ADMIN_METRICS}$"))
-    application.add_handler(CallbackQueryHandler(admin_backup_callback, pattern=f"^{CallbackData.ADMIN_BACKUP}$"))
-    application.add_handler(CallbackQueryHandler(admin_restore_backup_callback, pattern=f"^{CallbackData.ADMIN_RESTORE_BACKUP}$"))
-    application.add_handler(CallbackQueryHandler(admin_restore_backup_select_callback, pattern=f"^{CallbackData.ADMIN_RESTORE_BACKUP_SELECT_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(admin_backup_settings_callback, pattern=f"^{CallbackData.ADMIN_BACKUP_SETTINGS}$"))
-    application.add_handler(CallbackQueryHandler(admin_toggle_auto_backup_callback, pattern=f"^{CallbackData.ADMIN_TOGGLE_AUTO_BACKUP}$"))
-    application.add_handler(CallbackQueryHandler(admin_change_interval_callback, pattern=f"^{CallbackData.ADMIN_CHANGE_INTERVAL}$"))
-    application.add_handler(CallbackQueryHandler(admin_send_update_callback, pattern=f"^{CallbackData.ADMIN_SEND_UPDATE}$"))
-    application.add_handler(CallbackQueryHandler(admin_set_update_channel_callback, pattern=f"^{CallbackData.ADMIN_SET_UPDATE_CHANNEL}$"))
-    application.add_handler(CallbackQueryHandler(admin_show_update_channel_callback, pattern=f"^{CallbackData.ADMIN_SHOW_UPDATE_CHANNEL}$"))
-    application.add_handler(CallbackQueryHandler(admin_updates_callback, pattern=f"^{CallbackData.ADMIN_UPDATES}$"))
-    application.add_handler(CallbackQueryHandler(admin_force_subscribe_callback, pattern=f"^{CallbackData.ADMIN_FORCE_SUBSCRIBE}$"))
-    application.add_handler(CallbackQueryHandler(admin_set_force_channel_callback, pattern=f"^{CallbackData.ADMIN_SET_FORCE_CHANNEL}$"))
-    application.add_handler(CallbackQueryHandler(admin_broadcast_callback, pattern=f"^{CallbackData.ADMIN_BROADCAST}$"))
-    application.add_handler(CallbackQueryHandler(admin_confirm_broadcast_callback, pattern=f"^{CallbackData.ADMIN_CONFIRM_BROADCAST}$"))
-    application.add_handler(CallbackQueryHandler(admin_support_tickets_callback, pattern=f"^{CallbackData.ADMIN_SUPPORT_TICKETS}$"))
-    application.add_handler(CallbackQueryHandler(admin_delete_all_tickets_callback, pattern=f"^{CallbackData.ADMIN_DELETE_ALL_TICKETS}$"))
-    application.add_handler(CallbackQueryHandler(admin_confirm_delete_tickets_callback, pattern=f"^{CallbackData.ADMIN_CONFIRM_DELETE_TICKETS}$"))
-    application.add_handler(CallbackQueryHandler(admin_manage_sendcode_callback, pattern=f"^{CallbackData.ADMIN_MANAGE_SENDCODE}$"))
-    application.add_handler(CallbackQueryHandler(admin_set_sendcode_user_callback, pattern=f"^{CallbackData.ADMIN_SET_SENDCODE_USER}$"))
-    application.add_handler(CallbackQueryHandler(admin_show_log_channel_callback, pattern=f"^{CallbackData.ADMIN_SHOW_LOG_CHANNEL}$"))
-    application.add_handler(CallbackQueryHandler(admin_set_log_channel_callback, pattern=f"^{CallbackData.ADMIN_SET_LOG_CHANNEL}$"))
-    application.add_handler(CallbackQueryHandler(admin_replies_callback, pattern=f"^{CallbackData.ADMIN_REPLIES}$"))
-    application.add_handler(CallbackQueryHandler(admin_add_reply_callback, pattern=f"^{CallbackData.ADMIN_ADD_REPLY}$"))
-    application.add_handler(CallbackQueryHandler(admin_list_replies_callback, pattern=f"^{CallbackData.ADMIN_LIST_REPLIES}$"))
-    application.add_handler(CallbackQueryHandler(admin_del_reply_callback, pattern=f"^{CallbackData.ADMIN_DEL_REPLY}$"))
-    application.add_handler(CallbackQueryHandler(admin_del_reply_callback, pattern="^admin_del_reply_"))
-    application.add_handler(CallbackQueryHandler(admin_banned_words_callback, pattern=f"^{CallbackData.ADMIN_BANNED_WORDS}$"))
-    application.add_handler(CallbackQueryHandler(admin_add_banned_word_callback, pattern=f"^{CallbackData.ADMIN_ADD_BANNED_WORD}$"))
-    application.add_handler(CallbackQueryHandler(admin_list_banned_words_callback, pattern=f"^{CallbackData.ADMIN_LIST_BANNED_WORDS}$"))
-    application.add_handler(CallbackQueryHandler(admin_remove_banned_word_callback, pattern=f"^{CallbackData.ADMIN_REMOVE_BANNED_WORD}$"))
-    application.add_handler(CallbackQueryHandler(admin_del_banned_word_callback, pattern="^admin_del_banned_word_"))
-    application.add_handler(CallbackQueryHandler(admin_delete_contest_callback, pattern=f"^{CallbackData.ADMIN_DEL_CONTEST_PREFIX}"))
-
-    # ردود تلقائية
-    application.add_handler(CallbackQueryHandler(auto_reply_toggle_callback, pattern=f"^{CallbackData.AUTO_REPLY_TOGGLE_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(auto_reply_admins_callback, pattern=f"^{CallbackData.AUTO_REPLY_ADMINS_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(auto_reply_reset_callback, pattern=f"^{CallbackData.AUTO_REPLY_RESET_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(auto_reply_confirm_reset_callback, pattern=f"^{CallbackData.AUTO_REPLY_CONFIRM_RESET_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(auto_reply_cancel_callback, pattern=f"^{CallbackData.AUTO_REPLY_CANCEL_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(auto_reply_stats_callback, pattern=f"^{CallbackData.AUTO_REPLY_STATS_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(user_auto_reply_toggle_callback, pattern=f"^{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(admin_auto_reply_callback, pattern=f"^{CallbackData.ADMIN_AUTO_REPLY}$"))
-    application.add_handler(CallbackQueryHandler(admin_auto_reply_select_callback, pattern=f"^{CallbackData.ADMIN_AUTO_REPLY_SELECT_PREFIX}"))
-
+    app.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=f"^{CallbackData.ADMIN_PANEL}$"))
+    for cb in ["USERS", "BANNED_USERS", "UNBAN_ALL_USERS", "ALL_CHANNELS", "BANNED_CHANNELS",
+               "ACTIVATE_ALL_CHANNELS", "GROUPS", "BANNED_GROUPS", "UNBAN_ALL_GROUPS",
+               "BOT_CHANNELS", "BANNED_BOT_CHANNELS", "UNBAN_ALL_BOT_CHANNELS", "MONITOR_USERS",
+               "ADD_ADMIN", "REMOVE_ADMIN", "RAM", "STATS", "METRICS", "BACKUP", "RESTORE_BACKUP",
+               "BACKUP_SETTINGS", "TOGGLE_AUTO_BACKUP", "CHANGE_INTERVAL", "SEND_UPDATE",
+               "SET_UPDATE_CHANNEL", "SHOW_UPDATE_CHANNEL", "UPDATES", "FORCE_SUBSCRIBE",
+               "SET_FORCE_CHANNEL", "BROADCAST", "CONFIRM_BROADCAST", "SUPPORT_TICKETS",
+               "DELETE_ALL_TICKETS", "CONFIRM_DELETE_TICKETS", "MANAGE_SENDCODE",
+               "SET_SENDCODE_USER", "SHOW_LOG_CHANNEL", "SET_LOG_CHANNEL", "REPLIES",
+               "ADD_REPLY", "LIST_REPLIES", "DEL_REPLY", "BANNED_WORDS", "ADD_BANNED_WORD",
+               "LIST_BANNED_WORDS", "REMOVE_BANNED_WORD"]:
+        app.add_handler(CallbackQueryHandler(
+            getattr(globals(), f"admin_{cb.lower()}_callback"),
+            pattern=f"^{getattr(CallbackData, f'ADMIN_{cb}')}$"
+        ))
+    app.add_handler(CallbackQueryHandler(admin_del_reply_callback, pattern="^admin_del_reply_"))
+    app.add_handler(CallbackQueryHandler(admin_del_banned_word_callback, pattern="^admin_del_banned_word_"))
+    # الردود التلقائية
+    for cb in ["TOGGLE", "ADMINS", "RESET", "CONFIRM_RESET", "CANCEL", "STATS"]:
+        app.add_handler(CallbackQueryHandler(
+            getattr(globals(), f"auto_reply_{cb.lower()}_callback"),
+            pattern=f"^{getattr(CallbackData, f'AUTO_REPLY_{cb}_PREFIX')}"
+        ))
+    app.add_handler(CallbackQueryHandler(user_auto_reply_toggle_callback, pattern=f"^{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(admin_auto_reply_callback, pattern=f"^{CallbackData.ADMIN_AUTO_REPLY}$"))
+    app.add_handler(CallbackQueryHandler(admin_auto_reply_select_callback, pattern=f"^{CallbackData.ADMIN_AUTO_REPLY_SELECT_PREFIX}"))
     # NSFW
-    application.add_handler(CallbackQueryHandler(nsfw_settings_callback, pattern=f"^{CallbackData.NSFW_SETTINGS}$"))
-    application.add_handler(CallbackQueryHandler(nsfw_toggle_callback, pattern=f"^{CallbackData.NSFW_TOGGLE}$"))
-    application.add_handler(CallbackQueryHandler(nsfw_threshold_callback, pattern=f"^{CallbackData.NSFW_THRESHOLD_SET}$"))
-
-    # مسابقات
-    application.add_handler(CallbackQueryHandler(contests_menu_callback, pattern=f"^{CallbackData.CONTESTS_MENU}$"))
-    application.add_handler(CallbackQueryHandler(contest_join_callback, pattern=f"^{CallbackData.CONTEST_JOIN_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(contest_winners_callback, pattern=f"^{CallbackData.CONTEST_WINNERS}$"))
-    application.add_handler(CallbackQueryHandler(contests_back_callback, pattern=f"^{CallbackData.CONTESTS_BACK}$"))
-    application.add_handler(CallbackQueryHandler(admin_create_contest_callback, pattern=f"^{CallbackData.ADMIN_CREATE_CONTEST}$"))
-    application.add_handler(CallbackQueryHandler(admin_declare_winner_callback, pattern=f"^{CallbackData.ADMIN_DECLARE_WINNER}$"))
-
+    app.add_handler(CallbackQueryHandler(nsfw_settings_callback, pattern=f"^{CallbackData.NSFW_SETTINGS}$"))
+    app.add_handler(CallbackQueryHandler(nsfw_toggle_callback, pattern=f"^{CallbackData.NSFW_TOGGLE}$"))
+    app.add_handler(CallbackQueryHandler(nsfw_threshold_callback, pattern=f"^{CallbackData.NSFW_THRESHOLD_SET}$"))
+    # المسابقات
+    app.add_handler(CallbackQueryHandler(contests_menu_callback, pattern=f"^{CallbackData.CONTESTS_MENU}$"))
+    app.add_handler(CallbackQueryHandler(contest_join_callback, pattern=f"^{CallbackData.CONTEST_JOIN_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(contest_winners_callback, pattern=f"^{CallbackData.CONTEST_WINNERS}$"))
+    app.add_handler(CallbackQueryHandler(contests_back_callback, pattern=f"^{CallbackData.CONTESTS_BACK}$"))
+    app.add_handler(CallbackQueryHandler(admin_create_contest_callback, pattern=f"^{CallbackData.ADMIN_CREATE_CONTEST}$"))
+    app.add_handler(CallbackQueryHandler(admin_declare_winner_callback, pattern=f"^{CallbackData.ADMIN_DECLARE_WINNER}$"))
+    app.add_handler(CallbackQueryHandler(admin_delete_contest_callback, pattern=f"^{CallbackData.ADMIN_DEL_CONTEST_PREFIX}"))
     # تبديل الحظر
-    application.add_handler(CallbackQueryHandler(admin_toggle_channel_ban_callback, pattern=f"^{CallbackData.ADMIN_TOGGLE_CHANNEL_BAN_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(admin_toggle_group_ban_callback, pattern=f"^{CallbackData.ADMIN_TOGGLE_GROUP_BAN_PREFIX}"))
-
+    app.add_handler(CallbackQueryHandler(admin_toggle_channel_ban_callback, pattern=f"^{CallbackData.ADMIN_TOGGLE_CHANNEL_BAN_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(admin_toggle_group_ban_callback, pattern=f"^{CallbackData.ADMIN_TOGGLE_GROUP_BAN_PREFIX}"))
     # إحصائيات القنوات
-    application.add_handler(CallbackQueryHandler(channel_stats_callback, pattern=f"^{CallbackData.CHANNEL_STATS}:"))
-    application.add_handler(CallbackQueryHandler(channel_growth_callback, pattern=f"^{CallbackData.CHANNEL_GROWTH}:"))
-    application.add_handler(CallbackQueryHandler(channel_stats_refresh_callback, pattern=f"^{CallbackData.CHANNEL_STATS_REFRESH}:"))
-    application.add_handler(CallbackQueryHandler(my_channel_stats_callback, pattern=f"^{CallbackData.MY_CHANNEL_STATS}$"))
-
+    app.add_handler(CallbackQueryHandler(channel_stats_callback, pattern=f"^{CallbackData.CHANNEL_STATS}:"))
+    app.add_handler(CallbackQueryHandler(channel_growth_callback, pattern=f"^{CallbackData.CHANNEL_GROWTH}:"))
+    app.add_handler(CallbackQueryHandler(channel_stats_refresh_callback, pattern=f"^{CallbackData.CHANNEL_STATS_REFRESH}:"))
+    app.add_handler(CallbackQueryHandler(my_channel_stats_callback, pattern=f"^{CallbackData.MY_CHANNEL_STATS}$"))
     # اشتراك إجباري
-    application.add_handler(CallbackQueryHandler(check_subscribe_callback_handler, pattern=f"^{CallbackData.CHECK_SUBSCRIBE}$"))
-
+    app.add_handler(CallbackQueryHandler(check_subscribe_callback_handler, pattern=f"^{CallbackData.CHECK_SUBSCRIBE}$"))
     # لوحة التحكم
-    application.add_handler(CallbackQueryHandler(panel_lock_callback_handler, pattern=f"^{CallbackData.PANEL_LOCK_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(panel_unlock_callback_handler, pattern=f"^{CallbackData.PANEL_UNLOCK_PREFIX}"))
-    application.add_handler(CallbackQueryHandler(panel_close_callback_handler, pattern=f"^{CallbackData.PANEL_CLOSE}$"))
-
+    app.add_handler(CallbackQueryHandler(panel_lock_callback_handler, pattern=f"^{CallbackData.PANEL_LOCK_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(panel_unlock_callback_handler, pattern=f"^{CallbackData.PANEL_UNLOCK_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(panel_close_callback_handler, pattern=f"^{CallbackData.PANEL_CLOSE}$"))
     # إجراءات متقدمة
-    application.add_handler(CallbackQueryHandler(advanced_actions_callback, pattern=f"^{CallbackData.ADVANCED_ACTIONS}:"))
-    application.add_handler(CallbackQueryHandler(group_action_ban_callback, pattern=f"^{CallbackData.GROUP_ACTION_BAN}:"))
-    application.add_handler(CallbackQueryHandler(group_action_mute_callback, pattern=f"^{CallbackData.GROUP_ACTION_MUTE}:"))
-    application.add_handler(CallbackQueryHandler(group_action_warn_callback, pattern=f"^{CallbackData.GROUP_ACTION_WARN}:"))
-    application.add_handler(CallbackQueryHandler(group_action_kick_callback, pattern=f"^{CallbackData.GROUP_ACTION_KICK}:"))
-    application.add_handler(CallbackQueryHandler(group_action_restrict_callback, pattern=f"^{CallbackData.GROUP_ACTION_RESTRICT}:"))
-    application.add_handler(CallbackQueryHandler(group_action_pin_callback, pattern=f"^{CallbackData.GROUP_ACTION_PIN}:"))
-    application.add_handler(CallbackQueryHandler(group_action_log_callback, pattern=f"^{CallbackData.GROUP_ACTION_LOG}:"))
-    application.add_handler(CallbackQueryHandler(group_action_unban_callback, pattern=f"^{CallbackData.GROUP_ACTION_UNBAN}:"))
-    application.add_handler(CallbackQueryHandler(publish_all_channels_callback_handler, pattern=f"^{CallbackData.PUBLISH_ALL_CHANNELS}$"))
-    application.add_handler(CallbackQueryHandler(delete_group_callback, pattern="^delete_group:"))
-
-    # معالجات الأحداث
-    application.add_handler(ChatJoinRequestHandler(chat_join_request_handler))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members_handler))
-    application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
-
-    # مدفوعات
-    application.add_handler(PreCheckoutQueryHandler(pre_checkout_callback_handler))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback_handler))
-
-    # تتبع المحادثات
-    application.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_bot_added))
-
-    # تصفية الرسائل
-    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
-    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER,
-            delete_service_messages
-        )
-    )
-
-    # تعيين الأوامر
-    commands = [
+    app.add_handler(CallbackQueryHandler(advanced_actions_callback, pattern=f"^{CallbackData.ADVANCED_ACTIONS}:"))
+    for act in ["BAN", "MUTE", "WARN", "KICK", "RESTRICT", "PIN", "LOG", "UNBAN"]:
+        app.add_handler(CallbackQueryHandler(
+            getattr(globals(), f"group_action_{act.lower()}_callback"),
+            pattern=f"^{getattr(CallbackData, f'GROUP_ACTION_{act}')}:"
+        ))
+    app.add_handler(CallbackQueryHandler(advanced_mute_duration_callback, pattern="^adv_mute_duration:"))
+    app.add_handler(CallbackQueryHandler(publish_all_channels_callback_handler, pattern=f"^{CallbackData.PUBLISH_ALL_CHANNELS}$"))
+    
+    # ===================== 8. الأحداث =====================
+    print("📌 [8/9] تسجيل الأحداث...")
+    app.add_handler(ChatJoinRequestHandler(chat_join_request_handler))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members_handler))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
+    app.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_bot_added))
+    
+    # ===================== 9. المدفوعات =====================
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback_handler))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback_handler))
+    
+    # ===================== 10. تصفية الرسائل =====================
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    app.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, message_handler_main))
+    app.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, message_handler_main))
+    app.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
+    app.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
+    app.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
+    app.add_handler(MessageHandler(
+        filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER,
+        delete_service_messages
+    ))
+    
+    # ===================== 11. قائمة الأوامر =====================
+    print("📌 [9/9] تعيين القائمة...")
+    await app.bot.set_my_commands([
         BotCommand("start", "بدء البوت"),
         BotCommand("trial", "تجربة مجانية"),
         BotCommand("subscribe", "الاشتراك"),
@@ -13821,194 +13785,115 @@ async def main():
         BotCommand("declare_winner", "إعلان فائز"),
         BotCommand("set_rules", "تعيين قوانين المجموعة"),
         BotCommand("rules", "عرض قوانين المجموعة"),
-    ]
-    print("6️⃣ قبل set_my_commands...")
-    await application.bot.set_my_commands(commands)
-    print("7️⃣ بعد set_my_commands...")
-    import psutil
-
-    async def memory_logger():
-        while True:
-          await asyncio.sleep(60)
-          mem = psutil.virtual_memory()
-          logger.info(f"🧠 الذاكرة: {mem.percent}% مستخدمة، {mem.available // (1024**2)} ميجابايت متاحة")
-
-    # ====== تشغيل المهام الخلفية ======
-    print("8️⃣ قبل تشغيل المهام الخلفية...")
-    task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "auto_publish"))
+    ])
+    
+    # ===================== 12. Webhook =====================
+    print("📌 إعداد Webhook...")
+    await app.bot.delete_webhook(drop_pending_updates=True)
+    
+    host = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
+    webhook_url = f"https://{host}/webhook"
+    await app.bot.set_webhook(url=webhook_url)
+    print(f"✅ Webhook: {webhook_url}")
+    
+    # ===================== 13. معالج Webhook =====================
+    async def webhook_handler(request):
+        try:
+            data = await request.json()
+            update = Update.de_json(data, app.bot)
+            await app.process_update(update)
+            return web.Response(status=200)
+        except Exception as e:
+            logger.error(f"خطأ Webhook: {e}")
+            return web.Response(status=500)
+    
+    # إضافة المسار
+    web_app.router.add_post('/webhook', webhook_handler)
+    
+    # ===================== 14. المهام الخلفية =====================
+    print("📌 تشغيل المهام...")
+    task_manager.create_task(safe_loop(memory_monitor, "memory_monitor"))
+    task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(app.bot), "auto_publish"))
     task_manager.create_task(safe_loop(auto_backup, "auto_backup"))
-    task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
-    task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(application.bot), "reminders"))
+    task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(app.bot), "scheduled_posts"))
+    task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(app.bot), "reminders"))
     task_manager.create_task(safe_loop(cleanup_expired_sessions_improved, "cleanup_sessions"))
-
-    # تشغيل خادم الويب (مرة واحدة فقط)
-    web_success = await start_web_server_once()
-    if web_success:
-        logger.info("✅ خادم الويب يعمل")
-        task_manager.create_task(safe_loop(self_http_ping_loop, "http_ping"))
-    else:
-        logger.warning("⚠️ خادم الويب لم يعمل، لكن البوت مستمر")
-
-    task_manager.create_task(safe_loop(self_ping_loop, "ping"))
     task_manager.create_task(safe_loop(broadcast_stats_periodically, "broadcast_stats"))
     task_manager.create_task(safe_loop(cleanup_points_cache, "cleanup_points"))
-    task_manager.create_task(safe_loop(memory_monitor, "memory_monitor"))
-    task_manager.create_task(safe_loop(lambda: auto_close_contests_loop(application.bot), "auto_close_contests"))
-    task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "refresh_admins"))
-    print("9️⃣ بعد تشغيل المهام الخلفية...")
-
-    print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.19 - النسخة العالمية مع إصلاحات الأمان)")
-    print("✅ جميع التحسينات العالمية تم تطبيقها:")
-    print("   • ✅ نظام صلاحيات محسن: مالك مخفي > مشرف مخفي > مشرف حقيقي")
-    print("   • ✅ معالج /syncgroup يعمل للمشرفين والأعضاء العاديين بشكل مختلف")
-    print("   • ✅ تسجيل تلقائي للمجموعة والمالك عند إضافة البوت")
-    print("   • ✅ إشعار المشرفين عند طلب التفعيل من عضو عادي")
-    print("   • ✅ حلقة تحديث المشرفين والمالكين المخفيين التلقائية (كل ساعة)")
-    print("   • ✅ التحقق المباشر من تيليجرام عند الحاجة مع تحديث قاعدة البيانات")
-    print("   • ✅ كاش ذكي للصلاحيات لتسريع الأداء")
-    print("   • ✅ 200 رد تلقائي للمجموعات مع أوزان")
-    print("   • ✅ نظام ردود متقدم مع إعدادات لكل مجموعة")
-    print("   • ✅ دعم المالك والمشرفين المخفيين المتعددين")
-    print("   • ✅ نظام المسابقات المتكامل")
-    print("   • ✅ دعم أوامر /set_rules و /rules لقوانين المجموعة")
-    print("   • ✅ دعم حذف رسائل الخدمة التلقائي")
-    print("   • ✅ دعم الترحيب والوداع في المجموعات")
-    print("   • ✅ إصلاح ثغرة صلاحيات المشرفين (التحقق المزدوج)")
-    print("   • ✅ إصلاح تسجيل المالك المخفي (إعادة المحاولة وإشعار جميع المشرفين)")
-    print("   • ✅ معالجة خطأ User_bot_to_bot_disabled")
-    print("   • ✅ تحسين أمان أمر /sendcode (إزالة التوكن والمفاتيح)")
-
-    print("🔟 قبل try...")
+    task_manager.create_task(safe_loop(lambda: auto_close_contests_loop(app.bot), "auto_close_contests"))
+    task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(app.bot), "refresh_admins"))
+    task_manager.create_task(safe_loop(self_ping_loop, "ping"))
+    
+    # ===================== 15. خادم الويب =====================
+    port = int(os.getenv("PORT", WEB_PORT))
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, WEB_HOST, port)
+    await site.start()
+    print(f"✅ خادم الويب: http://{WEB_HOST}:{port}")
+    
+    # ===================== 16. تشغيل البوت =====================
+    print("=" * 60)
+    print(f"🚀 البوت يعمل عبر Webhook")
+    print(f"🔗 {webhook_url}")
+    print("✅ تم حل مشكلة 409 نهائياً")
+    print("=" * 60)
+    
     try:
-        print("🔄 بدء تشغيل polling...")
-        await run_polling_safe(application)
+        await app.run_webhook(
+            listen=WEB_HOST,
+            port=port,
+            url_path="/webhook",
+            webhook_url=webhook_url,
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
+        )
     except KeyboardInterrupt:
-        logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
-    except Exception as e:
-        logger.error(f"❌ خطأ في polling: {e}")
+        print("🛑 تم الإيقاف")
     finally:
-        await cleanup_resources()
+        await app.bot.delete_webhook()
+        await db_pool.close()
         await task_manager.cancel_all()
+        print("🧹 تنظيف الموارد")
 
 
-async def run_polling_safe(application):
-    """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
+# ====================================================================================
+#                      دالة الحلقات الآمنة
+# ====================================================================================
+
+async def safe_loop(coro_func, name="background"):
+    """تشغيل حلقة مع إعادة تشغيل تلقائي"""
     while True:
         try:
-            await application.run_polling(
-                drop_pending_updates=True,
-                poll_interval=POLL_INTERVAL
-            )
+            if asyncio.iscoroutinefunction(coro_func):
+                await coro_func()
+            else:
+                await coro_func()
         except asyncio.CancelledError:
-            logger.info("🛑 تم إلغاء polling")
-            break
-        except RuntimeError as e:
-            if "Cannot close a running event loop" in str(e):
-                logger.warning("⚠️ تم محاولة إغلاق حلقة الأحداث أثناء التشغيل، سيتم إعادة التشغيل...")
-                await asyncio.sleep(10)
-                continue
-            logger.error(f"❌ خطأ في Runtime: {e}")
+            print(f"🛑 إلغاء: {name}")
             break
         except Exception as e:
-            logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
+            print(f"❌ خطأ في {name}: {e}")
             await asyncio.sleep(10)
 
 
-async def cleanup_resources():
-    """تنظيف الموارد قبل الإغلاق"""
-    try:
-        await db_pool.close()
-        logger.info("✅ تم إغلاق اتصال قاعدة البيانات")
-    except:
-        pass
-    try:
-        if lock_socket:
-            lock_socket.close()
-    except:
-        pass
-
-
-async def start_web_server_once():
-    """تشغيل خادم الويب مرة واحدة فقط على المنفذ الصحيح"""
-    try:
-        port = int(os.getenv("PORT", WEB_PORT))
-        runner = web.AppRunner(web_app)
-        await runner.setup()
-        site = web.TCPSite(runner, WEB_HOST, port)
-        await site.start()
-        logger.info(f"✅ خادم الويب يعمل على http://{WEB_HOST}:{port}")
-        global WEB_PORT_USED
-        WEB_PORT_USED = port
-        return True
-    except OSError as e:
-        if "address already in use" in str(e):
-            logger.warning(f"⚠️ المنفذ {port} مشغول - قد يكون البوت يعمل بالفعل")
-        else:
-            logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
-        return False
-
-
-async def self_http_ping_loop():
-    """إرسال ping داخلي للحفاظ على نشاط Render (فقط إذا كان الخادم يعمل)"""
-    port = int(os.getenv("PORT", 10000))
-    url = f"http://localhost:{port}/health"
-    # تحقق أولي
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=5) as resp:
-                if resp.status != 200:
-                    logger.warning("⚠️ خادم الويب لا يستجيب، إلغاء ping")
-                    return
-    except:
-        logger.warning("⚠️ خادم الويب غير متاح، إلغاء ping")
-        return
-
-    while True:
-        await asyncio.sleep(120)
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=5) as resp:
-                    if resp.status == 200:
-                        logger.debug("✅ ping داخلي ناجح")
-        except Exception:
-            pass  # طبيعي
-
-
-async def self_ping_loop():
-    """الحفاظ على تشغيل البوت عن طريق ping الذاتي"""
-    while True:
-        await asyncio.sleep(300)  # كل 5 دقائق
-        try:
-            await ensure_db_connection()
-        except Exception as e:
-            logger.error(f"خطأ في ping الذاتي: {e}")
-
+# ====================================================================================
+#                      نقطة الدخول
+# ====================================================================================
 
 if __name__ == "__main__":
     try:
-        print("🚀 بدء تشغيل البوت (الإصدار 20.0.19)...")
+        print("🚀 بدء البوت...")
         if not TOKEN:
-            raise ValueError("❌ BOT_TOKEN غير معرف في متغيرات البيئة")
+            raise ValueError("BOT_TOKEN غير موجود")
         if not PRIMARY_OWNER_ID:
-            raise ValueError("❌ MAIN_ADMIN_ID غير معرف في متغيرات البيئة")
-        print("✅ جميع المتغيرات الأساسية موجودة")
+            raise ValueError("MAIN_ADMIN_ID غير موجود")
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n🛑 تم إيقاف البوت بواسطة المستخدم (Ctrl+C)")
+        print("\n🛑 تم الإيقاف")
         sys.exit(0)
-    except ValueError as e:
-        print(f"❌ خطأ في التهيئة: {e}")
-        print("📌 تأكد من تعيين المتغيرات التالية في بيئة Render:")
-        print("   • BOT_TOKEN")
-        print("   • MAIN_ADMIN_ID")
-        print("   • (اختياري) DB_ENCRYPTION_PASSWORD")
-        sys.exit(1)
     except Exception as e:
-        print(f"❌ خطأ غير متوقع: {type(e).__name__}: {e}")
-        print("📌 تفاصيل الخطأ الكاملة:")
-        import traceback
+        print(f"❌ خطأ: {e}")
         traceback.print_exc()
         sys.exit(1)
+
