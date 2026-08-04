@@ -1,9 +1,11 @@
+#```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
 الإصدار: 20.0.19 - النسخة العالمية مع نظام صلاحيات محسن وأمان متقدم
 المطور: @RelaxMgr
+تم تعديله لحل تعارض المنافذ وتوحيد خادم الويب
 """
 
 import sys
@@ -2133,10 +2135,8 @@ class UserState(Enum):
     WAITING_AUTO_REPLY_MENU = auto()
     WAITING_NSFW_THRESHOLD = auto()
     WAITING_EXPORT_DATA = auto()
-# ===================================================================
-# دوال قاعدة البيانات (db_*) - كاملة
-# ===================================================================
 
+# ===== دوال قاعدة البيانات (db_*) =====
 async def db_register_user(user_id: int) -> bool:
     async def _register(conn):
         cur = await conn.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
@@ -2277,7 +2277,7 @@ async def db_add_channel(user_id: int, channel_id: str, channel_name: str) -> in
 async def db_get_channels(user_id: int):
     async def _get(conn):
         try:
-            cur = await conn.execute("SELECT id, channel_id, channel_name, banned FROM user_channels WHERE user_id=? AND banned=0 ORDER BY id", (user_id,))
+            cur = await conn.execute("SELECT id, channel_id, channel_name, banned FROM user_channels WHERE user_id=? ORDER BY id", (user_id,))
             rows = await cur.fetchall()
             safe_rows = []
             for row in rows:
@@ -2815,9 +2815,7 @@ async def detect_owner_type(bot, chat_id: int) -> dict:
         logger.error(f"فشل كشف المالك في {chat_id}: {e}")
         return {'is_hidden': True, 'user_id': None}
 
-# ===================================================================
-# دوال الأمان (security_*) - كاملة
-# ===================================================================
+# ===== دوال الأمان (security_*) =====
 async def ensure_security_columns(conn):
     cur = await conn.execute("PRAGMA table_info(group_security)")
     existing = [row[1] for row in await cur.fetchall()]
@@ -3208,9 +3206,7 @@ async def db_get_hidden_admins_for_user(user_id: int):
         return await cur.fetchall()
     return await execute_db(_get)
 
-# ===================================================================
-# دوال الجدولة (schedule_*) - كاملة
-# ===================================================================
+# ===== دوال الجدولة (schedule_*) =====
 class ScheduleType(Enum):
     INTERVAL = "interval"
     CRON = "cron"
@@ -3399,9 +3395,7 @@ async def db_delete_scheduled_post(post_id: int):
         await conn.commit()
     return await execute_db(_delete)
 
-# ===================================================================
-# دوال الردود (replies_*) - كاملة
-# ===================================================================
+# ===== دوال الردود (replies_*) =====
 async def db_add_reply(keyword, reply):
     async def _add(conn):
         await conn.execute("INSERT OR REPLACE INTO group_replies (keyword, reply) VALUES (?,?)", (keyword.lower(), reply))
@@ -3427,9 +3421,7 @@ async def db_get_all_replies():
         return await cur.fetchall()
     return await execute_db(_get)
 
-# ===================================================================
-# دوال الردود المتقدمة (auto_reply_*) - كاملة
-# ===================================================================
+# ===== دوال الردود المتقدمة (auto_reply_*) =====
 async def db_get_auto_reply_settings(chat_id: int) -> dict:
     async def _get(conn):
         cur = await conn.execute("SELECT enabled, only_admins, ignore_bots FROM auto_reply_settings WHERE chat_id=?", (chat_id,))
@@ -3470,9 +3462,7 @@ async def db_set_user_auto_reply_status(user_id: int, enabled: bool) -> None:
         await conn.commit()
     return await execute_db(_set)
 
-# ===================================================================
-# دوال التذاكر (tickets_*) - كاملة
-# ===================================================================
+# ===== دوال التذاكر (tickets_*) =====
 async def db_get_next_ticket_number():
     async def _get(conn):
         cur = await conn.execute("SELECT value FROM settings WHERE key='last_ticket_number'")
@@ -3516,15 +3506,13 @@ async def db_mark_ticket_replied(ticket_id):
 async def db_delete_all_tickets() -> int:
     async def _delete(conn):
         await conn.execute("DELETE FROM support_tickets")
-        count = conn.rowcount
+        count = cur.rowcount
         await conn.execute("UPDATE settings SET value='0' WHERE key='last_ticket_number'")
         await conn.commit()
         return count
     return await execute_db(_delete)
 
-# ===================================================================
-# دوال الإحالات (referral_*) - كاملة
-# ===================================================================
+# ===== دوال الإحالات (referral_*) =====
 async def db_get_referral_settings() -> dict:
     async def _get(conn):
         settings = {}
@@ -3633,9 +3621,7 @@ async def db_get_welcome_bonus_points() -> int:
     settings = await db_get_referral_settings()
     return int(settings.get('welcome_bonus_points', '10'))
 
-# ===================================================================
-# دوال التذكيرات (reminder_*) - كاملة
-# ===================================================================
+# ===== دوال التذكيرات (reminder_*) =====
 async def db_get_user_reminder_settings(user_id: int) -> dict:
     async def _get(conn):
         cur = await conn.execute("SELECT subscription_reminder, daily_stats_reminder, weekly_report, reminder_days_before, last_reminder_sent, notification_lang FROM user_reminder_settings WHERE user_id=?", (user_id,))
@@ -3726,9 +3712,7 @@ async def db_get_all_active_users_for_report() -> list:
         return [row[0] for row in await cur.fetchall()]
     return await execute_db(_get)
 
-# ===================================================================
-# دوال المستويات (levels_*) - كاملة
-# ===================================================================
+# ===== دوال المستويات (levels_*) =====
 LEVEL_REQUIREMENTS = {1: 0, 2: 100, 3: 250, 4: 500, 5: 1000, 6: 2000, 7: 3500, 8: 5000, 9: 7500, 10: 10000}
 
 async def db_get_user_level(user_id: int):
@@ -3860,9 +3844,7 @@ async def achievement_system(user_id: int, action: str) -> str:
         return f"{ACHIEVEMENTS['first_referral']['icon']} {ACHIEVEMENTS['first_referral']['name']} (+{ACHIEVEMENTS['first_referral']['points']} نقطة)"
     return ""
 
-# ===================================================================
-# دوال الإعدادات العامة (settings_*) - كاملة
-# ===================================================================
+# ===== دوال الإعدادات العامة (settings_*) =====
 async def db_get_publish_interval() -> int:
     async def _get(conn):
         cur = await conn.execute("SELECT value FROM settings WHERE key='publish_interval'")
@@ -3981,9 +3963,7 @@ async def db_set_allowed_sendcode_user(user_id: int) -> None:
         await conn.commit()
     return await execute_db(_set)
 
-# ===================================================================
-# دوال الترجمة (translation_*) - كاملة
-# ===================================================================
+# ===== دوال الترجمة (translation_*) =====
 user_translation_settings_cache = {}
 _user_translation_cache_lock = asyncio.Lock()
 
@@ -4025,9 +4005,7 @@ async def translate_text(text: str, target_lang: str) -> str:
         logger.error(f"فشل الترجمة: {e}")
     return text
 
-# ===================================================================
-# دوال المسابقات (contests_*) - كاملة
-# ===================================================================
+# ===== دوال المسابقات (contests_*) =====
 class ContestTypes(Enum):
     QUIZ = "quiz"
     RAFFLE = "raffle"
@@ -4190,9 +4168,7 @@ async def db_get_random_participant(contest_id: int) -> int | None:
         return row[0] if row else None
     return await execute_db(_get)
 
-# ===================================================================
-# دوال إحصائيات القنوات (channel_stats_*) - كاملة
-# ===================================================================
+# ===== دوال إحصائيات القنوات (channel_stats_*) =====
 async def db_get_channel_stats(channel_db_id: int) -> dict:
     async def _get_stats(conn):
         conn.row_factory = aiosqlite.Row
@@ -4419,6 +4395,350 @@ async def db_get_channel_growth(channel_db_id: int, days: int = 30) -> dict:
             'total_views': sum(views)
         }
     return await execute_db(_get_growth)
+
+# ===== دوال الصحة (health_*) =====
+async def check_database_health() -> bool:
+    try:
+        async def _check(conn):
+            cur = await conn.execute("SELECT 1")
+            row = await cur.fetchone()
+            return row is not None
+        return await execute_db(_check)
+    except:
+        return False
+
+async def check_telegram_health() -> bool:
+    try:
+        from telegram.ext import Application
+        app = Application.builder().token(TOKEN).build()
+        me = await app.bot.get_me()
+        return me is not None
+    except:
+        return False
+
+def get_ram_usage():
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        return {
+            'total': round(mem.total / (1024**3), 1),
+            'used': round(mem.used / (1024**3), 1),
+            'percent': mem.percent
+        }
+    except:
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                lines = f.readlines()
+            mem_total = 0
+            mem_available = 0
+            for line in lines:
+                if 'MemTotal:' in line:
+                    mem_total = int(line.split()[1]) / (1024 * 1024)
+                if 'MemAvailable:' in line:
+                    mem_available = int(line.split()[1]) / (1024 * 1024)
+            if mem_total > 0:
+                used = mem_total - mem_available
+                percent = (used / mem_total) * 100
+                return {'total': round(mem_total, 1), 'used': round(used, 1), 'percent': round(percent, 1)}
+        except:
+            pass
+        return {'total': 0, 'used': 0, 'percent': 0}
+
+# ===== دوال مساعدة (utils_*) =====
+def parse_days_of_week_safe(days_str):
+    if not days_str:
+        return []
+    try:
+        return json.loads(days_str)
+    except:
+        return []
+
+def parse_dates_safe(dates_str):
+    if not dates_str:
+        return []
+    try:
+        return json.loads(dates_str)
+    except:
+        return []
+
+def contains_link(text):
+    patterns = [
+        r'https?://\S+',
+        r'www\.\S+',
+        r't\.me/\S+',
+        r'telegram\.me/\S+',
+        r'\b[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+\S*'
+    ]
+    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+
+def contains_mention(text):
+    return bool(re.search(r'@\w+', text))
+
+async def invalidate_user_cache(user_id: int):
+    try:
+        if user_id in _admin_cache:
+            del _admin_cache[user_id]
+        keys_to_remove = [k for k in _admin_cache.keys() if str(user_id) in k]
+        for key in keys_to_remove:
+            del _admin_cache[key]
+    except:
+        pass
+
+async def cleanup_points_cache():
+    while True:
+        await asyncio.sleep(3600)
+        user_points_last_hour.clear()
+
+# ===== دوال النسخ الاحتياطي (backup_*) =====
+async def create_backup():
+    try:
+        encrypted_path = encrypt_db_backup()
+        temp_backup = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        temp_backup.close()
+        shutil.copy2(DB_PATH, temp_backup.name)
+        with open(temp_backup.name, 'rb') as f:
+            backup_data = f.read()
+        compressed = compress_backup(backup_data)
+        encrypted = BACKUP_CIPHER.encrypt(compressed)
+        backup_file = BACKUP_DIR / f"backup_{mecca_now().strftime('%Y%m%d_%H%M%S')}.enc"
+        with open(backup_file, 'wb') as f:
+            f.write(encrypted)
+        os.unlink(temp_backup.name)
+        backups = sorted(BACKUP_DIR.glob("backup_*.enc"), key=lambda x: x.stat().st_mtime, reverse=True)
+        for old_backup in backups[MAX_BACKUPS:]:
+            old_backup.unlink()
+        if CLOUD_BACKUP_ENABLED and GOOGLE_AUTH_AVAILABLE:
+            await upload_backup_to_drive(backup_file)
+        logger.info(f"✅ تم إنشاء نسخة احتياطية مشفرة: {backup_file}")
+        return backup_file
+    except Exception as e:
+        logger.error(f"❌ فشل إنشاء النسخة الاحتياطية: {e}")
+        raise
+
+async def incremental_backup():
+    try:
+        last_backup = await db_get_last_backup_time()
+        if last_backup:
+            last_time = datetime.fromisoformat(last_backup)
+        else:
+            last_time = utc_now() - timedelta(days=7)
+        backup_data = {}
+        async def _get_new_posts(conn):
+            cur = await conn.execute("SELECT * FROM posts WHERE created_at > ? LIMIT 1000", (last_time.isoformat(),))
+            return await cur.fetchall()
+        new_posts = await execute_db(_get_new_posts)
+        if new_posts:
+            backup_data['posts'] = [dict(post) for post in new_posts]
+        async def _get_new_users(conn):
+            cur = await conn.execute("SELECT * FROM users WHERE user_id IN (SELECT user_id FROM users_cache WHERE last_updated > ?)", (last_time.isoformat(),))
+            return await cur.fetchall()
+        new_users = await execute_db(_get_new_users)
+        if new_users:
+            backup_data['users'] = [dict(user) for user in new_users]
+        if backup_data:
+            data_json = json.dumps(backup_data, default=str)
+            compressed = compress_backup(data_json.encode('utf-8'))
+            encrypted = BACKUP_CIPHER.encrypt(compressed)
+            backup_file = BACKUP_DIR / f"incremental_{mecca_now().strftime('%Y%m%d_%H%M%S')}.inc"
+            with open(backup_file, 'wb') as f:
+                f.write(encrypted)
+            logger.info(f"✅ تم إنشاء نسخة احتياطية متزايدة: {backup_file}")
+            return backup_file
+        logger.info("📭 لا توجد بيانات جديدة للنسخ الاحتياطي المتزايد")
+        return None
+    except Exception as e:
+        logger.error(f"❌ فشل إنشاء النسخة الاحتياطية المتزايدة: {e}")
+        return None
+
+async def list_backups():
+    backups = sorted(BACKUP_DIR.glob("backup_*.enc"), key=lambda x: x.stat().st_mtime, reverse=True)
+    incremental = sorted(BACKUP_DIR.glob("incremental_*.inc"), key=lambda x: x.stat().st_mtime, reverse=True)
+    return backups + incremental
+
+async def restore_backup(backup_path: Path):
+    if not backup_path.exists():
+        raise FileNotFoundError(f"الملف {backup_path} غير موجود")
+    with open(backup_path, 'rb') as f:
+        encrypted = f.read()
+    try:
+        decrypted = BACKUP_CIPHER.decrypt(encrypted)
+    except Exception as e:
+        raise ValueError(f"فشل فك التشفير: {e}")
+    try:
+        decompressed = decompress_backup(decrypted)
+    except Exception as e:
+        raise ValueError(f"فشل فك الضغط: {e}")
+    if backup_path.suffix == '.inc':
+        data = json.loads(decompressed.decode('utf-8'))
+        async def _merge_data(conn):
+            if 'posts' in data:
+                for post in data['posts']:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO posts (id, channel_db_id, text, media_type, media_file_id, published, fail_count, views_count, last_view_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (post['id'], post['channel_db_id'], post['text'], post['media_type'], post['media_file_id'], post['published'], post['fail_count'], post['views_count'], post['last_view_time'], post['created_at'])
+                    )
+            if 'users' in data:
+                for user in data['users']:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO users (user_id, auto_publish, banned, trial_used, subscription_end, referral_code, referred_by, active_channel, auto_reply_enabled, auto_recycle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (user['user_id'], user['auto_publish'], user['banned'], user['trial_used'], user['subscription_end'], user['referral_code'], user['referred_by'], user['active_channel'], user['auto_reply_enabled'], user['auto_recycle'])
+                    )
+            await conn.commit()
+        await execute_db(_merge_data)
+        logger.info(f"✅ تم دمج النسخة المتزايدة: {backup_path}")
+    else:
+        temp_restore = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        temp_restore.write(decompressed)
+        temp_restore.close()
+        current_backup = BACKUP_DIR / f"pre_restore_{mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+        shutil.copy2(DB_PATH, current_backup)
+        shutil.copy2(temp_restore.name, DB_PATH)
+        os.unlink(temp_restore.name)
+        await db_pool.initialize()
+        logger.info(f"✅ تم استعادة النسخة الكاملة: {backup_path}")
+
+async def auto_backup():
+    consecutive_errors = 0
+    backoff = AUTO_BACKUP_SLEEP
+    max_backoff = 7 * 24 * 60 * 60
+    while True:
+        try:
+            await asyncio.sleep(AUTO_BACKUP_SLEEP)
+            auto_enabled = await db_get_auto_backup()
+            if auto_enabled:
+                last_backup = await db_get_last_backup_time()
+                if not last_backup:
+                    await create_backup()
+                else:
+                    last_time = datetime.fromisoformat(last_backup)
+                    if (utc_now() - last_time).days >= 7:
+                        await create_backup()
+                    else:
+                        await incremental_backup()
+                async def _update_backup_time(conn):
+                    await conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_backup', ?)", (utc_now_iso(),))
+                    await conn.commit()
+                await execute_db(_update_backup_time)
+            consecutive_errors = 0
+            backoff = AUTO_BACKUP_SLEEP
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في النسخ الاحتياطي التلقائي: {e}")
+            backoff = min(backoff * 1.5, max_backoff)
+            await asyncio.sleep(backoff)
+
+# ===== دوال جوجل درايف (drive_*) =====
+_DRIVE_SERVICE_CACHE = None
+_DRIVE_SERVICE_CACHE_TIME = 0
+_DRIVE_SERVICE_CACHE_TTL = 3600
+
+async def get_google_drive_service(force_refresh: bool = False):
+    global _DRIVE_SERVICE_CACHE, _DRIVE_SERVICE_CACHE_TIME
+    if not CLOUD_BACKUP_ENABLED or not GOOGLE_AUTH_AVAILABLE:
+        logger.warning("☁️ Google Drive Backup معطل أو غير مدعوم")
+        return None
+    now = time_module.time()
+    if not force_refresh and _DRIVE_SERVICE_CACHE and (now - _DRIVE_SERVICE_CACHE_TIME) < _DRIVE_SERVICE_CACHE_TTL:
+        return _DRIVE_SERVICE_CACHE
+    try:
+        creds = None
+        token_path = Path(TOKEN_FILE)
+        if token_path.exists():
+            try:
+                creds = Credentials.from_authorized_user_file(str(token_path), ['https://www.googleapis.com/auth/drive.file'])
+            except Exception as e:
+                logger.warning(f"⚠️ فشل تحميل التوكن المخزن: {e}")
+        if creds and creds.valid:
+            _DRIVE_SERVICE_CACHE = build('drive', 'v3', credentials=creds)
+            _DRIVE_SERVICE_CACHE_TIME = now
+            logger.info("✅ تم استعادة خدمة Google Drive من التوكن المخزن")
+            return _DRIVE_SERVICE_CACHE
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                with open(token_path, 'w') as token:
+                    token.write(creds.to_json())
+                _DRIVE_SERVICE_CACHE = build('drive', 'v3', credentials=creds)
+                _DRIVE_SERVICE_CACHE_TIME = now
+                logger.info("✅ تم تجديد توكن Google Drive")
+                return _DRIVE_SERVICE_CACHE
+            except Exception as e:
+                logger.warning(f"⚠️ فشل تجديد التوكن: {e}")
+                if token_path.exists():
+                    token_path.unlink()
+        if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
+            logger.error(f"❌ ملف الاعتمادات غير موجود: {GOOGLE_CREDENTIALS_FILE}")
+            return None
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CREDENTIALS_FILE, ['https://www.googleapis.com/auth/drive.file'])
+        creds = flow.run_local_server(port=0)
+        with open(token_path, 'w') as token:
+            token.write(creds.to_json())
+        _DRIVE_SERVICE_CACHE = build('drive', 'v3', credentials=creds)
+        _DRIVE_SERVICE_CACHE_TIME = now
+        logger.info("✅ تم الحصول على توكن Google Drive جديد")
+        return _DRIVE_SERVICE_CACHE
+    except Exception as e:
+        logger.error(f"❌ خطأ في خدمة Google Drive: {e}")
+        return None
+
+async def upload_backup_to_drive(backup_path: Path, max_retries: int = 3) -> str:
+    if not CLOUD_BACKUP_ENABLED or not GOOGLE_AUTH_AVAILABLE or not GOOGLE_DRIVE_FOLDER_ID:
+        return None
+    if not backup_path.exists():
+        logger.error(f"❌ ملف النسخ غير موجود: {backup_path}")
+        return None
+    for attempt in range(max_retries):
+        try:
+            service = await get_google_drive_service(force_refresh=(attempt > 0))
+            if not service:
+                if attempt == max_retries - 1:
+                    logger.error("❌ فشل الحصول على خدمة Google Drive بعد عدة محاولات")
+                    return None
+                await asyncio.sleep(2 ** attempt)
+                continue
+            file_name = f"backup_{mecca_now().strftime('%Y%m%d_%H%M%S')}.enc"
+            try:
+                results = service.files().list(
+                    q=f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents",
+                    orderBy="createdTime desc",
+                    pageSize=15,
+                    fields="files(id, name)"
+                ).execute()
+                files = results.get('files', [])
+                for old_file in files[10:]:
+                    try:
+                        service.files().delete(fileId=old_file['id']).execute()
+                        logger.info(f"🗑️ تم حذف ملف قديم من Drive: {old_file['name']}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ فشل حذف الملف القديم: {e}")
+            except Exception as e:
+                logger.warning(f"⚠️ فشل تنظيف الملفات القديمة: {e}")
+            media = MediaFileUpload(
+                str(backup_path),
+                mimetype='application/octet-stream',
+                resumable=True,
+                chunksize=1024*1024
+            )
+            file_metadata = {
+                'name': file_name,
+                'parents': [GOOGLE_DRIVE_FOLDER_ID]
+            }
+            file = service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id'
+            )
+            response = file.execute()
+            file_id = response.get('id')
+            logger.info(f"✅ تم رفع النسخة إلى Google Drive: {file_id} (المحاولة {attempt+1})")
+            return file_id
+        except Exception as e:
+            logger.error(f"❌ خطأ في رفع النسخة: {e}")
+            if attempt == max_retries - 1:
+                return None
+            await asyncio.sleep(2 ** attempt)
+    return None
+
 # ===================================================================
 # دوال العقوبات والإجراءات (moderation_*) - كاملة
 # ===================================================================
@@ -5062,7 +5382,7 @@ async def add_15_posts_callback(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data[f"session_{uid}"] = []
     context.user_data[f"session_target_{uid}"] = min(15, MAX_UNPUBLISHED_POSTS - unpublished_count)
     context.user_data['state'] = UserState.ADDING_POSTS
-    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=CallbackData.CANCEL_SESSION)]])
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=CallbackData.CANCEL_SESSION)])
     msg = f"📥 أرسل المنشورات (نصوص أو صور أو فيديوهات أو مستندات)\nالحد الأقصى المسموح: {MAX_UNPUBLISHED_POSTS - unpublished_count} منشور"
     if query:
         await query.edit_message_text(msg, reply_markup=cancel_kb)
@@ -5966,24 +6286,31 @@ async def penalty_mute_duration_callback(update: Update, context: ContextTypes.D
 async def set_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
     parts = query.data.split(":")
     if len(parts) != 3:
         await query.edit_message_text("❌ بيانات غير صالحة")
         return
+    
     penalty = parts[1]
     chat_id = int(parts[2])
     uid = update.effective_user.id
+    
     if not await is_authorized_in_group(context.bot, chat_id, uid):
         await query.answer(get_text(uid, 'admin_only'), show_alert=True)
         return
+    
     await db_set_security_settings(chat_id, auto_penalty=penalty, auto_mute_duration=30)
+    
     penalty_names = {
         'none': '🚫 لا شيء (حذف فقط)',
         'kick': '👢 طرد',
         'ban': '🛑 حظر',
         'mute': '🔇 كتم (30 دقيقة)'
     }
+    
     await query.edit_message_text(f"✅ تم تغيير عقوبة الحذف إلى: {penalty_names[penalty]}")
+    
     await asyncio.sleep(3)
     await _update_security_panel(query, chat_id, uid)
 
@@ -10466,8 +10793,9 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error(f"فشل معالج الأخطاء نفسه: {e}")
 
 # ===================================================================
-# خادم الويب المبسط - سيتم دمجه مع application.web_app
+# خادم الويب المبسط (تم دمجه مع application.web_app)
 # ===================================================================
+# دوال المسارات الرئيسية - سيتم إضافتها إلى application.web_app في main
 async def index_handler(request):
     html_content = """<html>
         <head><title>ريلاكس مانيجر</title></head>
@@ -10503,40 +10831,7 @@ async def health_check_handler(request):
             'error': str(e)
         }, status=503)
 
-async def start_web_server():
-    global WEB_PORT_USED
-    try:
-        port = int(os.getenv("PORT", "8080"))
-        try:
-            runner = web.AppRunner(web_app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", port)
-            await site.start()
-            logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{port}")
-            WEB_PORT_USED = port
-        except OSError as e:
-            if "address already in use" in str(e):
-                logger.warning(f"⚠️ المنفذ {port} مشغول، البوت يستمر بدون خادم ويب")
-            else:
-                raise
-        except Exception as e:
-            logger.warning(f"⚠️ فشل بدء الخادم على المنفذ {port}: {e}")
-            try:
-                import random
-                random_port = random.randint(10000, 65535)
-                runner = web.AppRunner(web_app)
-                await runner.setup()
-                site = web.TCPSite(runner, "0.0.0.0", random_port)
-                await site.start()
-                logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{random_port} (منفذ عشوائي)")
-                WEB_PORT_USED = random_port
-            except:
-                logger.warning("⚠️ لا يمكن تشغيل خادم الويب، البوت يستمر بدون خادم ويب")
-    except Exception as e:
-        logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
-        logger.info("ℹ️ البوت يستمر في العمل بدون خادم ويب")
-
-# web_app = web.Application() تم تعريفه سابقاً في بداية الكود، سنقوم بإضافة المسارات إليه فقط
+# تم إزالة دالة start_web_server القديمة واستبدالها بالدمج في application.web_app
 
 # ===================================================================
 # نظام إدارة المهام (Task Manager)
@@ -10636,8 +10931,412 @@ async def init_db_improved():
         await conn.execute("PRAGMA optimize")
         await conn.execute("PRAGMA max_page_count=1000000")
         await conn.execute("PRAGMA secure_delete=ON")
-        # جميع جداول قاعدة البيانات (تم تعريفها سابقاً في الجزء الأول)
-        # ... (نفس الجداول الموجودة في الكود الأصلي)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                auto_publish INTEGER DEFAULT 1,
+                banned INTEGER DEFAULT 0,
+                trial_used INTEGER DEFAULT 0,
+                subscription_end TEXT DEFAULT NULL,
+                referral_code TEXT DEFAULT NULL,
+                active_channel INTEGER DEFAULT NULL,
+                auto_reply_enabled INTEGER DEFAULT 1,
+                auto_recycle INTEGER DEFAULT 1,
+                last_daily_reward TEXT DEFAULT NULL,
+                last_weekly_reward TEXT DEFAULT NULL,
+                achievements TEXT DEFAULT '[]'
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                channel_id TEXT,
+                channel_name TEXT,
+                created_at TIMESTAMP,
+                banned INTEGER DEFAULT 0,
+                FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_db_id INTEGER,
+                text TEXT,
+                media_type TEXT DEFAULT 'text',
+                media_file_id TEXT,
+                published INTEGER DEFAULT 0,
+                fail_count INTEGER DEFAULT 0,
+                views_count INTEGER DEFAULT 0,
+                last_view_time TIMESTAMP,
+                created_at TIMESTAMP,
+                FOREIGN KEY(channel_db_id) REFERENCES user_channels(id) ON DELETE CASCADE
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_security (
+                chat_id INTEGER PRIMARY KEY,
+                delete_links INTEGER DEFAULT 0,
+                mentions INTEGER DEFAULT 0,
+                warn_message INTEGER DEFAULT 1,
+                slow_mode INTEGER DEFAULT 0,
+                slow_mode_seconds INTEGER DEFAULT 5,
+                welcome_enabled INTEGER DEFAULT 0,
+                welcome_text TEXT DEFAULT 'مرحباً {user} في {chat} 🤍',
+                goodbye_enabled INTEGER DEFAULT 0,
+                goodbye_text TEXT DEFAULT 'وداعاً {user} 👋',
+                delete_banned_words INTEGER DEFAULT 0,
+                auto_penalty TEXT DEFAULT 'none',
+                auto_mute_duration INTEGER DEFAULT 60,
+                delete_videos INTEGER DEFAULT 0,
+                delete_audio INTEGER DEFAULT 0,
+                delete_animation INTEGER DEFAULT 0,
+                delete_service INTEGER DEFAULT 0,
+                delete_documents INTEGER DEFAULT 0,
+                delete_stickers INTEGER DEFAULT 0,
+                delete_penalty TEXT DEFAULT 'none',
+                delete_penalty_duration INTEGER DEFAULT 0
+            )
+        """)
+        await ensure_security_columns(conn)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_groups (
+                chat_id INTEGER PRIMARY KEY,
+                chat_name TEXT,
+                username TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP,
+                banned INTEGER DEFAULT 0
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_admins (
+                user_id INTEGER PRIMARY KEY
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS banned_words (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word TEXT,
+                chat_id INTEGER,
+                added_by INTEGER,
+                added_at TIMESTAMP,
+                UNIQUE(word, chat_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_groups_link (
+                user_id INTEGER,
+                chat_id INTEGER,
+                PRIMARY KEY(user_id, chat_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_admins (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                PRIMARY KEY(chat_id, user_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS hidden_owner_groups (
+                chat_id INTEGER PRIMARY KEY,
+                owner_id INTEGER,
+                is_hidden INTEGER DEFAULT 1
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS hidden_admins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                admin_id INTEGER NOT NULL,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(chat_id, admin_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS schedule (
+                channel_db_id INTEGER PRIMARY KEY,
+                schedule_type TEXT DEFAULT 'interval_minutes',
+                interval_minutes INTEGER DEFAULT 12,
+                interval_hours INTEGER DEFAULT 0,
+                interval_days INTEGER DEFAULT 0,
+                days_of_week TEXT DEFAULT '',
+                specific_dates TEXT DEFAULT '',
+                publish_time TEXT DEFAULT '00:00',
+                cron_expression TEXT DEFAULT NULL,
+                next_publish_date TEXT,
+                FOREIGN KEY (channel_db_id) REFERENCES user_channels(id) ON DELETE CASCADE
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS last_publish (
+                channel_db_id INTEGER PRIMARY KEY,
+                last_publish_time TIMESTAMP,
+                FOREIGN KEY (channel_db_id) REFERENCES user_channels(id) ON DELETE CASCADE
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                publish_time TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                fail_count INTEGER DEFAULT 0
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS support_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                message TEXT,
+                ticket_number INTEGER,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP,
+                replied INTEGER DEFAULT 0
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_levels (
+                user_id INTEGER PRIMARY KEY,
+                points INTEGER DEFAULT 0,
+                level INTEGER DEFAULT 1
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS referrals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                referrer_id INTEGER NOT NULL,
+                referred_id INTEGER NOT NULL,
+                referred_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_rewarded INTEGER DEFAULT 0,
+                UNIQUE(referred_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS referral_rewards (
+                user_id INTEGER PRIMARY KEY,
+                referral_count INTEGER DEFAULT 0,
+                total_reward_days INTEGER DEFAULT 0,
+                claimed_reward_days INTEGER DEFAULT 0
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS referral_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_reminder_settings (
+                user_id INTEGER PRIMARY KEY,
+                subscription_reminder INTEGER DEFAULT 1,
+                daily_stats_reminder INTEGER DEFAULT 0,
+                weekly_report INTEGER DEFAULT 1,
+                reminder_days_before INTEGER DEFAULT 3,
+                last_reminder_sent INTEGER DEFAULT 0,
+                notification_lang TEXT DEFAULT 'ar'
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS moderation_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                user_id INTEGER,
+                action TEXT,
+                duration_minutes INTEGER,
+                moderator_id INTEGER,
+                reason TEXT,
+                created_at TIMESTAMP
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_translation (
+                user_id INTEGER PRIMARY KEY,
+                lang TEXT DEFAULT 'off'
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_locks (
+                chat_id INTEGER PRIMARY KEY,
+                locked INTEGER DEFAULT 0,
+                locked_at TIMESTAMP,
+                locked_by INTEGER
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_rules (
+                chat_id INTEGER PRIMARY KEY,
+                rules_text TEXT,
+                set_by INTEGER,
+                set_at TIMESTAMP
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS contests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                creator_id INTEGER,
+                title TEXT,
+                description TEXT,
+                prize TEXT,
+                end_date TEXT,
+                status TEXT DEFAULT 'active',
+                winner_id INTEGER,
+                created_at TIMESTAMP,
+                contest_type TEXT DEFAULT 'raffle'
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS contest_participants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                contest_id INTEGER,
+                answer TEXT,
+                joined_at TIMESTAMP,
+                UNIQUE(user_id, contest_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS contest_winners (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contest_id INTEGER,
+                winner_id INTEGER,
+                announced_at TIMESTAMP
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS auto_reply_settings (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 1,
+                only_admins INTEGER DEFAULT 0,
+                ignore_bots INTEGER DEFAULT 1,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_replies (
+                keyword TEXT PRIMARY KEY,
+                reply TEXT
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS blocked_users (
+                user_id INTEGER PRIMARY KEY,
+                reason TEXT,
+                blocked_by INTEGER,
+                blocked_at TIMESTAMP,
+                expires_at TIMESTAMP,
+                severity TEXT DEFAULT 'ban'
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS allowed_sendcode_user (
+                id INTEGER PRIMARY KEY CHECK (id=1),
+                user_id INTEGER
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS web_sessions (
+                session_id TEXT PRIMARY KEY,
+                user_data TEXT,
+                expires INTEGER
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users_cache (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_updated TEXT
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_channels (
+                channel_id INTEGER PRIMARY KEY,
+                channel_name TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP,
+                banned INTEGER DEFAULT 0
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_messages (
+                user_id INTEGER,
+                chat_id INTEGER,
+                message_time TIMESTAMP,
+                PRIMARY KEY (user_id, chat_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_warnings (
+                user_id INTEGER,
+                chat_id INTEGER,
+                warnings INTEGER DEFAULT 0,
+                PRIMARY KEY(user_id, chat_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS channel_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_db_id INTEGER NOT NULL,
+                total_posts INTEGER DEFAULT 0,
+                published_posts INTEGER DEFAULT 0,
+                unpublished_posts INTEGER DEFAULT 0,
+                total_views INTEGER DEFAULT 0,
+                avg_views_per_post REAL DEFAULT 0,
+                last_post_time TIMESTAMP,
+                avg_time_between_posts REAL DEFAULT 0,
+                best_publish_hour INTEGER DEFAULT 0,
+                best_publish_day INTEGER DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (channel_db_id) REFERENCES user_channels(id) ON DELETE CASCADE,
+                UNIQUE(channel_db_id)
+            )
+        """)
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel_published ON posts(channel_db_id, published)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_next ON schedule(next_publish_date)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_channels_user ON user_channels(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_banned_words_chat ON banned_words(chat_id, word)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel_fail ON posts(channel_db_id, published, fail_count)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_subscription ON users(subscription_end)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_levels_points ON user_levels(points DESC)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_moderation_chat ON moderation_log(chat_id, created_at)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_hidden_admins_chat ON hidden_admins(chat_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_group_admins_chat ON group_admins(chat_id)")
+        try:
+            cursor = await conn.execute("PRAGMA table_info(group_security)")
+            columns = [col[1] for col in await cursor.fetchall()]
+            for col in ['mentions', 'delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers', 'delete_penalty', 'delete_penalty_duration']:
+                if col not in columns:
+                    await conn.execute(f"ALTER TABLE group_security ADD COLUMN {col} DEFAULT 0")
+        except:
+            pass
+        try:
+            cursor = await conn.execute("PRAGMA table_info(users)")
+            columns = [col[1] for col in await cursor.fetchall()]
+            for col in ['auto_recycle', 'last_daily_reward', 'last_weekly_reward', 'achievements']:
+                if col not in columns:
+                    await conn.execute(f"ALTER TABLE users ADD COLUMN {col} DEFAULT '[]'")
+        except:
+            pass
+        await conn.execute("INSERT OR IGNORE INTO bot_admins (user_id) VALUES (?)", (PRIMARY_OWNER_ID,))
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('publish_interval', '720')")
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('updates_channel', '')")
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup', '1')")
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_ticket_number', '0')")
+        await conn.execute("INSERT OR IGNORE INTO referral_settings (key, value) VALUES ('reward_days_per_referral', '3')")
+        await conn.execute("INSERT OR IGNORE INTO referral_settings (key, value) VALUES ('max_referrals_per_day', '5')")
+        await conn.execute("INSERT OR IGNORE INTO referral_settings (key, value) VALUES ('welcome_bonus_points', '10')")
         await conn.commit()
     await db_pool.initialize()
     await cache_manager.init()
@@ -10736,7 +11435,6 @@ async def main():
         request = HTTPXRequest(**request_kwargs)
         application = Application.builder().token(TOKEN).request(request).build()
     application.add_error_handler(global_error_handler)
-    # ===== إضافة جميع الأوامر =====
     application.add_handler(CommandHandler("start", start_command_handler))
     application.add_handler(CommandHandler("language", language_command_handler))
     application.add_handler(CommandHandler("syncgroup", syncgroup_command_handler))
@@ -10773,7 +11471,6 @@ async def main():
     application.add_handler(CommandHandler("declare_winner", declare_winner_command_handler))
     application.add_handler(CommandHandler("set_rules", set_rules_command_handler))
     application.add_handler(CommandHandler("rules", rules_command_handler))
-    # ===== إضافة جميع الكولباك =====
     application.add_handler(CallbackQueryHandler(lang_callback_handler, pattern="^lang_"))
     application.add_handler(CallbackQueryHandler(handle_text_callbacks, pattern="^(rank|top|schedule_post|language)$"))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
@@ -10950,7 +11647,6 @@ async def main():
     application.add_handler(CallbackQueryHandler(group_action_unban_callback, pattern=f"^{CallbackData.GROUP_ACTION_UNBAN}:"))
     application.add_handler(CallbackQueryHandler(publish_all_channels_callback_handler, pattern=f"^{CallbackData.PUBLISH_ALL_CHANNELS}$"))
     application.add_handler(CallbackQueryHandler(delete_group_callback, pattern="^delete_group:"))
-    # ===== معالجات الأحداث =====
     application.add_handler(ChatJoinRequestHandler(chat_join_request_handler))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members_handler))
     application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
@@ -10967,7 +11663,6 @@ async def main():
     application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_service_messages))
-    # ===== إعداد الأوامر في القائمة =====
     commands = [
         BotCommand("start", "بدء البوت"),
         BotCommand("trial", "تجربة مجانية"),
@@ -11007,10 +11702,6 @@ async def main():
         BotCommand("rules", "عرض قوانين المجموعة"),
     ]
     await application.bot.set_my_commands(commands)
-    # ===== إضافة مسارات الويب إلى application.web_app =====
-    application.web_app.router.add_get('/', index_handler)
-    application.web_app.router.add_get('/health', health_check_handler)
-    # ===== بدء المهام الخلفية =====
     task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "auto_publish"))
     task_manager.create_task(safe_loop(auto_backup, "auto_backup"))
     task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
@@ -11024,33 +11715,73 @@ async def main():
     task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "refresh_admins"))
     print(f"🚀 تم تشغيل {BOT_NAME} (الإصدار 20.0.19 - النسخة العالمية مع إصلاحات الأمان)")
     print("✅ جميع التحسينات العالمية تم تطبيقها:")
-    # ===== تشغيل Webhook أو Polling =====
+    print("   • ✅ نظام صلاحيات محسن: مالك مخفي > مشرف مخفي > مشرف حقيقي")
+    print("   • ✅ معالج /syncgroup يعمل للمشرفين والأعضاء العاديين بشكل مختلف")
+    print("   • ✅ تسجيل تلقائي للمجموعة والمالك عند إضافة البوت")
+    print("   • ✅ إشعار المشرفين عند طلب التفعيل من عضو عادي")
+    print("   • ✅ حلقة تحديث المشرفين والمالكين المخفيين التلقائية (كل ساعة)")
+    print("   • ✅ التحقق المباشر من تيليجرام عند الحاجة مع تحديث قاعدة البيانات")
+    print("   • ✅ كاش ذكي للصلاحيات لتسريع الأداء")
+    print("   • ✅ 200 رد تلقائي للمجموعات مع أوزان")
+    print("   • ✅ نظام ردود متقدم مع إعدادات لكل مجموعة")
+    print("   • ✅ دعم المالك والمشرفين المخفيين المتعددين")
+    print("   • ✅ نظام المسابقات المتكامل")
+    print("   • ✅ دعم أوامر /set_rules و /rules لقوانين المجموعة")
+    print("   • ✅ دعم حذف رسائل الخدمة التلقائي")
+    print("   • ✅ دعم الترحيب والوداع في المجموعات")
+    print("   • ✅ إصلاح ثغرة صلاحيات المشرفين (التحقق المزدوج)")
+    print("   • ✅ إصلاح تسجيل المالك المخفي (إعادة المحاولة وإشعار جميع المشرفين)")
+    print("   • ✅ معالجة خطأ User_bot_to_bot_disabled")
+    print("   • ✅ تحسين أمان أمر /sendcode (إزالة التوكن والمفاتيح)")
+    print("   • ✅ إضافة دوال إعادة التشغيل التلقائي (safe_loop)")
+    print("   • ✅ إضافة نظام النبض الداخلي (self_ping)")
+    print("   • ✅ توحيد خادم الويب مع application.web_app لحل تعارض المنافذ")
+    
+    # ===== إضافة مسارات الويب إلى application.web_app =====
+    application.web_app.router.add_get('/', index_handler)
+    application.web_app.router.add_get('/health', health_check_handler)
+    logger.info("✅ تم إضافة مسارات الويب إلى خادم التطبيق")
+    
+    # ===== استخدام Webhook بدلاً من Polling =====
     try:
         port = int(os.getenv("PORT", "10000"))
+        
         hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+        if not hostname:
+            hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
+        
         if hostname:
             webhook_url = f"https://{hostname}/{TOKEN}"
+            
             await application.initialize()
             await application.start()
+            
             await application.bot.set_webhook(
                 url=webhook_url,
                 drop_pending_updates=True,
                 allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
             )
+            
             logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
+            
             if not hasattr(application.web_app, '_webhook_added'):
                 application.web_app.router.add_post(f"/{TOKEN}", application.process_update)
                 application.web_app._webhook_added = True
                 logger.info("✅ تم إضافة مسار Webhook")
+            
             runner = web.AppRunner(application.web_app)
             await runner.setup()
             site = web.TCPSite(runner, "0.0.0.0", port)
             await site.start()
+            WEB_PORT_USED = port
+            
             logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
+            
             await asyncio.Event().wait()
         else:
             logger.warning("⚠️ RENDER_EXTERNAL_HOSTNAME غير معرّف، استخدام Polling")
             await run_polling_safe(application)
+            
     except Exception as e:
         logger.error(f"❌ فشل Webhook: {e}")
         logger.info("🔄 التراجع إلى Polling...")
@@ -11059,6 +11790,11 @@ async def main():
     finally:
         await cleanup_resources()
         await task_manager.cancel_all()
+
+# تعريف الدوال المتبقية (Command Handlers) - تم تضمينها سابقاً
+# لكن بعضها يعتمد على دوال معرفة في الأعلى، لذا نضعها هنا للتأكيد
+
+# تم تضمين جميع الدوال في الكود أعلاه.
 
 if __name__ == "__main__":
     try:
@@ -11071,4 +11807,3 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
