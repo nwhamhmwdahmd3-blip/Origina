@@ -9319,7 +9319,8 @@ web_app.router.add_get('/health', health_check_handler)
 async def start_web_server():
     global WEB_PORT_USED
     try:
-        port = int(os.getenv("PORT", "8080"))
+        # استخدام منفذ مختلف عن 10000
+        port = 8080  # أو أي منفذ آخر غير 10000
         try:
             runner = web.AppRunner(web_app)
             await runner.setup()
@@ -9329,25 +9330,19 @@ async def start_web_server():
             WEB_PORT_USED = port
         except OSError as e:
             if "address already in use" in str(e):
-                logger.warning(f"⚠️ المنفذ {port} مشغول، البوت يستمر بدون خادم ويب")
-            else:
-                raise
-        except Exception as e:
-            logger.warning(f"⚠️ فشل بدء الخادم على المنفذ {port}: {e}")
-            try:
+                logger.warning(f"⚠️ المنفذ {port} مشغول، محاولة منفذ عشوائي...")
                 import random
                 random_port = random.randint(10000, 65535)
                 runner = web.AppRunner(web_app)
                 await runner.setup()
                 site = web.TCPSite(runner, "0.0.0.0", random_port)
                 await site.start()
-                logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{random_port} (منفذ عشوائي)")
+                logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{random_port}")
                 WEB_PORT_USED = random_port
-            except:
-                logger.warning("⚠️ لا يمكن تشغيل خادم الويب، البوت يستمر بدون خادم ويب")
+            else:
+                raise
     except Exception as e:
         logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
-        logger.info("ℹ️ البوت يستمر في العمل بدون خادم ويب")
 
 # ===================================================================
 # نظام إدارة المهام (Task Manager)
