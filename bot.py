@@ -11840,7 +11840,8 @@ async def main():
             logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
             
             # إضافة مسار Webhook
-            application.web_app.router.add_post(f"/{TOKEN}", application.process_update)
+            web_app.router.add_post(f"/{TOKEN}", application.process_update)
+
             
             # انتظار الإيقاف
             await asyncio.Event().wait()
