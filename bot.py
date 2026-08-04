@@ -44,7 +44,6 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 import types
 import signal
-from web_server import run_flask 
 
 def check_python_version():
     required_version = (3, 8)
@@ -10839,7 +10838,10 @@ web_app.router.add_get('/health', health_check_handler)
 async def start_web_server():
     global WEB_PORT_USED
     try:
+        # استخدام PORT من Render أو المنفذ الافتراضي
         port = int(os.getenv("PORT", "8080"))
+        
+        # محاولة بدء الخادم على المنفذ المحدد
         try:
             runner = web.AppRunner(web_app)
             await runner.setup()
@@ -10854,6 +10856,7 @@ async def start_web_server():
                 raise
         except Exception as e:
             logger.warning(f"⚠️ فشل بدء الخادم على المنفذ {port}: {e}")
+            # نحاول منفذ عشوائي كحل أخير
             try:
                 import random
                 random_port = random.randint(10000, 65535)
@@ -10916,6 +10919,7 @@ async def safe_loop(coro, name="background_loop"):
             await asyncio.sleep(10)
 
 async def run_polling_safe(application):
+    """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
     while True:
         try:
             await application.run_polling(
@@ -10966,7 +10970,6 @@ async def init_db_improved():
         await conn.execute("PRAGMA optimize")
         await conn.execute("PRAGMA max_page_count=1000000")
         await conn.execute("PRAGMA secure_delete=ON")
-        # ===== جميع جداول قاعدة البيانات =====
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -11439,6 +11442,59 @@ async def declare_winner_command_handler(update: Update, context: ContextTypes.D
         await safe_send_markdown(context.bot, user_id, "❌ فشل إعلان الفائز!")
 
 # ===================================================================
+# دوال أوامر القوانين
+# ===================================================================
+async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None or update.effective_chat is None or update.effective_user is None:
+        return
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, user_id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    args = context.args
+    if not args:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:** `/set_rules نص القوانين`")
+        return
+    rules_text = " ".join(args)
+    async def _set_rules(conn):
+        await conn.execute("INSERT OR REPLACE INTO group_rules (chat_id, rules_text, set_by, set_at) VALUES (?, ?, ?, ?)", (chat_id, rules_text, user_id, utc_now_iso()))
+        await conn.commit()
+    await execute_db(_set_rules)
+    await safe_send_markdown(context.bot, user_id, "✅ **تم تعيين قوانين المجموعة بنجاح!**")
+    try:
+        await context.bot.send_message(chat_id, f"📋 **تم تحديث قوانين المجموعة**\n\n{rules_text}")
+    except:
+        pass
+
+async def rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None or update.effective_chat is None:
+        return
+    chat_id = update.effective_chat.id
+    async def _get_rules(conn):
+        cur = await conn.execute("SELECT rules_text, set_by, set_at FROM group_rules WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'rules': row[0], 'set_by': row[1], 'set_at': row[2]}
+        return None
+    rules_data = await execute_db(_get_rules)
+    if not rules_data:
+        await safe_send_markdown(context.bot, update.effective_user.id, "📭 لا توجد قوانين مسجلة لهذه المجموعة.")
+        return
+    try:
+        dt = datetime.fromisoformat(rules_data['set_at'])
+        dt_mecca = utc_to_mecca(dt)
+        set_time = dt_mecca.strftime("%Y-%m-%d %H:%M")
+    except:
+        set_time = "تاريخ غير معروف"
+    text = f"📋 **قوانين المجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\n{rules_data['rules']}\n━━━━━━━━━━━━━━━━━━━━━━\n👤 تم التعيين بواسطة: `{rules_data['set_by']}`\n🕐 التاريخ: {set_time}"
+    await safe_send_markdown(context.bot, update.effective_user.id, text)
+
+# ===================================================================
 # الوظيفة الرئيسية
 # ===================================================================
 async def main():
@@ -11471,7 +11527,6 @@ async def main():
         request = HTTPXRequest(**request_kwargs)
         application = Application.builder().token(TOKEN).request(request).build()
     application.add_error_handler(global_error_handler)
-    # ===== جميع الأوامر =====
     application.add_handler(CommandHandler("start", start_command_handler))
     application.add_handler(CommandHandler("language", language_command_handler))
     application.add_handler(CommandHandler("syncgroup", syncgroup_command_handler))
@@ -11508,7 +11563,6 @@ async def main():
     application.add_handler(CommandHandler("declare_winner", declare_winner_command_handler))
     application.add_handler(CommandHandler("set_rules", set_rules_command_handler))
     application.add_handler(CommandHandler("rules", rules_command_handler))
-    # ===== جميع الكولباك =====
     application.add_handler(CallbackQueryHandler(lang_callback_handler, pattern="^lang_"))
     application.add_handler(CallbackQueryHandler(handle_text_callbacks, pattern="^(rank|top|schedule_post|language)$"))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
@@ -11685,7 +11739,6 @@ async def main():
     application.add_handler(CallbackQueryHandler(group_action_unban_callback, pattern=f"^{CallbackData.GROUP_ACTION_UNBAN}:"))
     application.add_handler(CallbackQueryHandler(publish_all_channels_callback_handler, pattern=f"^{CallbackData.PUBLISH_ALL_CHANNELS}$"))
     application.add_handler(CallbackQueryHandler(delete_group_callback, pattern="^delete_group:"))
-    # ===== معالجات الأحداث =====
     application.add_handler(ChatJoinRequestHandler(chat_join_request_handler))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members_handler))
     application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
@@ -11702,7 +11755,6 @@ async def main():
     application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_service_messages))
-    # ===== قائمة الأوامر =====
     commands = [
         BotCommand("start", "بدء البوت"),
         BotCommand("trial", "تجربة مجانية"),
@@ -11742,13 +11794,13 @@ async def main():
         BotCommand("rules", "عرض قوانين المجموعة"),
     ]
     await application.bot.set_my_commands(commands)
-    # ===== تشغيل المهام الخلفية =====
     task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "auto_publish"))
     task_manager.create_task(safe_loop(auto_backup, "auto_backup"))
     task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
     task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(application.bot), "reminders"))
     task_manager.create_task(safe_loop(cleanup_expired_sessions_improved, "cleanup_sessions"))
-   # task_manager.create_task(safe_loop(start_web_server, "web_server"))
+    # تعطيل خادم الويب مؤقتاً حتى حل مشكلة المنفذ
+    # task_manager.create_task(safe_loop(start_web_server, "web_server"))
     task_manager.create_task(safe_loop(self_ping_loop, "self_ping"))
     task_manager.create_task(safe_loop(broadcast_stats_periodically, "broadcast_stats"))
     task_manager.create_task(safe_loop(cleanup_points_cache, "cleanup_points"))
@@ -11777,31 +11829,18 @@ async def main():
     print("   • ✅ تحسين أمان أمر /sendcode (إزالة التوكن والمفاتيح)")
     print("   • ✅ إضافة دوال إعادة التشغيل التلقائي (safe_loop)")
     print("   • ✅ إضافة نظام النبض الداخلي (self_ping)")
-    # ===== استخدام Webhook بدلاً من Polling =====
-    # ===== استخدام Polling مع Flask منفصل =====
-logger.info("🔄 تشغيل البوت باستخدام Polling...")
 
-# تشغيل Flask في الخلفية (إن لم يكن مشغّلاً بالفعل)
-try:
-    from web_server import run_flask
-    import asyncio
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, run_flask)
-    logger.info("✅ تم تشغيل خادم Flask في الخلفية")
-except Exception as e:
-    logger.warning(f"⚠️ فشل تشغيل Flask: {e}")
+    # ===== استخدام Polling بدلاً من Webhook لتجنب مشكلة المنفذ =====
+    try:
+        # استخدام Polling بدلاً من Webhook
+        logger.info("🔄 استخدام Polling بدلاً من Webhook...")
+        await run_polling_safe(application)
+    except KeyboardInterrupt:
+        logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
+    finally:
+        await cleanup_resources()
+        await task_manager.cancel_all()
 
-try:
-    await run_polling_safe(application)
-except KeyboardInterrupt:
-    logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
-finally:
-    await cleanup_resources()
-    await task_manager.cancel_all()
-
-# ===================================================================
-# دوال الأوامر (Command Handlers)
-# ===================================================================
 async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
@@ -11895,12 +11934,7 @@ async def handle_sendcode_confirmation_handler(update: Update, context: ContextT
             with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(watermarked_content)
             with open(temp_file, 'rb') as f:
-                await context.bot.send_document(
-                    chat_id=user_id,
-                    document=f,
-                    filename=f"relax_bot_secure_{mecca_now().strftime('%Y%m%d')}.py",
-                    caption="⚠️ **هذا الكود موقع رقمياً - لا تشاركه مع أي شخص غير موثوق!**\n\n📌 تم إزالة التوكن والمفاتيح من هذا الملف."
-                )
+                await context.bot.send_document(chat_id=user_id, document=f, filename=f"relax_bot_secure_{mecca_now().strftime('%Y%m%d')}.py", caption="⚠️ **هذا الكود موقع رقمياً - لا تشاركه مع أي شخص غير موثوق!**\n\n📌 تم إزالة التوكن والمفاتيح من هذا الملف.")
             os.unlink(temp_file)
             await security_audit.log("SENDCODE_EXECUTED", user_id, {"timestamp": mecca_now_iso()}, "CRITICAL")
             await safe_send_markdown(context.bot, user_id, "✅ تم إرسال الكود بنجاح على الخاص!")
@@ -12399,56 +12433,6 @@ async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAU
         success, msg = await execute_moderation_action(context.bot, chat_id, target_id, action, reason, duration, user_id)
         await safe_send_markdown(context.bot, chat_id, msg)
 
-async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None or update.effective_chat is None or update.effective_user is None:
-        return
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    chat = update.effective_chat
-    if chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(context.bot, user_id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
-        return
-    if not await is_authorized_in_group(context.bot, chat_id, user_id):
-        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
-        return
-    args = context.args
-    if not args:
-        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:** `/set_rules نص القوانين`")
-        return
-    rules_text = " ".join(args)
-    async def _set_rules(conn):
-        await conn.execute("INSERT OR REPLACE INTO group_rules (chat_id, rules_text, set_by, set_at) VALUES (?, ?, ?, ?)", (chat_id, rules_text, user_id, utc_now_iso()))
-        await conn.commit()
-    await execute_db(_set_rules)
-    await safe_send_markdown(context.bot, user_id, "✅ **تم تعيين قوانين المجموعة بنجاح!**")
-    try:
-        await context.bot.send_message(chat_id, f"📋 **تم تحديث قوانين المجموعة**\n\n{rules_text}")
-    except:
-        pass
-
-async def rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None or update.effective_chat is None:
-        return
-    chat_id = update.effective_chat.id
-    async def _get_rules(conn):
-        cur = await conn.execute("SELECT rules_text, set_by, set_at FROM group_rules WHERE chat_id=?", (chat_id,))
-        row = await cur.fetchone()
-        if row:
-            return {'rules': row[0], 'set_by': row[1], 'set_at': row[2]}
-        return None
-    rules_data = await execute_db(_get_rules)
-    if not rules_data:
-        await safe_send_markdown(context.bot, update.effective_user.id, "📭 لا توجد قوانين مسجلة لهذه المجموعة.")
-        return
-    try:
-        dt = datetime.fromisoformat(rules_data['set_at'])
-        dt_mecca = utc_to_mecca(dt)
-        set_time = dt_mecca.strftime("%Y-%m-%d %H:%M")
-    except:
-        set_time = "تاريخ غير معروف"
-    text = f"📋 **قوانين المجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\n{rules_data['rules']}\n━━━━━━━━━━━━━━━━━━━━━━\n👤 تم التعيين بواسطة: `{rules_data['set_by']}`\n🕐 التاريخ: {set_time}"
-    await safe_send_markdown(context.bot, update.effective_user.id, text)
-
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = update.effective_user.id
@@ -12562,7 +12546,6 @@ async def security_refresh_groups_callback(update: Update, context: ContextTypes
 
 if __name__ == "__main__":
     try:
-        os.environ["WEB_CONCURRENCY"] = "1"
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("🛑 تم إيقاف البوت")
