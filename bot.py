@@ -11778,54 +11778,26 @@ async def main():
     print("   • ✅ إضافة دوال إعادة التشغيل التلقائي (safe_loop)")
     print("   • ✅ إضافة نظام النبض الداخلي (self_ping)")
     # ===== استخدام Webhook بدلاً من Polling =====
-    try:
-        port = int(os.getenv("PORT", "10000"))
-        hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-        if not hostname:
-            hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
-        if hostname:
-            webhook_url = f"https://{hostname}/{TOKEN}"
-            await application.initialize()
-            await application.start()
-            await application.bot.set_webhook(
-                url=webhook_url,
-                drop_pending_updates=True,
-                allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
-            )
-            logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
-            # إضافة مسار Webhook (قبل تشغيل الخادم)
-            if not hasattr(application.web_app, '_webhook_added'):
-                application.web_app.router.add_post(f"/{TOKEN}", application.process_update)
-                application.web_app._webhook_added = True
-                logger.info("✅ تم إضافة مسار Webhook")
-            # تشغيل خادم الويب
-            runner = web.AppRunner(application.web_app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", port)
-            await site.start()
-            logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
-            # إضافة مسار الصحة
-            if not hasattr(application.web_app, '_health_added'):
-                async def health_check(request):
-                    return web.json_response({
-                        'status': 'healthy',
-                        'bot': BOT_NAME,
-                        'webhook': webhook_url
-                    })
-                application.web_app.router.add_get('/health', health_check)
-                application.web_app._health_added = True
-            await asyncio.Event().wait()
-        else:
-            logger.warning("⚠️ RENDER_EXTERNAL_HOSTNAME غير معرّف، استخدام Polling")
-            await run_polling_safe(application)
-    except Exception as e:
-        logger.error(f"❌ فشل Webhook: {e}")
-        logger.info("🔄 التراجع إلى Polling...")
-        await application.bot.delete_webhook()
-        await run_polling_safe(application)
-    finally:
-        await cleanup_resources()
-        await task_manager.cancel_all()
+    # ===== استخدام Polling مع Flask منفصل =====
+logger.info("🔄 تشغيل البوت باستخدام Polling...")
+
+# تشغيل Flask في الخلفية (إن لم يكن مشغّلاً بالفعل)
+try:
+    from web_server import run_flask
+    import asyncio
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, run_flask)
+    logger.info("✅ تم تشغيل خادم Flask في الخلفية")
+except Exception as e:
+    logger.warning(f"⚠️ فشل تشغيل Flask: {e}")
+
+try:
+    await run_polling_safe(application)
+except KeyboardInterrupt:
+    logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
+finally:
+    await cleanup_resources()
+    await task_manager.cancel_all()
 
 # ===================================================================
 # دوال الأوامر (Command Handlers)
