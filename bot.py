@@ -10845,29 +10845,41 @@ web_app.router.add_get('/health', health_check_handler)
 
 async def start_web_server():
     try:
-        render_port = int(os.getenv("PORT", "0"))
-        ports_to_try = []
-        if render_port > 0:
-            ports_to_try.append(render_port)
-        ports_to_try.extend([WEB_PORT, 8080, 10000, 8081, 8082, 8083])
-        for port in ports_to_try:
+        # استخدام PORT من Render أو المنفذ الافتراضي
+        port = int(os.getenv("PORT", "8080"))
+        
+        # محاولة بدء الخادم على المنفذ المحدد
+        try:
+            runner = web.AppRunner(web_app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{port}")
+            global WEB_PORT_USED
+            WEB_PORT_USED = port
+        except OSError as e:
+            if "address already in use" in str(e):
+                logger.warning(f"⚠️ المنفذ {port} مشغول، البوت يستمر بدون خادم ويب")
+            else:
+                raise
+        except Exception as e:
+            logger.warning(f"⚠️ فشل بدء الخادم على المنفذ {port}: {e}")
+            # نحاول منفذ عشوائي كحل أخير
             try:
+                import random
+                random_port = random.randint(10000, 65535)
                 runner = web.AppRunner(web_app)
                 await runner.setup()
-                site = web.TCPSite(runner, WEB_HOST, port)
+                site = web.TCPSite(runner, "0.0.0.0", random_port)
                 await site.start()
-                logger.info(f"✅ خادم الويب يعمل على http://{WEB_HOST}:{port}")
+                logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{random_port} (منفذ عشوائي)")
                 global WEB_PORT_USED
-                WEB_PORT_USED = port
-                return
-            except OSError as e:
-                if "address already in use" in str(e):
-                    logger.warning(f"⚠️ المنفذ {port} مشغول، جرب المنفذ التالي...")
-                    continue
-                raise
-        logger.error("❌ لا يمكن العثور على منفذ متاح لخادم الويب")
+                WEB_PORT_USED = random_port
+            except:
+                logger.warning("⚠️ لا يمكن تشغيل خادم الويب، البوت يستمر بدون خادم ويب")
     except Exception as e:
         logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
+        logger.info("ℹ️ البوت يستمر في العمل بدون خادم ويب")
 
 # ===================================================================
 # نظام إدارة المهام (Task Manager)
