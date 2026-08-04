@@ -44,6 +44,7 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 import types
 import signal
+from web_server import run_flask 
 
 def check_python_version():
     required_version = (3, 8)
