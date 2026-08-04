@@ -11739,10 +11739,25 @@ async def main():
     print("   • ✅ توحيد خادم الويب مع application.web_app لحل تعارض المنافذ")
     
     # ===== إضافة مسارات الويب إلى application.web_app =====
-    application.web_app.router.add_get('/', index_handler)
-    application.web_app.router.add_get('/health', health_check_handler)
-    logger.info("✅ تم إضافة مسارات الويب إلى خادم التطبيق")
+   # ===== تشغيل خادم ويب منفصل باستخدام aiohttp =====
+try:
+    from aiohttp import web
     
+    # إنشاء تطبيق ويب منفصل
+    web_app = web.Application()
+    web_app.router.add_get('/', index_handler)
+    web_app.router.add_get('/health', health_check_handler)
+    
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', WEB_PORT)
+    await site.start()
+    logger.info(f"✅ خادم الويب يعمل على المنفذ {WEB_PORT}")
+    
+except Exception as e:
+    logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
+    logger.info("🔄 البوت يعمل بدون خادم ويب...")
+
     # ===== استخدام Webhook بدلاً من Polling =====
     try:
         port = int(os.getenv("PORT", "10000"))
