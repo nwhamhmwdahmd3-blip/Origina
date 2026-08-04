@@ -6222,6 +6222,37 @@ async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(msg, reply_markup=penalty_keyboard(chat_id))
     else:
         await safe_send_markdown(context.bot, uid, msg, reply_markup=penalty_keyboard(chat_id))
+async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
+    
+    if not chat_id:
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer(get_text(uid, 'admin_only'), show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, get_text(uid, 'admin_only'))
+        return
+    
+    msg = "⚖️ **اختر عقوبة الحذف:**\n\nسيتم تطبيق هذه العقوبة عند حذف أي محتوى مخالف."
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚫 لا شيء", callback_data=f"set_penalty:none:{chat_id}"),
+         InlineKeyboardButton("👢 طرد", callback_data=f"set_penalty:kick:{chat_id}")],
+        [InlineKeyboardButton("🛑 حظر", callback_data=f"set_penalty:ban:{chat_id}"),
+         InlineKeyboardButton("🔇 كتم", callback_data=f"set_penalty:mute:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, msg, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, uid, msg, reply_markup=keyboard)
 
 async def penalty_kick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
