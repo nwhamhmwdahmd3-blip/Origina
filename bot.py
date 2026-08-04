@@ -11849,57 +11849,70 @@ async def main():
     print("   • ✅ إضافة دوال إعادة التشغيل التلقائي (safe_loop)")
     print("   • ✅ إضافة نظام النبض الداخلي (self_ping)")
     # ===== استخدام Webhook بدلاً من Polling =====
-    try:
-        port = int(os.getenv("PORT", "10000"))
+try:
+    port = int(os.getenv("PORT", "10000"))
+    
+    # الحصول على اسم المضيف من Render
+    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+    if not hostname:
+        hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
+    
+    if hostname:
+        webhook_url = f"https://{hostname}/{TOKEN}"
         
-        # الحصول على اسم المضيف من Render
-        hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-        if not hostname:
-            hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
+        # تهيئة التطبيق
+        await application.initialize()
+        await application.start()
         
-        if hostname:
-            webhook_url = f"https://{hostname}/{TOKEN}"
-            
-            # تهيئة التطبيق
-            await application.initialize()
-            await application.start()
-            
-            # تعيين Webhook
-            await application.bot.set_webhook(
-                url=webhook_url,
-                drop_pending_updates=True,
-                allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
-            )
-            
-            logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
-            
-            # إعداد خادم الويب
-            runner = web.AppRunner(web_app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", port)
-            await site.start()
-            
-            logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
-            
-            # إضافة مسار Webhook
-            web_app.router.add_post(f"/{TOKEN}", application.process_update)
-
-            
-            # انتظار الإيقاف
-            await asyncio.Event().wait()
-        else:
-            # التراجع إلى Polling إذا لم يكن هناك hostname
-            logger.warning("⚠️ RENDER_EXTERNAL_HOSTNAME غير معرّف، استخدام Polling")
-            await run_polling_safe(application)
-            
-    except Exception as e:
-        logger.error(f"❌ فشل Webhook: {e}")
-        logger.info("🔄 التراجع إلى Polling...")
-        await application.bot.delete_webhook()
+        # تعيين Webhook
+        await application.bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
+        )
+        
+        logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
+        
+        # ✅ إضافة مسار Webhook (قبل تشغيل الخادم)
+        if not hasattr(application.web_app, '_webhook_added'):
+            application.web_app.router.add_post(f"/{TOKEN}", application.process_update)
+            application.web_app._webhook_added = True
+            logger.info("✅ تم إضافة مسار Webhook")
+        
+        # ✅ تشغيل خادم الويب
+        runner = web.AppRunner(application.web_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        
+        logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
+        
+        # ✅ إضافة مسار الصحة (اختياري)
+        if not hasattr(application.web_app, '_health_added'):
+            async def health_check(request):
+                return web.json_response({
+                    'status': 'healthy',
+                    'bot': BOT_NAME,
+                    'webhook': webhook_url
+                })
+            application.web_app.router.add_get('/health', health_check)
+            application.web_app._health_added = True
+        
+        # انتظار الإيقاف
+        await asyncio.Event().wait()
+    else:
+        # التراجع إلى Polling إذا لم يكن هناك hostname
+        logger.warning("⚠️ RENDER_EXTERNAL_HOSTNAME غير معرّف، استخدام Polling")
         await run_polling_safe(application)
-    finally:
-        await cleanup_resources()
-        await task_manager.cancel_all()
+        
+except Exception as e:
+    logger.error(f"❌ فشل Webhook: {e}")
+    logger.info("🔄 التراجع إلى Polling...")
+    await application.bot.delete_webhook()
+    await run_polling_safe(application)
+finally:
+    await cleanup_resources()
+    await task_manager.cancel_all()
 
 async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
