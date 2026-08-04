@@ -1,4 +1,4 @@
-##!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
@@ -447,6 +447,7 @@ except ImportError:
 
 _security_cache_time = {}
 _security_cache_ttl = 30
+
 _translation_cache_lock = asyncio.Lock()
 user_translation_settings_cache = {}
 _user_translation_cache_lock = asyncio.Lock()
@@ -530,7 +531,8 @@ def load_banned_words_from_file(file_path: Path) -> List[str]:
                 f.write("# قائمة الكلمات المحظورة - كل كلمة في سطر منفصل\n")
                 f.write("# ابدأ السطر بـ # للتعليق\n")
                 f.write("# استخدم * للتعبيرات النمطية (مثل: سكس.*\n")
-                f.write("\nبورن\nسكس\nجنس\nعري\nخمر\nخمور\nمخدرات\nحشيش\nكحول\nدعارة\n")
+                f.write("\n")
+                f.write("بورن\nسكس\nجنس\nعري\nخمر\nخمور\nمخدرات\nحشيش\nكحول\nدعارة\n")
             print(f"✅ تم إنشاء ملف {file_path} مع كلمات افتراضية")
         except Exception as e:
             print(f"❌ فشل إنشاء ملف الكلمات المحظورة: {e}")
@@ -576,7 +578,10 @@ def import_banned_words_from_file(conn, words: List[str], added_by: int = 1) -> 
     try:
         for word in words:
             try:
-                conn.execute("INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)", (word, -1, added_by, utc_now_iso()))
+                conn.execute(
+                    "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+                    (word, -1, added_by, utc_now_iso())
+                )
                 imported += 1
             except:
                 continue
@@ -615,16 +620,32 @@ async def check_nsfw_image(image_bytes: bytes) -> dict:
         image_b64 = base64.b64encode(compressed).decode('utf-8')
         async with aiohttp.ClientSession() as session:
             url = "https://api.sightengine.com/1.0/check.json"
-            params = {"models": "nudity-2.0,wad", "api_user": SIGHTENGINE_API_USER, "api_secret": SIGHTENGINE_API_SECRET, "image": image_b64}
+            params = {
+                "models": "nudity-2.0,wad",
+                "api_user": SIGHTENGINE_API_USER,
+                "api_secret": SIGHTENGINE_API_SECRET,
+                "image": image_b64
+            }
             async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status != 200:
                     return {"nsfw": False, "score": 0, "error": f"فشل الاتصال ({resp.status})"}
                 data = await resp.json()
                 nsfw_score = data.get("nudity", {}).get("safe", 1)
                 nsfw_score = 1 - nsfw_score
-                wad = max(data.get("weapon", 0) or 0, data.get("drugs", 0) or 0, data.get("alcohol", 0) or 0)
+                wad = max(
+                    data.get("weapon", 0) or 0,
+                    data.get("drugs", 0) or 0,
+                    data.get("alcohol", 0) or 0
+                )
                 faces = data.get("faces", 0) or 0
-                return {"nsfw": nsfw_score > NSFW_THRESHOLD or wad > NSFW_THRESHOLD, "nsfw_score": round(nsfw_score, 2), "wad_score": round(wad, 2), "faces": faces, "safe_score": round(1 - nsfw_score, 2), "raw": data}
+                return {
+                    "nsfw": nsfw_score > NSFW_THRESHOLD or wad > NSFW_THRESHOLD,
+                    "nsfw_score": round(nsfw_score, 2),
+                    "wad_score": round(wad, 2),
+                    "faces": faces,
+                    "safe_score": round(1 - nsfw_score, 2),
+                    "raw": data
+                }
     except Exception as e:
         logger.error(f"خطأ في كشف NSFW للصورة: {e}")
         return {"nsfw": False, "score": 0, "error": str(e)}
@@ -667,7 +688,15 @@ async def check_nsfw_video(video_bytes: bytes, frames: int = NSFW_FRAMES) -> dic
             return {"nsfw": False, "score": 0, "error": "لا يمكن تحليل الإطارات"}
         avg_nsfw = sum(nsfw_scores) / len(nsfw_scores)
         avg_wad = sum(wad_scores) / len(wad_scores)
-        return {"nsfw": avg_nsfw > NSFW_THRESHOLD or avg_wad > NSFW_THRESHOLD, "nsfw_score": round(avg_nsfw, 2), "wad_score": round(avg_wad, 2), "faces": faces_count // len(frame_indices) if frame_indices else 0, "frames_analyzed": len(nsfw_scores), "max_nsfw_score": round(max(nsfw_scores), 2) if nsfw_scores else 0, "max_wad_score": round(max(wad_scores), 2) if wad_scores else 0}
+        return {
+            "nsfw": avg_nsfw > NSFW_THRESHOLD or avg_wad > NSFW_THRESHOLD,
+            "nsfw_score": round(avg_nsfw, 2),
+            "wad_score": round(avg_wad, 2),
+            "faces": faces_count // len(frame_indices) if frame_indices else 0,
+            "frames_analyzed": len(nsfw_scores),
+            "max_nsfw_score": round(max(nsfw_scores), 2) if nsfw_scores else 0,
+            "max_wad_score": round(max(wad_scores), 2) if wad_scores else 0
+        }
     except Exception as e:
         logger.error(f"خطأ في كشف NSFW للفيديو: {e}")
         return {"nsfw": False, "score": 0, "error": str(e)}
@@ -986,9 +1015,7 @@ def get_text(user_id: int, key: str) -> str:
 async def set_user_language(user_id: int, lang: str):
     user_language[user_id] = lang
 
-# ===================================================================
-# 200 رد تلقائي للمجموعات
-# ===================================================================
+# ===== 200 رد تلقائي =====
 WELCOME_REPLIES = {
     "مرحباً": ["أهلاً وسهلاً بك في مجموعتنا 🤍", "أهلاً بك، نورت المجموعة 🌸", "مرحباً، تشرفنا بوجودك 🙏"],
     "السلام عليكم": ["وعليكم السلام ورحمة الله وبركاته 🌹", "وعليكم السلام، نورت المجموعة 🌸", "الله يبارك فيك 🙏"],
@@ -1011,7 +1038,6 @@ WELCOME_REPLIES = {
     "نورت الدنيا": ["أنت النور 🌹", "نورت العالم بوجودك 🌸", "الدنيا بنورك ✨"],
     "فرحتنا": ["فرحتنا بوجودك 🤍", "نورت فرحتنا 🌹", "فرحة بمعرفتك 🌸"]
 }
-
 FAQ_REPLIES = {
     "كيف حالك": ["الحمد لله، بخير وأنت؟ ❤️", "بخير، تسلم 🌹", "الحمد لله، كيفك أنت؟ 🌸"],
     "شو اخبارك": ["كل الخير، كيفك أنت؟ 🌹", "بخير الحمد لله ❤️", "الخبر كله خير 🌸"],
@@ -1039,7 +1065,6 @@ FAQ_REPLIES = {
     "شنو تسوي": ["أخدم المجموعة وأديرها 📡", "أساعد في الإدارة 🌹", "أنا هنا لخدمتكم 🙏"],
     "ماذا تفعل": ["أساعد في إدارة المجموعة 🛡️", "أنشر وأحمي 🌹", "أخدم المجموعة 🙏"]
 }
-
 POSITIVE_REPLIES = {
     "شكراً": ["العفو، تحت أمرك دائماً ❤️", "العفو، أهلين 🙏", "الشكر لله 🌹"],
     "شكرا": ["العفو، أهلين 🙏", "العفو، نورت 🌸", "تسلم يا غالي 🌹"],
@@ -1062,7 +1087,6 @@ POSITIVE_REPLIES = {
     "الله يبارك فيك": ["وفيك بارك الله 🙏", "آمين، وبارك فيك 🌹", "الله يبارك في الجميع 🌸"],
     "تقبل مروري": ["نورتنا بمرورك 🌸", "شكراً لمرورك 🌹", "تشرفنا بوجودك 🙏"]
 }
-
 RELIGIOUS_REPLIES = {
     "ما شاء الله": ["تبارك الرحمن 🤍", "ما شاء الله تبارك الله 🌹", "الله يبارك 🙏"],
     "ماشاءالله": ["تبارك الله 🌹", "الله يبارك فيك 🙏", "ما شاء الله 🌸"],
@@ -1090,7 +1114,6 @@ RELIGIOUS_REPLIES = {
     "القدوس": ["سبحان القدوس 🤍", "القدوس السلام 🙏", "سبحان الله القدوس 🌹"],
     "السلام": ["السلام عليكم ورحمة الله 🌸", "السلام عليكم 🙏", "السلام عليكم ورحمة الله وبركاته 🌹"]
 }
-
 JOKE_REPLIES = {
     "ضحك": ["😂😂", "ههههه 🤣", "ضحكتني 😂"],
     "نكتة": ["مرة واحد قال للبوت: وينك؟ قال البوت: هني 👻", "مرة واحد سأل البوت: أيش تسوي؟ قال: أنشر وأحمي 🤖", "نكتة جديدة: البوت يقول للمستخدم: أنت نورت 🌟"],
@@ -1123,7 +1146,6 @@ JOKE_REPLIES = {
     "مزة": ["ههههه 🤣", "مزة منك 🌸", "ههههه مزة 😂"],
     "جو": ["جو حلو 😊", "جو رائع 🌹", "جو ممتع 🌸"]
 }
-
 MOTIVATIONAL_REPLIES = {
     "تعبت": ["إرتاح شوي، تستاهل الراحة 😊", "خذ قسط من الراحة 🌸", "تستاهل كل خير 🙏"],
     "زعلان": ["لا تزعل، كل شيء بيصير خير ❤️", "الدنيا جميلة، ابتسم 🌹", "كل شيء سيكون بخير 🌸"],
@@ -1141,7 +1163,6 @@ MOTIVATIONAL_REPLIES = {
     "طموح": ["طموحك يوصلك للنجاح 💫", "الطموح طريق القمة 🌹", "أنت طموح دائماً 🌸"],
     "ناجح": ["أنت ناجح دائماً 🎉", "النجاح حليفك 🌹", "مبروك النجاح 🙏"]
 }
-
 SOCIAL_REPLIES = {
     "كيفك": ["بخير الحمد لله، وأنت؟ 🌹", "بخير، تسلم ❤️", "الحمد لله، كيفك أنت؟ 🌸"],
     "كيفك انت": ["بخير، تسلم ❤️", "بخير، الحمد لله 🌹", "أنا بخير، شكراً 🙏"],
@@ -1164,7 +1185,6 @@ SOCIAL_REPLIES = {
     "البنات": ["الله يحفظهم لك 🌹", "البنات نعمة 🌸", "الله يرعاهم 🙏"],
     "العائلة": ["الله يجمع شملكم 🤍", "العائلة أغلى ما نملك 🌹", "الله يحمي العائلة 🌸"]
 }
-
 ADMIN_REPLIES = {
     "ممنوع": ["تم التنبيه، يرجى احترام قوانين المجموعة 🚫", "ممنوع، يرجى الالتزام 🌹", "تنبيه: ممنوع 🙏"],
     "انتبه": ["رجاءً انتبه للقوانين ⚠️", "انتبه يا غالي 🌹", "تنبيه مهم 🌸"],
@@ -1177,7 +1197,6 @@ ADMIN_REPLIES = {
     "سجل": ["تم تسجيل المخالفة 📝", "سجل المخالفات 🌹", "تم التوثيق 🙏"],
     "تنبيه": ["تنبيه هام يرجى قراءة القوانين 📋", "تنبيه للمخالفين 🌹", "انتبه للقوانين 🌸"]
 }
-
 REQUEST_REPLIES = {
     "بليز": ["حاضر، بس أرسل طلبك بالتفصيل 📝", "تفضل، أنا هنا 🌹", "أرسل طلبك 🙏"],
     "من فضلك": ["تفضل، أنا هنا للمساعدة 🤖", "تفضل، بكامل الخدمة 🌹", "أنا في خدمتك 🌸"],
@@ -1195,7 +1214,6 @@ REQUEST_REPLIES = {
     "فكرة": ["شاركنا فكرتك الجميلة 🌟", "فكرتك تهمنا 🌹", "تفضل بفكرتك 🙏"],
     "رأي": ["نرحب برأيك القيم 📝", "رأيك يهمنا 🌹", "تفضل برأيك 🌸"]
 }
-
 ABOUT_BOT_REPLIES = {
     "مين انت": ["أنا البوت، مساعد لإدارة المجموعات 🤖", "أنا ريلاكس مانيجر 🌹", "أنا خادم المجموعة 🙏"],
     "ايش تسوي": ["أساعد في إدارة المجموعات، النشر، الأمان، والكثير 📋", "أدير القنوات والمجموعات 🌹", "أنا مساعد شامل 🌸"],
@@ -1208,7 +1226,6 @@ ABOUT_BOT_REPLIES = {
     "عرف نفسك": ["أنا بوت مساعد، تحت أمركم 🙏", "أنا ريلاكس مانيجر 🌹", "أنا خادمكم 🌸"],
     "شنو فائدتك": ["أسهل عليك إدارة القناة والمجموعة 🚀", "فائدتي في الخدمة 🌹", "أنا هنا لمساعدتك 🙏"]
 }
-
 EXTRA_REPLIES = {
     "تمام": ["تمام يا غالي 🌸", "تمام، تسلم 🌹", "أوكي 🙏"],
     "اوك": ["أوكي، تحت أمرك 🙏", "أوكي، تمام 🌹", "ممتاز 🌸"],
@@ -1222,45 +1239,18 @@ EXTRA_REPLIES = {
     "ياحلو": ["حلوك الله 🌸", "أنت الحلو 🌹", "حلو كلامك 🙏"]
 }
 
-REPLY_WEIGHTS = {
-    'welcome': [0.5, 0.3, 0.2],
-    'faq': [0.4, 0.3, 0.3],
-    'positive': [0.4, 0.4, 0.2],
-    'religious': [0.4, 0.3, 0.3],
-    'joke': [0.3, 0.4, 0.3],
-    'motivational': [0.4, 0.3, 0.3],
-    'social': [0.4, 0.3, 0.3],
-    'admin': [0.5, 0.3, 0.2],
-    'request': [0.4, 0.3, 0.3],
-    'about': [0.4, 0.3, 0.3],
-    'extra': [0.4, 0.3, 0.3]
-}
-
-def get_weighted_reply(reply_list: List[str], category: str = 'default') -> str:
-    if not reply_list:
-        return "🙏"
-    if len(reply_list) == 1:
-        return reply_list[0]
-    weights = REPLY_WEIGHTS.get(category, [0.4, 0.3, 0.3])
-    weights = weights[:len(reply_list)]
-    if len(weights) < len(reply_list):
-        weights.extend([0.1] * (len(reply_list) - len(weights)))
-    total = sum(weights)
-    weights = [w / total for w in weights]
-    return random.choices(reply_list, weights=weights, k=1)[0]
-
 ALL_REPLIES = {}
-ALL_REPLIES.update({k: get_weighted_reply(v, 'welcome') if isinstance(v, list) else v for k, v in WELCOME_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'faq') if isinstance(v, list) else v for k, v in FAQ_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'positive') if isinstance(v, list) else v for k, v in POSITIVE_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'religious') if isinstance(v, list) else v for k, v in RELIGIOUS_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'joke') if isinstance(v, list) else v for k, v in JOKE_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'motivational') if isinstance(v, list) else v for k, v in MOTIVATIONAL_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'social') if isinstance(v, list) else v for k, v in SOCIAL_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'admin') if isinstance(v, list) else v for k, v in ADMIN_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'request') if isinstance(v, list) else v for k, v in REQUEST_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'about') if isinstance(v, list) else v for k, v in ABOUT_BOT_REPLIES.items()})
-ALL_REPLIES.update({k: get_weighted_reply(v, 'extra') if isinstance(v, list) else v for k, v in EXTRA_REPLIES.items()})
+ALL_REPLIES.update(WELCOME_REPLIES)
+ALL_REPLIES.update(FAQ_REPLIES)
+ALL_REPLIES.update(POSITIVE_REPLIES)
+ALL_REPLIES.update(RELIGIOUS_REPLIES)
+ALL_REPLIES.update(JOKE_REPLIES)
+ALL_REPLIES.update(MOTIVATIONAL_REPLIES)
+ALL_REPLIES.update(SOCIAL_REPLIES)
+ALL_REPLIES.update(ADMIN_REPLIES)
+ALL_REPLIES.update(REQUEST_REPLIES)
+ALL_REPLIES.update(ABOUT_BOT_REPLIES)
+ALL_REPLIES.update(EXTRA_REPLIES)
 
 def clean_text_for_telegram(text: str) -> str:
     if not text:
@@ -1316,6 +1306,7 @@ ERROR_MESSAGES = {
     "MessageNotModified": "✅ تم التحديث",
 }
 
+# ===== نظام التسجيل المتقدم =====
 class AdvancedLogger:
     def __init__(self):
         self.loggers = {}
@@ -1489,6 +1480,7 @@ class NotificationSystem:
 
 notification_system = NotificationSystem()
 
+# ===== دوال الإرسال الآمنة =====
 async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
     if not text:
         return None
@@ -1608,6 +1600,7 @@ async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
                 except:
                     raise final_e
 
+# ===== التحقق من التشغيل الواحد =====
 def check_single_instance():
     try:
         sock_path = TEMP_PATH / "bot.sock"
@@ -1622,6 +1615,7 @@ def check_single_instance():
 
 lock_socket = check_single_instance()
 
+# ===== دوال الوقت =====
 def utc_now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -1655,6 +1649,7 @@ def utc_to_mecca(utc_dt):
         utc_dt = utc_dt.replace(tzinfo=None)
     return utc_dt + timedelta(hours=3)
 
+# ===== نظام الأمان والتدقيق =====
 class SecurityAudit:
     async def log(self, event_type: str, user_id: int, details: dict, severity: str = "INFO"):
         log_entry = {
@@ -1714,6 +1709,7 @@ class AnomalyDetector:
 
 anomaly_detector = AnomalyDetector()
 
+# ===== Pool اتصالات قاعدة البيانات =====
 class DatabasePool:
     def __init__(self, max_connections: int = 10):
         self._pool = None
@@ -1762,6 +1758,7 @@ async def execute_db(func: Callable):
     finally:
         pass
 
+# ===== نظام التخزين المؤقت باستخدام Redis =====
 try:
     import aioredis
     REDIS_AVAILABLE = True
@@ -1810,6 +1807,7 @@ class CacheManager:
 
 cache_manager = CacheManager()
 
+# ===== دوال التشفير والضغط =====
 def encrypt_file_stream(src: Path, dst: Path, cipher: Fernet, chunk_size: int = 64*1024):
     with open(src, 'rb') as f_in, open(dst, 'wb') as f_out:
         while True:
@@ -1901,9 +1899,7 @@ class GlobalRateLimiter:
 
 global_rate_limiter = GlobalRateLimiter()
 
-# ===================================================================
-# تعريف CallbackData و UserState
-# ===================================================================
+# ===== تعريفات CallbackData و UserState =====
 class CallbackData:
     MAIN_MENU = "main_menu"
     CHANNELS_MY = "channels:my_channels"
@@ -2138,9 +2134,7 @@ class UserState(Enum):
     WAITING_NSFW_THRESHOLD = auto()
     WAITING_EXPORT_DATA = auto()
 
-# ===================================================================
-# جميع دوال قاعدة البيانات (db_*) كاملة
-# ===================================================================
+# ===== دوال قاعدة البيانات (db_*) =====
 async def db_register_user(user_id: int) -> bool:
     async def _register(conn):
         cur = await conn.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
@@ -2267,7 +2261,6 @@ async def db_set_auto_recycle(user_id: int, enabled: bool):
         await conn.commit()
     return await execute_db(_set)
 
-# دوال قنوات المستخدمين
 async def db_add_channel(user_id: int, channel_id: str, channel_name: str) -> int:
     async def _add(conn):
         cur = await conn.execute("SELECT id FROM user_channels WHERE user_id=? AND channel_id=?", (user_id, channel_id))
@@ -2379,7 +2372,6 @@ async def db_get_all_bot_channels(only_banned: bool = False):
         return await cur.fetchall()
     return await execute_db(_get)
 
-# دوال المنشورات
 async def db_save_posts(channel_db_id: int, posts: list) -> int:
     async def _save(conn):
         values = []
@@ -2504,7 +2496,6 @@ async def db_stats():
         return total, banned, posts, groups, channels
     return await execute_db(_stats)
 
-# دوال المجموعات
 async def db_register_group(chat_id: int, chat_name: str, added_by: int, username: str = None) -> bool:
     async def _register(conn):
         cur = await conn.execute("SELECT chat_id FROM bot_groups WHERE chat_id=?", (chat_id,))
@@ -2602,7 +2593,6 @@ async def is_chat_locked(chat_id: int) -> bool:
         return row and row[0] == 1
     return await execute_db(_check)
 
-# نظام الصلاحيات
 async def db_is_real_admin(chat_id: int, user_id: int) -> bool:
     async def _check(conn):
         cur = await conn.execute("SELECT 1 FROM group_admins WHERE chat_id=? AND user_id=?", (chat_id, user_id))
@@ -2823,9 +2813,7 @@ async def detect_owner_type(bot, chat_id: int) -> dict:
         logger.error(f"فشل كشف المالك في {chat_id}: {e}")
         return {'is_hidden': True, 'user_id': None}
 
-# ===================================================================
-# دوال الأمان (security_*)
-# ===================================================================
+# ===== دوال الأمان (security_*) =====
 async def ensure_security_columns(conn):
     cur = await conn.execute("PRAGMA table_info(group_security)")
     existing = [row[1] for row in await cur.fetchall()]
@@ -3216,9 +3204,7 @@ async def db_get_hidden_admins_for_user(user_id: int):
         return await cur.fetchall()
     return await execute_db(_get)
 
-# ===================================================================
-# دوال الجدولة (schedule_*)
-# ===================================================================
+# ===== دوال الجدولة (schedule_*) =====
 class ScheduleType(Enum):
     INTERVAL = "interval"
     CRON = "cron"
@@ -3407,9 +3393,7 @@ async def db_delete_scheduled_post(post_id: int):
         await conn.commit()
     return await execute_db(_delete)
 
-# ===================================================================
-# دوال الردود (replies_*)
-# ===================================================================
+# ===== دوال الردود (replies_*) =====
 async def db_add_reply(keyword, reply):
     async def _add(conn):
         await conn.execute("INSERT OR REPLACE INTO group_replies (keyword, reply) VALUES (?,?)", (keyword.lower(), reply))
@@ -3435,9 +3419,7 @@ async def db_get_all_replies():
         return await cur.fetchall()
     return await execute_db(_get)
 
-# ===================================================================
-# دوال الردود المتقدمة (auto_reply_*)
-# ===================================================================
+# ===== دوال الردود المتقدمة (auto_reply_*) =====
 async def db_get_auto_reply_settings(chat_id: int) -> dict:
     async def _get(conn):
         cur = await conn.execute("SELECT enabled, only_admins, ignore_bots FROM auto_reply_settings WHERE chat_id=?", (chat_id,))
@@ -3478,9 +3460,7 @@ async def db_set_user_auto_reply_status(user_id: int, enabled: bool) -> None:
         await conn.commit()
     return await execute_db(_set)
 
-# ===================================================================
-# دوال التذاكر (tickets_*)
-# ===================================================================
+# ===== دوال التذاكر (tickets_*) =====
 async def db_get_next_ticket_number():
     async def _get(conn):
         cur = await conn.execute("SELECT value FROM settings WHERE key='last_ticket_number'")
@@ -3530,9 +3510,7 @@ async def db_delete_all_tickets() -> int:
         return count
     return await execute_db(_delete)
 
-# ===================================================================
-# دوال الإحالات (referral_*)
-# ===================================================================
+# ===== دوال الإحالات (referral_*) =====
 async def db_get_referral_settings() -> dict:
     async def _get(conn):
         settings = {}
@@ -3641,9 +3619,7 @@ async def db_get_welcome_bonus_points() -> int:
     settings = await db_get_referral_settings()
     return int(settings.get('welcome_bonus_points', '10'))
 
-# ===================================================================
-# دوال التذكيرات (reminder_*)
-# ===================================================================
+# ===== دوال التذكيرات (reminder_*) =====
 async def db_get_user_reminder_settings(user_id: int) -> dict:
     async def _get(conn):
         cur = await conn.execute("SELECT subscription_reminder, daily_stats_reminder, weekly_report, reminder_days_before, last_reminder_sent, notification_lang FROM user_reminder_settings WHERE user_id=?", (user_id,))
@@ -3734,9 +3710,7 @@ async def db_get_all_active_users_for_report() -> list:
         return [row[0] for row in await cur.fetchall()]
     return await execute_db(_get)
 
-# ===================================================================
-# دوال المستويات (levels_*)
-# ===================================================================
+# ===== دوال المستويات (levels_*) =====
 LEVEL_REQUIREMENTS = {1: 0, 2: 100, 3: 250, 4: 500, 5: 1000, 6: 2000, 7: 3500, 8: 5000, 9: 7500, 10: 10000}
 
 async def db_get_user_level(user_id: int):
@@ -3868,9 +3842,7 @@ async def achievement_system(user_id: int, action: str) -> str:
         return f"{ACHIEVEMENTS['first_referral']['icon']} {ACHIEVEMENTS['first_referral']['name']} (+{ACHIEVEMENTS['first_referral']['points']} نقطة)"
     return ""
 
-# ===================================================================
-# دوال الإعدادات العامة (settings_*)
-# ===================================================================
+# ===== دوال الإعدادات العامة (settings_*) =====
 async def db_get_publish_interval() -> int:
     async def _get(conn):
         cur = await conn.execute("SELECT value FROM settings WHERE key='publish_interval'")
@@ -3989,9 +3961,7 @@ async def db_set_allowed_sendcode_user(user_id: int) -> None:
         await conn.commit()
     return await execute_db(_set)
 
-# ===================================================================
-# دوال الترجمة (translation_*)
-# ===================================================================
+# ===== دوال الترجمة (translation_*) =====
 user_translation_settings_cache = {}
 _user_translation_cache_lock = asyncio.Lock()
 
@@ -4033,9 +4003,7 @@ async def translate_text(text: str, target_lang: str) -> str:
         logger.error(f"فشل الترجمة: {e}")
     return text
 
-# ===================================================================
-# دوال المسابقات (contests_*)
-# ===================================================================
+# ===== دوال المسابقات (contests_*) =====
 class ContestTypes(Enum):
     QUIZ = "quiz"
     RAFFLE = "raffle"
@@ -4198,9 +4166,7 @@ async def db_get_random_participant(contest_id: int) -> int | None:
         return row[0] if row else None
     return await execute_db(_get)
 
-# ===================================================================
-# دوال إحصائيات القنوات (channel_stats_*)
-# ===================================================================
+# ===== دوال إحصائيات القنوات (channel_stats_*) =====
 async def db_get_channel_stats(channel_db_id: int) -> dict:
     async def _get_stats(conn):
         conn.row_factory = aiosqlite.Row
@@ -4428,9 +4394,7 @@ async def db_get_channel_growth(channel_db_id: int, days: int = 30) -> dict:
         }
     return await execute_db(_get_growth)
 
-# ===================================================================
-# دوال الصحة (health_*)
-# ===================================================================
+# ===== دوال الصحة (health_*) =====
 async def check_database_health() -> bool:
     try:
         async def _check(conn):
@@ -4478,9 +4442,7 @@ def get_ram_usage():
             pass
         return {'total': 0, 'used': 0, 'percent': 0}
 
-# ===================================================================
-# دوال مساعدة (utils_*)
-# ===================================================================
+# ===== دوال مساعدة (utils_*) =====
 def parse_days_of_week_safe(days_str):
     if not days_str:
         return []
@@ -4525,9 +4487,7 @@ async def cleanup_points_cache():
         await asyncio.sleep(3600)
         user_points_last_hour.clear()
 
-# ===================================================================
-# دوال النسخ الاحتياطي (backup_*)
-# ===================================================================
+# ===== دوال النسخ الاحتياطي (backup_*) =====
 async def create_backup():
     try:
         encrypted_path = encrypt_db_backup()
@@ -4664,9 +4624,7 @@ async def auto_backup():
             backoff = min(backoff * 1.5, max_backoff)
             await asyncio.sleep(backoff)
 
-# ===================================================================
-# دوال جوجل درايف (drive_*)
-# ===================================================================
+# ===== دوال جوجل درايف (drive_*) =====
 _DRIVE_SERVICE_CACHE = None
 _DRIVE_SERVICE_CACHE_TIME = 0
 _DRIVE_SERVICE_CACHE_TTL = 3600
@@ -4779,7 +4737,7 @@ async def upload_backup_to_drive(backup_path: Path, max_retries: int = 3) -> str
             await asyncio.sleep(2 ** attempt)
     return None
 # ===================================================================
-# دوال العقوبات والإجراءات (moderation_*)
+# دوال العقوبات والإجراءات (moderation_*) - كاملة
 # ===================================================================
 async def apply_penalty_with_duration(bot, chat_id: int, user_id: int, penalty: str, duration_minutes: int = 0, reason: str = ""):
     if penalty == 'kick':
@@ -6222,37 +6180,6 @@ async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(msg, reply_markup=penalty_keyboard(chat_id))
     else:
         await safe_send_markdown(context.bot, uid, msg, reply_markup=penalty_keyboard(chat_id))
-async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
-    uid = update.effective_user.id
-    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
-    
-    if not chat_id:
-        return
-    
-    if not await is_authorized_in_group(context.bot, chat_id, uid):
-        if query:
-            await query.answer(get_text(uid, 'admin_only'), show_alert=True)
-        else:
-            await safe_send_markdown(context.bot, uid, get_text(uid, 'admin_only'))
-        return
-    
-    msg = "⚖️ **اختر عقوبة الحذف:**\n\nسيتم تطبيق هذه العقوبة عند حذف أي محتوى مخالف."
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚫 لا شيء", callback_data=f"set_penalty:none:{chat_id}"),
-         InlineKeyboardButton("👢 طرد", callback_data=f"set_penalty:kick:{chat_id}")],
-        [InlineKeyboardButton("🛑 حظر", callback_data=f"set_penalty:ban:{chat_id}"),
-         InlineKeyboardButton("🔇 كتم", callback_data=f"set_penalty:mute:{chat_id}")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
-    ])
-    
-    if query:
-        await safe_edit_markdown(query, msg, reply_markup=keyboard)
-    else:
-        await safe_send_markdown(context.bot, uid, msg, reply_markup=keyboard)
 
 async def penalty_kick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -6352,6 +6279,7 @@ async def penalty_mute_duration_callback(update: Update, context: ContextTypes.D
             await query.edit_message_text(f"✅ تم تعيين العقوبة التلقائية إلى: **كتم {text}**", reply_markup=kb)
         else:
             await safe_send_markdown(context.bot, uid, f"✅ تم تعيين العقوبة التلقائية إلى: **كتم {text}**", reply_markup=kb)
+
 async def set_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالج اختيار عقوبة الحذف من الأزرار"""
     query = update.callback_query
@@ -10910,10 +10838,7 @@ web_app.router.add_get('/health', health_check_handler)
 async def start_web_server():
     global WEB_PORT_USED
     try:
-        # استخدام PORT من Render أو المنفذ الافتراضي
         port = int(os.getenv("PORT", "8080"))
-        
-        # محاولة بدء الخادم على المنفذ المحدد
         try:
             runner = web.AppRunner(web_app)
             await runner.setup()
@@ -10928,7 +10853,6 @@ async def start_web_server():
                 raise
         except Exception as e:
             logger.warning(f"⚠️ فشل بدء الخادم على المنفذ {port}: {e}")
-            # نحاول منفذ عشوائي كحل أخير
             try:
                 import random
                 random_port = random.randint(10000, 65535)
@@ -10991,7 +10915,6 @@ async def safe_loop(coro, name="background_loop"):
             await asyncio.sleep(10)
 
 async def run_polling_safe(application):
-    """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
     while True:
         try:
             await application.run_polling(
@@ -11011,7 +10934,6 @@ async def run_polling_safe(application):
         except Exception as e:
             logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
             await asyncio.sleep(10)
-
 
 # ===================================================================
 # دوال النبض الداخلي (Keep-Alive)
@@ -11043,6 +10965,7 @@ async def init_db_improved():
         await conn.execute("PRAGMA optimize")
         await conn.execute("PRAGMA max_page_count=1000000")
         await conn.execute("PRAGMA secure_delete=ON")
+        # ===== جميع جداول قاعدة البيانات =====
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -11547,6 +11470,7 @@ async def main():
         request = HTTPXRequest(**request_kwargs)
         application = Application.builder().token(TOKEN).request(request).build()
     application.add_error_handler(global_error_handler)
+    # ===== جميع الأوامر =====
     application.add_handler(CommandHandler("start", start_command_handler))
     application.add_handler(CommandHandler("language", language_command_handler))
     application.add_handler(CommandHandler("syncgroup", syncgroup_command_handler))
@@ -11583,6 +11507,7 @@ async def main():
     application.add_handler(CommandHandler("declare_winner", declare_winner_command_handler))
     application.add_handler(CommandHandler("set_rules", set_rules_command_handler))
     application.add_handler(CommandHandler("rules", rules_command_handler))
+    # ===== جميع الكولباك =====
     application.add_handler(CallbackQueryHandler(lang_callback_handler, pattern="^lang_"))
     application.add_handler(CallbackQueryHandler(handle_text_callbacks, pattern="^(rank|top|schedule_post|language)$"))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
@@ -11641,11 +11566,11 @@ async def main():
     application.add_handler(CallbackQueryHandler(penalty_kick_callback, pattern=f"^{CallbackData.PENALTY_KICK}:"))
     application.add_handler(CallbackQueryHandler(penalty_ban_callback, pattern=f"^{CallbackData.PENALTY_BAN}:"))
     application.add_handler(CallbackQueryHandler(penalty_mute_callback, pattern=f"^{CallbackData.PENALTY_MUTE}:"))
+    application.add_handler(CallbackQueryHandler(set_penalty_callback, pattern="^set_penalty:"))
     application.add_handler(CallbackQueryHandler(help_callback, pattern=f"^{CallbackData.HELP}$"))
     application.add_handler(CallbackQueryHandler(support_menu_callback, pattern=f"^{CallbackData.SUPPORT_MENU}$"))
     application.add_handler(CallbackQueryHandler(support_help_callback, pattern=f"^{CallbackData.SUPPORT_HELP}$"))
     application.add_handler(CallbackQueryHandler(support_ticket_callback, pattern=f"^{CallbackData.SUPPORT_TICKET}$"))
-    application.add_handler(CallbackQueryHandler(set_penalty_callback, pattern="^set_penalty:"))
     application.add_handler(CallbackQueryHandler(support_back_callback, pattern=f"^{CallbackData.SUPPORT_BACK}$"))
     application.add_handler(CallbackQueryHandler(trial_callback, pattern=f"^{CallbackData.TRIAL}$"))
     application.add_handler(CallbackQueryHandler(subscribe_menu_callback, pattern=f"^{CallbackData.SUBSCRIBE_MENU}$"))
@@ -11759,6 +11684,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(group_action_unban_callback, pattern=f"^{CallbackData.GROUP_ACTION_UNBAN}:"))
     application.add_handler(CallbackQueryHandler(publish_all_channels_callback_handler, pattern=f"^{CallbackData.PUBLISH_ALL_CHANNELS}$"))
     application.add_handler(CallbackQueryHandler(delete_group_callback, pattern="^delete_group:"))
+    # ===== معالجات الأحداث =====
     application.add_handler(ChatJoinRequestHandler(chat_join_request_handler))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members_handler))
     application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
@@ -11775,6 +11701,7 @@ async def main():
     application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_service_messages))
+    # ===== قائمة الأوامر =====
     commands = [
         BotCommand("start", "بدء البوت"),
         BotCommand("trial", "تجربة مجانية"),
@@ -11814,12 +11741,13 @@ async def main():
         BotCommand("rules", "عرض قوانين المجموعة"),
     ]
     await application.bot.set_my_commands(commands)
+    # ===== تشغيل المهام الخلفية =====
     task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "auto_publish"))
     task_manager.create_task(safe_loop(auto_backup, "auto_backup"))
     task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
     task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(application.bot), "reminders"))
     task_manager.create_task(safe_loop(cleanup_expired_sessions_improved, "cleanup_sessions"))
-   # task_manager.create_task(safe_loop(start_web_server, "web_server"))
+    task_manager.create_task(safe_loop(start_web_server, "web_server"))
     task_manager.create_task(safe_loop(self_ping_loop, "self_ping"))
     task_manager.create_task(safe_loop(broadcast_stats_periodically, "broadcast_stats"))
     task_manager.create_task(safe_loop(cleanup_points_cache, "cleanup_points"))
@@ -11849,71 +11777,58 @@ async def main():
     print("   • ✅ إضافة دوال إعادة التشغيل التلقائي (safe_loop)")
     print("   • ✅ إضافة نظام النبض الداخلي (self_ping)")
     # ===== استخدام Webhook بدلاً من Polling =====
-try:
-    port = int(os.getenv("PORT", "10000"))
-    
-    # الحصول على اسم المضيف من Render
-    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-    if not hostname:
-        hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
-    
-    if hostname:
-        webhook_url = f"https://{hostname}/{TOKEN}"
-        
-        # تهيئة التطبيق
-        await application.initialize()
-        await application.start()
-        
-        # تعيين Webhook
-        await application.bot.set_webhook(
-            url=webhook_url,
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
-        )
-        
-        logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
-        
-        # ✅ إضافة مسار Webhook (قبل تشغيل الخادم)
-        if not hasattr(application.web_app, '_webhook_added'):
-            application.web_app.router.add_post(f"/{TOKEN}", application.process_update)
-            application.web_app._webhook_added = True
-            logger.info("✅ تم إضافة مسار Webhook")
-        
-        # ✅ تشغيل خادم الويب
-        runner = web.AppRunner(application.web_app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", port)
-        await site.start()
-        
-        logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
-        
-        # ✅ إضافة مسار الصحة (اختياري)
-        if not hasattr(application.web_app, '_health_added'):
-            async def health_check(request):
-                return web.json_response({
-                    'status': 'healthy',
-                    'bot': BOT_NAME,
-                    'webhook': webhook_url
-                })
-            application.web_app.router.add_get('/health', health_check)
-            application.web_app._health_added = True
-        
-        # انتظار الإيقاف
-        await asyncio.Event().wait()
-    else:
-        # التراجع إلى Polling إذا لم يكن هناك hostname
-        logger.warning("⚠️ RENDER_EXTERNAL_HOSTNAME غير معرّف، استخدام Polling")
+    try:
+        port = int(os.getenv("PORT", "10000"))
+        hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+        if not hostname:
+            hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
+        if hostname:
+            webhook_url = f"https://{hostname}/{TOKEN}"
+            await application.initialize()
+            await application.start()
+            await application.bot.set_webhook(
+                url=webhook_url,
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
+            )
+            logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
+            # إضافة مسار Webhook (قبل تشغيل الخادم)
+            if not hasattr(application.web_app, '_webhook_added'):
+                application.web_app.router.add_post(f"/{TOKEN}", application.process_update)
+                application.web_app._webhook_added = True
+                logger.info("✅ تم إضافة مسار Webhook")
+            # تشغيل خادم الويب
+            runner = web.AppRunner(application.web_app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
+            # إضافة مسار الصحة
+            if not hasattr(application.web_app, '_health_added'):
+                async def health_check(request):
+                    return web.json_response({
+                        'status': 'healthy',
+                        'bot': BOT_NAME,
+                        'webhook': webhook_url
+                    })
+                application.web_app.router.add_get('/health', health_check)
+                application.web_app._health_added = True
+            await asyncio.Event().wait()
+        else:
+            logger.warning("⚠️ RENDER_EXTERNAL_HOSTNAME غير معرّف، استخدام Polling")
+            await run_polling_safe(application)
+    except Exception as e:
+        logger.error(f"❌ فشل Webhook: {e}")
+        logger.info("🔄 التراجع إلى Polling...")
+        await application.bot.delete_webhook()
         await run_polling_safe(application)
-        
-except Exception as e:
-    logger.error(f"❌ فشل Webhook: {e}")
-    logger.info("🔄 التراجع إلى Polling...")
-    await application.bot.delete_webhook()
-    await run_polling_safe(application)
-finally:
-    await cleanup_resources()
-    await task_manager.cancel_all()
+    finally:
+        await cleanup_resources()
+        await task_manager.cancel_all()
 
+# ===================================================================
+# دوال الأوامر (Command Handlers)
+# ===================================================================
 async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
@@ -12007,7 +11922,12 @@ async def handle_sendcode_confirmation_handler(update: Update, context: ContextT
             with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(watermarked_content)
             with open(temp_file, 'rb') as f:
-                await context.bot.send_document(chat_id=user_id, document=f, filename=f"relax_bot_secure_{mecca_now().strftime('%Y%m%d')}.py", caption="⚠️ **هذا الكود موقع رقمياً - لا تشاركه مع أي شخص غير موثوق!**\n\n📌 تم إزالة التوكن والمفاتيح من هذا الملف.")
+                await context.bot.send_document(
+                    chat_id=user_id,
+                    document=f,
+                    filename=f"relax_bot_secure_{mecca_now().strftime('%Y%m%d')}.py",
+                    caption="⚠️ **هذا الكود موقع رقمياً - لا تشاركه مع أي شخص غير موثوق!**\n\n📌 تم إزالة التوكن والمفاتيح من هذا الملف."
+                )
             os.unlink(temp_file)
             await security_audit.log("SENDCODE_EXECUTED", user_id, {"timestamp": mecca_now_iso()}, "CRITICAL")
             await safe_send_markdown(context.bot, user_id, "✅ تم إرسال الكود بنجاح على الخاص!")
@@ -12669,13 +12589,13 @@ async def security_refresh_groups_callback(update: Update, context: ContextTypes
 
 if __name__ == "__main__":
     try:
-        # منع nest_asyncio من التسبب بالمشكلة
-        import nest_asyncio
-        nest_asyncio.apply()
-        
-        # تشغيل البوت بدون إعادة تشغيل تلقائي
+        os.environ["WEB_CONCURRENCY"] = "1"
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("🛑 تم إيقاف البوت")
     except Exception as e:
         logger.error(f"❌ خطأ فادح: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
