@@ -6352,6 +6352,39 @@ async def penalty_mute_duration_callback(update: Update, context: ContextTypes.D
             await query.edit_message_text(f"✅ تم تعيين العقوبة التلقائية إلى: **كتم {text}**", reply_markup=kb)
         else:
             await safe_send_markdown(context.bot, uid, f"✅ تم تعيين العقوبة التلقائية إلى: **كتم {text}**", reply_markup=kb)
+async def set_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج اختيار عقوبة الحذف من الأزرار"""
+    query = update.callback_query
+    await query.answer()
+    
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        await query.edit_message_text("❌ بيانات غير صالحة")
+        return
+    
+    penalty = parts[1]
+    chat_id = int(parts[2])
+    uid = update.effective_user.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        await query.answer(get_text(uid, 'admin_only'), show_alert=True)
+        return
+    
+    # تعيين العقوبة
+    await db_set_security_settings(chat_id, auto_penalty=penalty, auto_mute_duration=30)
+    
+    penalty_names = {
+        'none': '🚫 لا شيء (حذف فقط)',
+        'kick': '👢 طرد',
+        'ban': '🛑 حظر',
+        'mute': '🔇 كتم (30 دقيقة)'
+    }
+    
+    await query.edit_message_text(f"✅ تم تغيير عقوبة الحذف إلى: {penalty_names[penalty]}")
+    
+    # العودة إلى إعدادات الأمان بعد 3 ثواني
+    await asyncio.sleep(3)
+    await _update_security_panel(query, chat_id, uid)
 
 async def _update_security_panel(query, chat_id: int, user_id: int):
     settings = await db_get_security_settings(chat_id)
