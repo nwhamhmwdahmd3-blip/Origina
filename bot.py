@@ -11791,10 +11791,766 @@ async def main():
         await cleanup_resources()
         await task_manager.cancel_all()
 
-# تعريف الدوال المتبقية (Command Handlers) - تم تضمينها سابقاً
-# لكن بعضها يعتمد على دوال معرفة في الأعلى، لذا نضعها هنا للتأكيد
+# ===================================================================
+# دوال معالجة الأوامر (Command Handlers)
+# ===================================================================
 
-# تم تضمين جميع الدوال في الكود أعلاه.
+async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /start"""
+    user = update.effective_user
+    user_id = user.id
+    
+    # تسجيل المستخدم
+    await db_register_user(user_id)
+    await db_update_user_cache(user_id, user.username or "", user.first_name or "")
+    
+    # التحقق من الإحالة
+    if context.args and context.args[0].startswith("ref_"):
+        referral_code = context.args[0][4:]
+        referrer_id = await db_get_user_by_referral_code(referral_code)
+        if referrer_id and referrer_id != user_id:
+            success = await db_add_referral(referrer_id, user_id)
+            if success:
+                await db_auto_reward_referral(referrer_id, user_id)
+                await achievement_system(referrer_id, 'first_referral')
+                try:
+                    await context.bot.send_message(
+                        chat_id=referrer_id,
+                        text=f"🎉 قام مستخدم جديد بالتسجيل باستخدام رابط الإحالة الخاص بك!\n👤 المعرف: {user_id}"
+                    )
+                except:
+                    pass
+    
+    # عرض القائمة الرئيسية
+    keyboard, title, active = await get_main_keyboard(user_id)
+    if update.message:
+        await safe_send_markdown(context.bot, user_id, title, reply_markup=keyboard)
+    else:
+        await safe_edit_markdown(update.callback_query, title, reply_markup=keyboard)
+    
+    # إرسال رسالة ترحيب
+    welcome_msg = get_text(user_id, 'welcome')
+    await safe_send_markdown(context.bot, user_id, welcome_msg)
+
+
+async def language_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /language"""
+    user_id = update.effective_user.id
+    
+    keyboard = []
+    for code, name in SUPPORTED_LANGUAGES.items():
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"lang_{code}")])
+    keyboard.append([InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)])
+    
+    msg = "🌐 **اختر لغتك / Choose your language:**"
+    if update.message:
+        await safe_send_markdown(context.bot, user_id, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_edit_markdown(update.callback_query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def lang_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تغيير اللغة من الكولباك"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    lang = query.data.replace("lang_", "")
+    
+    if lang in SUPPORTED_LANGUAGES:
+        await set_user_language(user_id, lang)
+        await query.edit_message_text(f"✅ تم تغيير اللغة إلى {SUPPORTED_LANGUAGES[lang]}")
+    else:
+        await query.edit_message_text("❌ لغة غير مدعومة")
+    
+    await main_menu_callback(update, context)
+
+
+async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /syncgroup - تفعيل المجموعة"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    chat = update.effective_chat
+    user = update.effective_user
+    chat_id = chat.id
+    user_id = user.id
+    
+    # تسجيل المجموعة
+    await db_register_group(chat_id, chat.title or "بدون اسم", user_id, chat.username)
+    
+    # التحقق من صلاحيات البوت
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        await safe_send_markdown(
+            context.bot, 
+            user_id, 
+            f"⚠️ **البوت ليس مشرفاً في المجموعة!**\n\n"
+            f"السبب: {bot_perms['reason']}\n\n"
+            f"📌 يرجى إضافة البوت كمشرف في المجموعة ثم استخدام `/syncgroup` مرة أخرى."
+        )
+        return
+    
+    # التحقق مما إذا كان المستخدم مشرفاً
+    is_admin = await is_currently_admin_in_group(context.bot, chat_id, user_id)
+    
+    if is_admin:
+        # المستخدم مشرف - تسجيل كمالك مخفي
+        await db_register_hidden_owner_group(chat_id, user_id)
+        invalidate_auth_cache(chat_id, user_id)
+        
+        await db_sync_group_admins(chat_id, context.bot, user_id)
+        
+        await safe_send_markdown(
+            context.bot, 
+            user_id, 
+            get_text(user_id, 'group_registered')
+        )
+        
+        # إرسال إشعار للمالك الحقيقي إن وجد
+        owner_info = await detect_owner_type(context.bot, chat_id)
+        if owner_info.get('user_id') and owner_info['user_id'] != user_id:
+            await db_register_hidden_owner_group(chat_id, owner_info['user_id'])
+            invalidate_auth_cache(chat_id, owner_info['user_id'])
+            try:
+                await context.bot.send_message(
+                    chat_id=owner_info['user_id'],
+                    text=f"📢 **تم تفعيل البوت في المجموعة**\n\n"
+                         f"📌 {chat.title}\n"
+                         f"🆔 {chat_id}\n"
+                         f"👤 تم التفعيل بواسطة: {user.first_name or user_id}"
+                )
+            except:
+                pass
+    else:
+        # المستخدم ليس مشرفاً - إرسال طلب للمشرفين
+        await notify_group_admins(context.bot, chat_id, user_id, chat.title)
+        
+        await safe_send_markdown(
+            context.bot, 
+            user_id, 
+            get_text(user_id, 'activation_requested')
+        )
+
+
+async def security_select_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج اختيار مجموعة لإعدادات الأمان"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    if query and query.data and query.data.startswith(CallbackData.SECURITY_SELECT_GROUP):
+        chat_id = int(query.data.split(":")[-1])
+        context.user_data['security_chat_id'] = chat_id
+        
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            if query:
+                await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+            return
+        
+        await _update_security_panel(query, chat_id, user_id)
+        return
+    
+    # عرض قائمة المجموعات
+    groups = await db_get_user_groups(user_id)
+    if not groups:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ أضف البوت", url=f"https://t.me/{BOT_USERNAME}?startgroup")],
+            [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+        ])
+        msg = "📭 لا توجد مجموعات مسجلة.\n\nأضف البوت إلى مجموعة واجعلها نشطة."
+        if query:
+            await safe_edit_markdown(query, msg, reply_markup=kb)
+        else:
+            await safe_send_markdown(context.bot, user_id, msg, reply_markup=kb)
+        return
+    
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        status_icon = "⛔" if banned else "✅"
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        keyboard.append([InlineKeyboardButton(f"{status_icon} {display_name}", callback_data=f"{CallbackData.SECURITY_SELECT_GROUP}{chat_id}")])
+        keyboard.append([InlineKeyboardButton("─" * 20, callback_data="noop")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+    
+    msg = "🔐 **اختر مجموعة لإعدادات الأمان:**"
+    if query:
+        await safe_edit_markdown(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_send_markdown(context.bot, user_id, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def security_refresh_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحديث قائمة المجموعات"""
+    await security_select_group_callback(update, context)
+
+
+async def register_hidden_owner_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تسجيل مالك مخفي"""
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    
+    if not await is_currently_admin_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, "❌ يجب أن تكون مشرفاً في المجموعة لتسجيل نفسك كمالك مخفي.")
+        return
+    
+    if await db_is_hidden_owner(chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'hidden_owner_already'))
+        return
+    
+    await db_register_hidden_owner_group(chat_id, user_id)
+    invalidate_auth_cache(chat_id, user_id)
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'hidden_owner_registered'))
+
+
+async def add_hidden_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إضافة مشرف مخفي"""
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    args = context.args
+    if not args:
+        await safe_send_markdown(context.bot, user_id, "❌ استخدم: `/add_hidden_admin معرف_المستخدم`")
+        return
+    
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ معرف غير صالح")
+        return
+    
+    if target_id == user_id:
+        await safe_send_markdown(context.bot, user_id, "❌ لا يمكن إضافة نفسك كمشرف مخفي")
+        return
+    
+    if await db_is_hidden_admin(chat_id, target_id):
+        await safe_send_markdown(context.bot, user_id, f"⚠️ المستخدم `{target_id}` مشرف مخفي بالفعل")
+        return
+    
+    await db_add_hidden_admin(chat_id, target_id, user_id)
+    invalidate_auth_cache(chat_id, target_id)
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'hidden_admin_added').format(target_id))
+
+
+async def remove_hidden_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إزالة مشرف مخفي"""
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    args = context.args
+    if not args:
+        await safe_send_markdown(context.bot, user_id, "❌ استخدم: `/remove_hidden_admin معرف_المستخدم`")
+        return
+    
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ معرف غير صالح")
+        return
+    
+    if target_id == user_id:
+        await safe_send_markdown(context.bot, user_id, "❌ لا يمكن إزالة نفسك كمشرف مخفي")
+        return
+    
+    await db_remove_hidden_admin(chat_id, target_id)
+    invalidate_auth_cache(chat_id, target_id)
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'hidden_admin_removed').format(target_id))
+
+
+async def list_hidden_admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض المشرفين المخفيين"""
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    admins = await db_get_hidden_admins(chat_id)
+    
+    if not admins:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'no_hidden_admins'))
+        return
+    
+    text = get_text(user_id, 'hidden_admin_list') + "\n"
+    for admin in admins:
+        text += f"• `{admin['admin_id']}` (أضيف بواسطة `{admin['added_by']}`)\n"
+    
+    await safe_send_markdown(context.bot, user_id, text)
+
+
+async def trial_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /trial"""
+    await trial_callback(update, context)
+
+
+async def subscribe_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /subscribe"""
+    await subscribe_menu_callback(update, context)
+
+
+async def help_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /help"""
+    user_id = update.effective_user.id
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'help'))
+
+
+async def support_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /support"""
+    user_id = update.effective_user.id
+    context.user_data['support_mode'] = True
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 كتابة تذكرة", callback_data=CallbackData.SUPPORT_TICKET)],
+        [InlineKeyboardButton("❓ المساعدة", callback_data=CallbackData.SUPPORT_HELP)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'support_welcome'), reply_markup=keyboard)
+
+
+async def support_reply_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """الرد على تذكرة الدعم"""
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    args = context.args
+    if len(args) < 2:
+        await safe_send_markdown(context.bot, user_id, "❌ استخدم: `/support_reply معرف_المستخدم نص_الرد`")
+        return
+    
+    try:
+        target_user_id = int(args[0])
+        reply_text = " ".join(args[1:])
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ معرف غير صالح")
+        return
+    
+    try:
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=f"📩 **رد على تذكرتك:**\n\n{reply_text}\n\n📌 تم الرد بواسطة فريق الدعم."
+        )
+        await safe_send_markdown(context.bot, user_id, f"✅ تم إرسال الرد إلى المستخدم `{target_user_id}`")
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ فشل إرسال الرد: {str(e)[:100]}")
+
+
+async def rank_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض الرتبة"""
+    user_id = update.effective_user.id
+    data = await get_rank(user_id)
+    text = f"📊 **رتبتك**\n━━━━━━━━━━━━━━━━━━━━━━\n• المستوى: {data['level']}\n• النقاط: {data['points']}\n• النقاط المطلوبة للمستوى التالي: {LEVEL_REQUIREMENTS.get(data['level'] + 1, 'MAX')}"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]])
+    await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+async def top_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض أفضل 10"""
+    user_id = update.effective_user.id
+    top_users = await get_top_users(10)
+    
+    if not top_users:
+        await safe_send_markdown(context.bot, user_id, "📭 لا يوجد مستخدمين بعد")
+        return
+    
+    text = "🏆 **أفضل 10 مستخدمين**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for idx, (uid, points, level) in enumerate(top_users, 1):
+        try:
+            user = await context.bot.get_chat(uid)
+            name = user.first_name or str(uid)
+        except:
+            name = str(uid)
+        medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
+        text += f"{medal} **{name}**\n   المستوى {level} | {points} نقطة\n\n"
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]])
+    await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+async def developer_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معلومات المطور"""
+    await developer_callback(update, context)
+
+
+async def updates_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض التحديثات"""
+    await updates_callback(update, context)
+
+
+async def stats_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إحصائيات القناة"""
+    user_id = update.effective_user.id
+    channels = await db_get_channels(user_id)
+    
+    if not channels:
+        await safe_send_markdown(context.bot, user_id, "📭 لا توجد قنوات مسجلة")
+        return
+    
+    active = await db_get_active_channel(user_id)
+    if not active:
+        active = channels[0][0] if channels else None
+    
+    if active:
+        stats = await db_get_channel_stats(active)
+        ch_info = await db_get_channel_info(active)
+        channel_name = ch_info[1] if ch_info else "القناة"
+        
+        text = f"📊 **إحصائيات {channel_name}**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        text += f"📝 إجمالي المنشورات: {stats['total_posts']}\n"
+        text += f"✅ المنشورة: {stats['published_posts']}\n"
+        text += f"⏳ غير المنشورة: {stats['unpublished_posts']}\n"
+        text += f"👁️ إجمالي المشاهدات: {stats['total_views']}\n"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)],
+            [InlineKeyboardButton("📊 إحصائيات مفصلة", callback_data=f"{CallbackData.CHANNEL_STATS}:{active}")]
+        ])
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, "⚠️ لم يتم تحديد قناة نشطة")
+
+
+async def sendcode_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إرسال كود البوت"""
+    user_id = update.effective_user.id
+    
+    allowed_user = await db_get_allowed_sendcode_user()
+    if user_id != PRIMARY_OWNER_ID and user_id != allowed_user:
+        await safe_send_markdown(context.bot, user_id, "❌ غير مصرح لك باستخدام هذا الأمر")
+        return
+    
+    # إنشاء كود عشوائي
+    code = secrets.token_hex(8)
+    context.user_data['sendcode_temp_password'] = code
+    context.user_data['sendcode_temp_timestamp'] = time_module.time()
+    context.user_data['state'] = UserState.WAITING_SENDCODE_PASSWORD
+    
+    await safe_send_markdown(
+        context.bot, 
+        user_id, 
+        f"🔑 **كود البوت المؤقت:**\n`{code}`\n\n⏳ ينتهي خلال 10 دقائق"
+    )
+
+
+async def lock_chat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قفل المجموعة"""
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    await db_set_chat_lock(chat_id, True, user_id)
+    await safe_send_markdown(context.bot, chat_id, get_text(user_id, 'locked'))
+
+
+async def unlock_chat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """فتح المجموعة"""
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    await db_set_chat_lock(chat_id, False)
+    await safe_send_markdown(context.bot, chat_id, get_text(user_id, 'unlocked'))
+
+
+async def schedule_post_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """جدولة منشور"""
+    user_id = update.effective_user.id
+    
+    if not await db_has_active_subscription(user_id) and not await db_has_used_trial(user_id):
+        await safe_send_markdown(context.bot, user_id, "⚠️ اشتراكك منتهٍ، استخدم /trial أو /subscribe")
+        return
+    
+    context.user_data['state'] = UserState.WAITING_SCHEDULE_POST
+    await safe_send_markdown(
+        context.bot, 
+        user_id, 
+        "📝 **جدولة منشور**\n\nأرسل التاريخ والوقت والنص بالصيغة التالية:\n`YYYY-MM-DD HH:MM نص المنشور`\n\nمثال: `2025-01-20 14:30 مرحباً بالجميع!`\n\n🕐 الوقت بتوقيت مكة المكرمة"
+    )
+
+
+async def panel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لوحة التحكم"""
+    await admin_panel_callback(update, context)
+
+
+async def set_log_channel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين قناة التقارير"""
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    identifier = context.user_data.get('temp_log_channel_identifier', '')
+    if not identifier and context.args:
+        identifier = context.args[0]
+    
+    if not identifier:
+        await safe_send_markdown(context.bot, user_id, "❌ أرسل معرف القناة (ID) أو معرف المستخدم (@username)")
+        context.user_data['state'] = UserState.WAITING_LOG_CHANNEL
+        return
+    
+    # محاولة الحصول على معرف القناة
+    channel_id = None
+    try:
+        if identifier.startswith('@'):
+            # معرف مستخدم
+            chat = await context.bot.get_chat(identifier)
+            channel_id = str(chat.id)
+        elif identifier.lstrip('-').isdigit():
+            # معرف رقمي
+            channel_id = identifier
+        else:
+            await safe_send_markdown(context.bot, user_id, "❌ معرف غير صالح")
+            context.user_data.pop('temp_log_channel_identifier', None)
+            context.user_data.pop('state', None)
+            return
+        
+        await db_set_log_channel_id(channel_id)
+        await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين قناة التقارير: `{channel_id}`")
+        
+        # اختبار الإرسال
+        try:
+            await context.bot.send_message(
+                chat_id=channel_id,
+                text="✅ **تم تعيين هذه القناة كقناة للتقارير!**"
+            )
+        except:
+            await safe_send_markdown(context.bot, user_id, "⚠️ تم التعيين ولكن لا يمكن إرسال رسالة اختبار. تأكد من أن البوت مشرف في القناة.")
+        
+    except Exception as e:
+        await safe_send_markdown(context.bot, user_id, f"❌ فشل التعيين: {str(e)[:100]}")
+    
+    context.user_data.pop('temp_log_channel_identifier', None)
+    context.user_data.pop('state', None)
+
+
+async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أوامر الإدارة (ban, mute, warn, kick, restrict, pin, unban)"""
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    command = update.message.text.split()[0].lstrip('/')
+    args = context.args
+    
+    # تحديد المستخدم المستهدف
+    target_id = None
+    if args:
+        try:
+            target_id = int(args[0])
+        except ValueError:
+            pass
+    
+    if target_id is None and update.message.reply_to_message:
+        target_id = update.message.reply_to_message.from_user.id
+    
+    if target_id is None:
+        await safe_send_markdown(context.bot, user_id, f"❌ يجب تحديد المستخدم (معرف أو رد على رسالة)")
+        return
+    
+    # تحديد السبب
+    reason = " ".join(args[1:]) if args and len(args) > 1 else ""
+    
+    # تحديد الإجراء
+    if command == "ban":
+        success, msg = await execute_ban(context.bot, chat_id, target_id, reason=reason, moderator_id=user_id)
+    elif command == "mute":
+        duration = context.user_data.get('mute_minutes', 60)
+        success, msg = await execute_mute(context.bot, chat_id, target_id, duration, reason=reason, moderator_id=user_id)
+    elif command == "warn":
+        success, msg = await execute_warn(context.bot, chat_id, target_id, user_id, reason=reason)
+    elif command == "kick":
+        success, msg = await execute_kick(context.bot, chat_id, target_id, reason=reason, moderator_id=user_id)
+    elif command == "restrict":
+        success, msg = await execute_restrict(context.bot, chat_id, target_id, reason=reason, moderator_id=user_id)
+    elif command == "unban":
+        success, msg = await execute_unban(context.bot, chat_id, target_id, moderator_id=user_id)
+    else:
+        await safe_send_markdown(context.bot, user_id, "❌ إجراء غير معروف")
+        return
+    
+    await safe_send_markdown(context.bot, user_id, msg)
+
+
+async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين قوانين المجموعة"""
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    
+    args = context.args
+    if not args:
+        await safe_send_markdown(context.bot, user_id, "❌ استخدم: `/set_rules نص القوانين`")
+        return
+    
+    rules_text = " ".join(args)
+    
+    async def _set_rules(conn):
+        await conn.execute("INSERT OR REPLACE INTO group_rules (chat_id, rules_text, set_by, set_at) VALUES (?, ?, ?, ?)", 
+                           (chat_id, rules_text, user_id, utc_now_iso()))
+        await conn.commit()
+    
+    await execute_db(_set_rules)
+    await safe_send_markdown(context.bot, chat_id, "✅ **تم تعيين قوانين المجموعة بنجاح!**")
+
+
+async def rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قوانين المجموعة"""
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
+        return
+    
+    chat_id = chat.id
+    
+    async def _get_rules(conn):
+        cur = await conn.execute("SELECT rules_text, set_by, set_at FROM group_rules WHERE chat_id=?", (chat_id,))
+        return await cur.fetchone()
+    
+    row = await execute_db(_get_rules)
+    
+    if not row:
+        await safe_send_markdown(context.bot, chat_id, "📭 **لا توجد قوانين مسجلة لهذه المجموعة.**\nاستخدم `/set_rules` لتعيين القوانين.")
+        return
+    
+    rules_text, set_by, set_at = row
+    
+    try:
+        dt = datetime.fromisoformat(set_at)
+        dt_mecca = utc_to_mecca(dt)
+        time_str = dt_mecca.strftime("%Y-%m-%d %H:%M")
+    except:
+        time_str = set_at
+    
+    await safe_send_markdown(
+        context.bot, 
+        chat_id, 
+        f"📋 **قوانين المجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\n\n{rules_text}\n\n━━━━━━━━━━━━━━━━━━━━━━\n📌 تم تعيينها بواسطة: `{set_by}`\n🕐 في: {time_str}"
+    )
+
+
+async def handle_text_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الكولباك النصية"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    user_id = update.effective_user.id
+    
+    if data == "rank":
+        await rank_command_handler(update, context)
+    elif data == "top":
+        await top_command_handler(update, context)
+    elif data == "schedule_post":
+        await schedule_post_command_handler(update, context)
+    elif data == "language":
+        await language_command_handler(update, context)
+
+
+async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض القائمة الرئيسية"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    keyboard, title, active = await get_main_keyboard(user_id)
+    
+    if query:
+        await safe_edit_markdown(query, title, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, title, reply_markup=keyboard)
+
+
+async def back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """العودة للخلف"""
+    await main_menu_callback(update, context)
+
+
+async def handle_sendcode_confirmation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد كود sendcode"""
+    user_id = update.effective_user.id
+    
+    # إنشاء كود جديد وإرساله
+    code = secrets.token_hex(8)
+    context.user_data['sendcode_temp_password'] = code
+    context.user_data['sendcode_temp_timestamp'] = time_module.time()
+    
+    await safe_send_markdown(
+        context.bot, 
+        user_id, 
+        f"🔑 **تم تأكيد الهوية!**\n\nكود البوت الجديد:\n`{code}`\n\n⏳ ينتهي خلال 10 دقائق"
+    )
+    
+    context.user_data.pop('state', None)
+
 
 if __name__ == "__main__":
     try:
