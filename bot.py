@@ -10844,6 +10844,7 @@ web_app.router.add_get('/index.html', index_handler)
 web_app.router.add_get('/health', health_check_handler)
 
 async def start_web_server():
+    global WEB_PORT_USED
     try:
         # استخدام PORT من Render أو المنفذ الافتراضي
         port = int(os.getenv("PORT", "8080"))
@@ -10855,7 +10856,6 @@ async def start_web_server():
             site = web.TCPSite(runner, "0.0.0.0", port)
             await site.start()
             logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{port}")
-            global WEB_PORT_USED
             WEB_PORT_USED = port
         except OSError as e:
             if "address already in use" in str(e):
@@ -10873,7 +10873,6 @@ async def start_web_server():
                 site = web.TCPSite(runner, "0.0.0.0", random_port)
                 await site.start()
                 logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{random_port} (منفذ عشوائي)")
-                global WEB_PORT_USED
                 WEB_PORT_USED = random_port
             except:
                 logger.warning("⚠️ لا يمكن تشغيل خادم الويب، البوت يستمر بدون خادم ويب")
