@@ -10927,7 +10927,7 @@ async def safe_loop(coro, name="background_loop"):
             await asyncio.sleep(10)
 
 async def run_polling_safe(application):
-    """تشغيل polling مع إعادة تشغيل تلقائي وإرسال سبب التوقف للمطور"""
+    """تشغيل polling مع إعادة تشغيل تلقائي عند الفشل"""
     while True:
         try:
             await application.run_polling(
@@ -10936,41 +10936,18 @@ async def run_polling_safe(application):
             )
         except asyncio.CancelledError:
             logger.info("🛑 تم إلغاء polling")
-            # إرسال إشعار للمطور
-            try:
-                await application.bot.send_message(
-                    chat_id=PRIMARY_OWNER_ID,
-                    text="🛑 **تم إيقاف البوت يدوياً** (تم إلغاء polling)"
-                )
-            except:
-                pass
             break
         except RuntimeError as e:
-            error_msg = str(e)
-            logger.error(f"❌ خطأ Runtime: {error_msg}. إعادة التشغيل بعد 10 ثوانٍ...")
-            # إرسال سبب التوقف للمطور
-            try:
-                await application.bot.send_message(
-                    chat_id=PRIMARY_OWNER_ID,
-                    text=f"⚠️ **تم إيقاف البوت مؤقتاً**\n\n📌 **السبب:** `{error_msg[:300]}`\n🔄 سيتم إعادة التشغيل خلال 10 ثوانٍ..."
-                )
-            except:
-                pass
+            if "Cannot close a running event loop" in str(e):
+                logger.warning("⚠️ مشكلة في إغلاق الحلقة، جاري إعادة المحاولة...")
+                await asyncio.sleep(3)
+                continue
+            logger.error(f"❌ خطأ Runtime: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
             await asyncio.sleep(10)
-            continue
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"❌ توقف polling: {error_msg}. إعادة التشغيل بعد 10 ثوانٍ...")
-            # إرسال سبب التوقف للمطور
-            try:
-                await application.bot.send_message(
-                    chat_id=PRIMARY_OWNER_ID,
-                    text=f"🚨 **توقف البوت فجأة!**\n\n📌 **السبب:** `{error_msg[:300]}`\n🔄 سيتم إعادة التشغيل خلال 10 ثوانٍ..."
-                )
-            except:
-                pass
+            logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
             await asyncio.sleep(10)
-            continue
+
 
 # ===================================================================
 # دوال النبض الداخلي (Keep-Alive)
