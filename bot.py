@@ -12578,13 +12578,13 @@ async def security_refresh_groups_callback(update: Update, context: ContextTypes
 
 if __name__ == "__main__":
     try:
-        os.environ["WEB_CONCURRENCY"] = "1"
+        # منع nest_asyncio من التسبب بالمشكلة
+        import nest_asyncio
+        nest_asyncio.apply()
+        
+        # تشغيل البوت بدون إعادة تشغيل تلقائي
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("🛑 تم إيقاف البوت")
     except Exception as e:
         logger.error(f"❌ خطأ فادح: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
