@@ -11797,7 +11797,7 @@ async def main():
             logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
             
             # إعداد خادم الويب
-            runner = web.AppRunner(application.web_app)
+            runner = web.AppRunner(web_app)
             await runner.setup()
             site = web.TCPSite(runner, "0.0.0.0", port)
             await site.start()
