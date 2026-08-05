@@ -9320,7 +9320,7 @@ async def start_web_server():
     global WEB_PORT_USED
     try:
         # استخدام منفذ مختلف عن 10000
-        port = 8080  # أو أي منفذ آخر غير 10000
+        port = 00001  # أو أي منفذ آخر غير 10000
         try:
             runner = web.AppRunner(web_app)
             await runner.setup()
