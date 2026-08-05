@@ -12237,11 +12237,421 @@ async def nsfw_threshold_callback(update: Update, context: ContextTypes.DEFAULT_
     if query:
         await query.edit_message_text(msg)
     else:
-        await safe_send_markdown(context.bot, uid, msg)
+        await safe_send_markdown(context.bot, uid
 
 # ===================================================================
-# الوظيفة الرئيسية main
+# دوال المسابقات (contests_*) - متقدمة
 # ===================================================================
+async def contests_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not update or not update.effective_user:
+            logger.error("update أو effective_user غير موجود")
+            return
+        user_id = update.effective_user.id
+        contests = []
+        try:
+            contests = await db_get_active_contests_with_participants(limit=10)
+        except Exception as e:
+            logger.error(f"خطأ في جلب المسابقات: {e}")
+            contests = []
+        if not contests:
+            text = "📭 لا توجد مسابقات نشطة حالياً."
+            if update.callback_query:
+                try:
+                    await safe_edit_markdown(update.callback_query, text)
+                except:
+                    await update.callback_query.edit_message_text(text)
+            else:
+                await safe_send_markdown(context.bot, user_id, text)
+            return
+        text = "🏆 **المسابقات النشطة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        keyboard = []
+        for contest in contests:
+            try:
+                if len(contest) < 6:
+                    continue
+                cid = contest[0]
+                title = contest[1] or "بدون عنوان"
+                desc = contest[2] or ""
+                prize = contest[3] or "غير محددة"
+                end_date = contest[4]
+                participants = contest[5] if len(contest) > 5 else 0
+                contest_type = contest[6] if len(contest) > 6 else 'raffle'
+                try:
+                    end_dt = datetime.fromisoformat(end_date)
+                    days_left = (end_dt - utc_now()).days
+                    time_left = f"⏳ متبقي {days_left} يوم" if days_left > 0 else "🔴 انتهت"
+                except:
+                    time_left = "📅 تاريخ غير صحيح"
+                    days_left = 0
+                try:
+                    participated = await db_get_user_participation(user_id, cid)
+                except Exception as e:
+                    logger.error(f"خطأ في db_get_user_participation للمستخدم {user_id} والمسابقة {cid}: {e}")
+                    participated = None
+                status_icon = "✅" if participated else "📝"
+                type_icon = "📝" if contest_type == 'quiz' else "🎲" if contest_type == 'raffle' else "🗳️" if contest_type == 'vote' else "📤"
+                text += f"📌 **{title}** {type_icon}\n"
+                text += f"📝 {(desc)[:100]}{'...' if len(desc) > 100 else ''}\n"
+                text += f"🎁 الجائزة: {prize}\n"
+                text += f"👥 المشاركون: {participants}\n"
+                text += f"🕐 {time_left}\n"
+                text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                if not participated and days_left > 0:
+                    keyboard.append([InlineKeyboardButton(f"{status_icon} شارك في {title[:20]}", callback_data=f"{CallbackData.CONTEST_JOIN_PREFIX}{cid}")])
+            except Exception as e:
+                logger.error(f"خطأ في معالجة مسابقة: {e}")
+                continue
+        keyboard.append([InlineKeyboardButton("🏆 الفائزون السابقون", callback_data=CallbackData.CONTEST_WINNERS)])
+        keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+        if update.callback_query:
+            try:
+                await safe_edit_markdown(update.callback_query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+            except:
+                await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await safe_send_markdown(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        error_id = log_error(e, {'user_id': update.effective_user.id if update and update.effective_user else None, 'chat_id': update.effective_chat.id if update and update.effective_chat else None})
+        msg = f"❌ حدث خطأ أثناء تحميل المسابقات (الرمز: `{error_id}`).\nيرجى المحاولة مرة أخرى لاحقاً."
+        try:
+            if update.callback_query:
+                await safe_edit_markdown(update.callback_query, msg)
+            else:
+                await safe_send_markdown(context.bot, user_id, msg)
+        except:
+            try:
+                if update.callback_query:
+                    await update.callback_query.edit_message_text("❌ حدث خطأ أثناء تحميل المسابقات.")
+                else:
+                    await context.bot.send_message(chat_id=user_id, text="❌ حدث خطأ أثناء تحميل المسابقات.")
+            except:
+                pass
+
+async def contests_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        try:
+            await update.callback_query.answer()
+        except:
+            pass
+    await contests_command_handler(update, context)
+
+async def contest_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+    try:
+        await query.answer()
+    except:
+        pass
+    user_id = update.effective_user.id
+    try:
+        contest_id = int(query.data.split(":")[-1])
+    except (ValueError, IndexError):
+        try:
+            await query.edit_message_text("❌ بيانات غير صالحة.")
+        except:
+            pass
+        return
+    try:
+        contest = await db_get_contest(contest_id)
+        if not contest:
+            try:
+                await query.edit_message_text("❌ المسابقة غير موجودة.")
+            except:
+                pass
+            return
+        if contest['status'] != 'active':
+            try:
+                await query.edit_message_text("❌ هذه المسابقة غير متاحة حالياً.")
+            except:
+                pass
+            return
+        try:
+            end_date = datetime.fromisoformat(contest['end_date'])
+            if end_date < utc_now():
+                try:
+                    await query.edit_message_text("❌ هذه المسابقة قد انتهت.")
+                except:
+                    pass
+                return
+        except:
+            pass
+        participation = await db_get_user_participation(user_id, contest_id)
+        if participation:
+            try:
+                await query.edit_message_text("✅ أنت مشترك بالفعل في هذه المسابقة!")
+            except:
+                pass
+            return
+        context.user_data['contest_join_id'] = contest_id
+        context.user_data['state'] = UserState.WAITING_CONTEST_ANSWER
+        msg = f"📝 **المشاركة في المسابقة: {contest['title']}**\n\n📌 أرسل إجابتك (نص) أو اضغط /skip للمشاركة بدون إجابة.\n⏳ يمكنك تعديل إجابتك قبل انتهاء المسابقة.\n📝 نوع المسابقة: {contest.get('contest_type', 'raffle')}"
+        try:
+            await query.edit_message_text(msg, parse_mode="MarkdownV2")
+        except:
+            await query.edit_message_text(msg)
+    except Exception as e:
+        error_id = log_error(e, {'user_id': user_id, 'contest_id': contest_id})
+        try:
+            await query.edit_message_text(f"❌ حدث خطأ أثناء المشاركة (الرمز: `{error_id}`).")
+        except:
+            pass
+
+async def contest_winners_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        if query:
+            await query.answer()
+    except:
+        pass
+    user_id = update.effective_user.id
+    try:
+        winners = await db_get_contest_winners(limit=10)
+        if not winners:
+            if query:
+                try:
+                    await query.edit_message_text("🏆 لا يوجد فائزون سابقون.")
+                except:
+                    pass
+            else:
+                await safe_send_markdown(context.bot, user_id, "🏆 لا يوجد فائزون سابقون.")
+            return
+        text = "🏆 **الفائزون السابقون**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        for contest_id, title, prize, winner_id, announced_at in winners:
+            try:
+                winner = await context.bot.get_chat(winner_id)
+                winner_name = winner.first_name or str(winner_id)
+            except:
+                winner_name = str(winner_id)
+            try:
+                announced_dt = datetime.fromisoformat(announced_at)
+                announced_mecca = utc_to_mecca(announced_dt)
+                date_str = announced_mecca.strftime("%Y-%m-%d")
+            except:
+                date_str = announced_at[:10] if announced_at else "?"
+            text += f"📌 **{title}**\n🎁 {prize}\n👤 {winner_name}\n📅 {date_str}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 تحديث", callback_data=CallbackData.CONTEST_WINNERS)],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.CONTESTS_BACK)]
+        ])
+        if query:
+            try:
+                await safe_edit_markdown(query, text, reply_markup=keyboard)
+            except:
+                await query.edit_message_text(text, reply_markup=keyboard)
+        else:
+            await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    except Exception as e:
+        error_id = log_error(e, {'user_id': user_id})
+        if query:
+            try:
+                await query.edit_message_text(f"❌ حدث خطأ أثناء عرض الفائزين (الرمز: `{error_id}`).")
+            except:
+                pass
+        else:
+            await safe_send_markdown(context.bot, user_id, f"❌ حدث خطأ أثناء عرض الفائزين (الرمز: `{error_id}`).")
+
+async def contests_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await contests_command_handler(update, context)
+
+async def admin_create_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+        except:
+            pass
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        if query:
+            try:
+                await query.edit_message_text("🔒 هذا الأمر للمشرفين فقط!")
+            except:
+                pass
+        return
+    context.user_data['state'] = UserState.WAITING_CONTEST_TITLE
+    msg = "📝 **إنشاء مسابقة جديدة**\n\nأرسل **عنوان** المسابقة:"
+    if query:
+        try:
+            await query.edit_message_text(msg, parse_mode="MarkdownV2")
+        except:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=msg, parse_mode="MarkdownV2")
+            except:
+                pass
+    else:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=msg, parse_mode="MarkdownV2")
+        except:
+            pass
+
+async def admin_declare_winner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+        except:
+            pass
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        if query:
+            try:
+                await query.edit_message_text("🔒 هذا الأمر للمشرفين فقط!")
+            except:
+                pass
+        return
+    msg = "📝 **إعلان فائز في مسابقة**\n\nاستخدم الأمر:\n`/declare_winner معرف_المسابقة معرف_المستخدم`\n\nمثال: `/declare_winner 5 123456789`\n\n📌 لعرض المسابقات النشطة استخدم `/contests`"
+    if query:
+        try:
+            await query.edit_message_text(msg, parse_mode="MarkdownV2")
+        except:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=msg, parse_mode="MarkdownV2")
+            except:
+                pass
+    else:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=msg, parse_mode="MarkdownV2")
+        except:
+            pass
+
+async def admin_delete_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
+        return
+    try:
+        contest_id = int(query.data.split(":")[-1])
+    except (ValueError, IndexError):
+        if query:
+            await query.edit_message_text("❌ بيانات غير صالحة.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "❌ بيانات غير صالحة.")
+        return
+    success = await db_delete_contest(contest_id, user_id)
+    if success:
+        if query:
+            await query.edit_message_text(f"✅ تم حذف المسابقة بنجاح (ID: {contest_id})")
+        else:
+            await safe_send_markdown(context.bot, user_id, f"✅ تم حذف المسابقة بنجاح (ID: {contest_id})")
+    else:
+        if query:
+            await query.edit_message_text("❌ فشل حذف المسابقة (تأكد من أنك منشئها أو مشرف).")
+        else:
+            await safe_send_markdown(context.bot, user_id, "❌ فشل حذف المسابقة (تأكد من أنك منشئها أو مشرف).")
+    await contests_command_handler(update, context)
+
+# ===================================================================
+# دوال أوامر إنشاء المسابقات (create_contest, declare_winner)
+# ===================================================================
+async def create_contest_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 هذا الأمر للمشرفين فقط!")
+        return
+    context.user_data['state'] = UserState.WAITING_CONTEST_TITLE
+    await safe_send_markdown(context.bot, user_id, "📝 **إنشاء مسابقة جديدة**\n\nأرسل **عنوان** المسابقة:")
+
+async def declare_winner_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 هذا الأمر للمشرفين فقط!")
+        return
+    args = context.args
+    if len(args) < 2:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:**\n`/declare_winner معرف_المسابقة معرف_المستخدم`\n\nمثال: `/declare_winner 5 123456789`", parse_mode="MarkdownV2")
+        return
+    try:
+        contest_id = int(args[0])
+        winner_id = int(args[1])
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ معرف غير صحيح!")
+        return
+    contest = await db_get_contest(contest_id)
+    if not contest:
+        await safe_send_markdown(context.bot, user_id, "❌ المسابقة غير موجودة!")
+        return
+    if contest['status'] != 'active':
+        await safe_send_markdown(context.bot, user_id, "❌ هذه المسابقة ليست نشطة!")
+        return
+    try:
+        end_date = datetime.fromisoformat(contest['end_date'])
+        if end_date > utc_now():
+            await safe_send_markdown(context.bot, user_id, "❌ المسابقة لم تنته بعد!")
+            return
+    except:
+        pass
+    success = await db_set_contest_winner(contest_id, winner_id)
+    if success:
+        await safe_send_markdown(context.bot, user_id, f"✅ تم إعلان المستخدم `{winner_id}` فائزاً في المسابقة **{contest['title']}**!")
+        try:
+            await context.bot.send_message(chat_id=winner_id, text=f"🏆 **تهانينا!**\nلقد فزت في مسابقة **{contest['title']}**!\n🎁 جائزتك: {contest['prize']}\n\n📌 تواصل مع المشرفين للحصول على جائزتك.")
+            await achievement_system(winner_id, 'contest_winner')
+        except:
+            pass
+    else:
+        await safe_send_markdown(context.bot, user_id, "❌ فشل إعلان الفائز!")
+
+# ===================================================================
+# دوال أوامر القوانين
+# ===================================================================
+async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None or update.effective_chat is None or update.effective_user is None:
+        return
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, user_id, "⚠️ هذا الأمر يعمل فقط في المجموعات!")
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+        return
+    args = context.args
+    if not args:
+        await safe_send_markdown(context.bot, user_id, "📝 **الاستخدام:** `/set_rules نص القوانين`")
+        return
+    rules_text = " ".join(args)
+    async def _set_rules(conn):
+        await conn.execute("INSERT OR REPLACE INTO group_rules (chat_id, rules_text, set_by, set_at) VALUES (?, ?, ?, ?)", (chat_id, rules_text, user_id, utc_now_iso()))
+        await conn.commit()
+    await execute_db(_set_rules)
+    await safe_send_markdown(context.bot, user_id, "✅ **تم تعيين قوانين المجموعة بنجاح!**")
+    try:
+        await context.bot.send_message(chat_id, f"📋 **تم تحديث قوانين المجموعة**\n\n{rules_text}")
+    except:
+        pass
+
+async def rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None or update.effective_chat is None:
+        return
+    chat_id = update.effective_chat.id
+    async def _get_rules(conn):
+        cur = await conn.execute("SELECT rules_text, set_by, set_at FROM group_rules WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'rules': row[0], 'set_by': row[1], 'set_at': row[2]}
+        return None
+    rules_data = await execute_db(_get_rules)
+    if not rules_data:
+        await safe_send_markdown(context.bot, update.effective_user.id, "📭 لا توجد قوانين مسجلة لهذه المجموعة.")
+        return
+    try:
+        dt = datetime.fromisoformat(rules_data['set_at'])
+        dt_mecca = utc_to_mecca(dt)
+        set_time = dt_mecca.strftime("%Y-%m-%d %H:%M")
+    except:
+        set_time = "تاريخ غير معروف"
+    text = f"📋 **قوانين المجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\n{rules_data['rules']}\n━━━━━━━━━━━━━━━━━━━━━━\n👤 تم التعيين بواسطة: `{rules_data['set_by']}`\n🕐 التاريخ: {set_time}"
+    await safe_send_markdown(context.bot, update.effective_user.id, text)
+
 async def main():
     await init_db_improved()
     try:
@@ -12544,7 +12954,13 @@ async def main():
     task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "scheduled_posts"))
     task_manager.create_task(safe_loop(lambda: send_reminders_loop_improved(application.bot), "reminders"))
     task_manager.create_task(safe_loop(cleanup_expired_sessions_improved, "cleanup_sessions"))
-    task_manager.create_task(safe_loop(start_web_server, "web_server"))
+    
+    # ✅ تشغيل خادم الويب فقط في بيئة محلية (بدون Webhook)
+    if not os.getenv("RENDER_EXTERNAL_HOSTNAME"):
+        task_manager.create_task(safe_loop(start_web_server, "web_server"))
+    else:
+        logger.info("✅ بيئة Webhook - تم تعطيل خادم الويب المستقل")
+    
     task_manager.create_task(safe_loop(self_ping_loop, "self_ping"))
     task_manager.create_task(safe_loop(broadcast_stats_periodically, "broadcast_stats"))
     task_manager.create_task(safe_loop(cleanup_points_cache, "cleanup_points"))
@@ -12573,63 +12989,45 @@ async def main():
     print("   • ✅ تحسين أمان أمر /sendcode (إزالة التوكن والمفاتيح)")
     print("   • ✅ إضافة دوال إعادة التشغيل التلقائي (safe_loop)")
     print("   • ✅ إضافة نظام النبض الداخلي (self_ping)")
-   # ===== تشغيل Webhook أو Polling =====
-try:
-    port = int(os.getenv("PORT", "10000"))
-    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-    if not hostname:
-        hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
     
-    if hostname:
-        webhook_url = f"https://{hostname}/{TOKEN}"
+    # ===== تشغيل Webhook أو Polling =====
+    try:
+        port = int(os.getenv("PORT", "10000"))
+        hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+        if not hostname:
+            hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
         
-        await application.initialize()
-        await application.start()
-        await application.bot.set_webhook(
-            url=webhook_url,
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
-        )
-        logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
-        
-        await application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=TOKEN,
-            webhook_url=webhook_url
-        )
-    else:
-        logger.warning("⚠️ RENDER_EXTERNAL_HOSTNAME غير معرّف، استخدام Polling")
-        await run_polling_safe(application)
-        
-except Exception as e:
-    logger.error(f"❌ فشل Webhook: {e}")
-    logger.info("🔄 التراجع إلى Polling...")
-    await application.bot.delete_webhook()
-    await run_polling_safe(application)
-
-finally:
-    await cleanup_resources()
-    await task_manager.cancel_all()
-            # تم إزالة خادم الويب اليدوي - نستخدم run_webhook() المدمج
-            runner = web.AppRunner(application.web_app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", port)
-            await site.start()
-            logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
-            await asyncio.Event().wait()
+        if hostname:
+            webhook_url = f"https://{hostname}/{TOKEN}"
+            
+            await application.initialize()
+            await application.start()
+            await application.bot.set_webhook(
+                url=webhook_url,
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
+            )
+            logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
+            
+            await application.run_webhook(
+                listen="0.0.0.0",
+                port=port,
+                url_path=TOKEN,
+                webhook_url=webhook_url
+            )
         else:
             logger.warning("⚠️ RENDER_EXTERNAL_HOSTNAME غير معرّف، استخدام Polling")
             await run_polling_safe(application)
+            
     except Exception as e:
         logger.error(f"❌ فشل Webhook: {e}")
         logger.info("🔄 التراجع إلى Polling...")
         await application.bot.delete_webhook()
         await run_polling_safe(application)
+    
     finally:
         await cleanup_resources()
         await task_manager.cancel_all()
-
 if __name__ == "__main__":
     try:
         os.environ["WEB_CONCURRENCY"] = "1"
@@ -12641,4 +13039,3 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
