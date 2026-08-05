@@ -9319,30 +9319,25 @@ web_app.router.add_get('/health', health_check_handler)
 async def start_web_server():
     global WEB_PORT_USED
     try:
-        # استخدام منفذ مختلف عن 10000
-        port = 00001  # أو أي منفذ آخر غير 10000
-        try:
-            runner = web.AppRunner(web_app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", port)
-            await site.start()
-            logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{port}")
-            WEB_PORT_USED = port
-        except OSError as e:
-            if "address already in use" in str(e):
-                logger.warning(f"⚠️ المنفذ {port} مشغول، محاولة منفذ عشوائي...")
-                import random
-                random_port = random.randint(10000, 65535)
-                runner = web.AppRunner(web_app)
-                await runner.setup()
-                site = web.TCPSite(runner, "0.0.0.0", random_port)
-                await site.start()
-                logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{random_port}")
-                WEB_PORT_USED = random_port
-            else:
-                raise
+        port = int(os.getenv("WEB_PORT", "8080"))
+        runner = web.AppRunner(web_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logger.info(f"✅ خادم الويب يعمل على http://0.0.0.0:{port}")
+        WEB_PORT_USED = port
+        # استمر في التشغيل إلى الأبد
+        await asyncio.Event().wait()
+    except OSError as e:
+        if "address already in use" in str(e):
+            logger.warning(f"⚠️ المنفذ {port} مشغول، لن يتم تشغيل خادم الويب.")
+            return  # ← إنهاء الدالة بدون إعادة تشغيل
+        else:
+            logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
+            return
     except Exception as e:
         logger.error(f"❌ فشل تشغيل خادم الويب: {e}")
+        return
 
 # ===================================================================
 # نظام إدارة المهام (Task Manager)
