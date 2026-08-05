@@ -12573,7 +12573,7 @@ async def main():
     print("   • ✅ تحسين أمان أمر /sendcode (إزالة التوكن والمفاتيح)")
     print("   • ✅ إضافة دوال إعادة التشغيل التلقائي (safe_loop)")
     print("   • ✅ إضافة نظام النبض الداخلي (self_ping)")
-    # ===== تشغيل Webhook أو Polling =====
+   # ===== تشغيل Webhook أو Polling =====
 try:
     port = int(os.getenv("PORT", "10000"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
@@ -12583,11 +12583,8 @@ try:
     if hostname:
         webhook_url = f"https://{hostname}/{TOKEN}"
         
-        # تهيئة التطبيق
         await application.initialize()
         await application.start()
-        
-        # تعيين Webhook
         await application.bot.set_webhook(
             url=webhook_url,
             drop_pending_updates=True,
@@ -12595,7 +12592,6 @@ try:
         )
         logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
         
-        # ✅ استخدام run_webhook المدمج بدلاً من الخادم اليدوي
         await application.run_webhook(
             listen="0.0.0.0",
             port=port,
@@ -12615,17 +12611,7 @@ except Exception as e:
 finally:
     await cleanup_resources()
     await task_manager.cancel_all()
-
-            async def health_check(request):
-                return web.json_response({
-                    'status': 'healthy',
-                    'bot': BOT_NAME,
-                    'webhook': webhook_url
-                })
-            if not hasattr(application.web_app, '_health_added'):
-                application.web_app.router.add_get('/health', health_check)
-                application.web_app.router.add_get('/', index_handler)
-                application.web_app._health_added = True
+            # تم إزالة خادم الويب اليدوي - نستخدم run_webhook() المدمج
             runner = web.AppRunner(application.web_app)
             await runner.setup()
             site = web.TCPSite(runner, "0.0.0.0", port)
