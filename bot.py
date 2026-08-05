@@ -5275,9 +5275,9 @@ async def cancel_session_callback(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop(f"session_target_{uid}", None)
     context.user_data.pop('state', None)
     if query:
-        await query.edit_message_text(get_text(uid, 'cancelled'))
+        await query.edit_message_text(get_text(uid,) 'cancelled'))
     else:
-        await safe_send_markdown(context.bot, uid, get_text(uid, 'cancelled'))
+        await safe_send_markdown(context.bot, uid,)wget_text(uid, 'cancelled'))
     await main_menu_callback(update, context)
 
 async def add_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -9386,12 +9386,15 @@ async def safe_loop(coro, name="background_loop"):
             await asyncio.sleep(10)
 
 async def run_polling_safe(application):
+    consecutive_errors = 0
     while True:
         try:
             await application.run_polling(
                 drop_pending_updates=True,
-                poll_interval=POLL_INTERVAL
+                poll_interval=POLL_INTERVAL,
+                close_loop=False  # ✅ منع إغلاق الحلقة تلقائياً
             )
+            break  # إذا انتهت polling بنجاح، اخرج من الحلقة
         except asyncio.CancelledError:
             logger.info("🛑 تم إلغاء polling")
             break
@@ -9400,11 +9403,16 @@ async def run_polling_safe(application):
                 logger.warning("⚠️ مشكلة في إغلاق الحلقة، جاري إعادة المحاولة...")
                 await asyncio.sleep(3)
                 continue
-            logger.error(f"❌ خطأ Runtime: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
+            logger.error(f"❌ خطأ Runtime: {e}")
             await asyncio.sleep(10)
+            continue
         except Exception as e:
-            logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
-            await asyncio.sleep(10)
+            logger.error(f"❌ توقف polling: {e}")
+            consecutive_errors += 1
+            wait_time = min(10 * consecutive_errors, 60)
+            logger.info(f"⏳ إعادة المحاولة بعد {wait_time} ثانية...")
+            await asyncio.sleep(wait_time)
+            continue
 
 # ===================================================================
 # دوال النبض الداخلي (Keep-Alive)
