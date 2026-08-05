@@ -12573,25 +12573,49 @@ async def main():
     print("   • ✅ تحسين أمان أمر /sendcode (إزالة التوكن والمفاتيح)")
     print("   • ✅ إضافة دوال إعادة التشغيل التلقائي (safe_loop)")
     print("   • ✅ إضافة نظام النبض الداخلي (self_ping)")
-    try:
-        port = int(os.getenv("PORT", "10000"))
-        hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-        if not hostname:
-            hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
-        if hostname:
-            webhook_url = f"https://{hostname}/{TOKEN}"
-            await application.initialize()
-            await application.start()
-            await application.bot.set_webhook(
-                url=webhook_url,
-                drop_pending_updates=True,
-                allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
-            )
-            logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
-            if not hasattr(application.web_app, '_webhook_added'):
-                application.web_app.router.add_post(f"/{TOKEN}", application.process_update)
-                application.web_app._webhook_added = True
-                logger.info("✅ تم إضافة مسار Webhook")
+    # ===== تشغيل Webhook أو Polling =====
+try:
+    port = int(os.getenv("PORT", "10000"))
+    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+    if not hostname:
+        hostname = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "").replace("http://", "")
+    
+    if hostname:
+        webhook_url = f"https://{hostname}/{TOKEN}"
+        
+        # تهيئة التطبيق
+        await application.initialize()
+        await application.start()
+        
+        # تعيين Webhook
+        await application.bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
+        )
+        logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
+        
+        # ✅ استخدام run_webhook المدمج بدلاً من الخادم اليدوي
+        await application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=TOKEN,
+            webhook_url=webhook_url
+        )
+    else:
+        logger.warning("⚠️ RENDER_EXTERNAL_HOSTNAME غير معرّف، استخدام Polling")
+        await run_polling_safe(application)
+        
+except Exception as e:
+    logger.error(f"❌ فشل Webhook: {e}")
+    logger.info("🔄 التراجع إلى Polling...")
+    await application.bot.delete_webhook()
+    await run_polling_safe(application)
+
+finally:
+    await cleanup_resources()
+    await task_manager.cancel_all()
+
             async def health_check(request):
                 return web.json_response({
                     'status': 'healthy',
