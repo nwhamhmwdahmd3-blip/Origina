@@ -3401,16 +3401,6 @@ async def check_bot_admin_permissions_group(bot, chat_id: int) -> dict:
 # 118. refresh_group_admins_and_hidden_owners_loop - تحديث صلاحيات المجموعات
 # ===================================================================
 async def refresh_group_admins_and_hidden_owners_loop(bot):
-    while True:
-        try:
-            async def _get_all_groups(conn):
-                cur = await conn.execute("SELECT chat_id FROM bot_groups WHERE banned=0")
-                return [row[0] for row in await cur.fetchall()]
-            groups = await execute_db(_get_all_groups)
-            for chat_id in groups:
-                try:
-                    await db_sync_group_admins(chat_id, bot)
-async def refresh_group_admins_and_hidden_owners_loop(bot):
     """
     حلقة تحديث صلاحيات المجموعات والمشرفين المخفيين
     تعمل كل ساعة للتأكد من تحديث الصلاحيات
@@ -3424,13 +3414,15 @@ async def refresh_group_admins_and_hidden_owners_loop(bot):
 
             groups = await execute_db(_get_all_groups)
             
+            logger.info(f"🔄 جاري تحديث صلاحيات {len(groups)} مجموعة...")
+            
             for chat_id in groups:
                 try:
-                    # مزامنة المشرفين الحقيقيين
+                    # مزامنة المشرفين الحقيقيين من تيليجرام
                     await db_sync_group_admins(chat_id, bot)
 
                     # التحقق من المالكين المخفيين
-                    async def _remove_non_admin_hidden_owners(conn):
+                    async def _check_hidden_owners(conn):
                         # جلب جميع المالكين المخفيين
                         cur = await conn.execute(
                             "SELECT owner_id FROM hidden_owner_groups WHERE chat_id=?", 
@@ -3440,10 +3432,8 @@ async def refresh_group_admins_and_hidden_owners_loop(bot):
                         
                         for owner_id in owners:
                             try:
-                                # التحقق المباشر من تيليجرام
                                 member = await bot.get_chat_member(chat_id, owner_id)
                                 if member.status not in ['administrator', 'creator']:
-                                    # إذا لم يعد مشرفاً، إزالته
                                     await conn.execute(
                                         "DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", 
                                         (chat_id, owner_id)
@@ -3475,18 +3465,18 @@ async def refresh_group_admins_and_hidden_owners_loop(bot):
                         
                         await conn.commit()
 
-                    await execute_db(_remove_non_admin_hidden_owners)
-                    await asyncio.sleep(0.5)
+                    await execute_db(_check_hidden_owners)
+                    await asyncio.sleep(0.5)  # تجنب الضغط على API
                     
                 except Exception as e:
                     logger.error(f"فشل تحديث صلاحيات المجموعة {chat_id}: {e}")
 
-            logger.info(f"✅ تم تحديث صلاحيات {len(groups)} مجموعة")
+            logger.info(f"✅ تم تحديث صلاحيات {len(groups)} مجموعة بنجاح")
             
         except Exception as e:
             logger.error(f"خطأ في حلقة تحديث الصلاحيات: {e}")
             
-        await asyncio.sleep(3600)  # كل ساعة
+        await asyncio.sleep(3600)  # الانتظار ساعة قبل التحديث التالي
 
 # ===================================================================
 # 119. is_currently_admin_in_group - التحقق من كون المستخدم مشرفاً حالياً
