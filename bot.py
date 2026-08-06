@@ -1,4 +1,4 @@
-##!/usr/bin/env python
+##!/usr/bin/env pytho
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
@@ -3067,8 +3067,15 @@ async def is_chat_locked(chat_id: int) -> bool:
 # 108. db_is_real_admin - التحقق من كون المستخدم مشرفاً حقيقياً
 # ===================================================================
 async def db_is_real_admin(chat_id: int, user_id: int) -> bool:
+    """
+    التحقق من كون المستخدم مشرفاً حقيقياً (مسجل في قاعدة البيانات)
+    يتم التخزين في جدول group_admins
+    """
     async def _check(conn):
-        cur = await conn.execute("SELECT 1 FROM group_admins WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        cur = await conn.execute(
+            "SELECT 1 FROM group_admins WHERE chat_id=? AND user_id=?", 
+            (chat_id, user_id)
+        )
         return await cur.fetchone() is not None
     return await execute_db(_check)
 
@@ -3076,8 +3083,15 @@ async def db_is_real_admin(chat_id: int, user_id: int) -> bool:
 # 109. db_is_hidden_owner - التحقق من كون المستخدم مالكاً مخفياً
 # ===================================================================
 async def db_is_hidden_owner(chat_id: int, user_id: int) -> bool:
+    """
+    التحقق من كون المستخدم مالكاً مخفياً
+    يتم التخزين في جدول hidden_owner_groups
+    """
     async def _check(conn):
-        cur = await conn.execute("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
+        cur = await conn.execute(
+            "SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", 
+            (chat_id, user_id)
+        )
         return await cur.fetchone() is not None
     return await execute_db(_check)
 
@@ -3085,10 +3099,125 @@ async def db_is_hidden_owner(chat_id: int, user_id: int) -> bool:
 # 110. db_is_hidden_admin - التحقق من كون المستخدم مشرفاً مخفياً
 # ===================================================================
 async def db_is_hidden_admin(chat_id: int, user_id: int) -> bool:
+    """
+    التحقق من كون المستخدم مشرفاً مخفياً
+    يتم التخزين في جدول hidden_admins
+    """
     async def _check(conn):
-        cur = await conn.execute("SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, user_id))
+        cur = await conn.execute(
+            "SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", 
+            (chat_id, user_id)
+        )
         return await cur.fetchone() is not None
     return await execute_db(_check)
+async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
+    """
+    التحقق المتكامل من صلاحية المستخدم في المجموعة
+    يستخدم التخزين المؤقت لتسريع الأداء
+    الأولوية: مالك مخفي > مشرف مخفي > مشرف حقيقي
+    """
+    # التحقق من المالك الرئيسي
+    if user_id == PRIMARY_OWNER_ID:
+        return True
+
+    # التحقق من صلاحيات البوت أولاً
+    bot_perms = await check_bot_admin_permissions_group(bot, chat_id)
+    if not bot_perms['can_act']:
+        logger.warning(f"⚠️ البوت ليس مشرفاً في {chat_id}")
+        return False
+
+    # التحقق من التخزين المؤقت
+    cache_key = f"auth_{chat_id}_{user_id}"
+    if CACHETOOLS_AVAILABLE:
+        if cache_key in _auth_cache:
+            return _auth_cache[cache_key]
+    else:
+        if cache_key in _auth_cache:
+            cached_time, value = _auth_cache[cache_key]
+            if time_module.time() - cached_time < _AUTH_CACHE_TTL:
+                return value
+
+    authorized = False
+    try:
+        # الخطوة 1: التحقق المباشر من تيليجرام
+        member = await bot.get_chat_member(chat_id, user_id)
+        
+        if member.status in ['administrator', 'creator']:
+            # المستخدم مشرف حقيقي - يتم تسجيله في قاعدة البيانات
+            async def _update_real_admin(conn):
+                await conn.execute(
+                    "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)", 
+                    (chat_id, user_id)
+                )
+                await conn.commit()
+            await execute_db(_update_real_admin)
+            authorized = True
+            
+        else:
+            # الخطوة 2: التحقق من المالك المخفي
+            if await db_is_hidden_owner(chat_id, user_id):
+                # التحقق من أن المالك المخفي لا يزال مشرفاً في تيليجرام
+                # إذا لم يعد مشرفاً، يتم إزالته
+                if not await is_currently_admin_in_group(bot, chat_id, user_id):
+                    async def _remove_hidden_owner(conn):
+                        await conn.execute(
+                            "DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", 
+                            (chat_id, user_id)
+                        )
+                        await conn.commit()
+                    await execute_db(_remove_hidden_owner)
+                    authorized = False
+                else:
+                    authorized = True
+                    
+            # الخطوة 3: التحقق من المشرف المخفي
+            elif await db_is_hidden_admin(chat_id, user_id):
+                # التحقق من أن المشرف المخفي لا يزال مشرفاً في تيليجرام
+                if not await is_currently_admin_in_group(bot, chat_id, user_id):
+                    async def _remove_hidden_admin(conn):
+                        await conn.execute(
+                            "DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?", 
+                            (chat_id, user_id)
+                        )
+                        await conn.commit()
+                    await execute_db(_remove_hidden_admin)
+                    authorized = False
+                else:
+                    authorized = True
+                    
+            # الخطوة 4: التحقق من المشرف الحقيقي المسجل
+            elif await db_is_real_admin(chat_id, user_id):
+                if not await is_currently_admin_in_group(bot, chat_id, user_id):
+                    async def _remove_real_admin(conn):
+                        await conn.execute(
+                            "DELETE FROM group_admins WHERE chat_id=? AND user_id=?", 
+                            (chat_id, user_id)
+                        )
+                        await conn.commit()
+                    await execute_db(_remove_real_admin)
+                    authorized = False
+                else:
+                    authorized = True
+            else:
+                authorized = False
+                
+    except Exception as e:
+        logger.warning(f"⚠️ فشل التحقق المباشر من مشرف {user_id} في {chat_id}: {e}")
+        # في حالة فشل التحقق المباشر، نستخدم قاعدة البيانات
+        if await db_is_hidden_owner(chat_id, user_id) or \
+           await db_is_hidden_admin(chat_id, user_id) or \
+           await db_is_real_admin(chat_id, user_id):
+            authorized = True
+        else:
+            authorized = False
+
+    # حفظ النتيجة في التخزين المؤقت
+    if CACHETOOLS_AVAILABLE:
+        _auth_cache[cache_key] = authorized
+    else:
+        _auth_cache[cache_key] = (time_module.time(), authorized)
+        
+    return authorized
 
 # ===================================================================
 # 111. db_register_hidden_owner_group - تسجيل مالك مخفي للمجموعة
@@ -3281,51 +3410,90 @@ async def refresh_group_admins_and_hidden_owners_loop(bot):
             for chat_id in groups:
                 try:
                     await db_sync_group_admins(chat_id, bot)
+async def refresh_group_admins_and_hidden_owners_loop(bot):
+    """
+    حلقة تحديث صلاحيات المجموعات والمشرفين المخفيين
+    تعمل كل ساعة للتأكد من تحديث الصلاحيات
+    """
+    while True:
+        try:
+            # جلب جميع المجموعات
+            async def _get_all_groups(conn):
+                cur = await conn.execute("SELECT chat_id FROM bot_groups WHERE banned=0")
+                return [row[0] for row in await cur.fetchall()]
+
+            groups = await execute_db(_get_all_groups)
+            
+            for chat_id in groups:
+                try:
+                    # مزامنة المشرفين الحقيقيين
+                    await db_sync_group_admins(chat_id, bot)
+
+                    # التحقق من المالكين المخفيين
                     async def _remove_non_admin_hidden_owners(conn):
-                        cur = await conn.execute("SELECT owner_id FROM hidden_owner_groups WHERE chat_id=?", (chat_id,))
+                        # جلب جميع المالكين المخفيين
+                        cur = await conn.execute(
+                            "SELECT owner_id FROM hidden_owner_groups WHERE chat_id=?", 
+                            (chat_id,)
+                        )
                         owners = [row[0] for row in await cur.fetchall()]
+                        
                         for owner_id in owners:
                             try:
+                                # التحقق المباشر من تيليجرام
                                 member = await bot.get_chat_member(chat_id, owner_id)
                                 if member.status not in ['administrator', 'creator']:
-                                    await conn.execute("DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, owner_id))
+                                    # إذا لم يعد مشرفاً، إزالته
+                                    await conn.execute(
+                                        "DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", 
+                                        (chat_id, owner_id)
+                                    )
                                     invalidate_auth_cache(chat_id, owner_id)
-                                    logger.info(f"🗑️ تم إزالة المالك المخفي {owner_id} من المجموعة {chat_id} (لم يعد مشرفاً)")
+                                    logger.info(f"🗑️ تم إزالة المالك المخفي {owner_id} من المجموعة {chat_id}")
                             except Exception as e:
-                                logger.error(f"فشل التحقق من المالك المخفي {owner_id} في {chat_id}: {e}")
-                        cur = await conn.execute("SELECT admin_id FROM hidden_admins WHERE chat_id=?", (chat_id,))
+                                logger.error(f"فشل التحقق من المالك المخفي {owner_id}: {e}")
+
+                        # التحقق من المشرفين المخفيين
+                        cur = await conn.execute(
+                            "SELECT admin_id FROM hidden_admins WHERE chat_id=?", 
+                            (chat_id,)
+                        )
                         admins = [row[0] for row in await cur.fetchall()]
+                        
                         for admin_id in admins:
                             try:
                                 member = await bot.get_chat_member(chat_id, admin_id)
                                 if member.status not in ['administrator', 'creator']:
-                                    await conn.execute("DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, admin_id))
+                                    await conn.execute(
+                                        "DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?", 
+                                        (chat_id, admin_id)
+                                    )
                                     invalidate_auth_cache(chat_id, admin_id)
-                                    logger.info(f"🗑️ تم إزالة المشرف المخفي {admin_id} من المجموعة {chat_id} (لم يعد مشرفاً)")
+                                    logger.info(f"🗑️ تم إزالة المشرف المخفي {admin_id} من المجموعة {chat_id}")
                             except Exception as e:
-                                logger.error(f"فشل التحقق من المشرف المخفي {admin_id} في {chat_id}: {e}")
+                                logger.error(f"فشل التحقق من المشرف المخفي {admin_id}: {e}")
+                        
                         await conn.commit()
+
                     await execute_db(_remove_non_admin_hidden_owners)
                     await asyncio.sleep(0.5)
+                    
                 except Exception as e:
                     logger.error(f"فشل تحديث صلاحيات المجموعة {chat_id}: {e}")
+
             logger.info(f"✅ تم تحديث صلاحيات {len(groups)} مجموعة")
+            
         except Exception as e:
             logger.error(f"خطأ في حلقة تحديث الصلاحيات: {e}")
-        await asyncio.sleep(3600)
+            
+        await asyncio.sleep(3600)  # كل ساعة
 
 # ===================================================================
 # 119. is_currently_admin_in_group - التحقق من كون المستخدم مشرفاً حالياً
-# ===================================================================
 async def is_currently_admin_in_group(bot, chat_id: int, user_id: int) -> bool:
     """
     التحقق المباشر من كون المستخدم مشرفاً في تيليجرام
-    Args:
-        bot: كائن البوت
-        chat_id: معرف المجموعة
-        user_id: معرف المستخدم
-    Returns:
-        bool: True إذا كان مشرفاً
+    هذه هي الطريقة الأكثر دقة لأنها تستفسر من تيليجرام مباشرة
     """
     try:
         # جلب معلومات المستخدم من تيليجرام
@@ -3338,14 +3506,43 @@ async def is_currently_admin_in_group(bot, chat_id: int, user_id: int) -> bool:
 
 # ===================================================================
 # 120. detect_owner_type - كشف نوع المالك
+async def db_is_hidden_owner(chat_id: int, user_id: int) -> bool:
+    """
+    التحقق من كون المستخدم مالكاً مخفياً
+    يتم التخزين في جدول hidden_owner_groups
+    """
+    async def _check(conn):
+        cur = await conn.execute(
+            "SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", 
+            (chat_id, user_id)
+        )
+        return await cur.fetchone() is not None
+    return await execute_db(_check)
+
 # ===================================================================
 async def detect_owner_type(bot, chat_id: int) -> dict:
+    """
+    كشف نوع المالك في المجموعة
+    يقوم بجلب المشرفين من تيليجرام وتحديد المالك (Creator)
+    """
     try:
+        # جلب جميع المشرفين
         admins = await bot.get_chat_administrators(chat_id)
+        
+        # البحث عن المالك (Creator)
         for admin in admins:
             if admin.status == 'creator':
-                return {'is_hidden': False, 'user_id': admin.user.id}
-        return {'is_hidden': True, 'user_id': None}
+                return {
+                    'is_hidden': False,      # المالك ظاهر في تيليجرام
+                    'user_id': admin.user.id
+                }
+        
+        # إذا لم يتم العثور على مالك ظاهر
+        return {
+            'is_hidden': True,              # المالك مخفي (غير موجود في تيليجرام)
+            'user_id': None
+        }
+        
     except Exception as e:
         logger.error(f"فشل كشف المالك في {chat_id}: {e}")
         return {'is_hidden': True, 'user_id': None}
