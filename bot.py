@@ -11157,22 +11157,57 @@ async def penalty_mute_callback(update: Update, context: ContextTypes.DEFAULT_TY
 # 403. penalty_mute_duration_callback - تعيين مدة الكتم
 # ===================================================================
 async def penalty_mute_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تعيين مدة الكتم للعقوبة التلقائية"""
     query = update.callback_query
-    if query:
-        await query.answer()
+    await query.answer()
+    
     user_id = update.effective_user.id
+    
+    # استخراج المدة و chat_id من الـ callback data
     parts = query.data.split(":")
-    if len(parts) == 2:
-        duration = int(parts[1])
-        chat_id = context.user_data.get('penalty_chat_id')
-        if not chat_id:
+    
+    # المدة تكون في المنتصف (parts[1])
+    # chat_id في النهاية (parts[-1])
+    if len(parts) < 2:
+        await query.answer("❌ بيانات غير صالحة", show_alert=True)
+        return
+    
+    duration_str = parts[1]
+    chat_id = int(parts[-1])
+    
+    # تحويل المدة إلى عدد صحيح
+    if duration_str == "permanent":
+        duration = -1
+        duration_text = "دائم"
+    else:
+        try:
+            duration = int(duration_str)
+            if duration < 60:
+                duration_text = f"{duration} دقيقة"
+            elif duration < 1440:
+                duration_text = f"{duration // 60} ساعة"
+            else:
+                duration_text = f"{duration // 1440} يوم"
+        except ValueError:
+            await query.answer("❌ مدة غير صالحة", show_alert=True)
             return
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
-            return
-        await db_set_security_settings(chat_id, auto_penalty='mute', auto_mute_duration=duration)
-        await query.answer(f"✅ تم تعيين مدة الكتم إلى {duration} دقيقة")
-        await group_settings_callback(update, context)
+    
+    # التحقق من الصلاحيات
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    # حفظ الإعدادات في قاعدة البيانات
+    await db_set_security_settings(
+        chat_id, 
+        auto_penalty='mute', 
+        auto_mute_duration=duration if duration > 0 else 60
+    )
+    
+    await query.answer(f"✅ تم تعيين مدة الكتم إلى: {duration_text}")
+    
+    # العودة إلى لوحة الأمان
+    await group_settings_callback(update, context)
 
 # ===================================================================
 # 404. admin_panel_callback - لوحة المشرفين
