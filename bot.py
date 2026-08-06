@@ -10098,26 +10098,24 @@ async def admin_auto_reply_callback(update: Update, context: ContextTypes.DEFAUL
     
     user_id = update.effective_user.id
     
-    # ===== التحقق من الصلاحيات (مشرف بوت أو مشرف مجموعة) =====
-    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
-        # إذا لم يكن مشرف بوت، يظهر له "غير مصرح"
-        await query.answer("🔒 غير مصرح", show_alert=True)
-        return
-    
+    # جلب جميع المجموعات التي يملك المستخدم صلاحية عليها
     groups = await db_get_user_groups(user_id)
+    
     if not groups:
-        await query.edit_message_text("📭 لا توجد مجموعات مسجلة")
+        await query.edit_message_text("📭 لا توجد مجموعات مسجلة. أضف البوت إلى مجموعة أولاً.")
         return
     
+    # بناء قائمة المجموعات المتاحة
     keyboard = []
     for chat_id, chat_name, username, banned in groups:
+        # تحقق من أن المستخدم مشرف في هذه المجموعة
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             continue
         display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
         keyboard.append([InlineKeyboardButton(f"📝 {display_name}", callback_data=f"{CallbackData.AUTO_REPLY_MENU_PREFIX}{chat_id}")])
     
     if not keyboard:
-        await query.edit_message_text("🔒 لا تملك صلاحية على أي مجموعة.")
+        await query.edit_message_text("🔒 لا تملك صلاحية إدارة الردود في أي مجموعة.")
         return
     
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
