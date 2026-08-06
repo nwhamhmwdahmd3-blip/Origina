@@ -6091,7 +6091,18 @@ async def setup_unified_web_server(application, port: int):
     
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
     if hostname:
-        application.web_app.router.add_post(f"/{TOKEN}", application.process_update)
+        # ===== معالج Webhook المعدل =====
+        async def webhook_handler(request):
+            try:
+                # معالجة التحديث
+                await application.process_update(request)
+                # إعادة استجابة نجاح
+                return web.Response(status=200, text="OK")
+            except Exception as e:
+                logger.error(f"خطأ في Webhook: {e}")
+                return web.Response(status=500, text="Error")
+        
+        application.web_app.router.add_post(f"/{TOKEN}", webhook_handler)
         logger.info(f"✅ تم إضافة مسار Webhook على /{TOKEN}")
     
     runner = web.AppRunner(application.web_app)
