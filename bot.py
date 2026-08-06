@@ -10775,6 +10775,192 @@ async def auto_reply_toggle_callback(update: Update, context: ContextTypes.DEFAU
         await query.answer(f"✅ تم {'تفعيل' if new_status else 'تعطيل'} الردود التلقائية")
     else:
         await safe_send_markdown(context.bot, uid, f"✅ تم {'تفعيل' if new_status else 'تعطيل'} الردود التلقائية")
+# ===================================================================
+# الدوال المفقودة - الأمان والمجموعات والإحصائيات
+# ===================================================================
+
+async def security_select_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار مجموعة لإعدادات الأمان"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    groups = await db_get_user_groups(user_id)
+    if not groups:
+        msg = "📭 لا توجد مجموعات مسجلة. أضف البوت إلى مجموعة أولاً."
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await safe_send_markdown(context.bot, user_id, msg)
+        return
+    
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            continue
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        status_icon = "⛔" if banned else "✅"
+        keyboard.append([InlineKeyboardButton(f"{status_icon} {display_name}", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")])
+    
+    if not keyboard:
+        msg = "🔒 لا تملك صلاحية على أي مجموعة."
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await safe_send_markdown(context.bot, user_id, msg)
+        return
+    
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+    
+    msg = "🔐 **اختر مجموعة لإعدادات الأمان:**"
+    if query:
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_send_markdown(context.bot, user_id, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def security_refresh_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحديث قائمة المجموعات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    await my_groups_callback(update, context)
+
+
+async def channel_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض إحصائيات القناة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('channel_stats_id')
+    
+    if not channel_db_id:
+        if query:
+            await query.edit_message_text("⚠️ لم يتم تحديد القناة.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "⚠️ لم يتم تحديد القناة.")
+        return
+    
+    stats = await db_get_channel_stats(channel_db_id)
+    ch_info = await db_get_channel_info(channel_db_id)
+    channel_name = ch_info[1] if ch_info else "القناة"
+    
+    text = f"📊 **إحصائيات {channel_name}**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📝 إجمالي المنشورات: {stats['total_posts']}\n"
+    text += f"✅ المنشورة: {stats['published_posts']}\n"
+    text += f"⏳ غير المنشورة: {stats['unpublished_posts']}\n"
+    text += f"👁️ إجمالي المشاهدات: {stats['total_views']}\n"
+    text += f"📊 متوسط المشاهدات: {stats['avg_views']}\n"
+    text += f"🕐 آخر منشور: {stats['last_post_time'][:16] if stats['last_post_time'] else 'لا يوجد'}\n"
+    text += f"📅 أول منشور: {stats['first_post_time'][:16] if stats['first_post_time'] else 'لا يوجد'}\n"
+    text += f"⏱️ متوسط الوقت بين المنشورات: {stats['avg_time_between_posts']} ساعة\n"
+    text += f"🕒 أفضل وقت للنشر: {stats['best_publish_hour']}:00\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 النمو", callback_data=f"{CallbackData.CHANNEL_GROWTH}:{channel_db_id}")],
+        [InlineKeyboardButton("🔄 تحديث", callback_data=f"{CallbackData.CHANNEL_STATS_REFRESH}:{channel_db_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+async def channel_growth_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض نمو القناة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    channel_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('channel_stats_id')
+    
+    if not channel_db_id:
+        if query:
+            await query.edit_message_text("⚠️ لم يتم تحديد القناة.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "⚠️ لم يتم تحديد القناة.")
+        return
+    
+    growth = await db_get_channel_growth(channel_db_id, days=30)
+    ch_info = await db_get_channel_info(channel_db_id)
+    channel_name = ch_info[1] if ch_info else "القناة"
+    
+    if not growth['dates']:
+        text = f"📈 **نمو {channel_name}**\n━━━━━━━━━━━━━━━━━━━━━━\nلا توجد بيانات كافية لعرض النمو."
+    else:
+        text = f"📈 **نمو {channel_name} (آخر 30 يوم)**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        text += f"📝 إجمالي المنشورات: {growth['total_posts']}\n"
+        text += f"👁️ إجمالي المشاهدات: {growth['total_views']}\n"
+        text += f"📊 متوسط المشاهدات لكل منشور: {round(growth['total_views'] / growth['total_posts'], 2) if growth['total_posts'] > 0 else 0}\n"
+        text += f"📅 عدد الأيام: {growth['total_days']}\n"
+        text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        for i in range(min(10, len(growth['dates']))):
+            idx = len(growth['dates']) - 1 - i
+            text += f"📅 {growth['dates'][idx]}: {growth['counts'][idx]} منشورات ({growth['views'][idx]} مشاهدة)\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 العودة للإحصائيات", callback_data=f"{CallbackData.CHANNEL_STATS}:{channel_db_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+async def channel_stats_refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحديث إحصائيات القناة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    await channel_stats_callback(update, context)
+
+
+async def my_channel_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض ملخص قنواتي"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    summary = await db_get_channel_stats_summary(user_id)
+    if not summary:
+        if query:
+            await query.edit_message_text("📭 لا توجد قنوات مسجلة.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "📭 لا توجد قنوات مسجلة.")
+        return
+    
+    text = f"📊 **ملخص قنواتي**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📡 إجمالي القنوات: {summary['total_channels']}\n"
+    text += f"🟢 القنوات النشطة: {summary['active_channels']}\n"
+    text += f"📝 إجمالي المنشورات: {summary['total_posts']}\n"
+    text += f"✅ المنشورة: {summary['total_published']}\n"
+    text += f"👁️ إجمالي المشاهدات: {summary['total_views']}\n"
+    text += f"📊 متوسط المشاهدات لكل قناة: {summary['avg_views_per_channel']}\n"
+    
+    if summary['best_channel']:
+        text += f"\n🏆 **أفضل قناة:**\n"
+        text += f"📌 {summary['best_channel']['name']}\n"
+        text += f"👁️ {summary['best_channel']['views']} مشاهدة\n"
+        text += f"📝 {summary['best_channel']['posts']} منشور\n"
+        text += f"📊 متوسط المشاهدات: {summary['best_channel']['avg_views']}\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 تحديث", callback_data=CallbackData.MY_CHANNEL_STATS)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
 
 # ===================================================================
 # 418. main - الوظيفة الرئيسية لتشغيل البوت
