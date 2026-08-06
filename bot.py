@@ -12784,6 +12784,295 @@ async def confirm_enable_all_callback(update: Update, context: ContextTypes.DEFA
 async def universal_security_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالج عام لأزرار الأمان (يوجه إلى security_toggle_callback)"""
     await security_toggle_callback(update, context)
+# ===================================================================
+# دوال إعدادات الردود التلقائية (Auto Reply)
+# ===================================================================
+
+async def admin_auto_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إعدادات الردود التلقائية من لوحة المشرفين"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    groups = await db_get_user_groups(user_id)
+    if not groups:
+        await query.edit_message_text("📭 لا توجد مجموعات مسجلة")
+        return
+    
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            continue
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        keyboard.append([InlineKeyboardButton(f"📝 {display_name}", callback_data=f"{CallbackData.AUTO_REPLY_MENU_PREFIX}{chat_id}")])
+    
+    if not keyboard:
+        await query.edit_message_text("🔒 لا تملك صلاحية على أي مجموعة.")
+        return
+    
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+    
+    await query.edit_message_text(
+        "📝 **اختر مجموعة لإعدادات الردود التلقائية:**",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def auto_reply_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج قائمة الردود التلقائية لمجموعة محددة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    settings = await db_get_auto_reply_settings(chat_id)
+    context.user_data['auto_reply_chat_id'] = chat_id
+    
+    await query.edit_message_text(
+        f"📝 **إعدادات الردود التلقائية**\n\nالمجموعة: {chat_id}",
+        reply_markup=get_auto_reply_keyboard(chat_id, settings)
+    )
+
+async def auto_reply_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تفعيل/تعطيل الردود التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    new_status = await db_toggle_auto_reply(chat_id)
+    settings = await db_get_auto_reply_settings(chat_id)
+    
+    await query.edit_message_reply_markup(reply_markup=get_auto_reply_keyboard(chat_id, settings))
+    await query.answer(f"✅ تم {'تفعيل' if new_status else 'تعطيل'} الردود التلقائية")
+
+async def auto_reply_admins_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تفعيل/تعطيل الردود للمشرفين فقط"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    settings = await db_get_auto_reply_settings(chat_id)
+    new_status = not settings['only_admins']
+    await db_set_auto_reply_only_admins(chat_id, new_status)
+    settings = await db_get_auto_reply_settings(chat_id)
+    
+    await query.edit_message_reply_markup(reply_markup=get_auto_reply_keyboard(chat_id, settings))
+    await query.answer(f"✅ تم {'تفعيل' if new_status else 'تعطيل'} الردود للمشرفين فقط")
+
+async def auto_reply_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إعادة تعيين الردود (تأكيد)"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم، إعادة تعيين", callback_data=f"{CallbackData.AUTO_REPLY_CONFIRM_RESET_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=f"{CallbackData.AUTO_REPLY_CANCEL_PREFIX}{chat_id}")]
+    ])
+    
+    await query.edit_message_text(
+        "⚠️ **تأكيد إعادة تعيين الردود**\n\nسيتم حذف جميع الردود المخصصة لهذه المجموعة!",
+        reply_markup=keyboard
+    )
+
+async def auto_reply_confirm_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تأكيد إعادة تعيين الردود"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    async def _reset_replies(conn):
+        await conn.execute("DELETE FROM group_replies WHERE chat_id=?", (chat_id,))
+        await conn.commit()
+    
+    await execute_db(_reset_replies)
+    settings = await db_get_auto_reply_settings(chat_id)
+    
+    await query.edit_message_text(
+        "✅ تم إعادة تعيين جميع الردود!",
+        reply_markup=get_auto_reply_keyboard(chat_id, settings)
+    )
+
+async def auto_reply_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إلغاء إعادة تعيين الردود"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    settings = await db_get_auto_reply_settings(chat_id)
+    
+    await query.edit_message_text(
+        "❌ تم إلغاء عملية إعادة التعيين",
+        reply_markup=get_auto_reply_keyboard(chat_id, settings)
+    )
+
+async def auto_reply_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض إحصائيات الردود"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    replies = await db_get_all_replies()
+    chat_replies = [r for r in replies if r[0].startswith(f"{chat_id}:")]
+    settings = await db_get_auto_reply_settings(chat_id)
+    
+    text = f"📊 **إحصائيات الردود**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📝 إجمالي الردود في المجموعة: {len(chat_replies)}\n"
+    text += f"📝 إجمالي الردود العامة: {len(replies) - len(chat_replies)}\n"
+    text += f"📌 حالة الردود التلقائية: {'🟢 مفعل' if settings['enabled'] else '🔴 معطل'}"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.AUTO_REPLY_MENU_PREFIX}{chat_id}")]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def user_auto_reply_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تبديل الردود التلقائية للمستخدم"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    target_user = int(query.data.split(":")[-1])
+    
+    if user_id != target_user and user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    current = await db_get_user_auto_reply_status(target_user)
+    new_status = not current
+    await db_set_user_auto_reply_status(target_user, new_status)
+    
+    await query.edit_message_reply_markup(reply_markup=get_user_auto_reply_keyboard(target_user, new_status))
+    await query.answer(f"✅ تم {'تفعيل' if new_status else 'تعطيل'} الردود التلقائية")
+
+
+# ===================================================================
+# دوال مدة الكتم / الحظر (Penalty Duration)
+# ===================================================================
+
+async def penalty_mute_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تعيين مدة الكتم للعقوبة التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    
+    if len(parts) < 2:
+        await query.answer("❌ بيانات غير صالحة", show_alert=True)
+        return
+    
+    # استخراج المدة من الـ callback data
+    duration_str = parts[0].split("_")[-1] if "_" in parts[0] else parts[1]
+    
+    # تحويل المدة إلى عدد صحيح
+    if duration_str == "permanent":
+        duration = -1
+        duration_text = "دائم"
+    else:
+        try:
+            duration = int(duration_str)
+            if duration < 60:
+                duration_text = f"{duration} دقيقة"
+            elif duration < 1440:
+                duration_text = f"{duration // 60} ساعة"
+            else:
+                duration_text = f"{duration // 1440} يوم"
+        except ValueError:
+            await query.answer("❌ مدة غير صالحة", show_alert=True)
+            return
+    
+    # استخراج chat_id
+    try:
+        chat_id = int(parts[-1])
+    except (ValueError, IndexError):
+        await query.answer("❌ معرف المجموعة غير صالح", show_alert=True)
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    # حفظ الإعدادات
+    await db_set_security_settings(chat_id, auto_penalty='mute', auto_mute_duration=duration if duration > 0 else 60)
+    
+    await query.answer(f"✅ تم تعيين مدة الكتم إلى: {duration_text}")
+    
+    # العودة إلى لوحة الأمان
+    await group_settings_callback(update, context)
+
+
+# ===================================================================
+# دوال إضافية للردود (get_auto_reply_keyboard, get_user_auto_reply_keyboard)
+# ===================================================================
+
+def get_auto_reply_keyboard(chat_id: int, settings: dict) -> InlineKeyboardMarkup:
+    """بناء كيبورد إعدادات الردود التلقائية"""
+    status_text = "🟢 مفعل" if settings['enabled'] else "🔴 معطل"
+    admin_text = "👑 مشرفين فقط" if settings['only_admins'] else "👥 الجميع"
+    
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"📝 الردود التلقائية: {status_text}", callback_data=f"{CallbackData.AUTO_REPLY_TOGGLE_PREFIX}{chat_id}")],
+        [InlineKeyboardButton(f"👥 المستخدمون: {admin_text}", callback_data=f"{CallbackData.AUTO_REPLY_ADMINS_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("🔄 إعادة تعيين الردود", callback_data=f"{CallbackData.AUTO_REPLY_RESET_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("📊 إحصائيات الردود", callback_data=f"{CallbackData.AUTO_REPLY_STATS_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+
+def get_user_auto_reply_keyboard(user_id: int, enabled: bool) -> InlineKeyboardMarkup:
+    """بناء كيبورد الردود التلقائية للمستخدم"""
+    status_text = "🟢 مفعل" if enabled else "🔴 معطل"
+    
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"📝 الردود التلقائية: {status_text}", callback_data=f"{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}{user_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
 
 # ===================================================================
 # 458. main - الوظيفة الرئيسية لتشغي
