@@ -1625,7 +1625,7 @@ class NotificationSystem:
     
     async def send_notification(self, bot, user_id: int, text: str, parse_mode: str = "MarkdownV2", reply_markup=None):
         try:
-            await safe_send_markdown(bot, user_id, text, reply_markup)
+            await safe_send_markdown(bot, user_id,) text, reply_markup)
             advanced_logger.log_access(user_id, "NOTIFICATION_SENT", {"text": text[:50]})
             return True
         except Exception as e:
