@@ -1,4 +1,4 @@
-##!/usr/bin/env python3
+##!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
@@ -6918,33 +6918,52 @@ async def cleanup_resources():
 # 276. start_command_handler - معالج أمر /start
 # ===================================================================
 async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    username = update.effective_user.username or ""
-    first_name = update.effective_user.first_name or ""
-    
-    await db_register_user(user_id)
-    await db_update_user_cache(user_id, username, first_name)
-    await set_user_language(user_id, 'ar')
-    
-    # التحقق من الإحالات
-    if context.args and context.args[0].startswith('ref_'):
-        ref_code = context.args[0][4:]
-        referrer_id = await db_get_user_by_referral_code(ref_code)
-        if referrer_id and referrer_id != user_id:
-            if await db_add_referral(referrer_id, user_id):
-                reward_days = await db_auto_reward_referral(referrer_id, user_id)
-                try:
-                    await context.bot.send_message(chat_id=referrer_id, text=f"🎉 قام مستخدم جديد بالتسجيل عبر رابطك!\n👤 المعرف: {user_id}\n🎁 مكافأتك: {reward_days} يوم اشتراك إضافي")
-                except:
-                    pass
-                await achievement_system(referrer_id, 'first_referral')
-    
-    # التحقق من الاشتراك الإجباري
-    if not await ensure_force_subscribe(update, context):
-        return
-    
-    kb, title, active = await get_main_keyboard(user_id)
-    await safe_send_markdown(context.bot, user_id, title, reply_markup=kb)
+    """معالج أمر /start"""
+    try:
+        user_id = update.effective_user.id
+        username = update.effective_user.username or ""
+        first_name = update.effective_user.first_name or ""
+        
+        # تسجيل المستخدم
+        await db_register_user(user_id)
+        await db_update_user_cache(user_id, username, first_name)
+        await set_user_language(user_id, 'ar')
+        
+        # التحقق من الإحالات
+        if context.args and context.args[0].startswith('ref_'):
+            ref_code = context.args[0][4:]
+            referrer_id = await db_get_user_by_referral_code(ref_code)
+            if referrer_id and referrer_id != user_id:
+                if await db_add_referral(referrer_id, user_id):
+                    reward_days = await db_auto_reward_referral(referrer_id, user_id)
+                    try:
+                        await context.bot.send_message(
+                            chat_id=referrer_id,
+                            text=f"🎉 قام مستخدم جديد بالتسجيل عبر رابطك!\n👤 المعرف: {user_id}\n🎁 مكافأتك: {reward_days} يوم اشتراك إضافي"
+                        )
+                    except:
+                        pass
+        
+        # التحقق من الاشتراك الإجباري
+        if not await ensure_force_subscribe(update, context):
+            return
+        
+        # الحصول على الكيبورد الرئيسي
+        kb, title, active = await get_main_keyboard(user_id)
+        
+        # إرسال الرسالة
+        if update.callback_query:
+            await safe_edit_markdown(update.callback_query, title, reply_markup=kb)
+        else:
+            await safe_send_markdown(context.bot, user_id, title, reply_markup=kb)
+            
+    except Exception as e:
+        logger.error(f"خطأ في start_command_handler: {e}")
+        await safe_send_markdown(
+            context.bot, 
+            update.effective_user.id, 
+            "❌ حدث خطأ، يرجى المحاولة مرة أخرى."
+        )
 
 # ===================================================================
 # 277. language_command_handler - معالج أمر /language
