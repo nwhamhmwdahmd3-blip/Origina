@@ -6079,31 +6079,27 @@ async def health_check_handler(request):
 # 260. setup_unified_web_server - إعداد خادم الويب الموحد
 # ===================================================================
 async def setup_unified_web_server(application, port: int):
-    """إعداد خادم الويب الموحد"""
-    # التأكد من وجود web_app
+    """إعداد خادم الويب الموحد مع Webhook"""
+    from aiohttp import web
+    import json
+    
     if not hasattr(application, 'web_app') or application.web_app is None:
         application.web_app = web.Application()
+    
+    # ===== معالج Webhook =====
+    async def webhook_handler(request):
+        try:
+            data = await request.json()
+            await application.process_update(data)
+            return web.Response(status=200, text="OK")
+        except Exception as e:
+            logger.error(f"خطأ في Webhook: {e}")
+            return web.Response(status=500, text="Error")
     
     # إضافة المسارات
     application.web_app.router.add_get('/', index_handler)
     application.web_app.router.add_get('/health', health_check_handler)
-    application.web_app.router.add_get('/index.html', index_handler)
-    
-    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-    if hostname:
-        # ===== معالج Webhook المعدل =====
-        async def webhook_handler(request):
-            try:
-                # معالجة التحديث
-                await application.process_update(request)
-                # إعادة استجابة نجاح
-                return web.Response(status=200, text="OK")
-            except Exception as e:
-                logger.error(f"خطأ في Webhook: {e}")
-                return web.Response(status=500, text="Error")
-        
-        application.web_app.router.add_post(f"/{TOKEN}", webhook_handler)
-        logger.info(f"✅ تم إضافة مسار Webhook على /{TOKEN}")
+    application.web_app.router.add_post(f"/{TOKEN}", webhook_handler)
     
     runner = web.AppRunner(application.web_app)
     await runner.setup()
