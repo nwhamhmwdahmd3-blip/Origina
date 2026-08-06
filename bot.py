@@ -6082,19 +6082,29 @@ async def health_check_handler(request):
 async def setup_unified_web_server(application, port: int):
     """إعداد خادم الويب الموحد مع Webhook"""
     from aiohttp import web
+    from telegram import Update
     import json
     
     if not hasattr(application, 'web_app') or application.web_app is None:
         application.web_app = web.Application()
     
-    # ===== معالج Webhook =====
+    # ===== معالج Webhook الصحيح =====
     async def webhook_handler(request):
         try:
+            # قراءة البيانات كـ JSON
             data = await request.json()
-            await application.process_update(data)
+            update_id = data.get('update_id', 'unknown')
+            logger.info(f"📩 استقبال تحديث: {update_id}")
+            
+            # ===== إنشاء كائن Update من البيانات =====
+            update = Update.de_json(data, application.bot)
+            
+            # ===== معالجة التحديث =====
+            await application.process_update(update)
+            
             return web.Response(status=200, text="OK")
         except Exception as e:
-            logger.error(f"خطأ في Webhook: {e}")
+            logger.error(f"❌ خطأ في Webhook: {e}")
             return web.Response(status=500, text="Error")
     
     # إضافة المسارات
