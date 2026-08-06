@@ -12707,6 +12707,20 @@ async def buy_subscription_90_callback(update: Update, context: ContextTypes.DEF
     if query:
         await query.answer()
     await buy_subscription_callback(update, context, 90, 120, "اشتراك 3 أشهر")
+async def handle_text_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الكولباك للأزرار البسيطة (rank, top, schedule_post, language)"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    if data == "rank":
+        await rank_command_handler(update, context)
+    elif data == "top":
+        await top_command_handler(update, context)
+    elif data == "schedule_post":
+        await schedule_post_command_handler(update, context)
+    elif data == "language":
+        await language_command_handler(update, context)
 
 # ===================================================================
 # 458. main - الوظيفة الرئيسية لتشغي
