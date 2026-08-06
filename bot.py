@@ -21,7 +21,6 @@ import hmac
 import time as time_module
 import re
 import shutil
-import logging
 import traceback
 import random
 import asyncio
@@ -207,6 +206,8 @@ import aiosqlite
 from dotenv import load_dotenv
 load_dotenv()
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember, BotCommand, LabeledPrice, ChatPermissions
+from telegram.ext import ContextTypes
+import logging
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, PreCheckoutQueryHandler, ChatMemberHandler, ChatJoinRequestHandler
 from telegram.error import TimedOut, NetworkError, BadRequest, Forbidden, Conflict
 from telegram.request import HTTPXRequest
