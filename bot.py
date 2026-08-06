@@ -5893,21 +5893,66 @@ def get_admin_keyboard(user_id: int) -> InlineKeyboardMarkup:
 # ===================================================================
 # 253. security_keyboard - كيبورد إعدادات الأمان
 # ===================================================================
-def security_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 حذف الروابط", callback_data=f"security:links:{chat_id}"), InlineKeyboardButton("@ حذف المعرفات", callback_data=f"security:mentions:{chat_id}")],
-        [InlineKeyboardButton("🚫 كلمات محظورة", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}"), InlineKeyboardButton("⏱️ الوضع البطيء", callback_data=f"security:slow_mode:{chat_id}")],
-        [InlineKeyboardButton("🎬 حذف الفيديوهات", callback_data=f"security:delete_videos:{chat_id}"), InlineKeyboardButton("🛠️ حذف رسائل الخدمة", callback_data=f"security:delete_service:{chat_id}")],
-        [InlineKeyboardButton("📄 حذف الملفات", callback_data=f"security:delete_documents:{chat_id}"), InlineKeyboardButton("🖼️ حذف الملصقات", callback_data=f"security:delete_stickers:{chat_id}")],
-        [InlineKeyboardButton("🎵 حذف الصوتيات", callback_data=f"security:delete_audio:{chat_id}"), InlineKeyboardButton("🎞️ حذف المتحركات", callback_data=f"security:delete_animation:{chat_id}")],
-        [InlineKeyboardButton("⚡ تفعيل الكل", callback_data=f"{CallbackData.SECURITY_ENABLE_ALL_PREFIX}{chat_id}"), InlineKeyboardButton("⛔ تعطيل الكل", callback_data=f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("⚖️ عقوبة الحذف", callback_data=f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("🎯 الترحيب", callback_data=f"security:welcome_enabled:{chat_id}"), InlineKeyboardButton("👋 الوداع", callback_data=f"security:goodbye_enabled:{chat_id}")],
-        [InlineKeyboardButton("⚖️ تحديد العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"), InlineKeyboardButton("📝 إعدادات الردود", callback_data=CallbackData.ADMIN_AUTO_REPLY)],
-        [InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")],
-        [InlineKeyboardButton("📜 سجل الإجراءات", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")],
-        [InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)]
-    ])
+def security_keyboard(chat_id: int, is_admin: bool = False) -> InlineKeyboardMarkup:
+    """
+    بناء كيبورد إعدادات الأمان للمجموعة.
+    - الأزرار الأساسية تظهر للجميع.
+    - الأزرار المتقدمة تظهر فقط للمشرفين (is_admin=True).
+    """
+    keyboard = [
+        # ===== أزرار أساسية (للجميع) =====
+        [
+            InlineKeyboardButton("🔗 حذف الروابط", callback_data=f"security:links:{chat_id}"),
+            InlineKeyboardButton("@ حذف المعرفات", callback_data=f"security:mentions:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🚫 كلمات محظورة", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}"),
+            InlineKeyboardButton("⏱️ الوضع البطيء", callback_data=f"security:slow_mode:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🎬 حذف الفيديوهات", callback_data=f"security:delete_videos:{chat_id}"),
+            InlineKeyboardButton("🛠️ حذف رسائل الخدمة", callback_data=f"security:delete_service:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("📄 حذف الملفات", callback_data=f"security:delete_documents:{chat_id}"),
+            InlineKeyboardButton("🖼️ حذف الملصقات", callback_data=f"security:delete_stickers:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🎵 حذف الصوتيات", callback_data=f"security:delete_audio:{chat_id}"),
+            InlineKeyboardButton("🎞️ حذف المتحركات", callback_data=f"security:delete_animation:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("⚡ تفعيل الكل", callback_data=f"{CallbackData.SECURITY_ENABLE_ALL_PREFIX}{chat_id}"),
+            InlineKeyboardButton("⛔ تعطيل الكل", callback_data=f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("⚖️ عقوبة الحذف", callback_data=f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🎯 الترحيب", callback_data=f"security:welcome_enabled:{chat_id}"),
+            InlineKeyboardButton("👋 الوداع", callback_data=f"security:goodbye_enabled:{chat_id}")
+        ],
+    ]
+
+    # ===== أزرار متقدمة (للمشرفين فقط) =====
+    if is_admin:
+        keyboard.extend([
+            [
+                InlineKeyboardButton("⚖️ تحديد العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"),
+                InlineKeyboardButton("📝 إعدادات الردود", callback_data=CallbackData.ADMIN_AUTO_REPLY)
+            ],
+            [
+                InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("📜 سجل الإجراءات", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")
+            ]
+        ])
+
+    # ===== زر الإغلاق =====
+    keyboard.append([InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)])
+
+    return InlineKeyboardMarkup(keyboard)
 
 # ===================================================================
 # 254. penalty_keyboard - كيبورد العقوبات
@@ -8303,7 +8348,13 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
 # 324. _update_security_panel - تحديث لوحة الأمان
 # ===================================================================
 async def _update_security_panel(query, chat_id: int, user_id: int):
+    """تحديث لوحة الأمان مع التحقق من صلاحيات المشرف"""
     settings = await db_get_security_settings(chat_id)
+    
+    # ===== التحقق من صلاحية المستخدم =====
+    is_admin = (user_id == PRIMARY_OWNER_ID) or (await is_bot_admin(user_id))
+    
+    # ===== بناء النص (كما هو) =====
     links_status = "✅ مفعل" if settings['links'] else "❌ معطل"
     mentions_status = "✅ مفعل" if settings['mentions'] else "❌ معطل"
     slow_mode_status = "✅ مفعل" if settings['slow_mode'] else "❌ معطل"
@@ -8336,7 +8387,8 @@ async def _update_security_panel(query, chat_id: int, user_id: int):
 ━━━━━━━━━━━━━━━━━━━━━━
 اختر الإعدادات المطلوبة:"""
     
-    await safe_edit_markdown(query, text, reply_markup=security_keyboard(chat_id))
+    # ===== استدعاء الكيبورد مع تمرير is_admin =====
+    await safe_edit_markdown(query, text, reply_markup=security_keyboard(chat_id, is_admin))
 
 # ===================================================================
 # 325. security_toggle_callback - معالج تبديل إعدادات الأمان
