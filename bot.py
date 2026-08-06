@@ -12721,6 +12721,37 @@ async def handle_text_callbacks(update: Update, context: ContextTypes.DEFAULT_TY
         await schedule_post_command_handler(update, context)
     elif data == "language":
         await language_command_handler(update, context)
+async def confirm_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تأكيد تفعيل جميع خيارات الحذف"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    # التحقق من الصلاحيات
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    # تفعيل جميع خيارات الحذف
+    keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    for key in keys:
+        settings[key] = True
+    await db_set_security_settings(chat_id, **{k: settings[k] for k in keys})
+    
+    await security_audit.log("SECURITY_ENABLE_ALL_CONFIRMED", user_id, {"chat_id": chat_id}, "INFO")
+    
+    # تحديث الكاش
+    if chat_id in _security_cache:
+        del _security_cache[chat_id]
+    _security_cache.pop(chat_id, None)
+    _security_cache_time.pop(chat_id, None)
+    await cache_manager.delete(f"security_{chat_id}")
+    
+    await query.answer("✅ تم تفعيل جميع خيارات الحذف")
+    await _update_security_panel(query, chat_id, user_id)
 
 # ===================================================================
 # 458. main - الوظيفة الرئيسية لتشغي
