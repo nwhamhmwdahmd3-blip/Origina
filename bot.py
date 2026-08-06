@@ -44,7 +44,8 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 import types
 import signal
-
+import logging
+logging.basicConfig(level=logging.DEBUG)
 # ===================================================================
 # 1. check_python_version - التحقق من إصدار بايثون
 # ===================================================================
