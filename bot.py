@@ -218,7 +218,7 @@ from aiohttp import web, WSMsgType
 import aiohttp
 from PIL import Image
 import numpy as np
-
+from aiohttp import web
 # ===================================================================
 # فلتر البيانات الحساسة
 # ===================================================================
@@ -6080,12 +6080,11 @@ async def health_check_handler(request):
 # ===================================================================
 async def setup_unified_web_server(application, port: int):
     """إعداد خادم الويب الموحد"""
-    # استخدام web_app الموجود بالفعل في application
+    # التأكد من وجود web_app
     if not hasattr(application, 'web_app') or application.web_app is None:
-        # إذا لم يكن موجوداً، نقوم بإنشائه
-        from aiohttp import web
         application.web_app = web.Application()
     
+    # إضافة المسارات
     application.web_app.router.add_get('/', index_handler)
     application.web_app.router.add_get('/health', health_check_handler)
     application.web_app.router.add_get('/index.html', index_handler)
@@ -12668,10 +12667,6 @@ async def main():
         logger.error(f"❌ فشل استيراد الكلمات المحظورة: {e}")
     load_all_languages()
     
-    # ===== إنشاء web_app =====
-    from aiohttp import web
-    web_app = web.Application()
-    
     if USE_PROXY:
         request_kwargs = {'proxy_url': PROXY_URL, 'read_timeout': 60.0, 'write_timeout': 30.0, 'connect_timeout': 30.0, 'pool_timeout': 10.0, 'connection_pool_size': MAX_CONNECTIONS}
         request = HTTPXRequest(**request_kwargs)
@@ -12681,14 +12676,12 @@ async def main():
         request = HTTPXRequest(**request_kwargs)
         application = Application.builder().token(TOKEN).request(request).build()
     
-    # تعيين web_app بعد بناء التطبيق
-    application.web_app = web_app
+    # إنشاء web_app وتعيينه
+    application.web_app = web.Application()
     
     application.add_error_handler(global_error_handler)
     
-    # ... باقي الكود (الأوامر والمعالجات) كما هو ...
-
-    # ... باقي الكود (إضافة الأوامر والمعالجات) ...
+    # ... باقي الكود (الأوامر والمعالجات) ...
 
     # ===== إضافة الأوامر =====
     application.add_handler(CommandHandler("start", start_command_handler))
