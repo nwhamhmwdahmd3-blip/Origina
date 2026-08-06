@@ -12706,12 +12706,33 @@ async def main():
         request = HTTPXRequest(**request_kwargs)
         application = Application.builder().token(TOKEN).request(request).build()
     
-    # إنشاء web_app وتعيينه
+    # ===== إنشاء web_app وتعيينه =====
     application.web_app = web.Application()
     
     application.add_error_handler(global_error_handler)
     
-    # ... باقي الكود (الأوامر والمعالجات) ...
+    # ===== إضافة الأوامر الأساسية =====
+    application.add_handler(CommandHandler("start", start_command_handler))
+    application.add_handler(CommandHandler("help", help_command_handler))
+    
+    # ===== إضافة معالجات الكولباك الأساسية =====
+    application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
+    application.add_handler(CallbackQueryHandler(back_callback, pattern=f"^{CallbackData.BACK}$"))
+    
+    # ===== معالجات الرسائل =====
+    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
+    
+    # ===== أوامر البوت =====
+    commands = [
+        BotCommand("start", "بدء البوت"),
+        BotCommand("help", "المساعدة"),
+    ]
+    await application.bot.set_my_commands(commands)
+    
+    # ===== استخدام Polling بدلاً من Webhook =====
+    logger.info("🔄 استخدام Polling (تم تعطيل Webhook)")
+    await application.bot.delete_webhook()
+    await run_polling_safe(application)
 
     # ===== إضافة الأوامر =====
     application.add_handler(CommandHandler("start", start_command_handler))
