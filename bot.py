@@ -6079,13 +6079,22 @@ async def health_check_handler(request):
 # 260. setup_unified_web_server - إعداد خادم الويب الموحد
 # ===================================================================
 async def setup_unified_web_server(application, port: int):
+    """إعداد خادم الويب الموحد"""
+    # استخدام web_app الموجود بالفعل في application
+    if not hasattr(application, 'web_app') or application.web_app is None:
+        # إذا لم يكن موجوداً، نقوم بإنشائه
+        from aiohttp import web
+        application.web_app = web.Application()
+    
     application.web_app.router.add_get('/', index_handler)
     application.web_app.router.add_get('/health', health_check_handler)
     application.web_app.router.add_get('/index.html', index_handler)
+    
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
     if hostname:
         application.web_app.router.add_post(f"/{TOKEN}", application.process_update)
         logger.info(f"✅ تم إضافة مسار Webhook على /{TOKEN}")
+    
     runner = web.AppRunner(application.web_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
@@ -12660,17 +12669,23 @@ async def main():
         logger.error(f"❌ فشل استيراد الكلمات المحظورة: {e}")
     load_all_languages()
     
+    # ===== إنشاء web_app لخادم الويب =====
+    from aiohttp import web
+    web_app = web.Application()
+    
     if USE_PROXY:
         request_kwargs = {'proxy_url': PROXY_URL, 'read_timeout': 60.0, 'write_timeout': 30.0, 'connect_timeout': 30.0, 'pool_timeout': 10.0, 'connection_pool_size': MAX_CONNECTIONS}
         request = HTTPXRequest(**request_kwargs)
-        application = Application.builder().token(TOKEN).request(request).build()
+        application = Application.builder().token(TOKEN).request(request).web_app(web_app).build()
     else:
         request_kwargs = {'read_timeout': 60.0, 'write_timeout': 30.0, 'connect_timeout': 30.0, 'pool_timeout': 10.0, 'connection_pool_size': MAX_CONNECTIONS}
         request = HTTPXRequest(**request_kwargs)
-        application = Application.builder().token(TOKEN).request(request).build()
+        application = Application.builder().token(TOKEN).request(request).web_app(web_app).build()
     
     application.add_error_handler(global_error_handler)
     
+    # ... باقي الكود (إضافة الأوامر والمعالجات) ...
+
     # ===== إضافة الأوامر =====
     application.add_handler(CommandHandler("start", start_command_handler))
     application.add_handler(CommandHandler("language", language_command_handler))
