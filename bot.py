@@ -10091,46 +10091,41 @@ async def nsfw_threshold_set_callback(update: Update, context: ContextTypes.DEFA
 # 352. admin_auto_reply_callback - إعدادات الردود التلقائية
 # ===================================================================
 async def admin_auto_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إعدادات الردود التلقائية من لوحة المشرفين"""
     query = update.callback_query
-    if query:
-        await query.answer()
-    uid = update.effective_user.id
+    await query.answer()
     
-    if uid != PRIMARY_OWNER_ID and not await is_bot_admin(uid):
-        if query:
-            await query.answer("🔒 غير مصرح", show_alert=True)
-        else:
-            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+    user_id = update.effective_user.id
+    
+    # ===== التحقق من الصلاحيات (مشرف بوت أو مشرف مجموعة) =====
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        # إذا لم يكن مشرف بوت، يظهر له "غير مصرح"
+        await query.answer("🔒 غير مصرح", show_alert=True)
         return
     
-    groups = await db_get_user_groups(uid)
+    groups = await db_get_user_groups(user_id)
     if not groups:
-        if query:
-            await query.edit_message_text("📭 لا توجد مجموعات مسجلة")
-        else:
-            await safe_send_markdown(context.bot, uid, "📭 لا توجد مجموعات مسجلة")
+        await query.edit_message_text("📭 لا توجد مجموعات مسجلة")
         return
     
     keyboard = []
     for chat_id, chat_name, username, banned in groups:
-        if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
             continue
         display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
         keyboard.append([InlineKeyboardButton(f"📝 {display_name}", callback_data=f"{CallbackData.AUTO_REPLY_MENU_PREFIX}{chat_id}")])
     
     if not keyboard:
-        if query:
-            await query.edit_message_text("🔒 لا تملك صلاحية على أي مجموعة.")
-        else:
-            await safe_send_markdown(context.bot, uid, "🔒 لا تملك صلاحية على أي مجموعة.")
+        await query.edit_message_text("🔒 لا تملك صلاحية على أي مجموعة.")
         return
     
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
     
-    if query:
-        await query.edit_message_text("📝 **اختر مجموعة لإعدادات الردود التلقائية:**", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await safe_send_markdown(context.bot, uid, "📝 **اختر مجموعة لإعدادات الردود التلقائية:**", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(
+        "📝 **اختر مجموعة لإعدادات الردود التلقائية:**",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="MarkdownV2"
+    )
 
 # ===================================================================
 # 353. auto_reply_menu_callback - قائمة الردود التلقائية
