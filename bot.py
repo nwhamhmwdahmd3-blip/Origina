@@ -3262,7 +3262,15 @@ async def refresh_group_admins_and_hidden_owners_loop(bot):
 # 119. is_currently_admin_in_group - التحقق من كون المستخدم مشرفاً حالياً
 # ===================================================================
 async def is_currently_admin_in_group(bot, chat_id: int, user_id: int) -> bool:
+    """التحقق من كون المستخدم مشرفاً في المجموعة (حتى لو كان مخفياً)"""
     try:
+        # إذا كان المعرف هو المعرف الوهمي للمشرف المخفي
+        if user_id == ANONYMOUS_ADMIN_ID:
+            # جلب جميع المشرفين الحقيقيين
+            admins = await bot.get_chat_administrators(chat_id)
+            # إذا كان هناك مشرفون، فهذا يعني أن المستخدم (المخفي) مشرف
+            return len(admins) > 0
+        # التحقق العادي للمستخدمين العاديين
         member = await bot.get_chat_member(chat_id, user_id)
         return member.status in ['administrator', 'creator']
     except Exception as e:
@@ -7007,14 +7015,34 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         await safe_send_markdown(context.bot, chat_id, f"⚠️ البوت ليس لديه الصلاحيات الكافية.\n{bot_perms['reason']}")
         return
     
+    # ===== التحقق من المشرف حتى لو كان مخفياً =====
     is_admin = await is_currently_admin_in_group(context.bot, chat_id, user_id)
     
     if is_admin:
-        await db_register_hidden_owner_group(chat_id, user_id)
-        await db_sync_group_admins(chat_id, context.bot, user_id)
-        invalidate_auth_cache(chat_id, user_id)
-        await safe_send_markdown(context.bot, chat_id, get_text(user_id, 'group_registered'))
-        await notify_group_admins(context.bot, chat_id, user_id, chat_name)
+        # معرفة المعرف الحقيقي للمشرف (إذا كان مخفياً)
+        real_user_id = user_id
+        if user_id == ANONYMOUS_ADMIN_ID:
+            # الحصول على معرف المالك الحقيقي من قائمة المشرفين
+            admins = await context.bot.get_chat_administrators(chat_id)
+            if admins:
+                # أول مشرف غير مخفي (أو المالك الحقيقي)
+                for admin in admins:
+                    if admin.status == 'creator' or admin.user.id != ANONYMOUS_ADMIN_ID:
+                        real_user_id = admin.user.id
+                        break
+                # إذا لم نجد مشرفاً غير مخفي، نأخذ أول مشرف
+                if real_user_id == ANONYMOUS_ADMIN_ID:
+                    real_user_id = admins[0].user.id
+        
+        await db_register_hidden_owner_group(chat_id, real_user_id)
+        await db_sync_group_admins(chat_id, context.bot, real_user_id)
+        invalidate_auth_cache(chat_id, real_user_id)
+        await safe_send_markdown(context.bot, chat_id, get_text(real_user_id, 'group_registered'))
+        await notify_group_admins(context.bot, chat_id, real_user_id, chat_name)
+        
+        # إشعار المستخدم بالمعرف الحقيقي
+        if user_id != real_user_id:
+            await safe_send_markdown(context.bot, user_id, f"🔍 تم تسجيلك كمالك مخفي باستخدام معرفك الحقيقي: `{real_user_id}`")
     else:
         await safe_send_markdown(context.bot, chat_id, get_text(user_id, 'activation_requested'))
         await notify_group_admins(context.bot, chat_id, user_id, chat_name)
