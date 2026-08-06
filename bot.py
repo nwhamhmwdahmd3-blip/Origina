@@ -12674,9 +12674,10 @@ async def buy_subscription_90_callback(update: Update, context: ContextTypes.DEF
     await buy_subscription_callback(update, context, 90, 120, "اشتراك 3 أشهر")
 
 # ===================================================================
-# 458. main - الوظيفة الرئيسية لتشغيل 
+# 458. main - الوظيفة الرئيسية لتشغي
 async def main():
     await init_db_improved()
+
     try:
         words = load_banned_words_from_file(BANNED_WORDS_FILE)
         if words:
@@ -12684,7 +12685,10 @@ async def main():
                 imported = 0
                 for word in words:
                     try:
-                        await conn.execute("INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)", (word, -1, PRIMARY_OWNER_ID, utc_now_iso()))
+                        await conn.execute(
+                            "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+                            (word, -1, PRIMARY_OWNER_ID, utc_now_iso())
+                        )
                         imported += 1
                     except:
                         continue
@@ -12695,44 +12699,34 @@ async def main():
             await rebuild_banned_patterns()
     except Exception as e:
         logger.error(f"❌ فشل استيراد الكلمات المحظورة: {e}")
+
     load_all_languages()
-    
+
+    task_manager = TaskManager(max_concurrent=10)
+
     if USE_PROXY:
-        request_kwargs = {'proxy_url': PROXY_URL, 'read_timeout': 60.0, 'write_timeout': 30.0, 'connect_timeout': 30.0, 'pool_timeout': 10.0, 'connection_pool_size': MAX_CONNECTIONS}
+        request_kwargs = {
+            'proxy_url': PROXY_URL,
+            'read_timeout': 60.0,
+            'write_timeout': 30.0,
+            'connect_timeout': 30.0,
+            'pool_timeout': 10.0,
+            'connection_pool_size': MAX_CONNECTIONS
+        }
         request = HTTPXRequest(**request_kwargs)
         application = Application.builder().token(TOKEN).request(request).build()
     else:
-        request_kwargs = {'read_timeout': 60.0, 'write_timeout': 30.0, 'connect_timeout': 30.0, 'pool_timeout': 10.0, 'connection_pool_size': MAX_CONNECTIONS}
+        request_kwargs = {
+            'read_timeout': 60.0,
+            'write_timeout': 30.0,
+            'connect_timeout': 30.0,
+            'pool_timeout': 10.0,
+            'connection_pool_size': MAX_CONNECTIONS
+        }
         request = HTTPXRequest(**request_kwargs)
         application = Application.builder().token(TOKEN).request(request).build()
-    
-    # ===== إنشاء web_app وتعيينه =====
-    application.web_app = web.Application()
-    
+
     application.add_error_handler(global_error_handler)
-    
-    # ===== إضافة الأوامر الأساسية =====
-    application.add_handler(CommandHandler("start", start_command_handler))
-    application.add_handler(CommandHandler("help", help_command_handler))
-    
-    # ===== إضافة معالجات الكولباك الأساسية =====
-    application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
-    application.add_handler(CallbackQueryHandler(back_callback, pattern=f"^{CallbackData.BACK}$"))
-    
-    # ===== معالجات الرسائل =====
-    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
-    
-    # ===== أوامر البوت =====
-    commands = [
-        BotCommand("start", "بدء البوت"),
-        BotCommand("help", "المساعدة"),
-    ]
-    await application.bot.set_my_commands(commands)
-    
-    # ===== استخدام Polling بدلاً من Webhook =====
-    logger.info("🔄 استخدام Polling (تم تعطيل Webhook)")
-    await application.bot.delete_webhook()
-    await run_polling_safe(application)
 
     # ===== إضافة الأوامر =====
     application.add_handler(CommandHandler("start", start_command_handler))
