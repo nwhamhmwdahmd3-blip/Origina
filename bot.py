@@ -12645,8 +12645,7 @@ async def buy_subscription_90_callback(update: Update, context: ContextTypes.DEF
     await buy_subscription_callback(update, context, 90, 120, "اشتراك 3 أشهر")
 
 # ===================================================================
-# 458. main - الوظيفة الرئيسية لتشغيل البوت
-# ===================================================================
+# 458. main - الوظيفة الرئيسية لتشغيل 
 async def main():
     await init_db_improved()
     try:
@@ -12669,21 +12668,26 @@ async def main():
         logger.error(f"❌ فشل استيراد الكلمات المحظورة: {e}")
     load_all_languages()
     
-    # ===== إنشاء web_app لخادم الويب =====
+    # ===== إنشاء web_app =====
     from aiohttp import web
     web_app = web.Application()
     
     if USE_PROXY:
         request_kwargs = {'proxy_url': PROXY_URL, 'read_timeout': 60.0, 'write_timeout': 30.0, 'connect_timeout': 30.0, 'pool_timeout': 10.0, 'connection_pool_size': MAX_CONNECTIONS}
         request = HTTPXRequest(**request_kwargs)
-        application = Application.builder().token(TOKEN).request(request).web_app(web_app).build()
+        application = Application.builder().token(TOKEN).request(request).build()
     else:
         request_kwargs = {'read_timeout': 60.0, 'write_timeout': 30.0, 'connect_timeout': 30.0, 'pool_timeout': 10.0, 'connection_pool_size': MAX_CONNECTIONS}
         request = HTTPXRequest(**request_kwargs)
-        application = Application.builder().token(TOKEN).request(request).web_app(web_app).build()
+        application = Application.builder().token(TOKEN).request(request).build()
+    
+    # تعيين web_app بعد بناء التطبيق
+    application.web_app = web_app
     
     application.add_error_handler(global_error_handler)
     
+    # ... باقي الكود (الأوامر والمعالجات) كما هو ...
+
     # ... باقي الكود (إضافة الأوامر والمعالجات) ...
 
     # ===== إضافة الأوامر =====
