@@ -9338,6 +9338,47 @@ async def buy_subscription_90_callback(update: Update, context: ContextTypes.DEF
     if update.callback_query:
         await update.callback_query.answer()
     await buy_subscription_callback(update, context, 90, 120, "اشتراك 3 أشهر")
+async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض معلومات المطور"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    text = "👨‍💻 **المطور**\n\nريلاكس مانيجر\nالإصدار 21.0.0\n\n📌 المطور: @RelaxMgr\n📌 القناة: @RelaxMgrr"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+async def updates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قناة التحديثات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    channel = await db_get_updates_channel()
+    if channel:
+        text = get_text(user_id, 'updates_text')
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 القناة", url=f"https://t.me/{channel}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        if query:
+            await safe_edit_markdown(query, text, reply_markup=keyboard)
+        else:
+            await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    else:
+        text = "📢 لا توجد قناة تحديثات محددة."
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        if query:
+            await safe_edit_markdown(query, text, reply_markup=keyboard)
+        else:
+            await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
 
 # ===================================================================
 # 58. الوظيفة الرئيسية main()
