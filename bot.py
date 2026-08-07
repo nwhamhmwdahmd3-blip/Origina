@@ -8777,6 +8777,25 @@ async def init_db_improved():
         
         await conn.commit()
         logger.info("✅ تم تهيئة قاعدة البيانات بنجاح")
+# أضف هذا السطر في قسم إعداد المسارات (بعد تعريف BANNED_WORDS_FILE)
+        BANNED_WORDS_FILE = BASE_PATH / "banned_words.txt"
+async def support_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة الدعم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 كتابة تذكرة", callback_data=CallbackData.SUPPORT_TICKET)],
+        [InlineKeyboardButton("❓ المساعدة", callback_data=CallbackData.SUPPORT_HELP)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, get_text(user_id, 'support_welcome'), reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'support_welcome'), reply_markup=keyboard)
 
 # ===================================================================
 # 57. تحسينات إضافية قبل التشغيل
