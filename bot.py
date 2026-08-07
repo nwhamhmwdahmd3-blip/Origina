@@ -269,6 +269,16 @@ _FAILED_ATTEMPTS_WINDOW = 300
 _TOKEN_EXPIRY = 300
 _AUTH_CACHE_TTL = 300
 _FLOOD_CACHE_MAX_SIZE = 10000
+# ===================================================================
+# إعدادات NSFW
+# ===================================================================
+SIGHTENGINE_API_USER = os.getenv("SIGHTENGINE_API_USER", "")
+SIGHTENGINE_API_SECRET = os.getenv("SIGHTENGINE_API_SECRET", "")
+NSFW_ENABLED = get_env_or_default("NSFW_ENABLED", True, bool)
+NSFW_THRESHOLD = get_env_or_default("NSFW_THRESHOLD", 0.7, float)
+NSFW_MAX_FILE_SIZE = get_env_or_default("NSFW_MAX_FILE_SIZE", 5 * 1024 * 1024, int)
+NSFW_MAX_VIDEO_SIZE = get_env_or_default("NSFW_MAX_VIDEO_SIZE", 10 * 1024 * 1024, int)
+NSFW_FRAMES = get_env_or_default("NSFW_FRAMES", 5, int)
 
 # ===================================================================
 # 7. قائمة الأعمدة المسموح بها (قائمة بيضاء للأمان)
