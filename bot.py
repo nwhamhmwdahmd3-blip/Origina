@@ -9379,6 +9379,67 @@ async def updates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit_markdown(query, text, reply_markup=keyboard)
         else:
             await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+# ===================================================================
+# معالجات الأعضاء الجدد والمغادرين
+# ===================================================================
+
+async def new_chat_members_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج دخول أعضاء جدد إلى المجموعة"""
+    if not update.message or not update.message.new_chat_members:
+        return
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        return
+    chat_id = chat.id
+    settings = await db_get_security_settings(chat_id)
+    for member in update.message.new_chat_members:
+        if member.id == context.bot.id:
+            continue
+        if settings.get('delete_service', False):
+            try:
+                await update.message.delete()
+                logger.info(f"🗑️ تم حذف رسالة دخول العضو {member.id} في المجموعة {chat_id}")
+            except Exception as e:
+                logger.error(f"❌ فشل حذف رسالة دخول العضو {member.id}: {e}")
+        if settings.get('welcome_enabled'):
+            welcome_text = settings.get('welcome_text', "مرحباً {user} في {chat} 🤍")
+            welcome_text = format_welcome_message(welcome_text, member.full_name or member.first_name or str(member.id), chat.title)
+            try:
+                await context.bot.send_message(chat_id, welcome_text)
+            except Exception as e:
+                logger.error(f"❌ فشل إرسال رسالة ترحيب للعضو {member.id}: {e}")
+        await db_update_user_cache(member.id, member.username or "", member.first_name or "")
+
+async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج مغادرة أعضاء من المجموعة"""
+    if not update.message or not update.message.left_chat_member:
+        return
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        return
+    chat_id = chat.id
+    left_member = update.message.left_chat_member
+    settings = await db_get_security_settings(chat_id)
+    if settings.get('delete_service', False):
+        try:
+            await update.message.delete()
+            logger.info(f"🗑️ تم حذف رسالة مغادرة العضو {left_member.id} في المجموعة {chat_id}")
+        except Exception as e:
+            logger.error(f"❌ فشل حذف رسالة مغادرة العضو {left_member.id}: {e}")
+    if settings.get('goodbye_enabled'):
+        goodbye_text = settings.get('goodbye_text', "وداعاً {user} 👋")
+        goodbye_text = goodbye_text.replace('{user}', left_member.full_name or left_member.first_name or str(left_member.id))
+        goodbye_text = goodbye_text.replace('{chat}', chat.title)
+        try:
+            await context.bot.send_message(chat_id, goodbye_text)
+        except Exception as e:
+            logger.error(f"❌ فشل إرسال رسالة وداع للعضو {left_member.id}: {e}")
+    if left_member.id != context.bot.id:
+        async def _clean_user_data(conn):
+            await conn.execute("DELETE FROM user_warnings WHERE user_id=? AND chat_id=?", (left_member.id, chat_id))
+            await conn.execute("DELETE FROM user_messages WHERE user_id=? AND chat_id=?", (left_member.id, chat_id))
+            await conn.commit()
+        await execute_db(_clean_user_data)
 
 # ===================================================================
 # 58. الوظيفة الرئيسية main()
