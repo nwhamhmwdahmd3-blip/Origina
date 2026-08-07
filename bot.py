@@ -9459,19 +9459,41 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
     """فلترة الرسائل في المجموعات مع تطبيق الإعدادات الأمنية"""
     if update.message is None or update.effective_chat is None or update.effective_user is None:
         return
+    
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     message = update.message
     text = message.text or message.caption or ""
+    
+    # تجاهل رسائل البوت نفسه
     if user_id == context.bot.id:
         return
+    
+    # تجاهل المجموعات غير المدعومة
     if update.effective_chat.type not in ['group', 'supergroup']:
         return
-    if await is_user_bot(context.bot, user_id):
+    
+    # ============================================================
+    # التحقق من أن المستخدم ليس بوتاً (مع الحماية من الأخطاء)
+    # ============================================================
+    try:
+        is_bot = await is_user_bot(context.bot, user_id)
+    except TypeError:
+        # إذا كانت الدالة غير متزامنة (نسخة قديمة)
+        is_bot = is_user_bot(context.bot, user_id)
+    if is_bot:
         return
+    
+    # ============================================================
+    # التحقق من صلاحيات البوت في المجموعة
+    # ============================================================
     bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
     if not bot_perms.get('can_act', False):
         return
+    
+    # ============================================================
+    # التحقق من قفل المجموعة
+    # ============================================================
     if await is_chat_locked(chat_id) and not await is_authorized_in_group(context.bot, chat_id, user_id):
         try:
             await message.delete()
@@ -9479,6 +9501,10 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
         except:
             pass
         return
+    
+    # ============================================================
+    # التحقق من الوضع البطيء (Slow Mode)
+    # ============================================================
     if not await db_check_slow_mode(chat_id, user_id):
         try:
             await message.delete()
@@ -9486,20 +9512,41 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
         except:
             pass
         return
+    
+    # ============================================================
+    # جلب إعدادات الأمان
+    # ============================================================
     settings = await db_get_security_settings(chat_id)
+    
+    # ============================================================
+    # فلترة الروابط
+    # ============================================================
     if settings.get('links', False) and contains_link(text):
         await delete_and_penalize(update, context, "🚫 ممنوع إرسال الروابط!")
         return
+    
+    # ============================================================
+    # فلترة المعرفات (@username)
+    # ============================================================
     if settings.get('mentions', False) and contains_mention(text):
         await delete_and_penalize(update, context, "🚫 ممنوع إرسال المعرفات (@username)!")
         return
+    
+    # ============================================================
+    # فلترة الكلمات المحظورة
+    # ============================================================
     if settings.get('delete_banned_words', False):
         word = await db_contains_banned_word(text, chat_id)
         if word:
             await delete_and_penalize(update, context, f"🚫 كلمة محظورة: `{word}`")
             return
+    
+    # ============================================================
+    # فلترة أنواع الميديا المحظورة
+    # ============================================================
     delete_media = False
     media_type = None
+    
     if settings.get('delete_videos', False) and message.video:
         delete_media = True
         media_type = "فيديو"
@@ -9530,6 +9577,7 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
     elif settings.get('delete_video_note', False) and message.video_note:
         delete_media = True
         media_type = "ملاحظة فيديو"
+    
     if delete_media:
         try:
             await message.delete()
@@ -9541,6 +9589,35 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
             duration = settings.get('delete_penalty_duration', settings.get('auto_mute_duration', 60))
             await apply_penalty_with_duration(context.bot, chat_id, user_id, penalty, duration)
         return
+    
+    # ============================================================
+    # فحص NSFW للصور والفيديوهات
+    # ============================================================
+    if NSFW_ENABLED and (message.photo or message.video):
+        try:
+            if message.photo:
+                file_id = message.photo[-1].file_id
+                file = await context.bot.get_file(file_id)
+                file_bytes = await file.download_as_bytearray()
+                result = await check_nsfw_cached(bytes(file_bytes))
+                if result.get('nsfw', False):
+                    await message.delete()
+                    await context.bot.send_message(chat_id, "🔞 تم حذف المحتوى غير اللائق!")
+                    return
+            elif message.video:
+                file = await context.bot.get_file(message.video.file_id)
+                file_bytes = await file.download_as_bytearray()
+                result = await check_nsfw_video(bytes(file_bytes))
+                if result.get('nsfw', False):
+                    await message.delete()
+                    await context.bot.send_message(chat_id, "🔞 تم حذف الفيديو غير اللائق!")
+                    return
+        except Exception as e:
+            logger.error(f"فشل فحص NSFW: {e}")
+    
+    # ============================================================
+    # فحص طول الرسالة
+    # ============================================================
     max_len = settings.get('max_message_length', 0)
     if max_len > 0 and len(text) > max_len:
         try:
@@ -9549,6 +9626,10 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
         except:
             pass
         return
+    
+    # ============================================================
+    # فحص مضاد الفيضان (Anti-Flood)
+    # ============================================================
     if settings.get('antiflood_enabled', False) and await db_check_antiflood(chat_id, user_id):
         try:
             await message.delete()
@@ -9558,6 +9639,10 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
         penalty = settings.get('antiflood_penalty', 'mute')
         await apply_penalty_with_duration(context.bot, chat_id, user_id, penalty, 60)
         return
+    
+    # ============================================================
+    # فحص الوضع الليلي (Night Mode)
+    # ============================================================
     if settings.get('night_mode_enabled', False):
         now = utc_now()
         try:
@@ -9581,8 +9666,16 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
                     return
         except:
             pass
+    
+    # ============================================================
+    # إضافة نقاط للمستخدم
+    # ============================================================
     if not user_id == context.bot.id:
         await add_points(user_id, update, context)
+    
+    # ============================================================
+    # الردود التلقائية
+    # ============================================================
     if text:
         auto_reply_settings = await db_get_auto_reply_settings(chat_id)
         if auto_reply_settings.get('enabled', False):
@@ -9602,6 +9695,7 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
                             await message.reply_text(reply)
                         except:
                             pass
+
 # ===================================================================
 # ===================================================================
 # جميع الدوال الناقصة (دفعة واحدة كاملة)
