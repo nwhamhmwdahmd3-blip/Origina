@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -8623,6 +8624,349 @@ async def declare_winner_command_handler(update: Update, context: ContextTypes.D
 # ===================================================================
 # ===== نهاية جميع الدوال الأساسية =====
 # ===================================================================
+# ===================================================================
+# ===== كولباك الأمان المفقودة =====
+# ===================================================================
+
+async def security_select_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """كولباك اختيار مجموعة لإعدادات الأمان"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+
+    groups = await db_get_user_groups(user_id)
+    if not groups:
+        await query.edit_message_text("📭 لا توجد مجموعات مسجلة. أضف البوت إلى مجموعة أولاً.")
+        return
+
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            continue
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        status_icon = "⛔" if banned else "✅"
+        keyboard.append([InlineKeyboardButton(f"{status_icon} {display_name}", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")])
+
+    if not keyboard:
+        await query.edit_message_text("🔒 لا تملك صلاحية على أي مجموعة.")
+        return
+
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+    await query.edit_message_text("🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+# ===================================================================
+# ===== كولباك المجموعات =====
+# ===================================================================
+
+async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """كولباك إعدادات المجموعة"""
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+        except Exception:
+            pass
+
+    user_id = update.effective_user.id
+    chat_id = None
+
+    try:
+        if query and query.data:
+            try:
+                chat_id = int(query.data.split(":")[-1])
+            except (ValueError, IndexError) as e:
+                error_id = advanced_logger.log_error("فشل استخراج chat_id من الكولباك", e, {"data": query.data})
+                await query.edit_message_text(f"❌ بيانات الكولباك غير صالحة (الرمز: `{error_id}`)")
+                return
+        else:
+            chat_id = context.user_data.get('group_chat_id')
+
+        if not chat_id:
+            if query:
+                await query.edit_message_text("❌ لم يتم تحديد المجموعة")
+            else:
+                await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة")
+            return
+
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            if query:
+                await query.edit_message_text(get_text(user_id, 'admin_only'))
+            else:
+                await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
+            return
+
+        try:
+            settings = await db_get_security_settings(chat_id, force_refresh=True)
+        except Exception as e:
+            error_id = advanced_logger.log_error("فشل جلب إعدادات الأمان", e, {"chat_id": chat_id})
+            if query:
+                await query.edit_message_text(f"❌ فشل جلب إعدادات الأمان (الرمز: `{error_id}`)")
+            else:
+                await safe_send_markdown(context.bot, user_id, f"❌ فشل جلب إعدادات الأمان (الرمز: `{error_id}`)")
+            return
+
+        await _update_security_panel(query, chat_id, user_id)
+    except Exception as e:
+        error_id = advanced_logger.log_error("خطأ غير متوقع في group_settings_callback", e, {"chat_id": chat_id, "user_id": user_id})
+        try:
+            if query:
+                await query.edit_message_text(f"❌ حدث خطأ:\n`{str(e)[:300]}`\n(الرمز: `{error_id}`)")
+            else:
+                await safe_send_markdown(context.bot, user_id, f"❌ حدث خطأ:\n`{str(e)[:300]}`\n(الرمز: `{error_id}`)")
+        except Exception as e2:
+            logger.error(f"فشل إرسال رسالة الخطأ للمستخدم: {e2}")
+
+
+# ===================================================================
+# ===== تحديث لوحة الأمان =====
+# ===================================================================
+
+async def _update_security_panel(query, chat_id: int, user_id: int):
+    """تحديث لوحة إعدادات الأمان"""
+    settings = await db_get_security_settings(chat_id)
+
+    status_text = lambda v: "✅ مفعل" if v else "❌ معطل"
+
+    text = f"""🔐 **إعدادات الأمان للمجموعة**
+━━━━━━━━━━━━━━━━━━━━━━
+🔗 **حذف الروابط:** {status_text(settings['links'])}
+@ **حذف المعرفات:** {status_text(settings['mentions'])}
+⏱️ **الوضع البطيء:** {status_text(settings['slow_mode'])} ({settings['slow_mode_seconds']} ثانية)
+🎯 **الترحيب:** {status_text(settings['welcome_enabled'])}
+👋 **الوداع:** {status_text(settings['goodbye_enabled'])}
+🎬 **حذف الفيديوهات:** {status_text(settings['delete_videos'])}
+🎵 **حذف الصوتيات:** {status_text(settings['delete_audio'])}
+🎞️ **حذف المتحركات:** {status_text(settings['delete_animation'])}
+🛠️ **حذف رسائل الخدمة:** {status_text(settings['delete_service'])}
+📄 **حذف الملفات:** {status_text(settings['delete_documents'])}
+🖼️ **حذف الملصقات:** {status_text(settings['delete_stickers'])}
+⚖️ **عقوبة الحذف:** {settings.get('delete_penalty', 'none')}
+━━━━━━━━━━━━━━━━━━━━━━
+اختر الإعدادات المطلوبة:"""
+
+    await safe_edit_markdown(query, text, reply_markup=security_keyboard(chat_id))
+
+
+# ===================================================================
+# ===== كولباك تبديل إعدادات الأمان =====
+# ===================================================================
+
+async def security_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """كولباك تبديل إعدادات الأمان"""
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+
+    user_id = update.effective_user.id
+    data_parts = query.data.split(":")
+
+    if len(data_parts) < 3:
+        return
+
+    action = data_parts[1]
+    chat_id = int(data_parts[2])
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+
+    toggles = {
+        "links": ("links", "SECURITY_TOGGLE_LINKS"),
+        "mentions": ("mentions", "SECURITY_TOGGLE_MENTIONS"),
+        "slow_mode": ("slow_mode", "SECURITY_TOGGLE_SLOW_MODE"),
+        "welcome_enabled": ("welcome_enabled", "SECURITY_TOGGLE_WELCOME"),
+        "goodbye_enabled": ("goodbye_enabled", "SECURITY_TOGGLE_GOODBYE"),
+        "delete_videos": ("delete_videos", "SECURITY_TOGGLE_DELETE_VIDEOS"),
+        "delete_audio": ("delete_audio", "SECURITY_TOGGLE_DELETE_AUDIO"),
+        "delete_animation": ("delete_animation", "SECURITY_TOGGLE_DELETE_ANIMATION"),
+        "delete_service": ("delete_service", "SECURITY_TOGGLE_DELETE_SERVICE"),
+        "delete_documents": ("delete_documents", "SECURITY_TOGGLE_DELETE_DOCUMENTS"),
+        "delete_stickers": ("delete_stickers", "SECURITY_TOGGLE_DELETE_STICKERS"),
+        "enable_all": ("enable_all", "SECURITY_ENABLE_ALL"),
+        "disable_all": ("disable_all", "SECURITY_DISABLE_ALL")
+    }
+
+    if action in toggles:
+        setting_key, event_name = toggles[action]
+        
+        if action == "enable_all":
+            # تفعيل جميع الإعدادات
+            for key in ['links', 'mentions', 'slow_mode', 'welcome_enabled', 'goodbye_enabled',
+                        'delete_videos', 'delete_audio', 'delete_animation', 'delete_service',
+                        'delete_documents', 'delete_stickers']:
+                settings[key] = True
+            await db_set_security_settings(chat_id, **{k: True for k in ['links', 'mentions', 'slow_mode', 'welcome_enabled', 'goodbye_enabled',
+                                                                          'delete_videos', 'delete_audio', 'delete_animation', 'delete_service',
+                                                                          'delete_documents', 'delete_stickers']})
+            await security_audit.log("SECURITY_ENABLE_ALL", user_id, {"chat_id": chat_id}, "INFO")
+            
+        elif action == "disable_all":
+            # تعطيل جميع الإعدادات
+            for key in ['links', 'mentions', 'slow_mode', 'welcome_enabled', 'goodbye_enabled',
+                        'delete_videos', 'delete_audio', 'delete_animation', 'delete_service',
+                        'delete_documents', 'delete_stickers']:
+                settings[key] = False
+            await db_set_security_settings(chat_id, **{k: False for k in ['links', 'mentions', 'slow_mode', 'welcome_enabled', 'goodbye_enabled',
+                                                                            'delete_videos', 'delete_audio', 'delete_animation', 'delete_service',
+                                                                            'delete_documents', 'delete_stickers']})
+            await security_audit.log("SECURITY_DISABLE_ALL", user_id, {"chat_id": chat_id}, "INFO")
+            
+        else:
+            settings[setting_key] = not settings[setting_key]
+            await db_set_security_settings(chat_id, **{setting_key: settings[setting_key]})
+            await security_audit.log(event_name, user_id, {"chat_id": chat_id, "enabled": settings[setting_key]}, "INFO")
+    else:
+        await query.edit_message_text("❌ إجراء غير معروف")
+        return
+
+    _security_cache.pop(chat_id, None)
+    await cache_manager.delete(f"security_{chat_id}")
+
+    await _update_security_panel(query, chat_id, user_id)
+
+
+# ===================================================================
+# ===== كولباك إغلاق الأمان =====
+# ===================================================================
+
+async def security_close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """كولباك إغلاق إعدادات الأمان"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.message.delete()
+
+
+# ===================================================================
+# ===== كولباك تحديث المجموعات =====
+# ===================================================================
+
+async def security_refresh_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """كولباك تحديث قائمة المجموعات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    await my_groups_callback(update, context)
+
+
+# ===================================================================
+# ===== كولباك حذف مجموعة =====
+# ===================================================================
+
+async def delete_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """كولباك حذف مجموعة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('delete_group_id')
+
+    if not chat_id:
+        return
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        if query:
+            await query.answer("❌ غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, user_id, "❌ غير مصرح")
+        return
+
+    async def _delete_group(conn):
+        await conn.execute("DELETE FROM bot_groups WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM user_groups_link WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM group_security WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM chat_locks WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM moderation_log WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM group_admins WHERE chat_id = ?", (chat_id,))
+        await conn.execute("DELETE FROM group_rules WHERE chat_id = ?", (chat_id,))
+        await conn.commit()
+
+    await execute_db(_delete_group)
+    invalidate_auth_cache(chat_id)
+
+    if query:
+        await query.edit_message_text("✅ تم حذف المجموعة من قاعدة البيانات.")
+    else:
+        await safe_send_markdown(context.bot, user_id, "✅ تم حذف المجموعة من قاعدة البيانات.")
+
+    await my_groups_callback(update, context)
+
+
+# ===================================================================
+# ===== كولباك مجموعاتي =====
+# ===================================================================
+
+async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """كولباك عرض مجموعاتي"""
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+        except:
+            pass
+    user_id = update.effective_user.id
+
+    groups = await db_get_user_groups(user_id)
+    valid_groups = []
+
+    for chat_id, chat_name, username, banned in groups:
+        is_admin = await is_currently_admin_in_group(context.bot, chat_id, user_id)
+        if is_admin:
+            valid_groups.append((chat_id, chat_name, username, banned))
+
+    if not valid_groups:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ أضف البوت", url=f"https://t.me/{BOT_USERNAME}?startgroup")],
+            [InlineKeyboardButton("🔄 تحديث القائمة", callback_data=CallbackData.SECURITY_REFRESH_GROUPS)],
+            [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+        ])
+        msg = "📭 لا توجد مجموعات مسجلة\n\nأضف البوت إلى مجموعة وستظهر هنا."
+
+        if query:
+            try:
+                await safe_edit_markdown(query, msg, reply_markup=kb)
+            except:
+                await query.edit_message_text(msg, reply_markup=kb)
+        else:
+            await safe_send_markdown(context.bot, user_id, msg, reply_markup=kb)
+        return
+
+    keyboard = []
+    for chat_id, chat_name, username, banned in valid_groups:
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        status_icon = "⛔" if banned else "✅"
+        keyboard.append([InlineKeyboardButton(f"{status_icon} {display_name}", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")])
+        keyboard.append([InlineKeyboardButton("🔐 الأمان", callback_data=f"{CallbackData.SECURITY_SELECT_GROUP}{chat_id}"),
+                        InlineKeyboardButton("📜 السجل", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}"),
+                        InlineKeyboardButton("⚙️ متقدم", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")])
+
+        is_locked = await is_chat_locked(chat_id)
+        lock_label = "🔒 قفل" if not is_locked else "🔓 فتح"
+        lock_callback = f"{CallbackData.PANEL_LOCK_PREFIX}{chat_id}" if not is_locked else f"{CallbackData.PANEL_UNLOCK_PREFIX}{chat_id}"
+        keyboard.append([InlineKeyboardButton(lock_label, callback_data=lock_callback),
+                        InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_group:{chat_id}")])
+        keyboard.append([InlineKeyboardButton("─" * 20, callback_data="noop")])
+
+    keyboard.append([InlineKeyboardButton("🔄 تحديث القائمة", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
+                    InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = "👥 **مجموعاتي**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر مجموعة للتحكم بها:\n\n✅ = نشطة  |  ⛔ = محظورة"
+
+    if query:
+        try:
+            await safe_edit_markdown(query, text, reply_markup=reply_markup)
+        except Exception as e:
+            try:
+                await query.edit_message_text(text, reply_markup=reply_markup)
+            except:
+                pass
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=reply_markup)
 
 # ===================================================================
 # ===== 61. الوظيفة الرئيسية (main) =====
