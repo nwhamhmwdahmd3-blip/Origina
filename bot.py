@@ -126,6 +126,17 @@ from aiohttp import web, WSMsgType
 import aiohttp
 from PIL import Image
 import numpy as np
+# ===================================================================
+# دوال مساعدة (Helper Functions)
+# ===================================================================
+
+async def is_user_bot(bot, user_id: int) -> bool:
+    """التحقق من كون المستخدم بوتاً"""
+    try:
+        chat = await bot.get_chat(user_id)
+        return chat.is_bot
+    except Exception:
+        return False
 
 # ===================================================================
 # 4. إعداد المسارات
