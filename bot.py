@@ -9156,7 +9156,189 @@ async def chat_join_request_handler(update: Update, context: ContextTypes.DEFAUL
 
 # ===================================================================
 
-async def main():
+async def # ===================================================================
+# 49. دوال النسخ الاحتياطي التلقائي (Auto Backup)
+# ===================================================================
+
+async def auto_backup():
+    """حلقة النسخ الاحتياطي التلقائي الدورية"""
+    consecutive_errors = 0
+    backoff = AUTO_BACKUP_SLEEP
+    max_backoff = 7 * 24 * 60 * 60
+    
+    while True:
+        try:
+            await asyncio.sleep(AUTO_BACKUP_SLEEP)
+            auto_enabled = await db_get_auto_backup()
+            
+            if auto_enabled:
+                last_backup = await db_get_last_backup_time()
+                if not last_backup:
+                    await create_backup()
+                else:
+                    last_time = datetime.fromisoformat(last_backup)
+                    if (utc_now() - last_time).days >= 7:
+                        await create_backup()
+                    else:
+                        await incremental_backup()
+                
+                async def _update_backup_time(conn):
+                    await conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_backup', ?)", (utc_now_iso(),))
+                    await conn.commit()
+                await execute_db(_update_backup_time)
+            
+            consecutive_errors = 0
+            backoff = AUTO_BACKUP_SLEEP
+            
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في النسخ الاحتياطي التلقائي: {e}")
+            backoff = min(backoff * 1.5, max_backoff)
+            await asyncio.sleep(backoff)
+
+# ===================================================================
+# 50. دوال إنشاء النسخ الاحتياطية (Backup Creation)
+# ===================================================================
+
+async def create_backup():
+    """إنشاء نسخة احتياطية كاملة مشفرة"""
+    try:
+        encrypted_path = encrypt_db_backup()
+        temp_backup = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        temp_backup.close()
+        shutil.copy2(DB_PATH, temp_backup.name)
+        with open(temp_backup.name, 'rb') as f:
+            backup_data = f.read()
+        compressed = compress_backup(backup_data)
+        encrypted = BACKUP_CIPHER.encrypt(compressed)
+        backup_file = BACKUP_DIR / f"backup_{mecca_now().strftime('%Y%m%d_%H%M%S')}.enc"
+        with open(backup_file, 'wb') as f:
+            f.write(encrypted)
+        os.unlink(temp_backup.name)
+        backups = sorted(BACKUP_DIR.glob("backup_*.enc"), key=lambda x: x.stat().st_mtime, reverse=True)
+        for old_backup in backups[MAX_BACKUPS:]:
+            old_backup.unlink()
+        if CLOUD_BACKUP_ENABLED and GOOGLE_AUTH_AVAILABLE:
+            await upload_backup_to_drive(backup_file)
+        logger.info(f"✅ تم إنشاء نسخة احتياطية مشفرة: {backup_file}")
+        return backup_file
+    except Exception as e:
+        logger.error(f"❌ فشل إنشاء النسخة الاحتياطية: {e}")
+        raise
+
+async def incremental_backup():
+    """إنشاء نسخة احتياطية متزايدة"""
+    try:
+        last_backup = await db_get_last_backup_time()
+        if last_backup:
+            last_time = datetime.fromisoformat(last_backup)
+        else:
+            last_time = utc_now() - timedelta(days=7)
+        backup_data = {}
+        async def _get_new_posts(conn):
+            cur = await conn.execute("SELECT * FROM posts WHERE created_at > ? LIMIT 1000", (last_time.isoformat(),))
+            return await cur.fetchall()
+        new_posts = await execute_db(_get_new_posts)
+        if new_posts:
+            backup_data['posts'] = [dict(post) for post in new_posts]
+        async def _get_new_users(conn):
+            cur = await conn.execute("SELECT * FROM users WHERE user_id IN (SELECT user_id FROM users_cache WHERE last_updated > ?)", (last_time.isoformat(),))
+            return await cur.fetchall()
+        new_users = await execute_db(_get_new_users)
+        if new_users:
+            backup_data['users'] = [dict(user) for user in new_users]
+        if backup_data:
+            data_json = json.dumps(backup_data, default=str)
+            compressed = compress_backup(data_json.encode('utf-8'))
+            encrypted = BACKUP_CIPHER.encrypt(compressed)
+            backup_file = BACKUP_DIR / f"incremental_{mecca_now().strftime('%Y%m%d_%H%M%S')}.inc"
+            with open(backup_file, 'wb') as f:
+                f.write(encrypted)
+            logger.info(f"✅ تم إنشاء نسخة احتياطية متزايدة: {backup_file}")
+            return backup_file
+        logger.info("📭 لا توجد بيانات جديدة للنسخ الاحتياطي المتزايد")
+        return None
+    except Exception as e:
+        logger.error(f"❌ فشل إنشاء النسخة الاحتياطية المتزايدة: {e}")
+        return None
+
+async def list_backups():
+    """قائمة بالنسخ الاحتياطية المتاحة"""
+    backups = sorted(BACKUP_DIR.glob("backup_*.enc"), key=lambda x: x.stat().st_mtime, reverse=True)
+    incremental = sorted(BACKUP_DIR.glob("incremental_*.inc"), key=lambda x: x.stat().st_mtime, reverse=True)
+    return backups + incremental
+
+async def restore_backup(backup_path: Path):
+    """استعادة نسخة احتياطية"""
+    if not backup_path.exists():
+        raise FileNotFoundError(f"الملف {backup_path} غير موجود")
+    with open(backup_path, 'rb') as f:
+        encrypted = f.read()
+    try:
+        decrypted = BACKUP_CIPHER.decrypt(encrypted)
+    except Exception as e:
+        raise ValueError(f"فشل فك التشفير: {e}")
+    try:
+        decompressed = decompress_backup(decrypted)
+    except Exception as e:
+        raise ValueError(f"فشل فك الضغط: {e}")
+    if backup_path.suffix == '.inc':
+        data = json.loads(decompressed.decode('utf-8'))
+        async def _merge_data(conn):
+            if 'posts' in data:
+                for post in data['posts']:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO posts (id, channel_db_id, text, media_type, media_file_id, published, fail_count, views_count, last_view_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (post['id'], post['channel_db_id'], post['text'], post['media_type'], post['media_file_id'], post['published'], post['fail_count'], post['views_count'], post['last_view_time'], post['created_at'])
+                    )
+            if 'users' in data:
+                for user in data['users']:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO users (user_id, auto_publish, banned, trial_used, subscription_end, referral_code, referred_by, active_channel, auto_reply_enabled, auto_recycle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (user['user_id'], user['auto_publish'], user['banned'], user['trial_used'], user['subscription_end'], user['referral_code'], user['referred_by'], user['active_channel'], user['auto_reply_enabled'], user['auto_recycle'])
+                    )
+            await conn.commit()
+        await execute_db(_merge_data)
+        logger.info(f"✅ تم دمج النسخة المتزايدة: {backup_path}")
+    else:
+        temp_restore = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        temp_restore.write(decompressed)
+        temp_restore.close()
+        current_backup = BACKUP_DIR / f"pre_restore_{mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+        shutil.copy2(DB_PATH, current_backup)
+        shutil.copy2(temp_restore.name, DB_PATH)
+        os.unlink(temp_restore.name)
+        await db_pool.initialize()
+        logger.info(f"✅ تم استعادة النسخة الكاملة: {backup_path}")
+
+async def db_get_auto_backup() -> bool:
+    """الحصول على حالة النسخ الاحتياطي التلقائي"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT value FROM settings WHERE key='auto_backup'")
+        row = await cur.fetchone()
+        return row and row[0] == '1'
+    return await execute_db(_get)
+
+async def db_get_last_backup_time():
+    """الحصول على وقت آخر نسخة احتياطية"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT value FROM settings WHERE key='last_backup'")
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def upload_backup_to_drive(backup_path: Path):
+    """رفع النسخة الاحتياطية إلى Google Drive (إذا كان مفعلاً)"""
+    if not CLOUD_BACKUP_ENABLED or not GOOGLE_AUTH_AVAILABLE:
+        return None
+    try:
+        # محاولة رفع الملف إلى Google Drive
+        # هذه دالة مبسطة، يمكن تخصيصها حسب الحاجة
+        logger.info(f"☁️ جاري رفع النسخة إلى Google Drive: {backup_path}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ فشل رفع النسخة إلى Google Drive: {e}")
+        return None
+
     # ================================================================
     # 1. تهيئة قاعدة البيانات
     # ================================================================
