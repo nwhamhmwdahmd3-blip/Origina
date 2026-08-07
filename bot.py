@@ -8898,6 +8898,219 @@ async def cleanup_resources():
     logger.info("🧹 جاري تنظيف الموارد...")
     await db_pool.close()
     logger.info("✅ تم تنظيف الموارد بنجاح")
+def load_banned_words_from_file(file_path: Path) -> List[str]:
+    """تحميل الكلمات المحظورة من ملف"""
+    words = []
+    if not file_path.exists():
+        print(f"⚠️ ملف {file_path} غير موجود، سيتم إنشاؤه")
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write("# قائمة الكلمات المحظورة - كل كلمة في سطر منفصل\n")
+                f.write("# ابدأ السطر بـ # للتعليق\n\n")
+                f.write("بورن\nسكس\nجنس\nعري\nخمر\nخمور\nمخدرات\nحشيش\nكحول\nدعارة\n")
+        except Exception as e:
+            print(f"❌ فشل إنشاء ملف الكلمات المحظورة: {e}")
+        return words
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                word = line.lower()
+                if len(word) >= 2:
+                    words.append(word)
+        print(f"✅ تم تحميل {len(words)} كلمة محظورة من {file_path}")
+    except Exception as e:
+        print(f"❌ فشل تحميل الكلمات المحظورة: {e}")
+    return words
+async def schedule_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة الجدولة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    ch_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('schedule_ch_id')
+    
+    if not ch_db_id:
+        ch_db_id = context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+    
+    if not ch_db_id:
+        if query:
+            await query.edit_message_text("⚠️ اختر قناة أولاً")
+        else:
+            await safe_send_markdown(context.bot, user_id, "⚠️ اختر قناة أولاً")
+        return
+    
+    schedule = await db_get_schedule(ch_db_id)
+    context.user_data['schedule_ch_id'] = ch_db_id
+    
+    schedule_type = schedule['type']
+    schedule_info = ""
+    if schedule_type == 'interval_minutes':
+        schedule_info = get_text(user_id, 'interval_minutes').format(schedule['interval_minutes'])
+    elif schedule_type == 'interval_hours':
+        schedule_info = get_text(user_id, 'interval_hours').format(schedule['interval_hours'])
+    elif schedule_type == 'interval_days':
+        schedule_info = get_text(user_id, 'interval_days').format(schedule['interval_days'])
+    elif schedule_type == 'days':
+        days = parse_days_of_week_safe(schedule['days_of_week'])
+        day_names = [get_text(user_id, 'sunday'), get_text(user_id, 'monday'), get_text(user_id, 'tuesday'), 
+                     get_text(user_id, 'wednesday'), get_text(user_id, 'thursday'), get_text(user_id, 'friday'), 
+                     get_text(user_id, 'saturday')]
+        days_str = ', '.join([day_names[d] for d in days]) if days else get_text(user_id, 'nothing')
+        schedule_info = get_text(user_id, 'days_week').format(days_str)
+    elif schedule_type == 'dates':
+        dates = parse_dates_safe(schedule['specific_dates'])
+        dates_str = ', '.join(dates) if dates else get_text(user_id, 'nothing')
+        schedule_info = get_text(user_id, 'specific_dates').format(dates_str)
+    elif schedule_type == 'cron':
+        schedule_info = f"CRON: {schedule['cron_expression']}"
+    else:
+        schedule_info = get_text(user_id, 'nothing')
+    
+    keyboard = [
+        [InlineKeyboardButton(get_text(user_id, 'interval_minutes'), callback_data=f"{CallbackData.SCHEDULE_SET_INTERVAL_MINUTES_PREFIX}{ch_db_id}")],
+        [InlineKeyboardButton(get_text(user_id, 'interval_hours'), callback_data=f"{CallbackData.SCHEDULE_SET_INTERVAL_HOURS_PREFIX}{ch_db_id}")],
+        [InlineKeyboardButton(get_text(user_id, 'interval_days'), callback_data=f"{CallbackData.SCHEDULE_SET_INTERVAL_DAYS_PREFIX}{ch_db_id}")],
+        [InlineKeyboardButton(get_text(user_id, 'days_week'), callback_data=f"{CallbackData.SCHEDULE_SET_DAYS_PREFIX}{ch_db_id}")],
+        [InlineKeyboardButton(get_text(user_id, 'specific_dates'), callback_data=f"{CallbackData.SCHEDULE_SET_DATES_PREFIX}{ch_db_id}")],
+        [InlineKeyboardButton(f"🕐 {get_text(user_id, 'send_time')}", callback_data=f"{CallbackData.SCHEDULE_SET_PUBLISH_TIME_PREFIX}{ch_db_id}")],
+        [InlineKeyboardButton("⏰ CRON", callback_data=f"schedule:set_cron:{ch_db_id}")],
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ]
+    
+    text = get_text(user_id, 'schedule_settings').format(schedule_info)
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def set_interval_minutes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين الجدولة بالدقائق"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    ch_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('schedule_ch_id')
+    if not ch_db_id:
+        return
+    context.user_data['state'] = UserState.WAITING_INTERVAL_MINUTES
+    context.user_data['schedule_ch_id'] = ch_db_id
+    await query.edit_message_text(get_text(user_id, 'send_minutes'))
+
+async def set_interval_hours_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين الجدولة بالساعات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    ch_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('schedule_ch_id')
+    if not ch_db_id:
+        return
+    context.user_data['state'] = UserState.WAITING_INTERVAL_HOURS
+    context.user_data['schedule_ch_id'] = ch_db_id
+    await query.edit_message_text(get_text(user_id, 'send_hours'))
+
+async def set_interval_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين الجدولة بالأيام"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    ch_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('schedule_ch_id')
+    if not ch_db_id:
+        return
+    context.user_data['state'] = UserState.WAITING_INTERVAL_DAYS
+    context.user_data['schedule_ch_id'] = ch_db_id
+    await query.edit_message_text(get_text(user_id, 'send_days'))
+
+async def set_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين أيام الأسبوع للجدولة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    ch_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('schedule_ch_id')
+    if not ch_db_id:
+        return
+    context.user_data['selected_days'] = []
+    context.user_data['schedule_ch_id'] = ch_db_id
+    context.user_data['state'] = UserState.SELECTING_DAYS
+    keyboard = await build_days_keyboard(user_id, context)
+    await query.edit_message_text(get_text(user_id, 'days_week'), reply_markup=keyboard)
+
+async def set_dates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين تواريخ محددة للجدولة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    ch_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('schedule_ch_id')
+    if not ch_db_id:
+        return
+    context.user_data['state'] = UserState.WAITING_DATES
+    context.user_data['schedule_ch_id'] = ch_db_id
+    await query.edit_message_text(get_text(user_id, 'send_dates'))
+
+async def set_publish_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين وقت النشر"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    ch_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('schedule_ch_id')
+    if not ch_db_id:
+        return
+    context.user_data['state'] = UserState.WAITING_PUBLISH_TIME
+    context.user_data['schedule_ch_id'] = ch_db_id
+    await query.edit_message_text(get_text(user_id, 'send_time'))
+
+async def set_cron_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين تعبير CRON للجدولة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    ch_db_id = int(query.data.split(":")[-1]) if query else context.user_data.get('schedule_ch_id')
+    if not ch_db_id:
+        return
+    context.user_data['state'] = UserState.WAITING_CRON
+    context.user_data['schedule_ch_id'] = ch_db_id
+    await query.edit_message_text("⏰ أرسل تعبير CRON (مثال: 0 12 * * 1)")
+
+async def day_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار يوم من أيام الأسبوع"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    day_index = int(query.data.split(":")[-1])
+    selected = context.user_data.get('selected_days', [])
+    if day_index in selected:
+        selected.remove(day_index)
+    else:
+        selected.append(day_index)
+    context.user_data['selected_days'] = selected
+    keyboard = await build_days_keyboard(user_id, context)
+    await query.edit_message_reply_markup(reply_markup=keyboard)
+
+async def save_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حفظ أيام الأسبوع المختارة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    ch_db_id = context.user_data.get('schedule_ch_id')
+    if not ch_db_id:
+        return
+    selected = context.user_data.get('selected_days', [])
+    await db_save_schedule(ch_db_id, 'days', days_of_week=json.dumps(selected))
+    await db_set_next_publish_date(ch_db_id, None)
+    context.user_data.pop('selected_days', None)
+    context.user_data.pop('state', None)
+    await query.edit_message_text(get_text(user_id, 'days_saved'))
+    await schedule_menu_callback(update, context)
 
 # ===================================================================
 # 61. الوظيفة الرئيسية main()
