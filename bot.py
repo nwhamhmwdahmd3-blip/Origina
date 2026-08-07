@@ -9130,6 +9130,937 @@ async def save_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.pop('state', None)
     await query.edit_message_text(get_text(user_id, 'days_saved'))
     await schedule_menu_callback(update, context)
+# ===================================================================
+# الدوال الناقصة - معالجات الكولباك
+# ===================================================================
+
+# 1. support_help_callback - معالج مساعدة الدعم
+# ===================================================================
+async def support_help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض مساعدة الدعم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.SUPPORT_MENU)]
+    ])
+    text = get_text(user_id, 'support_help')
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# 2. support_ticket_callback - معالج تذكرة دعم
+# ===================================================================
+async def support_ticket_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إنشاء تذكرة دعم جديدة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    context.user_data['support_mode'] = True
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 إلغاء", callback_data=CallbackData.SUPPORT_MENU)]
+    ])
+    text = "📝 **اكتب رسالتك** (سيتم إرسالها كتذكرة دعم)\nيمكنك إلغاء العملية بالضغط على الزر أدناه."
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# 3. support_back_callback - معالج رجوع الدعم
+# ===================================================================
+async def support_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الرجوع من الدعم"""
+    await support_menu_callback(update, context)
+
+# 4. help_callback - معالج المساعدة
+# ===================================================================
+async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض المساعدة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, get_text(user_id, 'help'), reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'help'), reply_markup=keyboard)
+
+# 5. support_menu_callback - معالج قائمة الدعم
+# ===================================================================
+async def support_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض قائمة الدعم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    context.user_data['support_mode'] = True
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 كتابة تذكرة", callback_data=CallbackData.SUPPORT_TICKET)],
+        [InlineKeyboardButton("❓ المساعدة", callback_data=CallbackData.SUPPORT_HELP)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    text = get_text(user_id, 'support_welcome')
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# 6. trial_callback - معالج التجربة المجانية
+# ===================================================================
+async def trial_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تفعيل التجربة المجانية"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    if await db_has_used_trial(user_id):
+        if query:
+            await query.edit_message_text(get_text(user_id, 'trial_used'))
+        else:
+            await safe_send_markdown(context.bot, user_id, get_text(user_id, 'trial_used'))
+        return
+    
+    if await db_has_active_subscription(user_id):
+        if query:
+            await query.edit_message_text(get_text(user_id, 'already_subscribed'))
+        else:
+            await safe_send_markdown(context.bot, user_id, get_text(user_id, 'already_subscribed'))
+        return
+    
+    await db_activate_trial(user_id)
+    if query:
+        await query.edit_message_text(get_text(user_id, 'trial'))
+    else:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'trial'))
+    await main_menu_callback(update, context)
+
+# 7. subscribe_menu_callback - معالج قائمة الاشتراك
+# ===================================================================
+async def subscribe_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض قائمة الاشتراك"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    if await db_has_active_subscription(user_id):
+        days = await db_get_subscription_days_left(user_id)
+        msg = f"✅ اشتراكك مفعل، متبقي {days} يوم\nشكراً لدعمك ❤️"
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await safe_send_markdown(context.bot, user_id, msg)
+        return
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ 1 يوم - 5 نجوم", callback_data=CallbackData.BUY_SUBSCRIPTION_1), 
+         InlineKeyboardButton("⭐ 2 يوم - 9 نجوم", callback_data=CallbackData.BUY_SUBSCRIPTION_2)],
+        [InlineKeyboardButton("⭐ شهر (30 يوم) - 50 نجمة", callback_data=CallbackData.BUY_SUBSCRIPTION_30), 
+         InlineKeyboardButton("⭐ 3 أشهر (90 يوم) - 120 نجمة", callback_data=CallbackData.BUY_SUBSCRIPTION_90)],
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    text = get_text(user_id, 'subscribe')
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=kb)
+
+# 8. buy_subscription_1_callback - شراء اشتراك 1 يوم
+# ===================================================================
+async def buy_subscription_1_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 1, 5, "اشتراك 1 يوم")
+
+# 9. buy_subscription_2_callback - شراء اشتراك 2 يوم
+# ===================================================================
+async def buy_subscription_2_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 2, 9, "اشتراك 2 يوم")
+
+# 10. buy_subscription_30_callback - شراء اشتراك شهر
+# ===================================================================
+async def buy_subscription_30_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 30, 50, "اشتراك شهر")
+
+# 11. buy_subscription_90_callback - شراء اشتراك 3 أشهر
+# ===================================================================
+async def buy_subscription_90_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 90, 120, "اشتراك 3 أشهر")
+
+# 12. developer_callback - معالج المطور
+# ===================================================================
+async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض معلومات المطور"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    text = f"""👑 **معلومات المطور**
+━━━━━━━━━━━━━━━━━━━━━━
+🤖 **البوت:** {BOT_NAME}
+📦 **الإصدار:** 21.0.0
+👨‍💻 **المطور:** @RelaxMgr
+
+📞 **طرق التواصل:**
+✅ **تيليجرام:** @RelaxMgr
+✅ **البوت:** @{BOT_USERNAME}"""
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📩 تواصل مع المطور", url=f"https://t.me/RelaxMgr")],
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# 13. updates_callback - معالج التحديثات
+# ===================================================================
+async def updates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض التحديثات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    updates_channel = await db_get_updates_channel()
+    if updates_channel:
+        text = f"""📢 **قناة التحديثات**
+━━━━━━━━━━━━━━━━━━━━━━
+📌 القناة: @{updates_channel}
+
+📢 تابع القناة لمعرفة آخر التحديثات:
+• ميزات جديدة ✨
+• تحسينات الأداء ⚡
+• إصلاحات الأخطاء 🔧
+• عروض حصرية 🎁
+
+🔗 اضغط على الزر أدناه لفتح القناة."""
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 افتح القناة", url=f"https://t.me/{updates_channel}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+    else:
+        text = """📢 **لم يتم تعيين قناة التحديثات بعد**
+
+📌 **لتعيين قناة التحديثات:**
+1. استخدم `/panel`
+2. اضغط على `⚙️ قناة التحديثات`
+3. أرسل معرف القناة
+
+⚠️ تأكد من أن البوت مشرف في القناة."""
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("👑 الذهاب للوحة الأدمن", callback_data=CallbackData.ADMIN_PANEL)],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# 14. referral_menu_callback - معالج قائمة الإحالات
+# ===================================================================
+async def referral_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض قائمة الإحالات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    referral_code = await db_get_referral_code(user_id)
+    if not referral_code:
+        referral_code = await db_generate_referral_code(user_id)
+    
+    stats = await db_get_referral_stats(user_id)
+    settings = await db_get_referral_settings()
+    reward_days = int(settings.get('reward_days_per_referral', '3'))
+    welcome_points = int(settings.get('welcome_bonus_points', '10'))
+    
+    text = get_text(user_id, 'referral_title').format(
+        referral_code, BOT_USERNAME, referral_code, 
+        stats['total_referrals'], stats['available_days'], 
+        reward_days, welcome_points
+    )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'copy_link'), callback_data=f"{CallbackData.REFERRAL_COPY_LINK_PREFIX}{referral_code}"), 
+         InlineKeyboardButton(get_text(user_id, 'claim_reward'), callback_data=CallbackData.REFERRAL_CLAIM_REWARD)],
+        [InlineKeyboardButton(get_text(user_id, 'referral_list'), callback_data=CallbackData.REFERRAL_LIST), 
+         InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# 15. referral_copy_link_callback - معالج نسخ رابط الإحالة
+# ===================================================================
+async def referral_copy_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج نسخ رابط الإحالة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    referral_code = query.data.split(":")[-1] if query else context.user_data.get('referral_code')
+    
+    if not referral_code:
+        return
+    
+    text = f"🔗 **رابط الإحالة الخاص بك:**\n`https://t.me/{BOT_USERNAME}?start=ref_{referral_code}`\n\nيمكنك الضغط مع الاستمرار على الرابط لنسخه."
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.REFERRAL_MENU)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=kb)
+
+# 16. claim_referral_reward_callback - صرف مكافأة الإحالة
+# ===================================================================
+async def claim_referral_reward_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج صرف مكافأة الإحالات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    stats = await db_get_referral_stats(user_id)
+    if stats['available_days'] <= 0:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.REFERRAL_MENU)]
+        ])
+        if query:
+            await safe_edit_markdown(query, get_text(user_id, 'no_reward_available'), reply_markup=kb)
+        else:
+            await safe_send_markdown(context.bot, user_id, get_text(user_id, 'no_reward_available'), reply_markup=kb)
+        return
+    
+    claimed = await db_claim_referral_reward(user_id)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.REFERRAL_MENU)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, get_text(user_id, 'reward_claimed').format(claimed), reply_markup=kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'reward_claimed').format(claimed), reply_markup=kb)
+
+# 17. referral_list_callback - معالج قائمة المحالين
+# ===================================================================
+async def referral_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض قائمة المحالين"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    async def _get_referrals(conn):
+        cur = await conn.execute(
+            """SELECT r.referred_id, r.referred_at, r.is_rewarded, u.first_name, u.username 
+               FROM referrals r LEFT JOIN users_cache u ON r.referred_id = u.user_id 
+               WHERE r.referrer_id = ? ORDER BY r.referred_at DESC LIMIT 20""", 
+            (user_id,)
+        )
+        return await cur.fetchall()
+    
+    referrals = await execute_db(_get_referrals)
+    
+    if not referrals:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.REFERRAL_MENU)]
+        ])
+        if query:
+            await safe_edit_markdown(query, get_text(user_id, 'no_referrals'), reply_markup=kb)
+        else:
+            await safe_send_markdown(context.bot, user_id, get_text(user_id, 'no_referrals'), reply_markup=kb)
+        return
+    
+    text = f"📊 **{get_text(user_id, 'referral_list')}**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for referred_id, referred_at, is_rewarded, first_name, username in referrals:
+        try:
+            referred_dt = datetime.fromisoformat(referred_at)
+            referred_mecca = utc_to_mecca(referred_dt)
+            date_str = referred_mecca.strftime("%Y-%m-%d")
+        except:
+            date_str = referred_at[:10] if referred_at else "تاريخ غير معروف"
+        status = "✅" if is_rewarded else "⏳"
+        name = first_name or username or str(referred_id)
+        text += f"{status} {name} - {date_str}\n"
+    
+    text += "\n✅ = تم منح المكافأة  |  ⏳ = قيد الانتظار"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'claim_reward'), callback_data=CallbackData.REFERRAL_CLAIM_REWARD)],
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.REFERRAL_MENU)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# 18. reminder_menu_callback - معالج قائمة التذكيرات
+# ===================================================================
+async def reminder_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض قائمة إعدادات التذكيرات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    settings = await db_get_user_reminder_settings(user_id)
+    status_sub = "🟢 مفعل" if settings['subscription_reminder'] else "🔴 معطل"
+    status_daily = "🟢 مفعل" if settings['daily_stats_reminder'] else "🔴 معطل"
+    status_weekly = "🟢 مفعل" if settings['weekly_report'] else "🔴 معطل"
+    
+    text = get_text(user_id, 'reminder_title').format(status_sub, status_daily, status_weekly, settings['reminder_days_before'])
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'reminder_sub'), callback_data=CallbackData.REMINDER_TOGGLE_SUB), 
+         InlineKeyboardButton(get_text(user_id, 'reminder_daily'), callback_data=CallbackData.REMINDER_TOGGLE_DAILY)],
+        [InlineKeyboardButton(get_text(user_id, 'reminder_weekly'), callback_data=CallbackData.REMINDER_TOGGLE_WEEKLY), 
+         InlineKeyboardButton(get_text(user_id, 'reminder_days_btn'), callback_data=CallbackData.REMINDER_SET_DAYS)],
+        [InlineKeyboardButton(get_text(user_id, 'reminder_lang_btn'), callback_data=CallbackData.REMINDER_SET_LANG), 
+         InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# 19. toggle_reminder_setting - تبديل إعداد تذكير
+# ===================================================================
+async def toggle_reminder_setting(update: Update, context: ContextTypes.DEFAULT_TYPE, setting: str):
+    """معالج تبديل إعداد تذكير"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    settings = await db_get_user_reminder_settings(user_id)
+    await db_update_reminder_settings(user_id, **{setting: not settings.get(setting, False)})
+    await reminder_menu_callback(update, context)
+
+# 20. reminder_set_days_callback - تعيين أيام التذكير
+# ===================================================================
+async def reminder_set_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تعيين عدد أيام التذكير قبل انتهاء الاشتراك"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    context.user_data['state'] = UserState.WAITING_REMINDER_DAYS
+    msg = "⏰ **عدد أيام التذكير**\n\nأرسل عدد الأيام التي تريد أن يتم تذكيرك بها قبل انتهاء الاشتراك (1-10 أيام):"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.REMINDER_MENU)]
+    ])
+    
+    if query:
+        await query.edit_message_text(msg, reply_markup=kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, msg, reply_markup=kb)
+
+# 21. reminder_set_lang_callback - تعيين لغة التذكير
+# ===================================================================
+async def reminder_set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تعيين لغة الإشعارات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("العربية 🇸🇦", callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}ar"), 
+         InlineKeyboardButton("English 🇬🇧", callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}en")],
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.REMINDER_MENU)]
+    ])
+    
+    msg = "🌐 **اختر لغة الإشعارات:**"
+    if query:
+        await query.edit_message_text(msg, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, msg, reply_markup=keyboard)
+
+# 22. reminder_lang_callback - اختيار لغة التذكير
+# ===================================================================
+async def reminder_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج اختيار لغة الإشعارات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    lang = query.data.split(":")[-1] if query else context.user_data.get('reminder_lang')
+    
+    if not lang:
+        return
+    
+    await db_update_reminder_settings(user_id, notification_lang=lang)
+    await reminder_menu_callback(update, context)
+
+# 23. translation_menu_callback - معالج قائمة الترجمة
+# ===================================================================
+async def translation_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض قائمة إعدادات الترجمة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    current_lang = await get_user_translation_language(user_id)
+    if current_lang == 'off':
+        status_text = get_text(user_id, 'translation_status_off')
+    else:
+        lang_names = {
+            'ar': 'العربية', 'en': 'English', 'fr': 'Français', 'tr': 'Türkçe',
+            'zh': '中文', 'ru': 'Русский', 'de': 'Deutsch', 'es': 'Español',
+            'it': 'Italiano', 'pt': 'Português', 'ja': '日本語', 'ko': '한국어'
+        }
+        lang_name = lang_names.get(current_lang, current_lang)
+        status_text = get_text(user_id, 'translation_status_on').format(lang_name)
+    
+    text = f"""🌐 **{get_text(user_id, 'translation_settings')}**
+━━━━━━━━━━━━━━━━━━━━━━
+📌 **الحالة:** {status_text}
+{get_text(user_id, 'translation_how_it_works')}
+━━━━━━━━━━━━━━━━━━━━━━
+{get_text(user_id, 'translation_choose')}"""
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'translation_off'), callback_data=CallbackData.TRANSLATION_OFF)],
+        [InlineKeyboardButton("🇸🇦 العربية", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}ar"), 
+         InlineKeyboardButton("🇬🇧 English", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}en")],
+        [InlineKeyboardButton("🇫🇷 Français", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}fr"), 
+         InlineKeyboardButton("🇹🇷 Türkçe", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}tr")],
+        [InlineKeyboardButton("🇨🇳 中文", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}zh"), 
+         InlineKeyboardButton("🇷🇺 Русский", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}ru")],
+        [InlineKeyboardButton("🇩🇪 Deutsch", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}de"), 
+         InlineKeyboardButton("🇪🇸 Español", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}es")],
+        [InlineKeyboardButton("🇮🇹 Italiano", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}it"), 
+         InlineKeyboardButton("🇵🇹 Português", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}pt")],
+        [InlineKeyboardButton("🇯🇵 日本語", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}ja"), 
+         InlineKeyboardButton("🇰🇷 한국어", callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}ko")],
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# 24. translation_off_callback - إيقاف الترجمة
+# ===================================================================
+async def translation_off_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إيقاف الترجمة التلقائية"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    await set_user_translation_language(user_id, 'off')
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await query.edit_message_text(get_text(user_id, 'translation_disabled'), reply_markup=kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'translation_disabled'), reply_markup=kb)
+
+# 25. translation_set_callback - تعيين لغة الترجمة
+# ===================================================================
+async def translation_set_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تعيين لغة الترجمة المفضلة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    lang = query.data.split(":")[-1] if query else context.user_data.get('translation_lang')
+    
+    if not lang:
+        return
+    
+    await set_user_translation_language(user_id, lang)
+    lang_names = {
+        'ar': 'العربية', 'en': 'English', 'fr': 'Français', 'tr': 'Türkçe',
+        'zh': '中文', 'ru': 'Русский', 'de': 'Deutsch', 'es': 'Español',
+        'it': 'Italiano', 'pt': 'Português', 'ja': '日本語', 'ko': '한국어'
+    }
+    lang_name = lang_names.get(lang, lang)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await query.edit_message_text(get_text(user_id, 'translation_enabled').format(lang_name), reply_markup=kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'translation_enabled').format(lang_name), reply_markup=kb)
+
+# 26. check_subscribe_callback_handler - التحقق من الاشتراك الإجباري
+# ===================================================================
+async def check_subscribe_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج زر التحقق من الاشتراك الإجباري"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    
+    enabled = await db_get_force_subscribe_status()
+    channel = await db_get_force_subscribe_channel()
+    
+    if enabled and channel:
+        if await is_user_subscribed(context.bot, uid, channel):
+            if query:
+                await safe_edit_markdown(query, "✅ تم التحقق! أنت مشترك الآن.")
+            else:
+                await safe_send_markdown(context.bot, uid, "✅ تم التحقق! أنت مشترك الآن.")
+            await main_menu_callback(update, context)
+        else:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📢 اشترك", url=f"https://t.me/{channel.lstrip('@')}"), 
+                 InlineKeyboardButton("🔄 تأكد", callback_data=CallbackData.CHECK_SUBSCRIBE), 
+                 InlineKeyboardButton(get_text(uid, 'back'), callback_data=CallbackData.BACK)]
+            ])
+            if query:
+                await safe_edit_markdown(query, f"❌ لم تشترك في @{channel.lstrip('@')}", reply_markup=kb)
+            else:
+                await safe_send_markdown(context.bot, uid, f"❌ لم تشترك في @{channel.lstrip('@')}", reply_markup=kb)
+    else:
+        if query:
+            await safe_edit_markdown(query, "⚠️ الاشتراك الإجباري غير مفعل")
+        else:
+            await safe_send_markdown(context.bot, uid, "⚠️ الاشتراك الإجباري غير مفعل")
+
+# 27. contests_menu_callback - معالج قائمة المسابقات
+# ===================================================================
+async def contests_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض قائمة المسابقات النشطة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    contests = await db_get_active_contests()
+    if not contests:
+        await query.edit_message_text("🏆 لا توجد مسابقات نشطة حالياً.")
+        return
+    
+    text = "🏆 **المسابقات النشطة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for contest in contests:
+        cid, creator_id, title, description, prize, end_date, contest_type, created_at = contest
+        participants = await db_get_contest_participants_count(cid)
+        try:
+            end_dt = datetime.fromisoformat(end_date)
+            days_left = (end_dt - utc_now()).days
+            time_text = get_text(user_id, 'contest_time_left').format(days_left) if days_left > 0 else get_text(user_id, 'contest_expired_label')
+        except:
+            time_text = "?"
+        text += f"📌 **{title}**\n🎁 {prize}\n👥 المشاركون: {participants}\n⏳ {time_text}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏆 الفائزون السابقون", callback_data=CallbackData.CONTEST_WINNERS)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    await safe_edit_markdown(query, text, reply_markup=kb)
+
+# 28. contest_join_callback - المشاركة في مسابقة
+# ===================================================================
+async def contest_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج المشاركة في مسابقة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    contest_id = int(query.data.split(":")[-1])
+    
+    contest = await db_get_contest(contest_id)
+    if not contest or contest['status'] != 'active':
+        await query.edit_message_text("❌ هذه المسابقة غير متاحة حالياً.")
+        return
+    
+    if await db_get_user_participation(user_id, contest_id):
+        await query.edit_message_text("✅ أنت مشترك بالفعل في هذه المسابقة!")
+        return
+    
+    context.user_data['contest_join_id'] = contest_id
+    context.user_data['state'] = UserState.WAITING_CONTEST_ANSWER
+    await query.edit_message_text(f"📝 **المشاركة في المسابقة: {contest['title']}**\n\n📌 أرسل إجابتك (نص) أو اضغط /skip للمشاركة بدون إجابة.")
+
+# 29. contest_winners_callback - عرض الفائزين السابقين
+# ===================================================================
+async def contest_winners_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض قائمة الفائزين السابقين"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    winners = await db_get_contest_winners(limit=10)
+    if not winners:
+        await query.edit_message_text("🏆 لا يوجد فائزون سابقون.")
+        return
+    
+    text = "🏆 **الفائزون السابقون**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for contest_id, title, prize, winner_id, announced_at in winners:
+        try:
+            winner = await context.bot.get_chat(winner_id)
+            winner_name = winner.first_name or str(winner_id)
+        except:
+            winner_name = str(winner_id)
+        try:
+            announced_dt = datetime.fromisoformat(announced_at)
+            announced_mecca = utc_to_mecca(announced_dt)
+            date_str = announced_mecca.strftime("%Y-%m-%d")
+        except:
+            date_str = announced_at[:10] if announced_at else "?"
+        text += f"📌 **{title}**\n🎁 {prize}\n👤 {winner_name}\n📅 {date_str}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.CONTESTS_BACK)]
+    ])
+    await safe_edit_markdown(query, text, reply_markup=keyboard)
+
+# 30. contests_back_callback - رجوع المسابقات
+# ===================================================================
+async def contests_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الرجوع من المسابقات"""
+    await contests_menu_callback(update, context)
+
+# 31. hidden_admin_add_callback - إضافة مشرف مخفي
+# ===================================================================
+async def hidden_admin_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إضافة مشرف مخفي"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.edit_message_text(get_text(user_id, 'admin_only'))
+        return
+    
+    context.user_data['pending_hidden_admin_add'] = chat_id
+    await query.edit_message_text("📝 أرسل معرف المستخدم الذي تريد إضافته كمشرف مخفي:")
+
+# 32. hidden_admin_remove_callback - إزالة مشرف مخفي
+# ===================================================================
+async def hidden_admin_remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إزالة مشرف مخفي"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    chat_id = int(parts[1])
+    admin_id = int(parts[2]) if len(parts) > 2 else None
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.edit_message_text(get_text(user_id, 'admin_only'))
+        return
+    
+    if admin_id:
+        await db_remove_hidden_admin(chat_id, admin_id)
+        await query.edit_message_text(f"✅ تم إزالة المشرف المخفي `{admin_id}`")
+        await show_hidden_admins(update, context, chat_id)
+    else:
+        await query.edit_message_text("❌ معرف غير صحيح")
+
+# 33. hidden_admin_list_callback - عرض المشرفين المخفيين
+# ===================================================================
+async def hidden_admin_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج عرض المشرفين المخفيين"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.edit_message_text(get_text(user_id, 'admin_only'))
+        return
+    
+    await show_hidden_admins(update, context, chat_id)
+
+# 34. show_hidden_admins - عرض المشرفين المخفيين (دالة مساعدة)
+# ===================================================================
+async def show_hidden_admins(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """عرض قائمة المشرفين المخفيين"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    admins = await db_get_hidden_admins(chat_id)
+    if not admins:
+        await query.edit_message_text(get_text(user_id, 'no_hidden_admins'))
+        return
+    
+    text = get_text(user_id, 'hidden_admin_list').format("")
+    keyboard = []
+    for admin in admins:
+        admin_id = admin['admin_id']
+        added_by = admin['added_by']
+        text += f"• `{admin_id}` (أضيف بواسطة {added_by})\n"
+        keyboard.append([
+            InlineKeyboardButton(f"🗑️ حذف {admin_id}", callback_data=f"{CallbackData.HIDDEN_ADMIN_REMOVE_PREFIX}{chat_id}:{admin_id}")
+        ])
+    
+    keyboard.append([
+        InlineKeyboardButton("➕ إضافة مشرف مخفي", callback_data=f"{CallbackData.HIDDEN_ADMIN_ADD}:{chat_id}"),
+        InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")
+    ])
+    
+    await safe_edit_markdown(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+# 35. security_close_callback - إغلاق الأمان
+# ===================================================================
+async def security_close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إغلاق إعدادات الأمان"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    await query.edit_message_text("🔒 تم إغلاق إعدادات الأمان")
+    await main_menu_callback(update, context)
+
+# 36. list_banned_words_callback - عرض الكلمات المحظورة
+# ===================================================================
+async def list_banned_words_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
+    """معالج عرض الكلمات المحظورة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    if chat_id is None:
+        chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    
+    if not chat_id:
+        await query.edit_message_text("❌ حدث خطأ")
+        return
+    
+    words = await db_get_banned_words(chat_id)
+    text = "🚫 **الكلمات المحظورة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    if words:
+        for word, added_by, added_at in words[:20]:
+            text += f"• `{word}` (أضيف بواسطة {added_by})\n"
+        if len(words) > 20:
+            text += f"\n... و {len(words) - 20} كلمة أخرى"
+    else:
+        text += "📭 لا توجد كلمات محظورة"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"{CallbackData.BANNED_WORDS_ADD_PREFIX}{chat_id}"), 
+         InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"{CallbackData.BANNED_WORDS_REMOVE_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.SECURITY_MAIN}:{chat_id}")]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=kb)
+
+# 37. security_delete_penalty_callback - عقوبة الحذف
+# ===================================================================
+async def security_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
+    """معالج تعيين عقوبة الحذف"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    if chat_id is None:
+        chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
+    
+    if not chat_id:
+        await query.edit_message_text("❌ حدث خطأ")
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    settings = await db_get_security_settings(chat_id)
+    current_penalty = settings.get('delete_penalty', 'none')
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛑 حظر", callback_data=f"set_delete_penalty:ban:{chat_id}"), 
+         InlineKeyboardButton("🔇 كتم", callback_data=f"set_delete_penalty:mute:{chat_id}")],
+        [InlineKeyboardButton("👢 طرد", callback_data=f"set_delete_penalty:kick:{chat_id}"), 
+         InlineKeyboardButton("⚪ لا شيء", callback_data=f"set_delete_penalty:none:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.SECURITY_MAIN}:{chat_id}")]
+    ])
+    
+    await query.edit_message_text(f"⚖️ **عقوبة الحذف الحالية:** {current_penalty}\n\nاختر العقوبة الجديدة:", reply_markup=kb)
+
+# 38. set_delete_penalty_callback - تعيين عقوبة الحذف
+# ===================================================================
+async def set_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تعيين عقوبة الحذف"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    penalty = parts[1]
+    chat_id = int(parts[2])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    await db_set_security_settings(chat_id, delete_penalty=penalty)
+    await query.edit_message_text(f"✅ تم تعيين عقوبة الحذف: {penalty}")
+    await security_menu_callback(update, context, chat_id)
+
+# 39. advanced_mute_duration_callback - اختيار مدة الكتم المتقدمة
+# ===================================================================
+async def advanced_mute_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج اختيار مدة الكتم المتقدمة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    minutes = int(parts[1])
+    chat_id = int(parts[2])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    context.user_data['mute_minutes'] = minutes
+    context.user_data['state'] = UserState.WAITING_MUTE_USER
+    context.user_data['advanced_chat_id'] = chat_id
+    
+    duration_text = "دائم" if minutes == 0 else f"{minutes} دقيقة"
+    msg = f"🔇 **كتم مستخدم**\n\nالمدة: {duration_text}\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /mute"
+    
+    await query.edit_message_text(msg)
 
 # ===================================================================
 # 61. الوظيفة الرئيسية main()
