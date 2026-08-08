@@ -12613,7 +12613,7 @@ async def main():
     application.add_handler(MessageHandler(filters.Text() & filters.ChatType.GROUPS & ~filters.Command(), filter_messages_handler))
     application.add_handler(MessageHandler(filters.Caption() & filters.ChatType.GROUPS & ~filters.Command(), filter_messages_handler))
     application.add_handler(MessageHandler(filters.Text() & filters.ChatType.PRIVATE & ~filters.Command(), message_handler_main))
-    application.add_handler(MessageHandler(filters.Photo() & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.Video() & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.Audio() & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.Voice() & filters.ChatType.PRIVATE, message_handler_main))
