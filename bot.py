@@ -179,6 +179,7 @@ TEMPLATES_PATH = get_writable_path(BASE_PATH, "templates")
 LANG_PATH = BASE_PATH / "lang"
 PLUGINS_PATH = BASE_PATH / "plugins"
 BANNED_WORDS_FILE = BASE_PATH / "banned_words.txt"
+NSFW_FRAMES = get_env_or_default("NSFW_FRAMES", 5, int)
 
 # إنشاء المجلدات
 for path in [DATA_PATH, BACKUP_DIR, LOG_PATH.parent, TEMP_PATH, STATIC_PATH, TEMPLATES_PATH, LANG_PATH, PLUGINS_PATH]:
