@@ -3214,7 +3214,7 @@ class CallbackData:
     USER_AUTO_REPLY_TOGGLE_PREFIX = "user_auto_reply_toggle:"
     NSFW_SETTINGS = "nsfw_settings"
     NSFW_TOGGLE = "nsfw_toggle"
-    0.7_SET = "nsfw_threshold_set"
+    NSFW_THRESHOLD_SET = "nsfw_threshold_set"
     SECURITY_DELETE_VIDEOS_PREFIX = "security:delete_videos:"
     SECURITY_DELETE_SERVICE_PREFIX = "security:delete_service:"
     SECURITY_DELETE_DOCUMENTS_PREFIX = "security:delete_documents:"
@@ -6563,7 +6563,7 @@ async def nsfw_settings_callback(update: Update, context: ContextTypes.DEFAULT_T
     text += f"📁 الحد الأقصى للفيديوهات: {10485760 // (1024*1024)} ميجابايت\n"
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"{'🔄 تعطيل' if NSFW_ENABLED else '✅ تفعيل'}", callback_data=CallbackData.NSFW_TOGGLE)],
-        [InlineKeyboardButton("⚙️ تغيير النسبة", callback_data=CallbackData.0.7_SET)],
+        [InlineKeyboardButton("⚙️ تغيير النسبة", callback_data=CallbackData.NSFW_THRESHOLD_SET)],
         [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
     ])
     if query:
@@ -11804,7 +11804,7 @@ async def main():
     # 5.23 NSFW
     application.add_handler(CallbackQueryHandler(nsfw_settings_callback, pattern=f"^{CallbackData.NSFW_SETTINGS}$"))
     application.add_handler(CallbackQueryHandler(nsfw_toggle_callback, pattern=f"^{CallbackData.NSFW_TOGGLE}$"))
-    application.add_handler(CallbackQueryHandler(nsfw_threshold_set_callback, pattern=f"^{CallbackData.0.7_SET}$"))
+    application.add_handler(CallbackQueryHandler(nsfw_threshold_set_callback, pattern=f"^{CallbackData.NSFW_THRESHOLD_SET}$"))
 
     # 5.24 الاشتراك الإجباري
     application.add_handler(CallbackQueryHandler(check_subscribe_callback_handler, pattern=f"^{CallbackData.CHECK_SUBSCRIBE}$"))
