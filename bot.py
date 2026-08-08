@@ -9810,6 +9810,121 @@ async def get_top_users(limit: int = 10):
         )
         return await cur.fetchall()
     return await execute_db(_get)
+# ===================================================================
+# دوال الردود التلقائية (Auto Reply)
+# ===================================================================
+
+async def db_get_auto_reply_settings(chat_id: int) -> dict:
+    """جلب إعدادات الردود التلقائية لمجموعة"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT enabled, only_admins, ignore_bots FROM auto_reply_settings WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'enabled': row[0] == 1, 'only_admins': row[1] == 1, 'ignore_bots': row[2] == 1}
+        return {'enabled': True, 'only_admins': False, 'ignore_bots': True}
+    return await execute_db(_get)
+
+async def db_set_auto_reply_enabled(chat_id: int, enabled: bool) -> None:
+    """تحديث حالة الردود التلقائية"""
+    async def _set(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO auto_reply_settings (chat_id, enabled, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (chat_id, 1 if enabled else 0)
+        )
+        await conn.commit()
+    return await execute_db(_set)
+
+async def db_set_auto_reply_only_admins(chat_id: int, only_admins: bool) -> None:
+    """تحديث خاصية المشرفين فقط"""
+    async def _set(conn):
+        await conn.execute(
+            "UPDATE auto_reply_settings SET only_admins=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=?",
+            (1 if only_admins else 0, chat_id)
+        )
+        await conn.commit()
+    return await execute_db(_set)
+
+async def db_toggle_auto_reply(chat_id: int) -> bool:
+    """تبديل حالة الردود التلقائية"""
+    settings = await db_get_auto_reply_settings(chat_id)
+    new_status = not settings['enabled']
+    await db_set_auto_reply_enabled(chat_id, new_status)
+    return new_status
+
+# ===================================================================
+# دوال الردود المخصصة (Custom Replies)
+# ===================================================================
+
+async def db_add_reply(keyword: str, reply: str) -> None:
+    """إضافة رد مخصص"""
+    async def _add(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO group_replies (keyword, reply) VALUES (?, ?)",
+            (keyword.lower(), reply)
+        )
+        await conn.commit()
+    return await execute_db(_add)
+
+async def db_del_reply(keyword: str) -> bool:
+    """حذف رد مخصص"""
+    async def _del(conn):
+        cur = await conn.execute("DELETE FROM group_replies WHERE keyword=?", (keyword.lower(),))
+        await conn.commit()
+        return cur.rowcount > 0
+    return await execute_db(_del)
+
+async def db_get_reply(keyword: str) -> str | None:
+    """جلب رد مخصص حسب الكلمة المفتاحية"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT reply FROM group_replies WHERE keyword=?", (keyword.lower(),))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def db_get_all_replies() -> list:
+    """جلب جميع الردود المخصصة"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT keyword, reply FROM group_replies ORDER BY keyword")
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+# ===================================================================
+# دوال نظام المستويات والنقاط (Levels & Points)
+# ===================================================================
+
+async def db_get_user_level(user_id: int) -> dict:
+    """جلب مستوى المستخدم ونقاطه"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT points, level FROM user_levels WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'points': row[0], 'level': row[1]}
+        return {'points': 0, 'level': 1}
+    return await execute_db(_get)
+
+async def db_update_user_level(user_id: int, points: int, level: int) -> None:
+    """تحديث مستوى المستخدم ونقاطه"""
+    async def _update(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_levels (user_id, points, level) VALUES (?, ?, ?)",
+            (user_id, points, level)
+        )
+        await conn.commit()
+    return await execute_db(_update)
+
+async def get_rank(user_id: int) -> dict:
+    """جلب رتبة المستخدم (مرادف لـ db_get_user_level)"""
+    return await db_get_user_level(user_id)
+
+async def get_top_users(limit: int = 10) -> list:
+    """جلب أفضل المستخدمين حسب النقاط"""
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT user_id, points, level FROM user_levels ORDER BY points DESC LIMIT ?",
+            (limit,)
+        )
+        return await cur.fetchall()
+    return await execute_db(_get)
 
 if __name__ == "__main__":
     try:
