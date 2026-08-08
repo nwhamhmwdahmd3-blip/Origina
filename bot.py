@@ -12610,9 +12610,9 @@ async def main():
     # ===================================================================
     # 6. تسجيل معالجات الرسائل (Message Handlers)
     # ===================================================================
-    application.add_handler(MessageHandler(filters.Text & filters.ChatType.GROUPS & ~filters.Command, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.Caption & filters.ChatType.GROUPS & ~filters.Command, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.Text & filters.ChatType.PRIVATE & ~filters.Command, message_handler_main))
+    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
     application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
