@@ -9437,6 +9437,10 @@ async def rebuild_banned_patterns():
 # 35. الوظيفة الرئيسية main() - معدلة للإصدار 22.8
 # ===================================================================
 
+# ===================================================================
+# 35. الوظيفة الرئيسية main() - متوافقة مع الإصدار 22.8
+# ===================================================================
+
 async def main():
     """
     الوظيفة الرئيسية لتشغيل البوت.
@@ -9652,17 +9656,17 @@ async def main():
     application.add_handler(CallbackQueryHandler(handle_text_callbacks, pattern="^(rank|top|schedule_post|language)$"))
 
     # ===================================================================
-    # تسجيل معالجات الرسائل (Message Handlers) - معدلة للإصدار 22.8
+    # تسجيل معالجات الرسائل (Message Handlers) - متوافقة مع 22.8
     # ===================================================================
-    application.add_handler(MessageHandler(filters.Text() & filters.ChatType.GROUPS & ~filters.Command(), filter_messages_handler))
-    application.add_handler(MessageHandler(filters.Caption() & filters.ChatType.GROUPS & ~filters.Command(), filter_messages_handler))
-    application.add_handler(MessageHandler(filters.Text() & filters.ChatType.PRIVATE & ~filters.Command(), message_handler_main))
-    application.add_handler(MessageHandler(filters.Photo() & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Video() & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Audio() & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Voice() & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Animation() & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Document() & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
+    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.VIDEO & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.DOCUMENT & filters.ChatType.PRIVATE, message_handler_main))
 
     # ===================================================================
     # تسجيل معالجات الأحداث الإضافية
@@ -9766,3 +9770,4 @@ if __name__ == "__main__":
         logger.error(f"❌ خطأ فادح: {e}")
         traceback.print_exc()
         sys.exit(1)
+
