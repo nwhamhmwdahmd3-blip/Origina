@@ -9429,18 +9429,6 @@ async def rebuild_banned_patterns():
         except Exception as e:
             logger.error(f"❌ فشل إعادة بناء الأنماط المحظورة: {e}")
 
-# ===================================================================
-# 35. الوظيفة الرئيسية main()
-# ===================================================================
-
-# ===================================================================
-# 35. الوظيفة الرئيسية main() - معدلة للإصدار 22.8
-# ===================================================================
-
-# ===================================================================
-# 35. الوظيفة الرئيسية main() - متوافقة مع الإصدار 22.8
-# ===================================================================
-
 async def main():
     """
     الوظيفة الرئيسية لتشغيل البوت.
@@ -9735,44 +9723,43 @@ async def main():
     task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "refresh_admins"))
     task_manager.create_task(safe_loop(memory_optimizer_loop, "memory_optimizer"))
 
-    # تشغيل البوت (Webhook أو Polling)
-     # ===================================================================
-# تشغيل البوت (Webhook أو Polling) - نسخة محسنة مع معالجة الأخطاء
-# ===================================================================
-hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
+    # ===================================================================
+    # تشغيل البوت (Webhook أو Polling) - نسخة محسنة مع معالجة الأخطاء
+    # ===================================================================
+    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
 
-if hostname:
-    web_port = int(os.getenv("PORT", "10000"))
-    logger.info(f"🌐 سيتم تشغيل خادم الويب على المنفذ {web_port} باستخدام hostname: {hostname}")
-    try:
-        await setup_unified_web_server(application, web_port)
-        logger.info("✅ تم بدء خادم الويب بنجاح")
-    except Exception as e:
-        logger.error(f"❌ فشل بدء خادم الويب: {e}")
-        raise
+    if hostname:
+        web_port = int(os.getenv("PORT", "10000"))
+        logger.info(f"🌐 سيتم تشغيل خادم الويب على المنفذ {web_port} باستخدام hostname: {hostname}")
+        try:
+            await setup_unified_web_server(application, web_port)
+            logger.info("✅ تم بدء خادم الويب بنجاح")
+        except Exception as e:
+            logger.error(f"❌ فشل بدء خادم الويب: {e}")
+            raise
 
-    await application.initialize()
-    await application.start()
-    webhook_url = f"https://{hostname}/{TOKEN}"
-    try:
-        await application.bot.set_webhook(
-            url=webhook_url,
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
-        )
-        logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
-    except Exception as e:
-        logger.error(f"❌ فشل تعيين Webhook: {e}")
-        raise
+        await application.initialize()
+        await application.start()
+        webhook_url = f"https://{hostname}/{TOKEN}"
+        try:
+            await application.bot.set_webhook(
+                url=webhook_url,
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
+            )
+            logger.info(f"✅ تم تعيين Webhook إلى: {webhook_url}")
+        except Exception as e:
+            logger.error(f"❌ فشل تعيين Webhook: {e}")
+            raise
 
-    try:
-        await asyncio.Event().wait()
-    except KeyboardInterrupt:
-        logger.info("🛑 تم إيقاف البوت")
-else:
-    logger.info("🔄 استخدام Polling (بدون Webhook)")
-    await application.bot.delete_webhook()
-    await run_polling_safe(application)
+        try:
+            await asyncio.Event().wait()
+        except KeyboardInterrupt:
+            logger.info("🛑 تم إيقاف البوت")
+    else:
+        logger.info("🔄 استخدام Polling (بدون Webhook)")
+        await application.bot.delete_webhook()
+        await run_polling_safe(application)
 
 if __name__ == "__main__":
     try:
@@ -9784,4 +9771,3 @@ if __name__ == "__main__":
         logger.error(f"❌ خطأ فادح: {e}")
         traceback.print_exc()
         sys.exit(1)
-
