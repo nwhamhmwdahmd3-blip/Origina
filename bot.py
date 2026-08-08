@@ -270,24 +270,7 @@ MAX_CONNECTIONS = 20
 ANONYMOUS_ADMIN_ID = int(os.getenv("ANONYMOUS_ADMIN_ID", "1087968824"))
 
 # ===================================================================
-# 6. إعدادات NSFW - ✅ تم تصحيح الخطأ هنا
-# ===================================================================
-SIGHTENGINE_API_USER = os.getenv("SIGHTENGINE_API_USER", "")
-SIGHTENGINE_API_SECRET = os.getenv("SIGHTENGINE_API_SECRET", "")
-NSFW_ENABLED = get_env_or_default("NSFW_ENABLED", True, bool)
-NSFW_THRESHOLD = get_env_or_default("NSFW_THRESHOLD", 0.7, float)
-NSFW_MAX_FILE_SIZE = get_env_or_default("NSFW_MAX_FILE_SIZE", 5 * 1024 * 1024, int)
-NSFW_MAX_VIDEO_SIZE = get_env_or_default("NSFW_MAX_VIDEO_SIZE", 10 * 1024 * 1024, int)
-
-# ✅ التصحيح: استخدام قيمة ثابتة بدلاً من get_env_or_default
-NSFW_FRAMES = 5
-
-NSFW_CACHE = {}
-NSFW_CACHE_TTL = 60
-_NSFW_CACHE_LOCK = asyncio.Lock()
-
-# ===================================================================
-# 7. ثوابت المجموعات المحسنة
+# 6. ثوابت المجموعات المحسنة
 # ===================================================================
 _MAX_BANNED_WORDS_PER_CHAT = 500
 _MAX_BANNED_WORDS_GLOBAL = 2000
@@ -299,7 +282,7 @@ _AUTH_CACHE_TTL = 300
 _FLOOD_CACHE_MAX_SIZE = 10000
 
 # ===================================================================
-# 8. قائمة الأعمدة المسموح بها (قائمة بيضاء للأمان)
+# 7. قائمة الأعمدة المسموح بها (قائمة بيضاء للأمان)
 # ===================================================================
 _ALLOWED_SECURITY_COLUMNS = {
     'delete_links', 'mentions', 'warn_message', 'slow_mode', 'slow_mode_seconds',
@@ -315,7 +298,7 @@ _ALLOWED_SECURITY_COLUMNS = {
 }
 
 # ===================================================================
-# 9. نظام السجلات
+# 8. نظام السجلات
 # ===================================================================
 class SensitiveDataFilter(logging.Filter):
     def filter(self, record):
@@ -398,7 +381,7 @@ def log_error(error: Exception, context: dict = None) -> str:
     return advanced_logger.log_error("حدث خطأ غير متوقع", error, context)
 
 # ===================================================================
-# 10. نظام التشفير
+# 9. نظام التشفير
 # ===================================================================
 def derive_key_from_password(password: str, salt: bytes) -> bytes:
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100000)
@@ -517,7 +500,7 @@ def decompress_backup(data: bytes) -> bytes:
         return gzip.decompress(data)
 
 # ===================================================================
-# 11. نظام التخزين المؤقت
+# 10. نظام التخزين المؤقت
 # ===================================================================
 try:
     from cachetools import TTLCache, LRUCache
@@ -544,7 +527,7 @@ _BANNED_PATTERNS_LOCK = asyncio.Lock()
 BANNED_PATTERNS = []
 
 # ===================================================================
-# 12. دوال مساعدة
+# 11. دوال مساعدة
 # ===================================================================
 def load_banned_words_from_file(file_path: Path) -> List[str]:
     words = []
@@ -719,7 +702,7 @@ def format_welcome_message(template: str, user_name: str, chat_name: str) -> str
         return f"مرحباً {safe_user} في {safe_chat}"
 
 # ===================================================================
-# 13. معالج الأخطاء
+# 12. معالج الأخطاء
 # ===================================================================
 class ErrorHandler:
     def __init__(self, max_retries: int = 3, base_delay: float = 1.0):
@@ -747,7 +730,7 @@ class ErrorHandler:
 error_handler = ErrorHandler()
 
 # ===================================================================
-# 14. دوال الإرسال الآمن
+# 13. دوال الإرسال الآمن
 # ===================================================================
 async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
     if not text:
@@ -843,7 +826,7 @@ async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
                 raise
 
 # ===================================================================
-# 15. نظام اللغة
+# 14. نظام اللغة
 # ===================================================================
 SUPPORTED_LANGUAGES = {
     'ar': 'العربية 🇸🇦', 'en': 'English 🇬🇧', 'fr': 'Français 🇫🇷',
@@ -1165,7 +1148,7 @@ async def set_user_language(user_id: int, lang: str):
     user_language[user_id] = lang
 
 # ===================================================================
-# 16. الردود التلقائية المدمجة (200+ رد)
+# 15. الردود التلقائية المدمجة (200+ رد)
 # ===================================================================
 WELCOME_REPLIES = {
     "مرحباً": ["أهلاً وسهلاً بك في مجموعتنا 🤍", "أهلاً بك، نورت المجموعة 🌸", "مرحباً، تشرفنا بوجودك 🙏"],
