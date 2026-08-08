@@ -3289,7 +3289,7 @@ class UserState(Enum):
     WAITING_HIDDEN_ADMIN_ADD = auto()
     WAITING_HIDDEN_ADMIN_REMOVE = auto()
     WAITING_AUTO_REPLY_MENU = auto()
-    WAITING_0.7 = auto()
+    WAITING_NSFW_THRESHOLD = auto()
     WAITING_EXPORT_DATA = auto()
     WAITING_CRON = auto()
 
@@ -6595,7 +6595,7 @@ async def nsfw_threshold_set_callback(update: Update, context: ContextTypes.DEFA
     if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    context.user_data['state'] = UserState.WAITING_0.7
+    context.user_data['state'] = UserState.WAITING_NSFW_THRESHOLD
     await query.edit_message_text("⚙️ **تغيير نسبة حساسية NSFW**\n\nأرسل النسبة المطلوبة (0-100):\nمثال: 70")
 
 # ===================================================================
@@ -12755,7 +12755,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await contests_command_handler(update, context)
         return
 
-    elif state == UserState.WAITING_0.7:
+    elif state == UserState.WAITING_NSFW_THRESHOLD:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
             context.user_data.pop('state', None)
@@ -12765,9 +12765,9 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             if threshold < 0 or threshold > 100:
                 await safe_send_markdown(context.bot, user_id, "❌ النسبة يجب أن تكون بين 0 و 100.")
                 return
-            global 0.7
-            0.7 = threshold / 100.0
-            os.environ["0.7"] = str(0.7)
+            global NSFW_THRESHOLD
+            NSFW_THRESHOLD = threshold / 100.0
+            os.environ["NSFW_THRESHOLD"] = str(NSFW_THRESHOLD)
             await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين نسبة الحساسية إلى {threshold}%")
         except ValueError:
             await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم صحيح.")
