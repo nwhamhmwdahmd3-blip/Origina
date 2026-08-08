@@ -3214,7 +3214,7 @@ class CallbackData:
     USER_AUTO_REPLY_TOGGLE_PREFIX = "user_auto_reply_toggle:"
     NSFW_SETTINGS = "nsfw_settings"
     NSFW_TOGGLE = "nsfw_toggle"
-    NSFW_THRESHOLD_SET = "nsfw_threshold_set"
+    0.7_SET = "nsfw_threshold_set"
     SECURITY_DELETE_VIDEOS_PREFIX = "security:delete_videos:"
     SECURITY_DELETE_SERVICE_PREFIX = "security:delete_service:"
     SECURITY_DELETE_DOCUMENTS_PREFIX = "security:delete_documents:"
@@ -3289,7 +3289,7 @@ class UserState(Enum):
     WAITING_HIDDEN_ADMIN_ADD = auto()
     WAITING_HIDDEN_ADMIN_REMOVE = auto()
     WAITING_AUTO_REPLY_MENU = auto()
-    WAITING_NSFW_THRESHOLD = auto()
+    WAITING_0.7 = auto()
     WAITING_EXPORT_DATA = auto()
     WAITING_CRON = auto()
 
@@ -6555,15 +6555,15 @@ async def nsfw_settings_callback(update: Update, context: ContextTypes.DEFAULT_T
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
         return
     status = "🟢 مفعل" if NSFW_ENABLED else "🔴 معطل"
-    threshold = NSFW_THRESHOLD * 100
+    threshold = 0.7 * 100
     text = f"🔞 **إعدادات NSFW**\n━━━━━━━━━━━━━━━━━━━━━━\n"
     text += f"📌 الحالة: {status}\n"
     text += f"📊 نسبة الحساسية: {threshold}%\n"
-    text += f"📁 الحد الأقصى للصور: {NSFW_MAX_FILE_SIZE // (1024*1024)} ميجابايت\n"
-    text += f"📁 الحد الأقصى للفيديوهات: {NSFW_MAX_VIDEO_SIZE // (1024*1024)} ميجابايت\n"
+    text += f"📁 الحد الأقصى للصور: {5242880 // (1024*1024)} ميجابايت\n"
+    text += f"📁 الحد الأقصى للفيديوهات: {10485760 // (1024*1024)} ميجابايت\n"
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"{'🔄 تعطيل' if NSFW_ENABLED else '✅ تفعيل'}", callback_data=CallbackData.NSFW_TOGGLE)],
-        [InlineKeyboardButton("⚙️ تغيير النسبة", callback_data=CallbackData.NSFW_THRESHOLD_SET)],
+        [InlineKeyboardButton("⚙️ تغيير النسبة", callback_data=CallbackData.0.7_SET)],
         [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
     ])
     if query:
@@ -6595,7 +6595,7 @@ async def nsfw_threshold_set_callback(update: Update, context: ContextTypes.DEFA
     if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    context.user_data['state'] = UserState.WAITING_NSFW_THRESHOLD
+    context.user_data['state'] = UserState.WAITING_0.7
     await query.edit_message_text("⚙️ **تغيير نسبة حساسية NSFW**\n\nأرسل النسبة المطلوبة (0-100):\nمثال: 70")
 
 # ===================================================================
@@ -7425,7 +7425,7 @@ async def check_nsfw_image(image_bytes: bytes) -> dict:
                 )
                 faces = data.get("faces", 0) or 0
                 return {
-                    "nsfw": nsfw_score > NSFW_THRESHOLD or wad > NSFW_THRESHOLD,
+                    "nsfw": nsfw_score > 0.7 or wad > 0.7,
                     "nsfw_score": round(nsfw_score, 2),
                     "wad_score": round(wad, 2),
                     "faces": faces,
@@ -7437,7 +7437,7 @@ async def check_nsfw_image(image_bytes: bytes) -> dict:
         return {"nsfw": False, "score": 0, "error": str(e)}
 
 
-async def check_nsfw_video(video_bytes: bytes, frames: int = NSFW_FRAMES) -> dict:
+async def check_nsfw_video(video_bytes: bytes, frames: int = 5) -> dict:
     if not CV2_AVAILABLE:
         return {"nsfw": False, "score": 0, "error": "cv2 غير مثبت"}
     try:
@@ -7476,7 +7476,7 @@ async def check_nsfw_video(video_bytes: bytes, frames: int = NSFW_FRAMES) -> dic
         avg_nsfw = sum(nsfw_scores) / len(nsfw_scores)
         avg_wad = sum(wad_scores) / len(wad_scores)
         return {
-            "nsfw": avg_nsfw > NSFW_THRESHOLD or avg_wad > NSFW_THRESHOLD,
+            "nsfw": avg_nsfw > 0.7 or avg_wad > 0.7,
             "nsfw_score": round(avg_nsfw, 2),
             "wad_score": round(avg_wad, 2),
             "faces": faces_count // len(frame_indices) if frame_indices else 0,
@@ -11804,7 +11804,7 @@ async def main():
     # 5.23 NSFW
     application.add_handler(CallbackQueryHandler(nsfw_settings_callback, pattern=f"^{CallbackData.NSFW_SETTINGS}$"))
     application.add_handler(CallbackQueryHandler(nsfw_toggle_callback, pattern=f"^{CallbackData.NSFW_TOGGLE}$"))
-    application.add_handler(CallbackQueryHandler(nsfw_threshold_set_callback, pattern=f"^{CallbackData.NSFW_THRESHOLD_SET}$"))
+    application.add_handler(CallbackQueryHandler(nsfw_threshold_set_callback, pattern=f"^{CallbackData.0.7_SET}$"))
 
     # 5.24 الاشتراك الإجباري
     application.add_handler(CallbackQueryHandler(check_subscribe_callback_handler, pattern=f"^{CallbackData.CHECK_SUBSCRIBE}$"))
@@ -12755,7 +12755,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await contests_command_handler(update, context)
         return
 
-    elif state == UserState.WAITING_NSFW_THRESHOLD:
+    elif state == UserState.WAITING_0.7:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
             context.user_data.pop('state', None)
@@ -12765,9 +12765,9 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             if threshold < 0 or threshold > 100:
                 await safe_send_markdown(context.bot, user_id, "❌ النسبة يجب أن تكون بين 0 و 100.")
                 return
-            global NSFW_THRESHOLD
-            NSFW_THRESHOLD = threshold / 100.0
-            os.environ["NSFW_THRESHOLD"] = str(NSFW_THRESHOLD)
+            global 0.7
+            0.7 = threshold / 100.0
+            os.environ["0.7"] = str(0.7)
             await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين نسبة الحساسية إلى {threshold}%")
         except ValueError:
             await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم صحيح.")
