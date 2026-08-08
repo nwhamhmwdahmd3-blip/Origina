@@ -9925,6 +9925,69 @@ async def get_top_users(limit: int = 10) -> list:
         )
         return await cur.fetchall()
     return await execute_db(_get)
+# ===================================================================
+# دوال الترجمة (Translation Functions)
+# ===================================================================
+
+# ذاكرة تخزين مؤقت لإعدادات الترجمة
+user_translation_settings_cache = {}
+_user_translation_cache_lock = asyncio.Lock()
+_translation_cache = {}
+
+async def get_user_translation_language(user_id: int) -> str:
+    """جلب لغة الترجمة المفضلة للمستخدم"""
+    async with _user_translation_cache_lock:
+        if user_id in user_translation_settings_cache:
+            return user_translation_settings_cache[user_id]
+    
+    async def _get(conn):
+        cur = await conn.execute("SELECT lang FROM user_translation WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 'off'
+    
+    lang = await execute_db(_get)
+    async with _user_translation_cache_lock:
+        user_translation_settings_cache[user_id] = lang
+    return lang
+
+async def set_user_translation_language(user_id: int, lang: str) -> None:
+    """تعيين لغة الترجمة للمستخدم"""
+    async def _set(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_translation (user_id, lang) VALUES (?, ?)",
+            (user_id, lang)
+        )
+        await conn.commit()
+    await execute_db(_set)
+    async with _user_translation_cache_lock:
+        user_translation_settings_cache[user_id] = lang
+
+async def translate_text(text: str, target_lang: str) -> str:
+    """ترجمة نص إلى اللغة المطلوبة"""
+    if not text or target_lang == 'off' or target_lang == 'ar':
+        return text
+    
+    cache_key = f"{hashlib.md5(text.encode()).hexdigest()}_{target_lang}"
+    
+    # التحقق من التخزين المؤقت
+    if cache_key in _translation_cache:
+        return _translation_cache[cache_key]
+    
+    try:
+        translator = GoogleTranslator(source='auto', target=target_lang)
+        translated = translator.translate(text)
+        if translated:
+            # تخزين في الكاش
+            _translation_cache[cache_key] = translated
+            # تنظيف الكاش إذا كان كبيراً
+            if len(_translation_cache) > 500:
+                oldest_key = next(iter(_translation_cache))
+                del _translation_cache[oldest_key]
+            return translated
+    except Exception as e:
+        logger.error(f"فشل الترجمة: {e}")
+    
+    return text
 
 if __name__ == "__main__":
     try:
