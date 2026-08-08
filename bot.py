@@ -11880,9 +11880,9 @@ async def main():
     application.add_handler(CallbackQueryHandler(user_auto_reply_toggle_callback, pattern=f"^{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}"))
 
     # 6. تسجيل معالجات الرسائل (Message Handlers)
-    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler_main))
+    application.add_handler(MessageHandler(filters.text & filters.ChatType.GROUPS & ~filters.command, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.caption & filters.ChatType.GROUPS & ~filters.command, filter_messages_handler))
+    application.add_handler(MessageHandler(filters.text & filters.ChatType.PRIVATE & ~filters.command, message_handler_main))
     application.add_handler(MessageHandler(filters.Photo & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.Video & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.Audio & filters.ChatType.PRIVATE, message_handler_main))
