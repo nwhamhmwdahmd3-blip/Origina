@@ -7123,13 +7123,26 @@ async def security_toggle_setting_callback(update: Update, context: ContextTypes
     user_id = update.effective_user.id
     parts = query.data.split(":")
     if len(parts) < 3:
+        await query.edit_message_text("❌ بيانات غير صالحة")
         return
     action = parts[1]
-    chat_id = int(parts[2])
+    try:
+        chat_id = int(parts[2])
+    except ValueError:
+        await query.edit_message_text("❌ معرف المجموعة غير صالح")
+        return
+
+    # التحقق من الصلاحية
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
         return
+
+    # جلب الإعدادات الحالية
     settings = await db_get_security_settings(chat_id, force_refresh=True)
+
+    # ================================================================
+    # تبديل الإعداد المطلوب
+    # ================================================================
     if action == "links":
         settings['links'] = not settings['links']
         await db_set_security_settings(chat_id, links=settings['links'])
@@ -7187,8 +7200,13 @@ async def security_toggle_setting_callback(update: Update, context: ContextTypes
     else:
         await query.edit_message_text("❌ إجراء غير معروف")
         return
+
+    # مسح الكاش
     _security_cache.pop(chat_id, None)
+
+    # تحديث واجهة المستخدم
     await _update_security_panel(query, chat_id, user_id)
+
 # ===================================================================
 # 36. معالجات الكولباك - الإحالات (Referrals)
 # ===================================================================
