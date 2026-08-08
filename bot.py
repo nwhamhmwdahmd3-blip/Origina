@@ -9509,6 +9509,2040 @@ async def user_auto_reply_toggle_callback(update: Update, context: ContextTypes.
     await db_set_user_auto_reply_status(target_user, new_status)
     await query.edit_message_reply_markup(reply_markup=get_user_auto_reply_keyboard(target_user, new_status))
     await query.answer(f"✅ تم {'تفعيل' if new_status else 'تعطيل'} الردود التلقائية")
+# ===================================================================
+# الدوال والمتغيرات المفقودة (مكملة للأجزاء الأربعة)
+# ===================================================================
+
+# ------------------- المتغيرات العامة -------------------
+_security_cache_time = {}
+CV2_AVAILABLE = False
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    pass
+
+# ------------------- كائنات الأمان والإحصائيات والإشعارات -------------------
+security_audit = advanced_logger  # استخدام الـ logger الموجود
+
+class Metrics:
+    def __init__(self):
+        self.start_time = time_module.time()
+        self.total_commands = 0
+        self.commands = {}
+        self.errors = 0
+        self.response_times = []
+
+    def record_command(self, command: str):
+        self.total_commands += 1
+        self.commands[command] = self.commands.get(command, 0) + 1
+
+    def record_error(self):
+        self.errors += 1
+
+    def record_response_time(self, seconds: float):
+        self.response_times.append(seconds)
+        if len(self.response_times) > 1000:
+            self.response_times = self.response_times[-1000:]
+
+    def get_stats(self):
+        avg_time = sum(self.response_times) / len(self.response_times) if self.response_times else 0
+        return {
+            'uptime': time_module.time() - self.start_time,
+            'total_commands': self.total_commands,
+            'commands': self.commands,
+            'errors': self.errors,
+            'avg_response_time': avg_time
+        }
+
+metrics = Metrics()
+
+class NotificationSystem:
+    async def send_bulk_notification(self, bot, user_ids: List[int], text: str) -> Tuple[int, int]:
+        success = 0
+        failed = 0
+        for uid in user_ids:
+            try:
+                await safe_send_markdown(bot, uid, text)
+                success += 1
+            except Exception:
+                failed += 1
+            await asyncio.sleep(0.05)  # تجنب الـ Flood
+        return success, failed
+
+notification_system = NotificationSystem()
+
+# ===================================================================
+# 1. دوال الإحالات (Referrals)
+# ===================================================================
+
+async def db_get_referral_settings() -> dict:
+    async def _get(conn):
+        settings = {}
+        cur = await conn.execute("SELECT key, value FROM referral_settings")
+        rows = await cur.fetchall()
+        for key, value in rows:
+            settings[key] = value
+        return settings
+    return await execute_db(_get)
+
+async def db_get_referral_code(user_id: int) -> str:
+    async def _get(conn):
+        cur = await conn.execute("SELECT referral_code FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row and row[0] else None
+    return await execute_db(_get)
+
+async def db_generate_referral_code(user_id: int) -> str:
+    async def _generate(conn):
+        code_hash = hashlib.md5(f"{user_id}{time_module.time()}".encode()).hexdigest()[:8]
+        referral_code = f"REF{code_hash.upper()}"
+        await conn.execute("UPDATE users SET referral_code=? WHERE user_id=?", (referral_code, user_id))
+        await conn.commit()
+        return referral_code
+    return await execute_db(_generate)
+
+async def db_get_user_by_referral_code(referral_code: str) -> int | None:
+    async def _get(conn):
+        cur = await conn.execute("SELECT user_id FROM users WHERE referral_code=?", (referral_code,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def db_add_referral(referrer_id: int, referred_id: int) -> bool:
+    if referrer_id == referred_id:
+        return False
+    async def _add(conn):
+        try:
+            cur = await conn.execute("SELECT 1 FROM referrals WHERE referred_id=?", (referred_id,))
+            if await cur.fetchone():
+                return False
+            today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            cur = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND referred_at >= ?", (referrer_id, today_start))
+            count_today = (await cur.fetchone())[0]
+            settings = await db_get_referral_settings()
+            max_per_day = int(settings.get('max_referrals_per_day', '5'))
+            if count_today >= max_per_day:
+                return False
+            await conn.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, referred_id))
+            await conn.execute("INSERT INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days) VALUES (?, 1, 0, 0) ON CONFLICT(user_id) DO UPDATE SET referral_count = referral_count + 1", (referrer_id,))
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"خطأ في إضافة إحالة: {e}")
+            return False
+    return await execute_db(_add)
+
+async def db_auto_reward_referral(referrer_id: int, referred_id: int) -> int:
+    async def _reward(conn):
+        settings = await db_get_referral_settings()
+        reward_days = int(settings.get('reward_days_per_referral', '3'))
+        await conn.execute("""
+            INSERT INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days)
+            VALUES (?, 0, ?, 0)
+            ON CONFLICT(user_id) DO UPDATE SET
+                referral_count = referral_count + 1,
+                total_reward_days = total_reward_days + ?
+        """, (referrer_id, reward_days, reward_days))
+        await conn.execute("UPDATE referrals SET is_rewarded=1 WHERE referrer_id=? AND referred_id=?", (referrer_id, referred_id))
+        await conn.commit()
+        return reward_days
+    return await execute_db(_reward)
+
+async def db_get_referral_stats(user_id: int) -> dict:
+    async def _get(conn):
+        cur = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
+        total_referrals = (await cur.fetchone())[0]
+        cur = await conn.execute("SELECT referral_count, total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return {
+            'total_referrals': total_referrals,
+            'referral_count': row[0] if row else 0,
+            'total_reward_days': row[1] if row else 0,
+            'claimed_reward_days': row[2] if row else 0,
+            'available_days': (row[1] if row else 0) - (row[2] if row else 0)
+        }
+    return await execute_db(_get)
+
+async def db_claim_referral_reward(user_id: int) -> int:
+    async def _claim(conn):
+        cur = await conn.execute("SELECT total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        total = row[0]
+        claimed = row[1]
+        available = total - claimed
+        if available <= 0:
+            return 0
+        current_sub = await db_get_subscription_days_left(user_id)
+        new_sub_days = current_sub + available
+        end_date = (utc_now() + timedelta(days=new_sub_days)).isoformat()
+        await conn.execute("UPDATE users SET subscription_end=? WHERE user_id=?", (end_date, user_id))
+        await conn.execute("UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?", (available, user_id))
+        await conn.commit()
+        return available
+    return await execute_db(_claim)
+
+async def db_get_welcome_bonus_points() -> int:
+    settings = await db_get_referral_settings()
+    return int(settings.get('welcome_bonus_points', '10'))
+
+# ===================================================================
+# 2. دوال التذكيرات (Reminders)
+# ===================================================================
+
+async def db_get_user_reminder_settings(user_id: int) -> dict:
+    async def _get(conn):
+        cur = await conn.execute("""
+            SELECT subscription_reminder, daily_stats_reminder, weekly_report,
+                   reminder_days_before, last_reminder_sent, notification_lang
+            FROM user_reminder_settings WHERE user_id=?
+        """, (user_id,))
+        row = await cur.fetchone()
+        if row:
+            return {
+                'subscription_reminder': row[0] == 1,
+                'daily_stats_reminder': row[1] == 1,
+                'weekly_report': row[2] == 1,
+                'reminder_days_before': row[3] if row[3] is not None else 3,
+                'last_reminder_sent': row[4] if row[4] else 0,
+                'notification_lang': row[5] if row[5] else 'ar'
+            }
+        else:
+            await conn.execute("""
+                INSERT INTO user_reminder_settings
+                (user_id, subscription_reminder, daily_stats_reminder, weekly_report,
+                 reminder_days_before, last_reminder_sent, notification_lang)
+                VALUES (?, 1, 0, 1, 3, 0, 'ar')
+            """, (user_id,))
+            await conn.commit()
+            return {'subscription_reminder': True, 'daily_stats_reminder': False,
+                    'weekly_report': True, 'reminder_days_before': 3,
+                    'last_reminder_sent': 0, 'notification_lang': 'ar'}
+    return await execute_db(_get)
+
+async def db_update_reminder_settings(user_id: int, **kwargs):
+    async def _update(conn):
+        fields, values = [], []
+        for key, value in kwargs.items():
+            if key == 'subscription_reminder':
+                fields.append("subscription_reminder=?")
+                values.append(1 if value else 0)
+            elif key == 'daily_stats_reminder':
+                fields.append("daily_stats_reminder=?")
+                values.append(1 if value else 0)
+            elif key == 'weekly_report':
+                fields.append("weekly_report=?")
+                values.append(1 if value else 0)
+            elif key == 'reminder_days_before':
+                fields.append("reminder_days_before=?")
+                values.append(value)
+            elif key == 'notification_lang':
+                fields.append("notification_lang=?")
+                values.append(value)
+        if fields:
+            query = f"UPDATE user_reminder_settings SET {', '.join(fields)} WHERE user_id=?"
+            values.append(user_id)
+            await conn.execute(query, values)
+            await conn.commit()
+    return await execute_db(_update)
+
+async def db_update_last_reminder_sent(user_id: int, reminder_type: str):
+    async def _update(conn):
+        now_timestamp = int(time_module.time())
+        await conn.execute("UPDATE user_reminder_settings SET last_reminder_sent=? WHERE user_id=?", (now_timestamp, user_id))
+        await conn.commit()
+    return await execute_db(_update)
+
+async def db_get_users_needing_reminder() -> list:
+    async def _get(conn):
+        now = utc_now()
+        users = []
+        cutoff_date = (now + timedelta(days=10)).isoformat()
+        cur = await conn.execute("""
+            SELECT user_id, subscription_end FROM users
+            WHERE subscription_end IS NOT NULL AND subscription_end <= ? AND banned=0
+        """, (cutoff_date,))
+        rows = await cur.fetchall()
+        for user_id, subscription_end_str in rows:
+            try:
+                end_date = datetime.fromisoformat(subscription_end_str)
+                days_left = (end_date - now).days
+                if days_left < 0:
+                    continue
+                settings = await db_get_user_reminder_settings(user_id)
+                if settings['subscription_reminder']:
+                    reminder_days = settings['reminder_days_before']
+                    last_sent = settings['last_reminder_sent']
+                    now_timestamp = int(time_module.time())
+                    need_reminder = False
+                    if 0 < days_left <= reminder_days:
+                        if last_sent == 0:
+                            need_reminder = True
+                        elif (now_timestamp - last_sent) > (3 * 24 * 60 * 60):
+                            need_reminder = True
+                    if need_reminder:
+                        users.append({'user_id': user_id, 'days_left': days_left,
+                                     'notification_lang': settings['notification_lang']})
+            except:
+                continue
+        return users
+    return await execute_db(_get)
+
+# ===================================================================
+# 3. دوال التذاكر (Support Tickets)
+# ===================================================================
+
+async def db_get_next_ticket_number():
+    async def _get(conn):
+        cur = await conn.execute("SELECT value FROM settings WHERE key='last_ticket_number'")
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+    return await execute_db(_get)
+
+async def db_save_ticket(user_id, username, message, ticket_num):
+    async def _save(conn):
+        created_at = utc_now_iso()
+        await conn.execute("INSERT INTO support_tickets (user_id, username, message, ticket_number, status, created_at) VALUES (?,?,?,?,?,?)", (user_id, username, sanitize_text(message), ticket_num, 'pending', created_at))
+        await conn.commit()
+        return True
+    return await execute_db(_save)
+
+async def db_get_user_ticket(user_id):
+    async def _get(conn):
+        cur = await conn.execute("SELECT ticket_number, status, created_at FROM support_tickets WHERE user_id=? ORDER BY id DESC LIMIT 1", (user_id,))
+        return await cur.fetchone()
+    return await execute_db(_get)
+
+async def db_get_all_tickets(limit=20):
+    async def _get(conn):
+        cur = await conn.execute("SELECT id, user_id, username, message, ticket_number, status, created_at FROM support_tickets ORDER BY id DESC LIMIT ?", (limit,))
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def db_get_last_ticket_id_for_user(user_id):
+    async def _get(conn):
+        cur = await conn.execute("SELECT id FROM support_tickets WHERE user_id=? ORDER BY id DESC LIMIT 1", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def db_mark_ticket_replied(ticket_id):
+    async def _mark(conn):
+        await conn.execute("UPDATE support_tickets SET status='replied', replied=1 WHERE id=?", (ticket_id,))
+        await conn.commit()
+    return await execute_db(_mark)
+
+async def db_delete_all_tickets() -> int:
+    async def _delete(conn):
+        await conn.execute("DELETE FROM support_tickets")
+        await conn.execute("UPDATE settings SET value='0' WHERE key='last_ticket_number'")
+        await conn.commit()
+        return 0
+    return await execute_db(_delete)
+
+# ===================================================================
+# 4. دوال الترجمة (Translation)
+# ===================================================================
+
+user_translation_settings_cache = {}
+_user_translation_cache_lock = asyncio.Lock()
+_translation_cache = {}
+
+async def get_user_translation_language(user_id: int) -> str:
+    async with _user_translation_cache_lock:
+        if user_id in user_translation_settings_cache:
+            return user_translation_settings_cache[user_id]
+    async def _get(conn):
+        cur = await conn.execute("SELECT lang FROM user_translation WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 'off'
+    lang = await execute_db(_get)
+    async with _user_translation_cache_lock:
+        user_translation_settings_cache[user_id] = lang
+    return lang
+
+async def set_user_translation_language(user_id: int, lang: str):
+    async def _set(conn):
+        await conn.execute("INSERT OR REPLACE INTO user_translation (user_id, lang) VALUES (?, ?)", (user_id, lang))
+        await conn.commit()
+    await execute_db(_set)
+    async with _user_translation_cache_lock:
+        user_translation_settings_cache[user_id] = lang
+
+async def translate_text(text: str, target_lang: str) -> str:
+    if not text or target_lang == 'off' or target_lang == 'ar':
+        return text
+    cache_key = f"{hashlib.md5(text.encode()).hexdigest()}_{target_lang}"
+    cached = _translation_cache.get(cache_key)
+    if cached:
+        return cached
+    try:
+        translator = GoogleTranslator(source='auto', target=target_lang)
+        translated = translator.translate(text)
+        if translated:
+            _translation_cache[cache_key] = translated
+            if len(_translation_cache) > 500:
+                _translation_cache.pop(next(iter(_translation_cache)))
+            return translated
+    except Exception as e:
+        logger.error(f"فشل الترجمة: {e}")
+    return text
+
+# ===================================================================
+# 5. دوال المسابقات (Contests)
+# ===================================================================
+
+class ContestTypes(Enum):
+    QUIZ = "quiz"
+    RAFFLE = "raffle"
+    VOTE = "vote"
+    SUBMISSION = "submission"
+
+async def db_get_active_contests_with_participants(limit: int = 10) -> list:
+    try:
+        async def _get(conn):
+            conn.row_factory = aiosqlite.Row
+            now = utc_now().isoformat()
+            try:
+                cur = await conn.execute("""
+                    SELECT c.id, c.title, c.description, c.prize, c.end_date, c.contest_type,
+                           COALESCE((SELECT COUNT(*) FROM contest_participants cp WHERE cp.contest_id = c.id), 0) as participants
+                    FROM contests c
+                    WHERE c.status = 'active' AND c.end_date > ?
+                    ORDER BY c.end_date ASC LIMIT ?
+                """, (now, limit))
+                rows = await cur.fetchall()
+                result = []
+                for row in rows:
+                    try:
+                        result.append((
+                            row['id'],
+                            row['title'],
+                            row['description'],
+                            row['prize'],
+                            row['end_date'],
+                            row['participants'],
+                            row['contest_type'] if 'contest_type' in row else 'raffle'
+                        ))
+                    except:
+                        continue
+                return result
+            except Exception as e:
+                logger.error(f"خطأ في تنفيذ الاستعلام: {e}")
+                return []
+        return await execute_db(_get)
+    except Exception as e:
+        logger.error(f"خطأ في db_get_active_contests_with_participants: {e}")
+        return []
+
+async def db_create_contest(creator_id: int, title: str, description: str, prize: str,
+                            end_date: datetime, contest_type: str = 'raffle') -> int:
+    try:
+        async def _create(conn):
+            if not isinstance(end_date, datetime):
+                raise ValueError("end_date must be datetime object")
+            end_date_str = end_date.isoformat()
+            created_at_str = utc_now_iso()
+            cur = await conn.execute("""
+                INSERT INTO contests (creator_id, title, description, prize, end_date, status, created_at, contest_type)
+                VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+            """, (creator_id, title, description, prize, end_date_str, created_at_str, contest_type))
+            await conn.commit()
+            return cur.lastrowid
+        contest_id = await execute_db(_create)
+        if contest_id:
+            logger.info(f"✅ تم إنشاء مسابقة جديدة (ID: {contest_id}) بواسطة المستخدم {creator_id}")
+        else:
+            logger.warning(f"⚠️ فشل إنشاء المسابقة، لم يتم إرجاع ID للمستخدم {creator_id}")
+        return contest_id
+    except Exception as e:
+        logger.error(f"❌ خطأ في db_create_contest: {e}")
+        raise
+
+async def db_get_contest(contest_id: int) -> dict | None:
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("""
+            SELECT id, title, description, prize, end_date, status, winner_id, creator_id, created_at, contest_type
+            FROM contests WHERE id = ?
+        """, (contest_id,))
+        row = await cur.fetchone()
+        if row:
+            return {
+                'id': row['id'], 'title': row['title'], 'description': row['description'],
+                'prize': row['prize'], 'end_date': row['end_date'], 'status': row['status'],
+                'winner_id': row['winner_id'], 'creator_id': row['creator_id'],
+                'created_at': row['created_at'], 'contest_type': row['contest_type'] if 'contest_type' in row else 'raffle'
+            }
+        return None
+    return await execute_db(_get)
+
+async def db_participate_in_contest(user_id: int, contest_id: int, answer: str = "") -> bool:
+    async def _participate(conn):
+        try:
+            await conn.execute(
+                "INSERT INTO contest_participants (user_id, contest_id, answer, joined_at) VALUES (?, ?, ?, ?)",
+                (user_id, contest_id, answer, utc_now_iso())
+            )
+            await conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+    return await execute_db(_participate)
+
+async def db_get_user_participation(user_id: int, contest_id: int) -> dict | None:
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute(
+            "SELECT id, answer, joined_at FROM contest_participants WHERE user_id = ? AND contest_id = ?",
+            (user_id, contest_id)
+        )
+        row = await cur.fetchone()
+        if row:
+            return {'id': row['id'], 'answer': row['answer'], 'joined_at': row['joined_at']}
+        return None
+    return await execute_db(_get)
+
+async def db_set_contest_winner(contest_id: int, winner_id: int) -> bool:
+    async def _set(conn):
+        await conn.execute(
+            "UPDATE contests SET status = 'finished', winner_id = ? WHERE id = ?",
+            (winner_id, contest_id)
+        )
+        await conn.execute(
+            "INSERT INTO contest_winners (contest_id, winner_id, announced_at) VALUES (?, ?, ?)",
+            (contest_id, winner_id, utc_now_iso())
+        )
+        await conn.commit()
+        return True
+    return await execute_db(_set)
+
+async def db_get_contest_winners(limit: int = 10) -> list:
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("""
+            SELECT c.id, c.title, c.prize, cw.winner_id, cw.announced_at
+            FROM contest_winners cw
+            JOIN contests c ON cw.contest_id = c.id
+            ORDER BY cw.announced_at DESC LIMIT ?
+        """, (limit,))
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def db_delete_contest(contest_id: int, user_id: int) -> bool:
+    async def _delete(conn):
+        cur = await conn.execute("SELECT creator_id FROM contests WHERE id = ?", (contest_id,))
+        row = await cur.fetchone()
+        if row and (row[0] == user_id or await is_bot_admin(user_id)):
+            await conn.execute("DELETE FROM contest_participants WHERE contest_id = ?", (contest_id,))
+            await conn.execute("DELETE FROM contests WHERE id = ?", (contest_id,))
+            await conn.commit()
+            return True
+        return False
+    return await execute_db(_delete)
+
+async def db_get_random_participant(contest_id: int) -> int | None:
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT user_id FROM contest_participants WHERE contest_id = ? ORDER BY RANDOM() LIMIT 1",
+            (contest_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+# ===================================================================
+# 6. دوال القنوات الإضافية (Additional Channel Functions)
+# ===================================================================
+
+async def db_get_user_channel_stats(user_id: int, channel_db_id: int) -> dict:
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("""
+            SELECT COUNT(*) as total_posts,
+                   SUM(CASE WHEN published = 1 THEN 1 ELSE 0 END) as published_posts,
+                   SUM(CASE WHEN published = 0 THEN 1 ELSE 0 END) as unpublished_posts,
+                   SUM(views_count) as total_views,
+                   AVG(views_count) as avg_views,
+                   MAX(created_at) as last_post_time,
+                   MIN(created_at) as first_post_time
+            FROM posts
+            WHERE channel_db_id = ?
+        """, (channel_db_id,))
+        row = await cur.fetchone()
+        if not row or row['total_posts'] == 0:
+            return {'total_posts': 0, 'published_posts': 0, 'unpublished_posts': 0,
+                    'total_views': 0, 'avg_views': 0, 'last_post_time': None, 'first_post_time': None}
+        return {
+            'total_posts': row['total_posts'] or 0,
+            'published_posts': row['published_posts'] or 0,
+            'unpublished_posts': row['unpublished_posts'] or 0,
+            'total_views': row['total_views'] or 0,
+            'avg_views': round(row['avg_views'] or 0, 2),
+            'last_post_time': row['last_post_time'],
+            'first_post_time': row['first_post_time']
+        }
+    return await execute_db(_get)
+
+async def db_get_channel_growth(channel_db_id: int, days: int = 30) -> dict:
+    async def _get_growth(conn):
+        conn.row_factory = aiosqlite.Row
+        start_date = (utc_now() - timedelta(days=days)).isoformat()
+        cur = await conn.execute("""
+            SELECT date(created_at) as post_date,
+                   COUNT(*) as count,
+                   SUM(views_count) as views
+            FROM posts
+            WHERE channel_db_id = ? AND created_at >= ?
+            GROUP BY date(created_at)
+            ORDER BY post_date
+        """, (channel_db_id, start_date))
+        rows = await cur.fetchall()
+        dates = []
+        counts = []
+        views = []
+        for row in rows:
+            dates.append(row['post_date'])
+            counts.append(row['count'] or 0)
+            views.append(row['views'] or 0)
+        return {
+            'dates': dates,
+            'counts': counts,
+            'views': views,
+            'total_days': len(dates),
+            'total_posts': sum(counts),
+            'total_views': sum(views)
+        }
+    return await execute_db(_get_growth)
+
+async def db_get_channel_stats_summary(user_id: int) -> dict:
+    async def _get_summary(conn):
+        channels = await db_get_channels(user_id)
+        if not channels:
+            return None
+        total_posts = 0
+        total_published = 0
+        total_views = 0
+        total_channels = len(channels)
+        best_channel = None
+        best_channel_views = 0
+        active_channels = 0
+        for ch_db_id, ch_tele_id, ch_name, banned in channels:
+            if not banned:
+                active_channels += 1
+            stats = await db_get_user_channel_stats(user_id, ch_db_id)
+            if stats and stats['total_posts'] > 0:
+                total_posts += stats['total_posts']
+                total_published += stats['published_posts']
+                total_views += stats['total_views']
+                if stats['total_views'] > best_channel_views:
+                    best_channel_views = stats['total_views']
+                    best_channel = {
+                        'name': ch_name,
+                        'views': stats['total_views'],
+                        'posts': stats['published_posts'],
+                        'avg_views': stats['avg_views']
+                    }
+        return {
+            'total_channels': total_channels,
+            'active_channels': active_channels,
+            'total_posts': total_posts,
+            'total_published': total_published,
+            'total_views': total_views,
+            'avg_views_per_channel': round(total_views / total_channels, 2) if total_channels > 0 else 0,
+            'best_channel': best_channel
+        }
+    return await execute_db(_get_summary)
+
+async def db_toggle_channel_ban(channel_db_id: int) -> bool:
+    async def _toggle(conn):
+        cur = await conn.execute("SELECT banned FROM user_channels WHERE id=?", (channel_db_id,))
+        row = await cur.fetchone()
+        if row:
+            new_status = 1 if row[0] == 0 else 0
+            await conn.execute("UPDATE user_channels SET banned=? WHERE id=?", (new_status, channel_db_id))
+            await conn.commit()
+            return new_status == 1
+        return False
+    return await execute_db(_toggle)
+
+async def db_toggle_bot_channel_ban(channel_id: int) -> bool:
+    async def _toggle(conn):
+        cur = await conn.execute("SELECT banned FROM bot_channels WHERE channel_id=?", (channel_id,))
+        row = await cur.fetchone()
+        if row:
+            new_status = 1 if row[0] == 0 else 0
+            await conn.execute("UPDATE bot_channels SET banned=? WHERE channel_id=?", (new_status, channel_id))
+            await conn.commit()
+            return new_status == 1
+        return False
+    return await execute_db(_toggle)
+
+# ===================================================================
+# 7. دوال المنشورات الإضافية (Additional Post Functions)
+# ===================================================================
+
+async def db_get_user_total_posts(user_id: int) -> int:
+    async def _get(conn):
+        cur = await conn.execute(
+            """SELECT COUNT(*) FROM posts p
+               JOIN user_channels uc ON p.channel_db_id = uc.id
+               WHERE uc.user_id = ? AND uc.banned = 0""",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] if row else 0
+    return await execute_db(_get)
+
+async def db_get_user_unpublished_posts(user_id: int) -> int:
+    async def _get(conn):
+        cur = await conn.execute(
+            """SELECT COUNT(*) FROM posts p
+               JOIN user_channels uc ON p.channel_db_id = uc.id
+               WHERE uc.user_id = ? AND p.published = 0 AND uc.banned = 0""",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] if row else 0
+    return await execute_db(_get)
+
+async def db_get_user_published_posts(user_id: int) -> int:
+    async def _get(conn):
+        cur = await conn.execute(
+            """SELECT COUNT(*) FROM posts p
+               JOIN user_channels uc ON p.channel_db_id = uc.id
+               WHERE uc.user_id = ? AND p.published = 1 AND uc.banned = 0""",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] if row else 0
+    return await execute_db(_get)
+
+async def db_get_channel_posts(channel_db_id: int, limit: int = 50) -> list:
+    async def _get(conn):
+        cur = await conn.execute(
+            """SELECT id, text, media_type, published, views_count, created_at
+               FROM posts WHERE channel_db_id = ?
+               ORDER BY created_at DESC LIMIT ?""",
+            (channel_db_id, limit)
+        )
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def db_get_post_by_id(post_id: int) -> dict | None:
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute(
+            """SELECT id, channel_db_id, text, media_type, media_file_id,
+                      published, fail_count, views_count, last_view_time, created_at
+               FROM posts WHERE id = ?""",
+            (post_id,)
+        )
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        return None
+    return await execute_db(_get)
+
+async def db_delete_all_posts(channel_db_id: int) -> int:
+    async def _delete(conn):
+        cur = await conn.execute("SELECT COUNT(*) FROM posts WHERE channel_db_id=?", (channel_db_id,))
+        count = (await cur.fetchone())[0]
+        await conn.execute("DELETE FROM posts WHERE channel_db_id=?", (channel_db_id,))
+        await conn.commit()
+        return count
+    return await execute_db(_delete)
+
+# ===================================================================
+# 8. دوال الجدولة الإضافية (Additional Schedule Functions)
+# ===================================================================
+
+async def db_save_schedule(channel_db_id: int, schedule_type: str,
+                           interval_minutes: int = None, interval_hours: int = None,
+                           interval_days: int = None, days_of_week: str = None,
+                           specific_dates: str = None, publish_time: str = None,
+                           cron_expression: str = None):
+    async def _save(conn):
+        await conn.execute("""
+            INSERT OR REPLACE INTO schedule
+            (channel_db_id, schedule_type, interval_minutes, interval_hours, interval_days,
+             days_of_week, specific_dates, publish_time, cron_expression, next_publish_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        """, (channel_db_id, schedule_type, interval_minutes, interval_hours, interval_days,
+              days_of_week or '[]', specific_dates or '[]', publish_time or '00:00', cron_expression))
+        await conn.commit()
+    return await execute_db(_save)
+
+async def db_get_schedule(channel_db_id: int):
+    async def _get(conn):
+        cur = await conn.execute("""
+            SELECT schedule_type, interval_minutes, interval_hours, interval_days,
+                   days_of_week, specific_dates, publish_time, cron_expression, next_publish_date
+            FROM schedule WHERE channel_db_id=?
+        """, (channel_db_id,))
+        row = await cur.fetchone()
+        if row:
+            return {
+                'type': row[0] or 'interval_minutes',
+                'interval_minutes': row[1] or 12,
+                'interval_hours': row[2] or 0,
+                'interval_days': row[3] or 0,
+                'days_of_week': row[4] or '[]',
+                'specific_dates': row[5] or '[]',
+                'publish_time': row[6] or '00:00',
+                'cron_expression': row[7],
+                'next_publish_date': row[8]
+            }
+        return {'type': 'interval_minutes', 'interval_minutes': 12, 'interval_hours': 0,
+                'interval_days': 0, 'days_of_week': '[]', 'specific_dates': '[]',
+                'publish_time': '00:00', 'cron_expression': None, 'next_publish_date': None}
+    return await execute_db(_get)
+
+async def db_set_next_publish_date(channel_db_id: int, next_date: datetime):
+    async def _set(conn):
+        if next_date:
+            await conn.execute("UPDATE schedule SET next_publish_date=? WHERE channel_db_id=?", (next_date.isoformat(), channel_db_id))
+        else:
+            await conn.execute("UPDATE schedule SET next_publish_date=NULL WHERE channel_db_id=?", (channel_db_id,))
+        await conn.commit()
+    return await execute_db(_set)
+
+async def db_set_last_publish(channel_db_id: int, publish_time: datetime):
+    async def _set(conn):
+        await conn.execute("INSERT OR REPLACE INTO last_publish (channel_db_id, last_publish_time) VALUES (?, ?)", (channel_db_id, publish_time.isoformat()))
+        await conn.commit()
+    return await execute_db(_set)
+
+async def db_update_next_publish_date(channel_db_id: int):
+    async def _update(conn):
+        schedule = await db_get_schedule(channel_db_id)
+        last_publish_cur = await conn.execute("SELECT last_publish_time FROM last_publish WHERE channel_db_id=?", (channel_db_id,))
+        last_row = await last_publish_cur.fetchone()
+        last_time = datetime.fromisoformat(last_row[0]) if last_row else utc_now()
+        schedule_type = schedule['type']
+        publish_time_str = schedule.get('publish_time', '00:00')
+        if ':' not in publish_time_str:
+            publish_time_str = '00:00'
+        try:
+            hour, minute = map(int, publish_time_str.split(':'))
+        except:
+            hour, minute = 0, 0
+        next_date = None
+        now = utc_now()
+        if schedule_type == 'interval_minutes':
+            minutes = schedule.get('interval_minutes', 12)
+            next_date = last_time + timedelta(minutes=minutes)
+        elif schedule_type == 'interval_hours':
+            hours = schedule.get('interval_hours', 1)
+            next_date = last_time + timedelta(hours=hours)
+        elif schedule_type == 'interval_days':
+            days = schedule.get('interval_days', 1)
+            next_date = last_time + timedelta(days=days)
+        elif schedule_type == 'days':
+            days_of_week = parse_days_of_week_safe(schedule.get('days_of_week', '[]'))
+            if days_of_week:
+                target_date = last_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                found = False
+                for i in range(1, 8):
+                    check_date = target_date + timedelta(days=i)
+                    if check_date.weekday() in days_of_week:
+                        next_date = check_date
+                        found = True
+                        break
+                if not found:
+                    next_date = target_date + timedelta(days=7)
+                    while next_date.weekday() not in days_of_week:
+                        next_date += timedelta(days=1)
+            else:
+                next_date = last_time + timedelta(days=1)
+        elif schedule_type == 'dates':
+            specific_dates = parse_dates_safe(schedule.get('specific_dates', '[]'))
+            if specific_dates:
+                target_date = last_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                for date_str in sorted(specific_dates):
+                    try:
+                        date_obj = datetime.strptime(date_str, '%Y-%m-%d').replace(hour=hour, minute=minute, second=0, microsecond=0)
+                        if date_obj > last_time:
+                            next_date = date_obj
+                            break
+                    except:
+                        continue
+                if not next_date:
+                    try:
+                        next_date = datetime.strptime(specific_dates[0], '%Y-%m-%d').replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=365)
+                    except:
+                        next_date = utc_now() + timedelta(days=1)
+            else:
+                next_date = utc_now() + timedelta(days=1)
+        elif schedule_type == 'cron':
+            cron_expr = schedule.get('cron_expression', '0 0 * * *')
+            try:
+                parts = cron_expr.split()
+                if len(parts) >= 5:
+                    next_date = last_time + timedelta(days=1)
+                    for i in range(1, 31):
+                        check_date = last_time + timedelta(days=i)
+                        if check_date.hour == hour and check_date.minute == minute:
+                            if parts[2] == '*' or check_date.day == int(parts[2]):
+                                if parts[3] == '*' or check_date.month == int(parts[3]):
+                                    if parts[4] == '*' or check_date.weekday() == int(parts[4]):
+                                        next_date = check_date
+                                        break
+            except:
+                next_date = utc_now() + timedelta(days=1)
+        else:
+            next_date = utc_now() + timedelta(minutes=schedule.get('interval_minutes', 12))
+        if next_date:
+            if next_date <= now:
+                if schedule_type == 'interval_minutes':
+                    minutes = schedule.get('interval_minutes', 12)
+                    while next_date <= now:
+                        next_date += timedelta(minutes=minutes)
+                elif schedule_type == 'interval_hours':
+                    hours = schedule.get('interval_hours', 1)
+                    while next_date <= now:
+                        next_date += timedelta(hours=hours)
+                elif schedule_type == 'interval_days':
+                    days = schedule.get('interval_days', 1)
+                    while next_date <= now:
+                        next_date += timedelta(days=days)
+                else:
+                    while next_date <= now:
+                        next_date += timedelta(days=1)
+            await conn.execute("UPDATE schedule SET next_publish_date=? WHERE channel_db_id=?", (next_date.isoformat(), channel_db_id))
+            await conn.commit()
+    return await execute_db(_update)
+
+async def db_set_publish_time(channel_db_id: int, time_str: str):
+    async def _set(conn):
+        await conn.execute("UPDATE schedule SET publish_time=? WHERE channel_db_id=?", (time_str, channel_db_id))
+        await conn.commit()
+    return await execute_db(_set)
+
+async def db_add_scheduled_post(chat_id: int, text: str, publish_time: datetime):
+    async def _add(conn):
+        await conn.execute("INSERT INTO scheduled_posts (chat_id, text, publish_time, fail_count) VALUES (?, ?, ?, 0)", (chat_id, sanitize_text(text), publish_time.isoformat()))
+        await conn.commit()
+    return await execute_db(_add)
+
+async def db_get_due_scheduled_posts(now: datetime, limit: int = 50):
+    async def _get(conn):
+        cur = await conn.execute("SELECT id, chat_id, text, fail_count FROM scheduled_posts WHERE publish_time <= ? LIMIT ?", (now.isoformat(), limit))
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def db_update_scheduled_post_fail(post_id: int, fail_count: int):
+    async def _update(conn):
+        await conn.execute("UPDATE scheduled_posts SET fail_count = ? WHERE id = ?", (fail_count, post_id))
+        await conn.commit()
+    return await execute_db(_update)
+
+async def db_delete_scheduled_post(post_id: int):
+    async def _delete(conn):
+        await conn.execute("DELETE FROM scheduled_posts WHERE id = ?", (post_id,))
+        await conn.commit()
+    return await execute_db(_delete)
+
+# ===================================================================
+# 9. دوال الإحصائيات الإضافية (Additional Stats Functions)
+# ===================================================================
+
+LEVEL_REQUIREMENTS = {
+    1: 0,
+    2: 100,
+    3: 250,
+    4: 500,
+    5: 1000,
+    6: 2000,
+    7: 5000,
+    8: 10000,
+    9: 20000,
+    10: 50000
+}
+
+ACHIEVEMENTS = {
+    'first_post': {'name': 'أول منشور', 'points': 10, 'icon': '📝'},
+    'first_week': {'name': 'أسبوع نشاط', 'points': 50, 'icon': '📅'},
+    'first_month': {'name': 'شهر نشاط', 'points': 200, 'icon': '🎉'},
+    'first_referral': {'name': 'أول إحالة', 'points': 25, 'icon': '🔗'},
+    'ten_referrals': {'name': '10 إحالات', 'points': 100, 'icon': '🌟'},
+    'first_contest': {'name': 'أول مسابقة', 'points': 30, 'icon': '🏆'},
+    'contest_winner': {'name': 'فائز بمسابقة', 'points': 100, 'icon': '🥇'},
+}
+
+async def db_get_user_level(user_id: int):
+    async def _get(conn):
+        cur = await conn.execute("SELECT points, level FROM user_levels WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'points': row[0], 'level': row[1]}
+        return {'points': 0, 'level': 1}
+    return await execute_db(_get)
+
+async def db_update_user_level(user_id: int, points: int, level: int):
+    async def _update(conn):
+        await conn.execute("INSERT OR REPLACE INTO user_levels (user_id, points, level) VALUES (?,?,?)", (user_id, points, level))
+        await conn.commit()
+    return await execute_db(_update)
+
+async def get_rank(user_id: int) -> dict:
+    return await db_get_user_level(user_id)
+
+async def get_top_users(limit: int = 10):
+    async def _get(conn):
+        cur = await conn.execute("SELECT user_id, points, level FROM user_levels ORDER BY points DESC LIMIT ?", (limit,))
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def achievement_system(user_id: int, action: str) -> str:
+    async def _get_achievements(conn):
+        cur = await conn.execute("SELECT achievements FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else '[]'
+    achievements = json.loads(await execute_db(_get_achievements) or '[]')
+    if action == 'first_post' and 'first_post' not in achievements:
+        achievements.append('first_post')
+        await db_update_user_level(user_id, (await db_get_user_level(user_id))['points'] + ACHIEVEMENTS['first_post']['points'], 1)
+        return f"{ACHIEVEMENTS['first_post']['icon']} {ACHIEVEMENTS['first_post']['name']} (+{ACHIEVEMENTS['first_post']['points']} نقطة)"
+    if action == 'first_referral' and 'first_referral' not in achievements:
+        achievements.append('first_referral')
+        await db_update_user_level(user_id, (await db_get_user_level(user_id))['points'] + ACHIEVEMENTS['first_referral']['points'], 1)
+        return f"{ACHIEVEMENTS['first_referral']['icon']} {ACHIEVEMENTS['first_referral']['name']} (+{ACHIEVEMENTS['first_referral']['points']} نقطة)"
+    if action == 'contest_winner' and 'contest_winner' not in achievements:
+        achievements.append('contest_winner')
+        await db_update_user_level(user_id, (await db_get_user_level(user_id))['points'] + ACHIEVEMENTS['contest_winner']['points'], 1)
+        return f"{ACHIEVEMENTS['contest_winner']['icon']} {ACHIEVEMENTS['contest_winner']['name']} (+{ACHIEVEMENTS['contest_winner']['points']} نقطة)"
+    return ""
+
+# ===================================================================
+# 10. دوال النسخ الاحتياطي الإضافية (Additional Backup Functions)
+# ===================================================================
+
+async def create_backup():
+    try:
+        encrypted_path = encrypt_db_backup()
+        temp_backup = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        temp_backup.close()
+        shutil.copy2(DB_PATH, temp_backup.name)
+        with open(temp_backup.name, 'rb') as f:
+            backup_data = f.read()
+        compressed = compress_backup(backup_data)
+        encrypted = BACKUP_CIPHER.encrypt(compressed)
+        backup_file = BACKUP_DIR / f"backup_{mecca_now().strftime('%Y%m%d_%H%M%S')}.enc"
+        with open(backup_file, 'wb') as f:
+            f.write(encrypted)
+        os.unlink(temp_backup.name)
+        backups = sorted(BACKUP_DIR.glob("backup_*.enc"), key=lambda x: x.stat().st_mtime, reverse=True)
+        for old_backup in backups[MAX_BACKUPS:]:
+            old_backup.unlink()
+        logger.info(f"✅ تم إنشاء نسخة احتياطية مشفرة: {backup_file}")
+        return backup_file
+    except Exception as e:
+        logger.error(f"❌ فشل إنشاء النسخة الاحتياطية: {e}")
+        raise
+
+async def incremental_backup():
+    try:
+        last_backup = await db_get_last_backup_time()
+        if last_backup:
+            last_time = datetime.fromisoformat(last_backup)
+        else:
+            last_time = utc_now() - timedelta(days=7)
+        backup_data = {}
+        async def _get_new_posts(conn):
+            cur = await conn.execute("SELECT * FROM posts WHERE created_at > ? LIMIT 1000", (last_time.isoformat(),))
+            return await cur.fetchall()
+        new_posts = await execute_db(_get_new_posts)
+        if new_posts:
+            backup_data['posts'] = [dict(post) for post in new_posts]
+        async def _get_new_users(conn):
+            cur = await conn.execute("SELECT * FROM users WHERE user_id IN (SELECT user_id FROM users_cache WHERE last_updated > ?)", (last_time.isoformat(),))
+            return await cur.fetchall()
+        new_users = await execute_db(_get_new_users)
+        if new_users:
+            backup_data['users'] = [dict(user) for user in new_users]
+        if backup_data:
+            data_json = json.dumps(backup_data, default=str)
+            compressed = compress_backup(data_json.encode('utf-8'))
+            encrypted = BACKUP_CIPHER.encrypt(compressed)
+            backup_file = BACKUP_DIR / f"incremental_{mecca_now().strftime('%Y%m%d_%H%M%S')}.inc"
+            with open(backup_file, 'wb') as f:
+                f.write(encrypted)
+            logger.info(f"✅ تم إنشاء نسخة احتياطية متزايدة: {backup_file}")
+            return backup_file
+        logger.info("📭 لا توجد بيانات جديدة للنسخ الاحتياطي المتزايد")
+        return None
+    except Exception as e:
+        logger.error(f"❌ فشل إنشاء النسخة الاحتياطية المتزايدة: {e}")
+        return None
+
+async def list_backups():
+    backups = sorted(BACKUP_DIR.glob("backup_*.enc"), key=lambda x: x.stat().st_mtime, reverse=True)
+    incremental = sorted(BACKUP_DIR.glob("incremental_*.inc"), key=lambda x: x.stat().st_mtime, reverse=True)
+    return backups + incremental
+
+async def restore_backup(backup_path: Path):
+    if not backup_path.exists():
+        raise FileNotFoundError(f"الملف {backup_path} غير موجود")
+    with open(backup_path, 'rb') as f:
+        encrypted = f.read()
+    try:
+        decrypted = BACKUP_CIPHER.decrypt(encrypted)
+    except Exception as e:
+        raise ValueError(f"فشل فك التشفير: {e}")
+    try:
+        decompressed = decompress_backup(decrypted)
+    except Exception as e:
+        raise ValueError(f"فشل فك الضغط: {e}")
+    if backup_path.suffix == '.inc':
+        data = json.loads(decompressed.decode('utf-8'))
+        async def _merge_data(conn):
+            if 'posts' in data:
+                for post in data['posts']:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO posts (id, channel_db_id, text, media_type, media_file_id, published, fail_count, views_count, last_view_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (post['id'], post['channel_db_id'], post['text'], post['media_type'], post['media_file_id'], post['published'], post['fail_count'], post['views_count'], post['last_view_time'], post['created_at'])
+                    )
+            if 'users' in data:
+                for user in data['users']:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO users (user_id, auto_publish, banned, trial_used, subscription_end, referral_code, referred_by, active_channel, auto_reply_enabled, auto_recycle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (user['user_id'], user['auto_publish'], user['banned'], user['trial_used'], user['subscription_end'], user['referral_code'], user['referred_by'], user['active_channel'], user['auto_reply_enabled'], user['auto_recycle'])
+                    )
+            await conn.commit()
+        await execute_db(_merge_data)
+        logger.info(f"✅ تم دمج النسخة المتزايدة: {backup_path}")
+    else:
+        temp_restore = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+        temp_restore.write(decompressed)
+        temp_restore.close()
+        current_backup = BACKUP_DIR / f"pre_restore_{mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+        shutil.copy2(DB_PATH, current_backup)
+        shutil.copy2(temp_restore.name, DB_PATH)
+        os.unlink(temp_restore.name)
+        await db_pool.initialize()
+        logger.info(f"✅ تم استعادة النسخة الكاملة: {backup_path}")
+
+# ===================================================================
+# 11. دوال الجلسات والتوكنات (Sessions & Tokens)
+# ===================================================================
+
+WEB_SESSION_TIMEOUT = 3600
+
+async def db_create_web_session(user_id: int) -> str:
+    session_id = secrets.token_urlsafe(32)
+    async def _create(conn):
+        await conn.execute(
+            "INSERT INTO web_sessions (session_id, user_id, created_at, expires) VALUES (?, ?, ?, ?)",
+            (session_id, user_id, time_module.time(), time_module.time() + WEB_SESSION_TIMEOUT)
+        )
+        await conn.commit()
+        return session_id
+    return await execute_db(_create)
+
+async def db_validate_web_session(session_id: str) -> int | None:
+    async def _validate(conn):
+        now = time_module.time()
+        cur = await conn.execute(
+            "SELECT user_id FROM web_sessions WHERE session_id = ? AND expires > ?",
+            (session_id, now)
+        )
+        row = await cur.fetchone()
+        if row:
+            await conn.execute(
+                "UPDATE web_sessions SET expires = ? WHERE session_id = ?",
+                (now + WEB_SESSION_TIMEOUT, session_id)
+            )
+            await conn.commit()
+            return row[0]
+        return None
+    return await execute_db(_validate)
+
+async def db_delete_web_session(session_id: str) -> bool:
+    async def _delete(conn):
+        await conn.execute("DELETE FROM web_sessions WHERE session_id = ?", (session_id,))
+        await conn.commit()
+        return True
+    return await execute_db(_delete)
+
+# ===================================================================
+# 12. دوال التخزين المؤقت (Cache Classes) - مكتملة
+# ===================================================================
+
+class TimedLRUCache:
+    def __init__(self, maxsize=200, ttl=3600):
+        self.cache = {}
+        self.maxsize = maxsize
+        self.ttl = ttl
+        self._lock = asyncio.Lock()
+    async def get(self, key):
+        async with self._lock:
+            if key in self.cache:
+                value, timestamp = self.cache[key]
+                if time_module.time() - timestamp < self.ttl:
+                    return value
+                else:
+                    del self.cache[key]
+            return None
+    async def set(self, key, value):
+        async with self._lock:
+            if key in self.cache:
+                del self.cache[key]
+            self.cache[key] = (value, time_module.time())
+            if len(self.cache) > self.maxsize:
+                oldest = min(self.cache.keys(), key=lambda k: self.cache[k][1])
+                del self.cache[oldest]
+    async def clear(self):
+        async with self._lock:
+            self.cache.clear()
+
+class CacheManager:
+    def __init__(self):
+        self.redis = None
+        self.use_redis = False
+        try:
+            import aioredis
+            self.use_redis = os.getenv("REDIS_URL") is not None
+        except:
+            self.use_redis = False
+        self.local_cache = {}
+    async def init(self):
+        if self.use_redis:
+            try:
+                import aioredis
+                self.redis = await aioredis.from_url(os.getenv("REDIS_URL"))
+                await self.redis.ping()
+                logger.info("✅ تم الاتصال بـ Redis")
+            except Exception as e:
+                logger.warning(f"⚠️ فشل الاتصال بـ Redis: {e}")
+                self.use_redis = False
+    async def get(self, key: str):
+        if self.use_redis and self.redis:
+            try:
+                value = await self.redis.get(key)
+                if value:
+                    return json.loads(value)
+            except:
+                pass
+        return self.local_cache.get(key)
+    async def set(self, key: str, value: Any, ttl: int = 300):
+        if self.use_redis and self.redis:
+            try:
+                await self.redis.setex(key, ttl, json.dumps(value))
+                return
+            except:
+                pass
+        self.local_cache[key] = value
+    async def delete(self, key: str):
+        if self.use_redis and self.redis:
+            try:
+                await self.redis.delete(key)
+            except:
+                pass
+        self.local_cache.pop(key, None)
+
+cache_manager = CacheManager()
+_translation_cache = TimedLRUCache(maxsize=500, ttl=3600)
+
+# ===================================================================
+# 13. دوال الميديا (Media Processing)
+# ===================================================================
+
+async def download_media_file(bot, file_id: str) -> bytes | None:
+    try:
+        file = await bot.get_file(file_id)
+        file_bytes = await file.download_as_bytearray()
+        return bytes(file_bytes)
+    except Exception as e:
+        logger.error(f"فشل تحميل الملف: {e}")
+        return None
+
+async def check_media_nsfw(file_bytes: bytes, file_type: str = 'photo') -> dict:
+    if file_type == 'photo':
+        return await check_nsfw_image(file_bytes)
+    elif file_type == 'video':
+        return await check_nsfw_video(file_bytes)
+    else:
+        return {"nsfw": False, "score": 0, "error": "نوع غير مدعوم"}
+
+async def get_media_info(bot, file_id: str) -> dict:
+    try:
+        file = await bot.get_file(file_id)
+        return {
+            'file_id': file.file_id,
+            'file_size': file.file_size,
+            'file_path': file.file_path,
+            'is_animated': False,
+            'mime_type': None
+        }
+    except Exception as e:
+        logger.error(f"فشل جلب معلومات الملف: {e}")
+        return {}
+
+# ===================================================================
+# 14. دوال الوضع الليلي (Night Mode Functions)
+# ===================================================================
+
+async def is_night_mode_active(chat_id: int) -> bool:
+    settings = await db_get_security_settings(chat_id)
+    if not settings.get('night_mode_enabled', False):
+        return False
+    try:
+        start = datetime.strptime(settings.get('night_mode_start', '23:00'), '%H:%M').time()
+        end = datetime.strptime(settings.get('night_mode_end', '06:00'), '%H:%M').time()
+        current = utc_now().time()
+        if start < end:
+            return start <= current <= end
+        else:
+            return current >= start or current <= end
+    except:
+        return False
+
+async def get_night_mode_action(chat_id: int) -> str:
+    settings = await db_get_security_settings(chat_id)
+    return settings.get('night_mode_action', 'mute')
+
+# ===================================================================
+# 15. دوال الردود التلقائية (Auto Reply Functions) - مكتملة
+# ===================================================================
+
+async def db_add_reply(keyword, reply):
+    async def _add(conn):
+        await conn.execute("INSERT OR REPLACE INTO group_replies (keyword, reply) VALUES (?,?)", (keyword.lower(), reply))
+        await conn.commit()
+    return await execute_db(_add)
+
+async def db_del_reply(keyword):
+    async def _del(conn):
+        await conn.execute("DELETE FROM group_replies WHERE keyword=?", (keyword.lower(),))
+        await conn.commit()
+    return await execute_db(_del)
+
+async def db_get_reply(keyword):
+    async def _get(conn):
+        cur = await conn.execute("SELECT reply FROM group_replies WHERE keyword=?", (keyword.lower(),))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def db_get_all_replies():
+    async def _get(conn):
+        cur = await conn.execute("SELECT keyword, reply FROM group_replies ORDER BY keyword")
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def db_get_auto_reply_settings(chat_id: int) -> dict:
+    async def _get(conn):
+        cur = await conn.execute("SELECT enabled, only_admins, ignore_bots FROM auto_reply_settings WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'enabled': row[0] == 1, 'only_admins': row[1] == 1, 'ignore_bots': row[2] == 1}
+        return {'enabled': True, 'only_admins': False, 'ignore_bots': True}
+    return await execute_db(_get)
+
+async def db_set_auto_reply_enabled(chat_id: int, enabled: bool) -> None:
+    async def _set(conn):
+        await conn.execute("INSERT OR REPLACE INTO auto_reply_settings (chat_id, enabled, updated_at) VALUES (?, 1, CURRENT_TIMESTAMP)" if enabled else "INSERT OR REPLACE INTO auto_reply_settings (chat_id, enabled, updated_at) VALUES (?, 0, CURRENT_TIMESTAMP)", (chat_id,))
+        await conn.commit()
+    return await execute_db(_set)
+
+async def db_set_auto_reply_only_admins(chat_id: int, only_admins: bool) -> None:
+    async def _set(conn):
+        await conn.execute("UPDATE auto_reply_settings SET only_admins=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=?", (1 if only_admins else 0, chat_id))
+        await conn.commit()
+    return await execute_db(_set)
+
+async def db_toggle_auto_reply(chat_id: int) -> bool:
+    settings = await db_get_auto_reply_settings(chat_id)
+    new_status = not settings['enabled']
+    await db_set_auto_reply_enabled(chat_id, new_status)
+    return new_status
+
+# ===================================================================
+# 16. دوال القواعد والإعلانات (Rules & Announcements)
+# ===================================================================
+
+async def db_get_group_rules(chat_id: int) -> dict | None:
+    async def _get(conn):
+        cur = await conn.execute("SELECT rules_text, updated_by, updated_at FROM group_rules WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'rules_text': row[0], 'updated_by': row[1], 'updated_at': row[2]}
+        return None
+    return await execute_db(_get)
+
+async def db_set_group_rules(chat_id: int, rules_text: str, updated_by: int) -> bool:
+    async def _set(conn):
+        await conn.execute("INSERT OR REPLACE INTO group_rules (chat_id, rules_text, updated_by, updated_at) VALUES (?, ?, ?, ?)", (chat_id, rules_text, updated_by, utc_now_iso()))
+        await conn.commit()
+        return True
+    return await execute_db(_set)
+
+async def db_add_announcement(title: str, text: str, created_by: int, scheduled_for: datetime = None) -> int:
+    async def _add(conn):
+        cur = await conn.execute(
+            "INSERT INTO announcements (title, text, created_by, created_at, scheduled_for, status) VALUES (?, ?, ?, ?, ?, 'pending') RETURNING id",
+            (title, text, created_by, utc_now_iso(), scheduled_for.isoformat() if scheduled_for else None)
+        )
+        row = await cur.fetchone()
+        await conn.commit()
+        return row[0] if row else None
+    return await execute_db(_add)
+
+# ===================================================================
+# 17. دوال النسخ الاحتياطي التلقائي (Auto Backup)
+# ===================================================================
+
+async def auto_backup():
+    consecutive_errors = 0
+    backoff = AUTO_BACKUP_SLEEP
+    max_backoff = 7 * 24 * 60 * 60
+    while True:
+        try:
+            await asyncio.sleep(AUTO_BACKUP_SLEEP)
+            auto_enabled = await db_get_auto_backup()
+            if auto_enabled:
+                last_backup = await db_get_last_backup_time()
+                if not last_backup:
+                    await create_backup()
+                else:
+                    last_time = datetime.fromisoformat(last_backup)
+                    if (utc_now() - last_time).days >= 7:
+                        await create_backup()
+                    else:
+                        await incremental_backup()
+                async def _update_backup_time(conn):
+                    await conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_backup', ?)", (utc_now_iso(),))
+                    await conn.commit()
+                await execute_db(_update_backup_time)
+            consecutive_errors = 0
+            backoff = AUTO_BACKUP_SLEEP
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في النسخ الاحتياطي التلقائي: {e}")
+            backoff = min(backoff * 1.5, max_backoff)
+            await asyncio.sleep(backoff)
+
+# ===================================================================
+# 18. دوال الأمان الإضافية - كاملة
+# ===================================================================
+
+async def db_get_security_settings(chat_id: int, force_refresh: bool = False) -> dict:
+    default_settings = {
+        'links': False, 'mentions': False, 'warn': True, 'slow_mode': False,
+        'slow_mode_seconds': 5, 'welcome_enabled': False,
+        'welcome_text': "مرحباً {user} في {chat} 🤍", 'goodbye_enabled': False,
+        'goodbye_text': "وداعاً {user} 👋", 'delete_banned_words': False,
+        'auto_penalty': 'none', 'auto_mute_duration': 60,
+        'delete_videos': False, 'delete_audio': False, 'delete_animation': False,
+        'delete_service': False, 'delete_documents': False, 'delete_stickers': False,
+        'delete_forwarded': False, 'delete_polls': False, 'delete_games': False,
+        'delete_voice': False, 'delete_video_note': False,
+        'delete_penalty': 'none', 'delete_penalty_duration': 0,
+        'antiflood_enabled': False, 'antiflood_messages': 5, 'antiflood_seconds': 10,
+        'antiflood_penalty': 'mute', 'max_warnings': 3, 'warn_penalty': 'ban',
+        'max_message_length': 0, 'night_mode_enabled': False,
+        'night_mode_start': '23:00', 'night_mode_end': '06:00', 'night_mode_action': 'mute'
+    }
+    if not isinstance(chat_id, int) or chat_id <= 0:
+        return default_settings.copy()
+    if not force_refresh:
+        if chat_id in _security_cache:
+            cached_time, value = _security_cache[chat_id]
+            if time_module.time() - cached_time < _AUTH_CACHE_TTL:
+                return value.copy()
+    async def _get(conn):
+        try:
+            original_factory = conn.row_factory
+            conn.row_factory = aiosqlite.Row
+            await ensure_security_columns(conn)
+            cur = await conn.execute("SELECT * FROM group_security WHERE chat_id=?", (chat_id,))
+            row = await cur.fetchone()
+            if row:
+                settings = {}
+                for key in default_settings:
+                    col_name = _get_column_name(key)
+                    if col_name and hasattr(row, col_name):
+                        val = getattr(row, col_name)
+                        if isinstance(default_settings[key], bool):
+                            settings[key] = val == 1 if val is not None else default_settings[key]
+                        else:
+                            settings[key] = val if val is not None else default_settings[key]
+                    else:
+                        settings[key] = default_settings[key]
+                _security_cache[chat_id] = (time_module.time(), settings)
+                return settings
+            await conn.execute("INSERT INTO group_security (chat_id) VALUES (?)", (chat_id,))
+            await conn.commit()
+            _security_cache[chat_id] = (time_module.time(), default_settings.copy())
+            return default_settings.copy()
+        except Exception as e:
+            logger.error(f"خطأ في جلب إعدادات الأمان {chat_id}: {e}")
+            return default_settings.copy()
+        finally:
+            conn.row_factory = original_factory
+    return await execute_db(_get)
+
+async def db_set_security_settings(chat_id: int, **kwargs) -> bool:
+    if not isinstance(chat_id, int) or chat_id <= 0:
+        return False
+    allowed_penalties = ['none', 'warn', 'mute', 'kick', 'ban']
+    validated = {}
+    for key, value in kwargs.items():
+        col_name = _get_column_name(key)
+        if not col_name:
+            continue
+        if col_name not in _ALLOWED_SECURITY_COLUMNS:
+            logger.warning(f"محاولة استخدام عمود غير مصرح به: {col_name}")
+            continue
+        if key.endswith('_enabled'):
+            validated[col_name] = 1 if value else 0
+        elif key.endswith('_penalty') or key == 'auto_penalty':
+            validated[col_name] = value if value in allowed_penalties else 'none'
+        elif key.endswith('_text') or key.endswith('_start') or key.endswith('_end'):
+            validated[col_name] = html.escape(str(value)[:1000]) if value else ""
+        else:
+            try:
+                validated[col_name] = int(value) if value is not None else 0
+            except (ValueError, TypeError):
+                validated[col_name] = 0
+    if 'night_mode_start' in validated and not validate_time_format(validated['night_mode_start']):
+        validated['night_mode_start'] = '23:00'
+    if 'night_mode_end' in validated and not validate_time_format(validated['night_mode_end']):
+        validated['night_mode_end'] = '06:00'
+    if not validated:
+        return False
+    async def _set(conn):
+        try:
+            await ensure_security_columns(conn)
+            cur = await conn.execute("SELECT 1 FROM group_security WHERE chat_id=?", (chat_id,))
+            if not await cur.fetchone():
+                await conn.execute("INSERT INTO group_security (chat_id) VALUES (?)", (chat_id,))
+            updates = [f"{k}=?" for k in validated.keys()]
+            values = list(validated.values())
+            values.append(chat_id)
+            await conn.execute(f"UPDATE group_security SET {', '.join(updates)} WHERE chat_id=?", values)
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"خطأ في تعيين إعدادات الأمان {chat_id}: {e}")
+            await conn.rollback()
+            return False
+    result = await execute_db(_set)
+    _security_cache.pop(chat_id, None)
+    return result
+
+async def db_set_chat_lock(chat_id: int, locked: bool, locked_by: int = None) -> bool:
+    if not isinstance(chat_id, int) or chat_id <= 0:
+        return False
+    async def _set(conn):
+        try:
+            if locked:
+                await conn.execute("INSERT OR REPLACE INTO chat_locks (chat_id, locked, locked_at, locked_by) VALUES (?, 1, ?, ?)", (chat_id, utc_now_iso(), locked_by))
+            else:
+                await conn.execute("DELETE FROM chat_locks WHERE chat_id=?", (chat_id,))
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"خطأ في قفل المجموعة {chat_id}: {e}")
+            return False
+    return await execute_db(_set)
+
+async def is_chat_locked(chat_id: int) -> bool:
+    async def _check(conn):
+        try:
+            cur = await conn.execute("SELECT 1 FROM chat_locks WHERE chat_id=? AND locked=1", (chat_id,))
+            return await cur.fetchone() is not None
+        except Exception as e:
+            logger.error(f"خطأ في التحقق من قفل المجموعة {chat_id}: {e}")
+            return False
+    return await execute_db(_check)
+
+async def db_check_slow_mode(chat_id: int, user_id: int) -> bool:
+    settings = await db_get_security_settings(chat_id)
+    if not settings['slow_mode']:
+        return True
+    seconds = settings.get('slow_mode_seconds', 5)
+    async def _check(conn):
+        cur = await conn.execute("SELECT message_time FROM user_messages WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        row = await cur.fetchone()
+        now = utc_now()
+        if row:
+            last_time = datetime.fromisoformat(row[0])
+            if (now - last_time).total_seconds() < seconds:
+                return False
+        await conn.execute("INSERT OR REPLACE INTO user_messages (user_id, chat_id, message_time) VALUES (?, ?, ?)", (user_id, chat_id, now.isoformat()))
+        await conn.commit()
+        return True
+    return await execute_db(_check)
+
+# ===================================================================
+# 19. دوال الصلاحيات المتقدمة (Authorization Functions) - مكتملة
+# ===================================================================
+
+async def check_bot_admin_permissions_group(bot, chat_id: int) -> dict:
+    try:
+        me = await bot.get_chat_member(chat_id, bot.id)
+        if me.status not in ['administrator', 'creator']:
+            return {'can_act': False, 'reason': 'البوت ليس مشرفاً'}
+        perms = {
+            'can_delete': getattr(me, 'can_delete_messages', False),
+            'can_ban': getattr(me, 'can_restrict_members', False),
+            'can_pin': getattr(me, 'can_pin_messages', False),
+            'can_invite': getattr(me, 'can_invite_users', False)
+        }
+        missing = [k for k, v in perms.items() if not v]
+        if missing:
+            return {'can_act': False, 'reason': f'ينقص البوت صلاحيات: {", ".join(missing)}', 'permissions': perms}
+        return {'can_act': True, 'reason': '', 'permissions': perms}
+    except Exception as e:
+        return {'can_act': False, 'reason': str(e)}
+
+async def is_currently_admin_in_group(bot, chat_id: int, user_id: int) -> bool:
+    if user_id == ANONYMOUS_ADMIN_ID:
+        try:
+            admins = await bot.get_chat_administrators(chat_id)
+            return len(admins) > 0
+        except Exception:
+            return False
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        return member.status in ['administrator', 'creator']
+    except Exception as e:
+        logger.error(f"خطأ في التحقق من مشرف {user_id} في {chat_id}: {e}")
+        return False
+
+def invalidate_auth_cache(chat_id: int = None, user_id: int = None):
+    try:
+        if chat_id and user_id:
+            key = f"auth_{chat_id}_{user_id}"
+            _auth_cache.pop(key, None)
+        elif chat_id:
+            keys = [k for k in _auth_cache if k.startswith(f"auth_{chat_id}_")]
+            for k in keys:
+                _auth_cache.pop(k, None)
+        else:
+            _auth_cache.clear()
+    except Exception as e:
+        logger.error(f"خطأ في مسح الكاش: {e}")
+
+async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
+    if user_id == PRIMARY_OWNER_ID:
+        return True
+    bot_perms = await check_bot_admin_permissions_group(bot, chat_id)
+    if not bot_perms.get('can_act', False):
+        return False
+    cache_key = f"auth_{chat_id}_{user_id}"
+    if cache_key in _auth_cache:
+        cached_time, value = _auth_cache[cache_key]
+        if time_module.time() - cached_time < 60:
+            return value
+    authorized = False
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        if member.status in ['administrator', 'creator']:
+            authorized = True
+        else:
+            if await db_is_hidden_owner(chat_id, user_id):
+                authorized = True
+            elif await db_is_hidden_admin(chat_id, user_id):
+                authorized = True
+            else:
+                authorized = False
+    except Exception as e:
+        logger.warning(f"فشل التحقق من {user_id} في {chat_id}: {e}")
+        authorized = await db_is_hidden_owner(chat_id, user_id) or await db_is_hidden_admin(chat_id, user_id) or await db_is_real_admin(chat_id, user_id)
+    _auth_cache[cache_key] = (time_module.time(), authorized)
+    return authorized
+
+async def is_bot_admin(user_id: int) -> bool:
+    if user_id == PRIMARY_OWNER_ID:
+        return True
+    async def _check(conn):
+        cur = await conn.execute("SELECT 1 FROM bot_admins WHERE user_id=?", (user_id,))
+        return await cur.fetchone() is not None
+    return await execute_db(_check)
+
+async def add_bot_admin(user_id: int) -> bool:
+    if user_id == PRIMARY_OWNER_ID:
+        return True
+    async def _add(conn):
+        await conn.execute("INSERT OR IGNORE INTO bot_admins (user_id) VALUES (?)", (user_id,))
+        await conn.commit()
+        return True
+    return await execute_db(_add)
+
+async def remove_bot_admin(user_id: int) -> bool:
+    if user_id == PRIMARY_OWNER_ID:
+        return False
+    async def _remove(conn):
+        await conn.execute("DELETE FROM bot_admins WHERE user_id=?", (user_id,))
+        await conn.commit()
+        return True
+    return await execute_db(_remove)
+
+# ===================================================================
+# 20. دوال العقوبات والإجراءات الإشرافية (Penalty Functions) - كاملة
+# ===================================================================
+
+async def apply_penalty_with_duration(bot, chat_id: int, user_id: int, 
+                                     penalty: str, duration_minutes: int = 0, 
+                                     reason: str = "") -> Tuple[bool, str]:
+    if user_id == PRIMARY_OWNER_ID:
+        return False, "لا يمكن تطبيق عقوبة على المطور الأساسي"
+    if await db_is_hidden_owner(chat_id, user_id):
+        return False, "لا يمكن تطبيق عقوبة على المالك المخفي"
+    result = False, "عقوبة غير معروفة"
+    if penalty == 'kick':
+        result = await execute_kick(bot, chat_id, user_id, reason)
+    elif penalty == 'ban':
+        result = await execute_ban(bot, chat_id, user_id, reason)
+    elif penalty == 'mute':
+        result = await execute_mute(bot, chat_id, user_id, duration_minutes, reason)
+    elif penalty == 'warn':
+        result = await execute_warn(bot, chat_id, user_id, bot.id, reason)
+    return result
+
+async def execute_ban(bot, chat_id: int, user_id: int, reason: str = "", moderator_id: int = None) -> Tuple[bool, str]:
+    try:
+        await bot.ban_chat_member(chat_id, user_id)
+        async def _log(conn):
+            await conn.execute("INSERT INTO moderation_log (chat_id, user_id, action, moderator_id, reason, created_at) VALUES (?, ?, 'ban', ?, ?, ?)", (chat_id, user_id, moderator_id, reason[:200] if reason else "", utc_now_iso()))
+            await conn.commit()
+        await execute_db(_log)
+        return True, f"✅ تم حظر المستخدم {user_id}"
+    except Exception as e:
+        logger.error(f"خطأ في حظر المستخدم {user_id}: {e}")
+        return False, "❌ حدث خطأ أثناء تنفيذ العملية"
+
+async def execute_mute(bot, chat_id: int, user_id: int, duration_minutes: int = None, reason: str = "", moderator_id: int = None) -> Tuple[bool, str]:
+    try:
+        until_date = None
+        if duration_minutes and duration_minutes > 0:
+            until_date = datetime.utcnow() + timedelta(minutes=duration_minutes)
+        permissions = ChatPermissions(can_send_messages=False)
+        await bot.restrict_chat_member(chat_id, user_id, permissions, until_date=until_date)
+        duration_text = f" لمدة {duration_minutes} دقيقة" if duration_minutes else " بشكل دائم"
+        async def _log(conn):
+            await conn.execute("INSERT INTO moderation_log (chat_id, user_id, action, duration_minutes, moderator_id, reason, created_at) VALUES (?, ?, 'mute', ?, ?, ?, ?)", (chat_id, user_id, duration_minutes or -1, moderator_id, reason[:200] if reason else "", utc_now_iso()))
+            await conn.commit()
+        await execute_db(_log)
+        return True, f"✅ تم كتم المستخدم {user_id}{duration_text}"
+    except Exception as e:
+        logger.error(f"خطأ في كتم المستخدم {user_id}: {e}")
+        return False, "❌ حدث خطأ أثناء تنفيذ العملية"
+
+async def execute_kick(bot, chat_id: int, user_id: int, reason: str = "", moderator_id: int = None) -> Tuple[bool, str]:
+    try:
+        await bot.ban_chat_member(chat_id, user_id)
+        await bot.unban_chat_member(chat_id, user_id)
+        async def _log(conn):
+            await conn.execute("INSERT INTO moderation_log (chat_id, user_id, action, moderator_id, reason, created_at) VALUES (?, ?, 'kick', ?, ?, ?)", (chat_id, user_id, moderator_id, reason[:200] if reason else "", utc_now_iso()))
+            await conn.commit()
+        await execute_db(_log)
+        return True, f"✅ تم طرد المستخدم {user_id}"
+    except Exception as e:
+        logger.error(f"خطأ في طرد المستخدم {user_id}: {e}")
+        return False, "❌ حدث خطأ أثناء تنفيذ العملية"
+
+async def execute_warn(bot, chat_id: int, user_id: int, moderator_id: int, reason: str = "") -> Tuple[bool, str]:
+    settings = await db_get_security_settings(chat_id)
+    max_warnings = settings.get('max_warnings', 3)
+    warn_penalty = settings.get('warn_penalty', 'ban')
+    async def _add_warning(conn):
+        cur = await conn.execute("SELECT warnings FROM user_warnings WHERE user_id=? AND chat_id=?", (user_id, chat_id))
+        row = await cur.fetchone()
+        warnings = (row[0] if row else 0) + 1
+        await conn.execute("INSERT OR REPLACE INTO user_warnings (user_id, chat_id, warnings) VALUES (?, ?, ?)", (user_id, chat_id, warnings))
+        await conn.execute("INSERT INTO moderation_log (chat_id, user_id, action, duration_minutes, moderator_id, reason, created_at) VALUES (?, ?, 'warn', ?, ?, ?, ?)", (chat_id, user_id, warnings, moderator_id, reason[:200] if reason else "", utc_now_iso()))
+        await conn.commit()
+        return warnings
+    warnings = await execute_db(_add_warning)
+    if warnings >= max_warnings:
+        penalty_reason = f"تلقائي بعد {warnings} تحذيرات"
+        if warn_penalty == 'ban':
+            await execute_ban(bot, chat_id, user_id, penalty_reason, moderator_id)
+        elif warn_penalty == 'kick':
+            await execute_kick(bot, chat_id, user_id, penalty_reason, moderator_id)
+        elif warn_penalty == 'mute':
+            await execute_mute(bot, chat_id, user_id, 1440, penalty_reason, moderator_id)
+        async def _clear(conn):
+            await conn.execute("DELETE FROM user_warnings WHERE user_id=? AND chat_id=?", (user_id, chat_id))
+            await conn.commit()
+        await execute_db(_clear)
+        return True, f"⚠️ تحذير {warnings}/{max_warnings} - تم تطبيق {warn_penalty}"
+    return True, f"⚠️ تحذير {warnings}/{max_warnings}"
+
+async def execute_restrict(bot, chat_id: int, user_id: int, reason: str = "", moderator_id: int = None) -> Tuple[bool, str]:
+    try:
+        permissions = ChatPermissions(can_send_messages=True, can_send_media_messages=False, can_send_other_messages=False, can_add_web_page_previews=False)
+        await bot.restrict_chat_member(chat_id, user_id, permissions)
+        async def _log(conn):
+            await conn.execute("INSERT INTO moderation_log (chat_id, user_id, action, moderator_id, reason, created_at) VALUES (?, ?, 'restrict', ?, ?, ?)", (chat_id, user_id, moderator_id, reason[:200] if reason else "", utc_now_iso()))
+            await conn.commit()
+        await execute_db(_log)
+        return True, f"✅ تم تقييد المستخدم {user_id}"
+    except Exception as e:
+        logger.error(f"خطأ في تقييد المستخدم {user_id}: {e}")
+        return False, "❌ حدث خطأ أثناء تنفيذ العملية"
+
+async def execute_unban(bot, chat_id: int, user_id: int, moderator_id: int = None) -> Tuple[bool, str]:
+    try:
+        await bot.unban_chat_member(chat_id, user_id)
+        async def _log(conn):
+            await conn.execute("INSERT INTO moderation_log (chat_id, user_id, action, moderator_id, created_at) VALUES (?, ?, 'unban', ?, ?)", (chat_id, user_id, moderator_id, utc_now_iso()))
+            await conn.commit()
+        await execute_db(_log)
+        return True, f"✅ تم إلغاء حظر المستخدم {user_id}"
+    except Exception as e:
+        logger.error(f"خطأ في إلغاء حظر المستخدم {user_id}: {e}")
+        return False, "❌ حدث خطأ أثناء تنفيذ العملية"
+
+async def execute_pin(bot, chat_id: int, message_id: int, disable_notification: bool = False) -> Tuple[bool, str]:
+    try:
+        await bot.pin_chat_message(chat_id, message_id, disable_notification=disable_notification)
+        return True, "✅ تم تثبيت الرسالة"
+    except Exception as e:
+        return False, f"❌ فشل التثبيت: {str(e)[:100]}"
+
+async def execute_moderation_action(bot, chat_id: int, user_id: int, action: str, reason: str = "", duration: int = None, moderator_id: int = None):
+    if action == 'ban':
+        return await execute_ban(bot, chat_id, user_id, reason=reason, moderator_id=moderator_id)
+    elif action == 'mute':
+        return await execute_mute(bot, chat_id, user_id, duration_minutes=duration, reason=reason, moderator_id=moderator_id)
+    elif action == 'warn':
+        return await execute_warn(bot, chat_id, user_id, moderator_id, reason=reason)
+    elif action == 'kick':
+        return await execute_kick(bot, chat_id, user_id, reason=reason, moderator_id=moderator_id)
+    elif action == 'restrict':
+        return await execute_restrict(bot, chat_id, user_id, reason=reason, moderator_id=moderator_id)
+    elif action == 'unban':
+        return await execute_unban(bot, chat_id, user_id, moderator_id=moderator_id)
+    elif action == 'pin':
+        return None, "استخدم زر التثبيت مع الرد على الرسالة"
+    else:
+        return False, f"إجراء غير معروف: {action}"
+
+async def delete_and_penalize(update: Update, context: ContextTypes.DEFAULT_TYPE, warning_message: str):
+    if not update.message:
+        return
+    message = update.message
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    try:
+        await message.delete()
+    except Exception as e:
+        logger.error(f"فشل حذف الرسالة: {e}")
+    try:
+        await safe_send_markdown(context.bot, chat_id, warning_message)
+    except:
+        pass
+    settings = await db_get_security_settings(chat_id)
+    penalty = settings.get('auto_penalty', 'none')
+    if penalty != 'none':
+        duration = settings.get('auto_mute_duration', 60)
+        await apply_penalty_with_duration(context.bot, chat_id, user_id, penalty, duration, reason="مخالفة قواعد المجموعة")
+
+async def get_moderation_log(chat_id: int, limit: int = 20) -> str:
+    async def _get_log(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("SELECT user_id, action, duration_minutes, reason, created_at FROM moderation_log WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?", (chat_id, limit))
+        return await cur.fetchall()
+    logs = await execute_db(_get_log)
+    if not logs:
+        return "📭 لا توجد سجلات إجراءات"
+    text = "📜 **سجل إجراءات المجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for log in logs:
+        user_id = log['user_id']
+        action = log['action']
+        duration = log['duration_minutes']
+        reason = log['reason']
+        created_at = log['created_at']
+        try:
+            dt = datetime.fromisoformat(created_at)
+            dt_mecca = utc_to_mecca(dt)
+            time_str = dt_mecca.strftime("%Y-%m-%d %H:%M")
+        except:
+            time_str = created_at[:16] if created_at else "?"
+        duration_text = ""
+        if action == 'mute' and duration:
+            if duration == -1:
+                duration_text = " (دائم)"
+            elif duration < 60:
+                duration_text = f" ({duration} دقيقة)"
+            elif duration < 1440:
+                duration_text = f" ({duration//60} ساعة)"
+            else:
+                duration_text = f" ({duration//1440} يوم)"
+        elif action == 'warn' and duration:
+            duration_text = f" (تحذير #{duration})"
+        reason_text = f"\n   📝 السبب: {reason[:50]}" if reason else ""
+        text += f"• `{user_id}` → {action}{duration_text}{reason_text}\n   🕐 {time_str}\n\n"
+    return text
+
+# ===================================================================
+# 21. دوال الكلمات المحظورة (Banned Words) - مكتملة
+# ===================================================================
+
+async def db_add_banned_word(word: str, chat_id: int, added_by: int) -> bool:
+    if not word or not isinstance(word, str):
+        return False
+    if not isinstance(chat_id, int) or chat_id <= 0:
+        return False
+    word = word.strip().lower()[:100]
+    if len(word) < 2:
+        return False
+    async def _add(conn):
+        try:
+            cur = await conn.execute("SELECT COUNT(*) FROM banned_words WHERE chat_id=?", (chat_id,))
+            count = (await cur.fetchone())[0]
+            if count >= _MAX_BANNED_WORDS_PER_CHAT:
+                logger.warning(f"تم الوصول للحد الأقصى للكلمات المحظورة في {chat_id}")
+                return False
+            if chat_id == -1:
+                cur = await conn.execute("SELECT COUNT(*) FROM banned_words WHERE chat_id=-1")
+                global_count = (await cur.fetchone())[0]
+                if global_count >= _MAX_BANNED_WORDS_GLOBAL:
+                    logger.warning("تم الوصول للحد الأقصى للكلمات المحظورة العامة")
+                    return False
+            await conn.execute("INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?, ?, ?, ?)", (word, chat_id, added_by, utc_now_iso()))
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"خطأ في إضافة كلمة محظورة: {e}")
+            return False
+    return await execute_db(_add)
+
+async def db_remove_banned_word(word: str, chat_id: int) -> bool:
+    if not word or not isinstance(word, str):
+        return False
+    word = word.strip().lower()
+    async def _remove(conn):
+        try:
+            await conn.execute("DELETE FROM banned_words WHERE word=? AND chat_id=?", (word, chat_id))
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"خطأ في حذف كلمة محظورة: {e}")
+            return False
+    return await execute_db(_remove)
+
+async def db_get_banned_words(chat_id: int):
+    async def _get(conn):
+        try:
+            cur = await conn.execute("SELECT word, added_by, added_at FROM banned_words WHERE chat_id=? OR chat_id=-1", (chat_id,))
+            return await cur.fetchall()
+        except Exception as e:
+            logger.error(f"خطأ في جلب الكلمات المحظورة: {e}")
+            return []
+    return await execute_db(_get)
+
+async def db_contains_banned_word(text: str, chat_id: int) -> Optional[str]:
+    if not text:
+        return None
+    words = await db_get_banned_words(chat_id)
+    text_lower = text.lower()
+    for word, _, _ in words:
+        if word in text_lower:
+            return word
+    return None
+
+# ===================================================================
+# 22. دوال الأحداث (Event Functions) - مكتملة
+# ===================================================================
+
+async def track_chat_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = update.my_chat_member
+    if not result:
+        return
+    new_status = result.new_chat_member.status
+    old_status = result.old_chat_member.status
+    if new_status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]:
+        is_new = old_status in [ChatMember.LEFT, ChatMember.BANNED, ChatMember.RESTRICTED]
+        if is_new:
+            chat = result.chat
+            adder = result.from_user
+            if chat.type == 'channel':
+                await db_register_channel(chat.id, chat.title or "بدون اسم", adder.id)
+                try:
+                    await context.bot.send_message(
+                        chat_id=adder.id,
+                        text=f"✅ **تم إضافة البوت إلى القناة**\n\n📌 الاسم: {chat.title}\n🆔 المعرف: {chat.id}",
+                        parse_mode="MarkdownV2"
+                    )
+                except:
+                    pass
+            elif chat.type in ['group', 'supergroup']:
+                await send_addition_report_to_all_admins(context.bot, chat, adder, "مجموعة" if chat.type == 'group' else "سوبر جروب")
+                await db_register_group(chat.id, chat.title or "بدون اسم", adder.id, chat.username)
+                await db_register_hidden_owner_group(chat.id, adder.id)
+                invalidate_auth_cache(chat.id, adder.id)
+                await db_sync_group_admins(chat.id, context.bot, adder.id)
+                owner_info = await detect_owner_type(context.bot, chat.id)
+                if owner_info.get('user_id') and owner_info['user_id'] != adder.id:
+                    await db_register_hidden_owner_group(chat.id, owner_info['user_id'])
+                    invalidate_auth_cache(chat.id, owner_info['user_id'])
+            else:
+                return
+
+# ===================================================================
+# 23. دوال معالجة الميديا الإضافية (Media Processing) - مكتملة
+# ===================================================================
+
+async def download_media_file(bot, file_id: str) -> bytes | None:
+    try:
+        file = await bot.get_file(file_id)
+        file_bytes = await file.download_as_bytearray()
+        return bytes(file_bytes)
+    except Exception as e:
+        logger.error(f"فشل تحميل الملف: {e}")
+        return None
+
+async def check_media_nsfw(file_bytes: bytes, file_type: str = 'photo') -> dict:
+    if file_type == 'photo':
+        return await check_nsfw_image(file_bytes)
+    elif file_type == 'video':
+        return await check_nsfw_video(file_bytes)
+    else:
+        return {"nsfw": False, "score": 0, "error": "نوع غير مدعوم"}
+
+async def get_media_info(bot, file_id: str) -> dict:
+    try:
+        file = await bot.get_file(file_id)
+        return {
+            'file_id': file.file_id,
+            'file_size': file.file_size,
+            'file_path': file.file_path,
+            'is_animated': False,
+            'mime_type': None
+        }
+    except Exception as e:
+        logger.error(f"فشل جلب معلومات الملف: {e}")
+        return {}
+
+# ===================================================================
+# 24. دوال الوضع الليلي (Night Mode) - مكتملة
+# ===================================================================
+
+async def is_night_mode_active(chat_id: int) -> bool:
+    settings = await db_get_security_settings(chat_id)
+    if not settings.get('night_mode_enabled', False):
+        return False
+    try:
+        start = datetime.strptime(settings.get('night_mode_start', '23:00'), '%H:%M').time()
+        end = datetime.strptime(settings.get('night_mode_end', '06:00'), '%H:%M').time()
+        current = utc_now().time()
+        if start < end:
+            return start <= current <= end
+        else:
+            return current >= start or current <= end
+    except:
+        return False
+
+async def get_night_mode_action(chat_id: int) -> str:
+    settings = await db_get_security_settings(chat_id)
+    return settings.get('night_mode_action', 'mute')
 
 # ===================================================================
 # 64. الوظيفة الرئيسية (main)
