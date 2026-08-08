@@ -9760,6 +9760,56 @@ async def main():
         logger.info("🔄 استخدام Polling (بدون Webhook)")
         await application.bot.delete_webhook()
         await run_polling_safe(application)
+# ===================================================================
+# دوال نظام المستويات والنقاط - أضفها إلى نهاية الملف
+# ===================================================================
+
+LEVEL_REQUIREMENTS = {
+    1: 0,
+    2: 100,
+    3: 250,
+    4: 500,
+    5: 1000,
+    6: 2000,
+    7: 5000,
+    8: 10000,
+    9: 20000,
+    10: 50000
+}
+
+async def db_get_user_level(user_id: int) -> dict:
+    """جلب مستوى المستخدم ونقاطه"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT points, level FROM user_levels WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'points': row[0], 'level': row[1]}
+        return {'points': 0, 'level': 1}
+    return await execute_db(_get)
+
+async def db_update_user_level(user_id: int, points: int, level: int):
+    """تحديث مستوى المستخدم ونقاطه"""
+    async def _update(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_levels (user_id, points, level) VALUES (?, ?, ?)",
+            (user_id, points, level)
+        )
+        await conn.commit()
+    return await execute_db(_update)
+
+async def get_rank(user_id: int) -> dict:
+    """جلب رتبة المستخدم (مرادف لـ db_get_user_level)"""
+    return await db_get_user_level(user_id)
+
+async def get_top_users(limit: int = 10):
+    """جلب أفضل المستخدمين حسب النقاط"""
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT user_id, points, level FROM user_levels ORDER BY points DESC LIMIT ?",
+            (limit,)
+        )
+        return await cur.fetchall()
+    return await execute_db(_get)
 
 if __name__ == "__main__":
     try:
