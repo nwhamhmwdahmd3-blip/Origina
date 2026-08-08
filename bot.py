@@ -9533,6 +9533,7 @@ async def main():
     # ===================================================================
     # تسجيل معالجات الكولباك (CallbackQuery Handlers) - جميع الكولباك
     # ===================================================================
+    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=f"^{CallbackData.ADMIN_PANEL}$"))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
     application.add_handler(CallbackQueryHandler(back_callback, pattern=f"^{CallbackData.BACK}$"))
     application.add_handler(CallbackQueryHandler(cancel_session_callback, pattern=f"^{CallbackData.CANCEL_SESSION}$"))
@@ -9988,6 +9989,358 @@ async def translate_text(text: str, target_lang: str) -> str:
         logger.error(f"فشل الترجمة: {e}")
     
     return text
+# ===================================================================
+# دوال التذكيرات (Reminder Settings)
+# ===================================================================
+
+async def db_get_user_reminder_settings(user_id: int) -> dict:
+    """جلب إعدادات التذكيرات للمستخدم"""
+    async def _get(conn):
+        cur = await conn.execute("""
+            SELECT subscription_reminder, daily_stats_reminder, weekly_report,
+                   reminder_days_before, last_reminder_sent, notification_lang
+            FROM user_reminder_settings WHERE user_id=?
+        """, (user_id,))
+        row = await cur.fetchone()
+        if row:
+            return {
+                'subscription_reminder': row[0] == 1,
+                'daily_stats_reminder': row[1] == 1,
+                'weekly_report': row[2] == 1,
+                'reminder_days_before': row[3] if row[3] is not None else 3,
+                'last_reminder_sent': row[4] if row[4] else 0,
+                'notification_lang': row[5] if row[5] else 'ar'
+            }
+        else:
+            # إنشاء إعدادات افتراضية
+            await conn.execute("""
+                INSERT INTO user_reminder_settings
+                (user_id, subscription_reminder, daily_stats_reminder, weekly_report,
+                 reminder_days_before, last_reminder_sent, notification_lang)
+                VALUES (?, 1, 0, 1, 3, 0, 'ar')
+            """, (user_id,))
+            await conn.commit()
+            return {
+                'subscription_reminder': True,
+                'daily_stats_reminder': False,
+                'weekly_report': True,
+                'reminder_days_before': 3,
+                'last_reminder_sent': 0,
+                'notification_lang': 'ar'
+            }
+    return await execute_db(_get)
+
+async def db_update_reminder_settings(user_id: int, **kwargs) -> None:
+    """تحديث إعدادات التذكيرات"""
+    async def _update(conn):
+        fields, values = [], []
+        for key, value in kwargs.items():
+            if key == 'subscription_reminder':
+                fields.append("subscription_reminder=?")
+                values.append(1 if value else 0)
+            elif key == 'daily_stats_reminder':
+                fields.append("daily_stats_reminder=?")
+                values.append(1 if value else 0)
+            elif key == 'weekly_report':
+                fields.append("weekly_report=?")
+                values.append(1 if value else 0)
+            elif key == 'reminder_days_before':
+                fields.append("reminder_days_before=?")
+                values.append(value)
+            elif key == 'notification_lang':
+                fields.append("notification_lang=?")
+                values.append(value)
+        if fields:
+            query = f"UPDATE user_reminder_settings SET {', '.join(fields)} WHERE user_id=?"
+            values.append(user_id)
+            await conn.execute(query, values)
+            await conn.commit()
+    return await execute_db(_update)
+
+async def db_update_last_reminder_sent(user_id: int, reminder_type: str) -> None:
+    """تحديث وقت إرسال آخر تذكير"""
+    async def _update(conn):
+        now_timestamp = int(time_module.time())
+        await conn.execute(
+            "UPDATE user_reminder_settings SET last_reminder_sent=? WHERE user_id=?",
+            (now_timestamp, user_id)
+        )
+        await conn.commit()
+    return await execute_db(_update)
+
+# ===================================================================
+# دوال الإحالات (Referrals)
+# ===================================================================
+
+async def db_get_referral_code(user_id: int) -> str | None:
+    """جلب كود الإحالة للمستخدم"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT referral_code FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row and row[0] else None
+    return await execute_db(_get)
+
+async def db_generate_referral_code(user_id: int) -> str:
+    """إنشاء كود إحالة جديد للمستخدم"""
+    async def _generate(conn):
+        code_hash = hashlib.md5(f"{user_id}{time_module.time()}".encode()).hexdigest()[:8]
+        referral_code = f"REF{code_hash.upper()}"
+        await conn.execute(
+            "UPDATE users SET referral_code=? WHERE user_id=?",
+            (referral_code, user_id)
+        )
+        await conn.commit()
+        return referral_code
+    return await execute_db(_generate)
+
+async def db_get_user_by_referral_code(referral_code: str) -> int | None:
+    """جلب المستخدم عن طريق كود الإحالة"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT user_id FROM users WHERE referral_code=?", (referral_code,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def db_add_referral(referrer_id: int, referred_id: int) -> bool:
+    """إضافة إحالة جديدة"""
+    if referrer_id == referred_id:
+        return False
+    async def _add(conn):
+        try:
+            # التحقق من عدم وجود إحالة مكررة
+            cur = await conn.execute("SELECT 1 FROM referrals WHERE referred_id=?", (referred_id,))
+            if await cur.fetchone():
+                return False
+            
+            # التحقق من الحد اليومي
+            today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            cur = await conn.execute(
+                "SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND referred_at >= ?",
+                (referrer_id, today_start)
+            )
+            count_today = (await cur.fetchone())[0]
+            settings = await db_get_referral_settings()
+            max_per_day = int(settings.get('max_referrals_per_day', '5'))
+            if count_today >= max_per_day:
+                return False
+            
+            # إضافة الإحالة
+            await conn.execute(
+                "INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)",
+                (referrer_id, referred_id)
+            )
+            await conn.execute(
+                """INSERT INTO referral_rewards 
+                   (user_id, referral_count, total_reward_days, claimed_reward_days) 
+                   VALUES (?, 1, 0, 0) 
+                   ON CONFLICT(user_id) DO UPDATE SET referral_count = referral_count + 1""",
+                (referrer_id,)
+            )
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"خطأ في إضافة إحالة: {e}")
+            return False
+    return await execute_db(_add)
+
+async def db_auto_reward_referral(referrer_id: int, referred_id: int) -> int:
+    """مكافأة تلقائية للإحالة"""
+    async def _reward(conn):
+        settings = await db_get_referral_settings()
+        reward_days = int(settings.get('reward_days_per_referral', '3'))
+        await conn.execute(
+            """INSERT INTO referral_rewards 
+               (user_id, referral_count, total_reward_days, claimed_reward_days) 
+               VALUES (?, 0, ?, 0) 
+               ON CONFLICT(user_id) DO UPDATE SET 
+                   referral_count = referral_count + 1, 
+                   total_reward_days = total_reward_days + ?""",
+            (referrer_id, reward_days, reward_days)
+        )
+        await conn.execute(
+            "UPDATE referrals SET is_rewarded=1 WHERE referrer_id=? AND referred_id=?",
+            (referrer_id, referred_id)
+        )
+        await conn.commit()
+        return reward_days
+    return await execute_db(_reward)
+
+async def db_get_referral_settings() -> dict:
+    """جلب إعدادات الإحالات"""
+    async def _get(conn):
+        settings = {}
+        cur = await conn.execute("SELECT key, value FROM referral_settings")
+        rows = await cur.fetchall()
+        for key, value in rows:
+            settings[key] = value
+        return settings
+    return await execute_db(_get)
+
+async def db_get_referral_stats(user_id: int) -> dict:
+    """جلب إحصائيات الإحالات للمستخدم"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
+        total_referrals = (await cur.fetchone())[0]
+        cur = await conn.execute(
+            "SELECT referral_count, total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        return {
+            'total_referrals': total_referrals,
+            'referral_count': row[0] if row else 0,
+            'total_reward_days': row[1] if row else 0,
+            'claimed_reward_days': row[2] if row else 0,
+            'available_days': (row[1] if row else 0) - (row[2] if row else 0)
+        }
+    return await execute_db(_get)
+
+async def db_claim_referral_reward(user_id: int) -> int:
+    """صرف مكافآت الإحالات"""
+    async def _claim(conn):
+        cur = await conn.execute(
+            "SELECT total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        total = row[0]
+        claimed = row[1]
+        available = total - claimed
+        if available <= 0:
+            return 0
+        
+        # إضافة الأيام إلى الاشتراك
+        current_sub = await db_get_subscription_days_left(user_id)
+        new_sub_days = current_sub + available
+        end_date = (utc_now() + timedelta(days=new_sub_days)).isoformat()
+        await conn.execute(
+            "UPDATE users SET subscription_end=? WHERE user_id=?",
+            (end_date, user_id)
+        )
+        await conn.execute(
+            "UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?",
+            (available, user_id)
+        )
+        await conn.commit()
+        return available
+    return await execute_db(_claim)
+
+# ===================================================================
+# دوال إضافية مفقودة
+# ===================================================================
+
+async def db_get_user_channel_stats(user_id: int, channel_db_id: int) -> dict:
+    """جلب إحصائيات قناة معينة للمستخدم"""
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("""
+            SELECT COUNT(*) as total_posts,
+                   SUM(CASE WHEN published = 1 THEN 1 ELSE 0 END) as published_posts,
+                   SUM(CASE WHEN published = 0 THEN 1 ELSE 0 END) as unpublished_posts,
+                   SUM(views_count) as total_views,
+                   AVG(views_count) as avg_views,
+                   MAX(created_at) as last_post_time,
+                   MIN(created_at) as first_post_time
+            FROM posts
+            WHERE channel_db_id = ?
+        """, (channel_db_id,))
+        row = await cur.fetchone()
+
+        if not row or row['total_posts'] == 0:
+            return {
+                'total_posts': 0, 'published_posts': 0, 'unpublished_posts': 0,
+                'total_views': 0, 'avg_views': 0, 'last_post_time': None, 'first_post_time': None
+            }
+        return {
+            'total_posts': row['total_posts'] or 0,
+            'published_posts': row['published_posts'] or 0,
+            'unpublished_posts': row['unpublished_posts'] or 0,
+            'total_views': row['total_views'] or 0,
+            'avg_views': round(row['avg_views'] or 0, 2),
+            'last_post_time': row['last_post_time'],
+            'first_post_time': row['first_post_time']
+        }
+    return await execute_db(_get)
+
+async def db_get_subscription_days_left(user_id: int) -> int:
+    """جلب عدد الأيام المتبقية في الاشتراك"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row and row[0]:
+            try:
+                end_date = datetime.fromisoformat(row[0])
+                days = (end_date - utc_now()).days
+                return max(0, days)
+            except:
+                return 0
+        return 0
+    return await execute_db(_get)
+# ===================================================================
+# دوال لوحة الأدمن (Admin Panel Functions)
+# ===================================================================
+
+async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض لوحة المشرفين"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    # التحقق من الصلاحية
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
+        return
+    
+    keyboard = get_admin_keyboard(user_id)
+    text = "👑 **لوحة التحكم**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر الإجراء المطلوب:"
+    
+    if query:
+        try:
+            await safe_edit_markdown(query, text, reply_markup=keyboard)
+        except Exception as e:
+            # إذا فشل التعديل، أرسل رسالة جديدة
+            await query.message.reply_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# ===================================================================
+# دوال المشرفين (Admin Functions)
+# ===================================================================
+
+async def is_bot_admin(user_id: int) -> bool:
+    """التحقق من كون المستخدم مشرفاً في البوت"""
+    if user_id == PRIMARY_OWNER_ID:
+        return True
+    async def _check(conn):
+        cur = await conn.execute("SELECT 1 FROM bot_admins WHERE user_id=?", (user_id,))
+        return await cur.fetchone() is not None
+    return await execute_db(_check)
+
+async def add_bot_admin(user_id: int) -> bool:
+    """إضافة مشرف جديد للبوت"""
+    if user_id == PRIMARY_OWNER_ID:
+        return True
+    async def _add(conn):
+        await conn.execute("INSERT OR IGNORE INTO bot_admins (user_id) VALUES (?)", (user_id,))
+        await conn.commit()
+        return True
+    return await execute_db(_add)
+
+async def remove_bot_admin(user_id: int) -> bool:
+    """إزالة مشرف من البوت"""
+    if user_id == PRIMARY_OWNER_ID:
+        return False
+    async def _remove(conn):
+        await conn.execute("DELETE FROM bot_admins WHERE user_id=?", (user_id,))
+        await conn.commit()
+        return True
+    return await execute_db(_remove)
 
 if __name__ == "__main__":
     try:
