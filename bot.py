@@ -12610,15 +12610,15 @@ async def main():
     # ===================================================================
     # 6. تسجيل معالجات الرسائل (Message Handlers)
     # ===================================================================
-    application.add_handler(MessageHandler(filters.Text & filters.ChatType.GROUPS & ~filters.Command, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.Caption & filters.ChatType.GROUPS & ~filters.Command, filter_messages_handler))
-    application.add_handler(MessageHandler(filters.Text & filters.ChatType.PRIVATE & ~filters.Command, message_handler_main))
-    application.add_handler(MessageHandler(filters.Photo & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Video & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Audio & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Voice & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Animation & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Document & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.Text() & filters.ChatType.GROUPS & ~filters.Command(), filter_messages_handler))
+    application.add_handler(MessageHandler(filters.Caption() & filters.ChatType.GROUPS & ~filters.Command(), filter_messages_handler))
+    application.add_handler(MessageHandler(filters.Text() & filters.ChatType.PRIVATE & ~filters.Command(), message_handler_main))
+    application.add_handler(MessageHandler(filters.Photo() & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.Video() & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.Audio() & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.Voice() & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.Animation() & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.Document() & filters.ChatType.PRIVATE, message_handler_main))
 
     # ===================================================================
     # 7. تسجيل معالجات الأحداث الإضافية
