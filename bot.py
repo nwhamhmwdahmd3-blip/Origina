@@ -8218,6 +8218,7 @@ async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT
 # ===================================================================
 
 async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """فلترة الرسائل في المجموعات مع تطبيق الإعدادات الأمنية"""
     if update.message is None or update.effective_chat is None or update.effective_user is None:
         return
 
@@ -8232,13 +8233,16 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
     if update.effective_chat.type not in ['group', 'supergroup']:
         return
 
+    # التحقق من أن المستخدم ليس بوتاً
     if await is_user_bot(context.bot, user_id):
         return
 
+    # التحقق من صلاحيات البوت
     bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
     if not bot_perms.get('can_act', False):
         return
 
+    # التحقق من قفل المجموعة
     if await is_chat_locked(chat_id) and not await is_authorized_in_group(context.bot, chat_id, user_id):
         try:
             await message.delete()
@@ -8247,6 +8251,7 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
             pass
         return
 
+    # التحقق من الوضع البطيء
     if not await db_check_slow_mode(chat_id, user_id):
         try:
             await message.delete()
@@ -8257,20 +8262,24 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
 
     settings = await db_get_security_settings(chat_id)
 
+    # حذف الروابط
     if settings.get('links', False) and contains_link(text):
         await delete_and_penalize(update, context, "🚫 ممنوع إرسال الروابط!")
         return
 
+    # حذف المعرفات
     if settings.get('mentions', False) and contains_mention(text):
         await delete_and_penalize(update, context, "🚫 ممنوع إرسال المعرفات (@username)!")
         return
 
+    # حذف الكلمات المحظورة
     if settings.get('delete_banned_words', False):
         word = await db_contains_banned_word(text, chat_id)
         if word:
             await delete_and_penalize(update, context, f"🚫 كلمة محظورة: `{word}`")
             return
 
+    # حذف أنواع محددة من الوسائط
     delete_media = False
     media_type = None
 
@@ -8318,6 +8327,7 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
             await apply_penalty_with_duration(context.bot, chat_id, user_id, penalty, duration)
         return
 
+    # فحص الطول الأقصى للرسالة
     max_len = settings.get('max_message_length', 0)
     if max_len > 0 and len(text) > max_len:
         try:
@@ -8327,6 +8337,7 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
             pass
         return
 
+    # مضاد الفيضان
     if settings.get('antiflood_enabled', False) and await db_check_antiflood(chat_id, user_id):
         try:
             await message.delete()
@@ -8337,6 +8348,7 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
         await apply_penalty_with_duration(context.bot, chat_id, user_id, penalty, 60)
         return
 
+    # الوضع الليلي
     if settings.get('night_mode_enabled', False):
         now = utc_now()
         try:
@@ -8361,9 +8373,11 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
         except:
             pass
 
+    # إضافة نقاط للمستخدم
     if not user_id == context.bot.id:
         await add_points(user_id, update, context)
 
+    # الردود التلقائية
     if text:
         auto_reply_settings = await db_get_auto_reply_settings(chat_id)
         if auto_reply_settings.get('enabled', False):
