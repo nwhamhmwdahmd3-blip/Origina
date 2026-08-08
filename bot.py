@@ -9658,7 +9658,7 @@ async def main():
     application.add_handler(MessageHandler(filters.Audio() & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.Voice() & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.Animation() & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.Document() & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.Document.ALL() & filters.ChatType.PRIVATE, message_handler_main))
 
     # ===================================================================
     # تسجيل معالجات الأحداث الإضافية
