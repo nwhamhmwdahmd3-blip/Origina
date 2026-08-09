@@ -10197,8 +10197,10 @@ async def main():
     تشمل إعداد التطبيق، تسجيل جميع المعالجات، المهام الخلفية، وتشغيل Webhook أو Polling.
     """
 
+    # تهيئة قاعدة البيانات وتحسينات ما قبل التشغيل
     await init_db_improved()
 
+    # تحميل الكلمات المحظورة من الملف
     try:
         words = load_banned_words_from_file(BANNED_WORDS_FILE)
         if words:
@@ -10221,8 +10223,10 @@ async def main():
     except Exception as e:
         logger.error(f"❌ فشل استيراد الكلمات المحظورة: {e}")
 
+    # تحميل اللغات
     load_all_languages()
 
+    # إعداد الـ Application
     if USE_PROXY:
         request_kwargs = {
             'proxy_url': PROXY_URL,
@@ -10245,10 +10249,11 @@ async def main():
         request = HTTPXRequest(**request_kwargs)
         application = Application.builder().token(TOKEN).request(request).build()
 
+    # إضافة معالج الأخطاء العالمي
     application.add_error_handler(global_error_handler)
 
     # ===================================================================
-    # تسجيل معالجات الأوامر
+    # تسجيل معالجات الأوامر (Command Handlers)
     # ===================================================================
     application.add_handler(CommandHandler("start", start_command_handler))
     application.add_handler(CommandHandler("language", language_command_handler))
@@ -10288,24 +10293,8 @@ async def main():
     application.add_handler(CommandHandler("rules", rules_command_handler))
 
     # ===================================================================
-    # تسجيل معالجات الكولباك
+    # تسجيل معالجات الكولباك (CallbackQuery Handlers)
     # ===================================================================
-    # معالجات الأمان المتقدمة
-    application.add_handler(CallbackQueryHandler(security_advanced_actions_callback, pattern=f"^{CallbackData.ADVANCED_ACTIONS}"))
-    application.add_handler(CallbackQueryHandler(penalty_warn_callback, pattern="^penalty:warn:"))
-    application.add_handler(CallbackQueryHandler(penalty_restrict_callback, pattern="^penalty:restrict:"))
-    application.add_handler(CallbackQueryHandler(penalty_none_callback, pattern="^penalty:none:"))
-
-    # معالجات إعدادات التحذير
-    application.add_handler(CallbackQueryHandler(security_warn_settings_callback, pattern="^security:warn_settings:"))
-    application.add_handler(CallbackQueryHandler(security_warn_count_callback, pattern="^warn_count:"))
-    application.add_handler(CallbackQueryHandler(security_warn_penalty_callback, pattern="^warn_penalty:"))
-    application.add_handler(CallbackQueryHandler(set_warn_penalty_callback, pattern="^set_warn_penalty:"))
-
-    application.add_handler(CallbackQueryHandler(security_warn_settings_callback, pattern="^security:warn_settings:"))
-    application.add_handler(CallbackQueryHandler(security_warn_count_callback, pattern="^warn_count:"))
-    application.add_handler(CallbackQueryHandler(security_warn_penalty_callback, pattern="^warn_penalty:"))
-    application.add_handler(CallbackQueryHandler(set_warn_penalty_callback, pattern="^set_warn_penalty:"))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
     application.add_handler(CallbackQueryHandler(back_callback, pattern=f"^{CallbackData.BACK}$"))
     application.add_handler(CallbackQueryHandler(cancel_session_callback, pattern=f"^{CallbackData.CANCEL_SESSION}$"))
@@ -10351,6 +10340,9 @@ async def main():
     application.add_handler(CallbackQueryHandler(penalty_kick_callback, pattern=f"^{CallbackData.PENALTY_KICK}:"))
     application.add_handler(CallbackQueryHandler(penalty_ban_callback, pattern=f"^{CallbackData.PENALTY_BAN}:"))
     application.add_handler(CallbackQueryHandler(penalty_mute_callback, pattern=f"^{CallbackData.PENALTY_MUTE}:"))
+    application.add_handler(CallbackQueryHandler(penalty_warn_callback, pattern="^penalty:warn:"))
+    application.add_handler(CallbackQueryHandler(penalty_restrict_callback, pattern="^penalty:restrict:"))
+    application.add_handler(CallbackQueryHandler(penalty_none_callback, pattern="^penalty:none:"))
     application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_5}"))
     application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_30}"))
     application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_60}"))
@@ -10479,7 +10471,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(user_auto_reply_toggle_callback, pattern=f"^{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}"))
 
     # ===================================================================
-    # تسجيل معالجات الرسائل
+    # تسجيل معالجات الرسائل (Message Handlers) - للإصدار 22.8
     # ===================================================================
     application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
@@ -10489,7 +10481,7 @@ async def main():
     application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
-    application.add_handler(MessageHandler(filters.DOCUMENT & filters.ChatType.PRIVATE, message_handler_main))
+    application.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, message_handler_main))
 
     # ===================================================================
     # تسجيل معالجات الأحداث الإضافية
@@ -10558,7 +10550,9 @@ async def main():
     task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "refresh_admins"))
     task_manager.create_task(safe_loop(memory_optimizer_loop, "memory_optimizer"))
 
-    # تشغيل البوت
+    # ===================================================================
+    # تشغيل البوت (Webhook أو Polling)
+    # ===================================================================
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
 
     if hostname:
