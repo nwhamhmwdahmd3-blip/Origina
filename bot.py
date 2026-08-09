@@ -10290,6 +10290,17 @@ async def main():
     # ===================================================================
     # تسجيل معالجات الكولباك
     # ===================================================================
+    # معالجات الأمان المتقدمة
+    application.add_handler(CallbackQueryHandler(security_advanced_actions_callback, pattern=f"^{CallbackData.ADVANCED_ACTIONS}"))
+    application.add_handler(CallbackQueryHandler(penalty_warn_callback, pattern="^penalty:warn:"))
+    application.add_handler(CallbackQueryHandler(penalty_restrict_callback, pattern="^penalty:restrict:"))
+    application.add_handler(CallbackQueryHandler(penalty_none_callback, pattern="^penalty:none:"))
+
+    # معالجات إعدادات التحذير
+    application.add_handler(CallbackQueryHandler(security_warn_settings_callback, pattern="^security:warn_settings:"))
+    application.add_handler(CallbackQueryHandler(security_warn_count_callback, pattern="^warn_count:"))
+    application.add_handler(CallbackQueryHandler(security_warn_penalty_callback, pattern="^warn_penalty:"))
+    application.add_handler(CallbackQueryHandler(set_warn_penalty_callback, pattern="^set_warn_penalty:"))
 
     application.add_handler(CallbackQueryHandler(security_warn_settings_callback, pattern="^security:warn_settings:"))
     application.add_handler(CallbackQueryHandler(security_warn_count_callback, pattern="^warn_count:"))
