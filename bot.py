@@ -1464,52 +1464,87 @@ async def db_get_all_users():
         return await cur.fetchall()
     return await execute_db(_get)
 
+# ===================================================================
+# دوال المستخدمين (User Functions) - نسخة نظيفة
+# ===================================================================
+
+async def db_register_user(user_id: int) -> bool:
+    """تسجيل مستخدم جديد في قاعدة البيانات"""
+    async def _register(conn):
+        try:
+            cur = await conn.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            if await cur.fetchone():
+                return False
+            
+            await conn.execute(
+                "INSERT INTO users (user_id, auto_publish, banned, trial_used, auto_reply_enabled, auto_recycle) VALUES (?, 1, 0, 0, 1, 1)",
+                (user_id,)
+            )
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"خطأ في تسجيل المستخدم {user_id}: {e}")
+            await conn.rollback()
+            return False
+    return await execute_db(_register)
+
+async def db_get_all_users():
+    """جلب جميع المستخدمين"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT user_id, banned FROM users ORDER BY user_id")
+        return await cur.fetchall()
+    return await execute_db(_get)
+
 async def db_update_user_cache(user_id: int, username: str, first_name: str):
+    """تحديث بيانات المستخدم في الكاش"""
     async def _update(conn):
         await conn.execute(
-            """INSERT OR REPLACE INTO users_cache 
-               (user_id, username, first_name, last_updated) 
-               VALUES (?, ?, ?, ?)""",
+            "INSERT OR REPLACE INTO users_cache (user_id, username, first_name, last_updated) VALUES (?, ?, ?, ?)",
             (user_id, username or "", first_name or "", utc_now_iso())
         )
         await conn.commit()
     return await execute_db(_update)
 
 async def db_is_banned(user_id: int) -> bool:
+    """التحقق من حظر المستخدم"""
     async def _check(conn):
-        cur = await conn.execute("SELECT banned FROM users WHERE user_id=?", (user_id,))
+        cur = await conn.execute("SELECT banned FROM users WHERE user_id = ?", (user_id,))
         row = await cur.fetchone()
         return row and row[0] == 1
     return await execute_db(_check)
 
 async def db_set_ban(user_id: int, banned: bool):
+    """تعيين حظر المستخدم"""
     async def _set(conn):
-        await conn.execute("UPDATE users SET banned=? WHERE user_id=?", (1 if banned else 0, user_id))
+        await conn.execute("UPDATE users SET banned = ? WHERE user_id = ?", (1 if banned else 0, user_id))
         await conn.commit()
     return await execute_db(_set)
 
 async def db_has_used_trial(user_id: int) -> bool:
+    """التحقق من استخدام التجربة المجانية"""
     async def _check(conn):
-        cur = await conn.execute("SELECT trial_used FROM users WHERE user_id=?", (user_id,))
+        cur = await conn.execute("SELECT trial_used FROM users WHERE user_id = ?", (user_id,))
         row = await cur.fetchone()
         return row and row[0] == 1
     return await execute_db(_check)
 
 async def db_activate_trial(user_id: int) -> int:
+    """تفعيل التجربة المجانية"""
     async def _activate(conn):
-        cur = await conn.execute("SELECT trial_used FROM users WHERE user_id=?", (user_id,))
+        cur = await conn.execute("SELECT trial_used FROM users WHERE user_id = ?", (user_id,))
         row = await cur.fetchone()
         if row and row[0] == 1:
             return 0
         end_date = (utc_now() + timedelta(days=30)).isoformat()
-        await conn.execute("UPDATE users SET trial_used=1, subscription_end=? WHERE user_id=?", (end_date, user_id))
+        await conn.execute("UPDATE users SET trial_used = 1, subscription_end = ? WHERE user_id = ?", (end_date, user_id))
         await conn.commit()
         return 30
     return await execute_db(_activate)
 
 async def db_activate_subscription(user_id: int, days: int):
+    """تفعيل الاشتراك"""
     async def _activate(conn):
-        cur = await conn.execute("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
+        cur = await conn.execute("SELECT subscription_end FROM users WHERE user_id = ?", (user_id,))
         row = await cur.fetchone()
         if row and row[0]:
             try:
@@ -1522,13 +1557,14 @@ async def db_activate_subscription(user_id: int, days: int):
                 new_end = utc_now() + timedelta(days=days)
         else:
             new_end = utc_now() + timedelta(days=days)
-        await conn.execute("UPDATE users SET subscription_end=? WHERE user_id=?", (new_end.isoformat(), user_id))
+        await conn.execute("UPDATE users SET subscription_end = ? WHERE user_id = ?", (new_end.isoformat(), user_id))
         await conn.commit()
     return await execute_db(_activate)
 
 async def db_has_active_subscription(user_id: int) -> bool:
+    """التحقق من وجود اشتراك نشط"""
     async def _check(conn):
-        cur = await conn.execute("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
+        cur = await conn.execute("SELECT subscription_end FROM users WHERE user_id = ?", (user_id,))
         row = await cur.fetchone()
         if row and row[0]:
             try:
