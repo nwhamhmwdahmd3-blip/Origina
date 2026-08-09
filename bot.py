@@ -10290,6 +10290,11 @@ async def main():
     # ===================================================================
     # تسجيل معالجات الكولباك
     # ===================================================================
+
+    application.add_handler(CallbackQueryHandler(security_warn_settings_callback, pattern="^security:warn_settings:"))
+    application.add_handler(CallbackQueryHandler(security_warn_count_callback, pattern="^warn_count:"))
+    application.add_handler(CallbackQueryHandler(security_warn_penalty_callback, pattern="^warn_penalty:"))
+    application.add_handler(CallbackQueryHandler(set_warn_penalty_callback, pattern="^set_warn_penalty:"))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern=f"^{CallbackData.MAIN_MENU}$"))
     application.add_handler(CallbackQueryHandler(back_callback, pattern=f"^{CallbackData.BACK}$"))
     application.add_handler(CallbackQueryHandler(cancel_session_callback, pattern=f"^{CallbackData.CANCEL_SESSION}$"))
@@ -11091,6 +11096,106 @@ async def db_set_user_language(user_id: int, lang: str) -> None:
         )
         await conn.commit()
     await execute_db(_set)
+# ===================================================================
+# دوال أزرار الأمان المفقودة
+# ===================================================================
+
+async def security_warn_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعدادات التحذير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    # جلب الإعدادات الحالية
+    settings = await db_get_security_settings(chat_id)
+    max_warnings = settings.get('max_warnings', 3)
+    warn_penalty = settings.get('warn_penalty', 'ban')
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🔢 عدد التحذيرات: {max_warnings}", callback_data=f"warn_count:{chat_id}"),
+         InlineKeyboardButton(f"⚖️ العقوبة: {warn_penalty}", callback_data=f"warn_penalty:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+    
+    await query.edit_message_text(
+        f"⚠️ **إعدادات التحذير**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔢 عدد التحذيرات: {max_warnings}\n"
+        f"⚖️ عقوبة الوصول للحد الأقصى: {warn_penalty}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"اختر الإعداد المطلوب:",
+        reply_markup=keyboard,
+        parse_mode="MarkdownV2"
+    )
+
+# ===================================================================
+# دوال إعدادات التحذير الإضافية
+# ===================================================================
+
+async def security_warn_count_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغيير عدد التحذيرات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = "WAITING_WARN_COUNT"
+    context.user_data['security_chat_id'] = chat_id
+    await query.edit_message_text("🔢 أرسل عدد التحذيرات المسموح بها (1-10):\nمثال: 3")
+
+async def security_warn_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغيير عقوبة التحذير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛑 حظر", callback_data=f"set_warn_penalty:ban:{chat_id}"),
+         InlineKeyboardButton("👢 طرد", callback_data=f"set_warn_penalty:kick:{chat_id}")],
+        [InlineKeyboardButton("🔇 كتم", callback_data=f"set_warn_penalty:mute:{chat_id}"),
+         InlineKeyboardButton("❌ لا شيء", callback_data=f"set_warn_penalty:none:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"security:warn_settings:{chat_id}")]
+    ])
+    
+    await query.edit_message_text(
+        "⚖️ **اختر عقوبة التحذير**\n"
+        "عند وصول المستخدم إلى الحد الأقصى للتحذيرات:",
+        reply_markup=keyboard,
+        parse_mode="MarkdownV2"
+    )
+
+async def set_warn_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين عقوبة التحذير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        await query.edit_message_text("❌ بيانات غير صالحة")
+        return
+    
+    penalty = parts[1]
+    chat_id = int(parts[2])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_security_settings(chat_id, warn_penalty=penalty)
+    await query.answer(f"✅ تم تعيين عقوبة التحذير إلى: {penalty}")
+    await security_warn_settings_callback(update, context)
 
 if __name__ == "__main__":
     try:
