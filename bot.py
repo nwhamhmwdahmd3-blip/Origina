@@ -3781,7 +3781,13 @@ async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
         first_name = update.effective_user.first_name or ""
         await db_register_user(user_id)
         await db_update_user_cache(user_id, username, first_name)
-        await set_user_language(user_id, 'ar')
+        
+        # تحميل اللغة من قاعدة البيانات، وإلا استخدم العربية
+        lang = await db_get_user_language(user_id)
+        if not lang:
+            lang = 'ar'
+        await set_user_language(user_id, lang)
+        
         if context.args and context.args[0].startswith('ref_'):
             ref_code = context.args[0][4:]
             referrer_id = await db_get_user_by_referral_code(ref_code)
@@ -3802,7 +3808,6 @@ async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         logger.error(f"خطأ في start_command_handler: {e}")
         await safe_send_markdown(context.bot, update.effective_user.id, "❌ حدث خطأ، يرجى المحاولة مرة أخرى.")
-
 
 async def language_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -6517,8 +6522,15 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query:
         await query.answer()
     user_id = update.effective_user.id
-    lang_code = query.data.split("_")[-1] if query else context.user_data.get('lang_code', 'ar')
+    lang_code = query.data.split("_")[-1]
+    
+    # حفظ في الذاكرة المؤقتة
     await set_user_language(user_id, lang_code)
+    
+    # حفظ في قاعدة البيانات
+    await db_set_user_language(user_id, lang_code)
+    
+    # تحديث القائمة الرئيسية
     kb, title, active = await get_main_keyboard(user_id)
     if query:
         await safe_edit_markdown(query, title, reply_markup=kb)
