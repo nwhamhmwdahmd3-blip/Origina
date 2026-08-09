@@ -4907,32 +4907,32 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def _update_security_panel(query, chat_id: int, user_id: int):
-    """تحديث لوحة الأمان - يستخدم HTML لتجنب أخطاء التنسيق"""
+    """تحديث لوحة الأمان بعد تغيير الإعداد"""
     try:
         settings = await db_get_security_settings(chat_id, force_refresh=True)
         
-        def st(val): return "✅" if val else "❌"
+        def status(val): return "✅" if val else "❌"
         
-        text = f"""🔐 إعدادات الأمان للمجموعة
+        text = f"""🔐 **إعدادات الأمان للمجموعة**
 ━━━━━━━━━━━━━━━━━━━━━━
-🔗 الروابط: {st(settings.get('links'))}
-@ المعرفات: {st(settings.get('mentions'))}
-⏱️ البطيء: {st(settings.get('slow_mode'))} ({settings.get('slow_mode_seconds', 5)}ث)
-🎯 الترحيب: {st(settings.get('welcome_enabled'))}
-👋 الوداع: {st(settings.get('goodbye_enabled'))}
-🎬 فيديوهات: {st(settings.get('delete_videos'))}
-🎵 صوتيات: {st(settings.get('delete_audio'))}
-🎞️ متحركات: {st(settings.get('delete_animation'))}
-🛠️ الخدمة: {st(settings.get('delete_service'))}
-📄 ملفات: {st(settings.get('delete_documents'))}
-🖼️ ملصقات: {st(settings.get('delete_stickers'))}
-📨 المُعاد: {st(settings.get('delete_forwarded'))}
-📊 استطلاعات: {st(settings.get('delete_polls'))}
-🎮 ألعاب: {st(settings.get('delete_games'))}
-🎤 صوتيات: {st(settings.get('delete_voice'))}
-🎥 فيديو نوت: {st(settings.get('delete_video_note'))}
-🌊 مضاد الفيضان: {st(settings.get('antiflood_enabled'))}
-🌙 ليلي: {st(settings.get('night_mode_enabled'))}
+🔗 الروابط: {status(settings.get('links'))}
+@ المعرفات: {status(settings.get('mentions'))}
+⏱️ البطيء: {status(settings.get('slow_mode'))} ({settings.get('slow_mode_seconds', 5)}ث)
+🎯 الترحيب: {status(settings.get('welcome_enabled'))}
+👋 الوداع: {status(settings.get('goodbye_enabled'))}
+🎬 فيديوهات: {status(settings.get('delete_videos'))}
+🎵 صوتيات: {status(settings.get('delete_audio'))}
+🎞️ متحركات: {status(settings.get('delete_animation'))}
+🛠️ الخدمة: {status(settings.get('delete_service'))}
+📄 ملفات: {status(settings.get('delete_documents'))}
+🖼️ ملصقات: {status(settings.get('delete_stickers'))}
+📨 المُعاد: {status(settings.get('delete_forwarded'))}
+📊 استطلاعات: {status(settings.get('delete_polls'))}
+🎮 ألعاب: {status(settings.get('delete_games'))}
+🎤 صوتيات: {status(settings.get('delete_voice'))}
+🎥 فيديو نوت: {status(settings.get('delete_video_note'))}
+🌊 مضاد الفيضان: {status(settings.get('antiflood_enabled'))}
+🌙 ليلي: {status(settings.get('night_mode_enabled'))}
 📏 الطول: {settings.get('max_message_length', 0) or 'غير محدود'}
 ⚖️ العقوبة: {settings.get('delete_penalty', 'لا شيء')}
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -4989,7 +4989,15 @@ async def _update_security_panel(query, chat_id: int, user_id: int):
             ]
         ]
         
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        # محاولة تعديل الرسالة، وتجاهل خطأ "لم تتغير"
+        try:
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="MarkdownV2")
+        except BadRequest as e:
+            if "message is not modified" in str(e).lower():
+                # الرسالة لم تتغير، نكتفي بتأكيد التغيير
+                await query.answer("✅ تم التغيير", show_alert=False)
+            else:
+                raise e
     except Exception as e:
         logger.error(f"خطأ في تحديث لوحة الأمان: {e}")
         try:
