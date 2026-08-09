@@ -11348,6 +11348,545 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /security - إعدادات الأمان",
         parse_mode="Markdown"
     )
+# ===================================================================
+# دوال المستويات والنقاط (Levels & Points Functions)
+# ===================================================================
+
+# متطلبات كل مستوى
+LEVEL_REQUIREMENTS = {
+    1: 0,
+    2: 100,
+    3: 250,
+    4: 500,
+    5: 1000,
+    6: 2000,
+    7: 5000,
+    8: 10000,
+    9: 20000,
+    10: 50000
+}
+
+# تخزين مؤقت لعدد النقاط في الساعة (لمنع التكدس)
+user_points_last_hour = defaultdict(lambda: (0, 0.0))
+
+async def db_get_user_level(user_id: int) -> dict:
+    """
+    الحصول على مستوى المستخدم ونقاطه
+    Args:
+        user_id: معرف المستخدم
+    Returns:
+        dict: {'points': int, 'level': int}
+    """
+    async def _get(conn):
+        cur = await conn.execute("SELECT points, level FROM user_levels WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'points': row[0], 'level': row[1]}
+        # إذا لم يكن موجوداً، إنشاء سجل جديد
+        await conn.execute("INSERT INTO user_levels (user_id, points, level) VALUES (?, 0, 1)", (user_id,))
+        await conn.commit()
+        return {'points': 0, 'level': 1}
+    return await execute_db(_get)
+
+async def db_update_user_level(user_id: int, points: int, level: int):
+    """
+    تحديث مستوى المستخدم ونقاطه
+    Args:
+        user_id: معرف المستخدم
+        points: عدد النقاط
+        level: المستوى
+    """
+    async def _update(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_levels (user_id, points, level) VALUES (?, ?, ?)",
+            (user_id, points, level)
+        )
+        await conn.commit()
+    return await execute_db(_update)
+
+async def add_points(user_id: int, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None):
+    """
+    إضافة نقطة للمستخدم مع منع التكدس (20 نقطة في الساعة)
+    Args:
+        user_id: معرف المستخدم
+        update: كائن التحديث (للإشعارات)
+        context: سياق البوت (للإشعارات)
+    """
+    now = utc_now()
+    count, last_timestamp = user_points_last_hour.get(user_id, (0, 0.0))
+    
+    if last_timestamp > 0:
+        last_time = datetime.fromtimestamp(last_timestamp)
+        last_time = to_naive(last_time)
+        if (now - last_time).total_seconds() < 3600:
+            if count >= 20:
+                return
+            new_count = count + 1
+        else:
+            new_count = 1
+    else:
+        new_count = 1
+    
+    user_points_last_hour[user_id] = (new_count, now.timestamp())
+    
+    data = await db_get_user_level(user_id)
+    old_level = data['level']
+    points = data['points'] + 1
+    level = old_level
+    new_levels = []
+    
+    for lvl, pts in LEVEL_REQUIREMENTS.items():
+        if points >= pts and lvl > level:
+            new_levels.append(lvl)
+            level = lvl
+    
+    # إشعار بتقدم المستوى
+    if new_levels and update and update.effective_user and context:
+        try:
+            if len(new_levels) == 1:
+                msg = f"🎉 **تهانينا!**\nلقد وصلت إلى المستوى {new_levels[0]}! 🎉"
+            else:
+                msg = f"🎉 **تهانينا!**\nلقد تقدمت {len(new_levels)} مستويات إلى المستوى {new_levels[-1]}! 🎉"
+            await safe_send_to_user_or_group(update, context, msg)
+        except:
+            pass
+    
+    await db_update_user_level(user_id, points, level)
+
+async def get_rank(user_id: int) -> dict:
+    """
+    الحصول على رتبة المستخدم (نفس db_get_user_level)
+    Args:
+        user_id: معرف المستخدم
+    Returns:
+        dict: {'points': int, 'level': int}
+    """
+    return await db_get_user_level(user_id)
+
+async def get_top_users(limit: int = 10) -> List[tuple]:
+    """
+    الحصول على أفضل المستخدمين حسب النقاط
+    Args:
+        limit: عدد المستخدمين المطلوبين
+    Returns:
+        List[tuple]: قائمة بـ (user_id, points, level)
+    """
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT user_id, points, level FROM user_levels ORDER BY points DESC LIMIT ?",
+            (limit,)
+        )
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def daily_reward(user_id: int) -> int:
+    """
+    مكافأة يومية (10 نقاط)
+    Args:
+        user_id: معرف المستخدم
+    Returns:
+        int: عدد النقاط الممنوحة (0 إذا تم أخذها اليوم)
+    """
+    today = utc_now().date()
+    async def _check(conn):
+        cur = await conn.execute("SELECT last_daily_reward FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row and row[0]:
+            try:
+                last_date = datetime.fromisoformat(row[0]).date()
+                if last_date == today:
+                    return 0
+            except:
+                pass
+        await conn.execute("UPDATE users SET last_daily_reward=? WHERE user_id=?", (utc_now_iso(), user_id))
+        await conn.commit()
+        return 10
+    reward = await execute_db(_check)
+    if reward > 0:
+        data = await db_get_user_level(user_id)
+        await db_update_user_level(user_id, data['points'] + reward, data['level'])
+    return reward
+
+async def weekly_reward(user_id: int) -> int:
+    """
+    مكافأة أسبوعية (50 نقطة)
+    Args:
+        user_id: معرف المستخدم
+    Returns:
+        int: عدد النقاط الممنوحة (0 إذا تم أخذها هذا الأسبوع)
+    """
+    week_start = (utc_now() - timedelta(days=utc_now().weekday())).date()
+    async def _check(conn):
+        cur = await conn.execute("SELECT last_weekly_reward FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row and row[0]:
+            try:
+                last_date = datetime.fromisoformat(row[0]).date()
+                if last_date >= week_start:
+                    return 0
+            except:
+                pass
+        await conn.execute("UPDATE users SET last_weekly_reward=? WHERE user_id=?", (utc_now_iso(), user_id))
+        await conn.commit()
+        return 50
+    reward = await execute_db(_check)
+    if reward > 0:
+        data = await db_get_user_level(user_id)
+        await db_update_user_level(user_id, data['points'] + reward, data['level'])
+    return reward
+
+# ===================================================================
+# نظام الإنجازات (Achievements)
+# ===================================================================
+
+ACHIEVEMENTS = {
+    'first_post': {'name': 'أول منشور', 'points': 10, 'icon': '📝'},
+    'first_week': {'name': 'أسبوع نشاط', 'points': 50, 'icon': '📅'},
+    'first_month': {'name': 'شهر نشاط', 'points': 200, 'icon': '🎉'},
+    'first_referral': {'name': 'أول إحالة', 'points': 25, 'icon': '🔗'},
+    'ten_referrals': {'name': '10 إحالات', 'points': 100, 'icon': '🌟'},
+    'first_contest': {'name': 'أول مسابقة', 'points': 30, 'icon': '🏆'},
+    'contest_winner': {'name': 'فائز بمسابقة', 'points': 100, 'icon': '🥇'},
+}
+
+async def achievement_system(user_id: int, action: str) -> str:
+    """
+    نظام الإنجازات: منح نقاط إضافية عند تحقيق إنجاز معين
+    Args:
+        user_id: معرف المستخدم
+        action: نوع الإنجاز ('first_post', 'first_referral', ...)
+    Returns:
+        str: رسالة الإنجاز
+    """
+    async def _get_achievements(conn):
+        cur = await conn.execute("SELECT achievements FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else '[]'
+    
+    achievements = json.loads(await execute_db(_get_achievements) or '[]')
+    
+    if action == 'first_post' and 'first_post' not in achievements:
+        achievements.append('first_post')
+        points = ACHIEVEMENTS['first_post']['points']
+        await db_update_user_level(user_id, (await db_get_user_level(user_id))['points'] + points, 1)
+        return f"{ACHIEVEMENTS['first_post']['icon']} {ACHIEVEMENTS['first_post']['name']} (+{points} نقطة)"
+    
+    if action == 'first_referral' and 'first_referral' not in achievements:
+        achievements.append('first_referral')
+        points = ACHIEVEMENTS['first_referral']['points']
+        await db_update_user_level(user_id, (await db_get_user_level(user_id))['points'] + points, 1)
+        return f"{ACHIEVEMENTS['first_referral']['icon']} {ACHIEVEMENTS['first_referral']['name']} (+{points} نقطة)"
+    
+    return ""
+
+# ===================================================================
+# دوال الترجمة (Translation Functions)
+# ===================================================================
+
+user_translation_settings_cache = {}
+_user_translation_cache_lock = asyncio.Lock()
+
+async def get_user_translation_language(user_id: int) -> str:
+    """الحصول على لغة الترجمة للمستخدم"""
+    async with _user_translation_cache_lock:
+        if user_id in user_translation_settings_cache:
+            return user_translation_settings_cache[user_id]
+    
+    async def _get(conn):
+        cur = await conn.execute("SELECT lang FROM user_translation WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 'off'
+    
+    lang = await execute_db(_get)
+    async with _user_translation_cache_lock:
+        user_translation_settings_cache[user_id] = lang
+    return lang
+
+async def set_user_translation_language(user_id: int, lang: str):
+    """تعيين لغة الترجمة للمستخدم"""
+    async def _set(conn):
+        await conn.execute("INSERT OR REPLACE INTO user_translation (user_id, lang) VALUES (?, ?)", (user_id, lang))
+        await conn.commit()
+    await execute_db(_set)
+    async with _user_translation_cache_lock:
+        user_translation_settings_cache[user_id] = lang
+
+async def translate_text(text: str, target_lang: str) -> str:
+    """ترجمة نص إلى اللغة المستهدفة"""
+    if not text or target_lang == 'off' or target_lang == 'ar':
+        return text
+    
+    cache_key = f"{hashlib.md5(text.encode()).hexdigest()}_{target_lang}"
+    cached = await _translation_cache.get(cache_key)
+    if cached:
+        return cached
+    
+    try:
+        translator = GoogleTranslator(source='auto', target=target_lang)
+        translated = translator.translate(text)
+        if translated:
+            await _translation_cache.set(cache_key, translated)
+            return translated
+    except Exception as e:
+        logger.error(f"فشل الترجمة: {e}")
+    return text
+
+# ===================================================================
+# دوال الإحالات (Referral Functions)
+# ===================================================================
+
+async def db_get_referral_settings() -> dict:
+    """الحصول على إعدادات الإحالات"""
+    async def _get(conn):
+        settings = {}
+        cur = await conn.execute("SELECT key, value FROM referral_settings")
+        rows = await cur.fetchall()
+        for key, value in rows:
+            settings[key] = value
+        return settings
+    return await execute_db(_get)
+
+async def db_get_referral_code(user_id: int) -> str:
+    """الحصول على كود الإحالة للمستخدم"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT referral_code FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row and row[0] else None
+    return await execute_db(_get)
+
+async def db_generate_referral_code(user_id: int) -> str:
+    """إنشاء كود إحالة للمستخدم"""
+    async def _generate(conn):
+        code_hash = hashlib.md5(f"{user_id}{time_module.time()}".encode()).hexdigest()[:8]
+        referral_code = f"REF{code_hash.upper()}"
+        await conn.execute("UPDATE users SET referral_code=? WHERE user_id=?", (referral_code, user_id))
+        await conn.commit()
+        return referral_code
+    return await execute_db(_generate)
+
+async def db_get_user_by_referral_code(referral_code: str) -> int | None:
+    """الحصول على المستخدم بواسطة كود الإحالة"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT user_id FROM users WHERE referral_code=?", (referral_code,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def db_add_referral(referrer_id: int, referred_id: int) -> bool:
+    """إضافة إحالة جديدة"""
+    async def _add(conn):
+        if referrer_id == referred_id:
+            return False
+        cur = await conn.execute("SELECT 1 FROM referrals WHERE referred_id=?", (referred_id,))
+        if await cur.fetchone():
+            return False
+        
+        today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        cur = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND referred_at >= ?",
+                                (referrer_id, today_start))
+        count_today = (await cur.fetchone())[0]
+        settings = await db_get_referral_settings()
+        max_per_day = int(settings.get('max_referrals_per_day', '5'))
+        if count_today >= max_per_day:
+            return False
+        
+        await conn.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, referred_id))
+        await conn.execute(
+            "INSERT INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days) VALUES (?, 1, 0, 0) ON CONFLICT(user_id) DO UPDATE SET referral_count = referral_count + 1",
+            (referrer_id,)
+        )
+        await conn.commit()
+        return True
+    return await execute_db(_add)
+
+async def db_auto_reward_referral(referrer_id: int, referred_id: int) -> int:
+    """مكافأة تلقائية للإحالة"""
+    async def _reward(conn):
+        settings = await db_get_referral_settings()
+        reward_days = int(settings.get('reward_days_per_referral', '3'))
+        await conn.execute("""
+            INSERT INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days)
+            VALUES (?, 0, ?, 0)
+            ON CONFLICT(user_id) DO UPDATE SET
+                referral_count = referral_count + 1,
+                total_reward_days = total_reward_days + ?
+        """, (referrer_id, reward_days, reward_days))
+        await conn.execute("UPDATE referrals SET is_rewarded=1 WHERE referrer_id=? AND referred_id=?",
+                          (referrer_id, referred_id))
+        await conn.commit()
+        return reward_days
+    return await execute_db(_reward)
+
+async def db_get_referral_stats(user_id: int) -> dict:
+    """الحصول على إحصائيات الإحالات للمستخدم"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
+        total_referrals = (await cur.fetchone())[0]
+        cur = await conn.execute(
+            "SELECT referral_count, total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        return {
+            'total_referrals': total_referrals,
+            'referral_count': row[0] if row else 0,
+            'total_reward_days': row[1] if row else 0,
+            'claimed_reward_days': row[2] if row else 0,
+            'available_days': (row[1] if row else 0) - (row[2] if row else 0)
+        }
+    return await execute_db(_get)
+
+async def db_claim_referral_reward(user_id: int) -> int:
+    """صرف مكافآت الإحالات"""
+    async def _claim(conn):
+        cur = await conn.execute("SELECT total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        total = row[0]
+        claimed = row[1]
+        available = total - claimed
+        if available <= 0:
+            return 0
+        
+        current_sub = await db_get_subscription_days_left(user_id)
+        new_sub_days = current_sub + available
+        end_date = (utc_now() + timedelta(days=new_sub_days)).isoformat()
+        await conn.execute("UPDATE users SET subscription_end=? WHERE user_id=?", (end_date, user_id))
+        await conn.execute("UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?",
+                          (available, user_id))
+        await conn.commit()
+        return available
+    return await execute_db(_claim)
+
+async def db_get_welcome_bonus_points() -> int:
+    """الحصول على نقاط الترحيب"""
+    settings = await db_get_referral_settings()
+    return int(settings.get('welcome_bonus_points', '10'))
+
+# ===================================================================
+# دوال التذكيرات (Reminder Functions)
+# ===================================================================
+
+async def db_get_user_reminder_settings(user_id: int) -> dict:
+    """الحصول على إعدادات التذكيرات للمستخدم"""
+    async def _get(conn):
+        cur = await conn.execute(
+            """SELECT subscription_reminder, daily_stats_reminder, weekly_report,
+                      reminder_days_before, last_reminder_sent, notification_lang
+               FROM user_reminder_settings WHERE user_id=?""",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        if row:
+            return {
+                'subscription_reminder': row[0] == 1,
+                'daily_stats_reminder': row[1] == 1,
+                'weekly_report': row[2] == 1,
+                'reminder_days_before': row[3] if row[3] is not None else 3,
+                'last_reminder_sent': row[4] if row[4] else 0,
+                'notification_lang': row[5] if row[5] else 'ar'
+            }
+        else:
+            await conn.execute(
+                "INSERT INTO user_reminder_settings (user_id, subscription_reminder, daily_stats_reminder, weekly_report, reminder_days_before, last_reminder_sent, notification_lang) VALUES (?, 1, 0, 1, 3, 0, 'ar')",
+                (user_id,)
+            )
+            await conn.commit()
+            return {
+                'subscription_reminder': True, 'daily_stats_reminder': False,
+                'weekly_report': True, 'reminder_days_before': 3,
+                'last_reminder_sent': 0, 'notification_lang': 'ar'
+            }
+    return await execute_db(_get)
+
+async def db_update_reminder_settings(user_id: int, **kwargs):
+    """تحديث إعدادات التذكيرات للمستخدم"""
+    async def _update(conn):
+        fields, values = [], []
+        for key, value in kwargs.items():
+            if key == 'subscription_reminder':
+                fields.append("subscription_reminder=?")
+                values.append(1 if value else 0)
+            elif key == 'daily_stats_reminder':
+                fields.append("daily_stats_reminder=?")
+                values.append(1 if value else 0)
+            elif key == 'weekly_report':
+                fields.append("weekly_report=?")
+                values.append(1 if value else 0)
+            elif key == 'reminder_days_before':
+                fields.append("reminder_days_before=?")
+                values.append(value)
+            elif key == 'notification_lang':
+                fields.append("notification_lang=?")
+                values.append(value)
+        
+        if fields:
+            query = f"UPDATE user_reminder_settings SET {', '.join(fields)} WHERE user_id=?"
+            values.append(user_id)
+            await conn.execute(query, values)
+            await conn.commit()
+    return await execute_db(_update)
+
+async def db_update_last_reminder_sent(user_id: int, reminder_type: str):
+    """تحديث وقت آخر تذكير تم إرساله"""
+    async def _update(conn):
+        now_timestamp = int(time_module.time())
+        await conn.execute("UPDATE user_reminder_settings SET last_reminder_sent=? WHERE user_id=?",
+                          (now_timestamp, user_id))
+        await conn.commit()
+    return await execute_db(_update)
+
+async def db_get_users_needing_reminder() -> list:
+    """الحصول على المستخدمين الذين يحتاجون تذكير"""
+    async def _get(conn):
+        now = utc_now()
+        users = []
+        cutoff_date = (now + timedelta(days=10)).isoformat()
+        cur = await conn.execute(
+            "SELECT user_id, subscription_end FROM users WHERE subscription_end IS NOT NULL AND subscription_end <= ? AND banned=0",
+            (cutoff_date,)
+        )
+        rows = await cur.fetchall()
+        
+        for user_id, subscription_end_str in rows:
+            try:
+                end_date = datetime.fromisoformat(subscription_end_str)
+                days_left = (end_date - now).days
+                if days_left < 0:
+                    continue
+                
+                settings = await db_get_user_reminder_settings(user_id)
+                if settings['subscription_reminder']:
+                    reminder_days = settings['reminder_days_before']
+                    last_sent = settings['last_reminder_sent']
+                    now_timestamp = int(time_module.time())
+                    
+                    need_reminder = False
+                    if 0 < days_left <= reminder_days:
+                        if last_sent == 0:
+                            need_reminder = True
+                        elif (now_timestamp - last_sent) > (3 * 24 * 60 * 60):
+                            need_reminder = True
+                    
+                    if need_reminder:
+                        users.append({
+                            'user_id': user_id,
+                            'days_left': days_left,
+                            'notification_lang': settings['notification_lang']
+                        })
+            except:
+                continue
+        return users
+    return await execute_db(_get)
+
+async def db_get_all_active_users_for_report() -> list:
+    """الحصول على جميع المستخدمين النشطين للتقرير"""
+    async def _get(conn):
+        thirty_days_ago = (utc_now() - timedelta(days=30)).isoformat()
+        cur = await conn.execute("SELECT user_id FROM users_cache WHERE last_updated >= ?", (thirty_days_ago,))
+        return [row[0] for row in await cur.fetchall()]
+    return await execute_db(_get)
 
 # ===================================================================
 # 47. main()
