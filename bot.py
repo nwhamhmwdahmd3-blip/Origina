@@ -7991,9 +7991,9 @@ async def security_banned_words_menu_callback(update: Update, context: ContextTy
 
 # ===================================================================
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        logging.error(f"❌ خطأ فادح: {e}")
-        logging.error(traceback.format_exc())
-        sys.exit(1)
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+        url_path="TOKEN",
+        webhook_url="https://اسم_تطبيقك.onrender.com/TOKEN"
+    )
