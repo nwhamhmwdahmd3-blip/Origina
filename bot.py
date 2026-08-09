@@ -3241,8 +3241,7 @@ class CallbackData:
 # ===================================================================
 # 27. حالات المستخدم (UserState)
 # ===================================================================
-
-class UserState(Enum):
+  class UserState(Enum):
     NONE = auto()
     ADDING_POSTS = auto()
     WAITING_CHANNEL_ID = auto()
@@ -3292,6 +3291,9 @@ class UserState(Enum):
     WAITING_NSFW_THRESHOLD = auto()
     WAITING_EXPORT_DATA = auto()
     WAITING_CRON = auto()
+    WAITING_MAX_LENGTH = auto()
+    WAITING_SCHEDULE = auto()
+    WAITING_CONFIRM = auto()
 
 
 # ===================================================================
