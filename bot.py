@@ -1,9 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 21.0.0 - النسخة العالمية الكاملة مع جميع الميزات
-المطور: @RelaxMgr
+#ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
+#الإصدار: 21.0.0 - النسخة العالمية الكاملة مع جميع الميزات
+#لمطور: @RelaxMgr
 """
 
 import sys
@@ -3282,7 +3279,6 @@ class UserState(Enum):
     WAITING_EXPORT_DATA = auto()
     WAITING_CRON = auto()
     WAITING_MAX_LENGTH = auto()
-    WAITING_WARN_COUNT = auto()
     WAITING_SCHEDULE = auto()
     WAITING_CONFIRM = auto()
 
@@ -4803,15 +4799,11 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
         except:
             pass
 
-async def _update_security_panel(query, chat_id, user_id):
-    """
-    تحديث لوحة إعدادات الأمان وعرض الإعدادات الحالية.
-    """
+async def _update_security_panel(query, chat_id: int, user_id: int):
     try:
         settings = await db_get_security_settings(chat_id, force_refresh=True)
 
-        def st(val):
-            return "✅" if val else "❌"
+        def st(val): return "✅" if val else "❌"
 
         text = f"""🔐 إعدادات الأمان للمجموعة
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -4898,7 +4890,10 @@ async def _update_security_panel(query, chat_id, user_id):
                 raise e
     except Exception as e:
         logger.error(f"خطأ في تحديث لوحة الأمان: {e}")
-        await query.answer("❌ حدث خطأ أثناء التحديث", show_alert=True)
+        try:
+            await query.edit_message_text("❌ حدث خطأ أثناء تحديث الإعدادات.")
+        except:
+            pass
 
 async def settings_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -5693,134 +5688,78 @@ async def security_toggle_setting_callback(update: Update, context: ContextTypes
 
     settings = await db_get_security_settings(chat_id, force_refresh=True)
 
-    # ===================================================================
-    # تبديل الإعدادات (Toggle)
-    # ===================================================================
     if action == "links":
         settings['links'] = not settings['links']
         await db_set_security_settings(chat_id, links=settings['links'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['links'] else 'تم التعطيل'}")
-        
     elif action == "mentions":
         settings['mentions'] = not settings['mentions']
         await db_set_security_settings(chat_id, mentions=settings['mentions'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['mentions'] else 'تم التعطيل'}")
-        
     elif action == "slow_mode":
         settings['slow_mode'] = not settings['slow_mode']
         await db_set_security_settings(chat_id, slow_mode=settings['slow_mode'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['slow_mode'] else 'تم التعطيل'}")
-        
     elif action == "delete_videos":
         settings['delete_videos'] = not settings['delete_videos']
         await db_set_security_settings(chat_id, delete_videos=settings['delete_videos'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_videos'] else 'تم التعطيل'}")
-        
     elif action == "delete_service":
         settings['delete_service'] = not settings['delete_service']
         await db_set_security_settings(chat_id, delete_service=settings['delete_service'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_service'] else 'تم التعطيل'}")
-        
     elif action == "delete_documents":
         settings['delete_documents'] = not settings['delete_documents']
         await db_set_security_settings(chat_id, delete_documents=settings['delete_documents'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_documents'] else 'تم التعطيل'}")
-        
     elif action == "delete_stickers":
         settings['delete_stickers'] = not settings['delete_stickers']
         await db_set_security_settings(chat_id, delete_stickers=settings['delete_stickers'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_stickers'] else 'تم التعطيل'}")
-        
     elif action == "delete_audio":
         settings['delete_audio'] = not settings['delete_audio']
         await db_set_security_settings(chat_id, delete_audio=settings['delete_audio'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_audio'] else 'تم التعطيل'}")
-        
     elif action == "delete_animation":
         settings['delete_animation'] = not settings['delete_animation']
         await db_set_security_settings(chat_id, delete_animation=settings['delete_animation'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_animation'] else 'تم التعطيل'}")
-        
     elif action == "delete_forwarded":
         settings['delete_forwarded'] = not settings['delete_forwarded']
         await db_set_security_settings(chat_id, delete_forwarded=settings['delete_forwarded'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_forwarded'] else 'تم التعطيل'}")
-        
     elif action == "delete_polls":
         settings['delete_polls'] = not settings['delete_polls']
         await db_set_security_settings(chat_id, delete_polls=settings['delete_polls'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_polls'] else 'تم التعطيل'}")
-        
     elif action == "delete_games":
         settings['delete_games'] = not settings['delete_games']
         await db_set_security_settings(chat_id, delete_games=settings['delete_games'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_games'] else 'تم التعطيل'}")
-        
     elif action == "delete_voice":
         settings['delete_voice'] = not settings['delete_voice']
         await db_set_security_settings(chat_id, delete_voice=settings['delete_voice'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_voice'] else 'تم التعطيل'}")
-        
     elif action == "delete_video_note":
         settings['delete_video_note'] = not settings['delete_video_note']
         await db_set_security_settings(chat_id, delete_video_note=settings['delete_video_note'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['delete_video_note'] else 'تم التعطيل'}")
-        
     elif action == "welcome_enabled":
         settings['welcome_enabled'] = not settings['welcome_enabled']
         await db_set_security_settings(chat_id, welcome_enabled=settings['welcome_enabled'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['welcome_enabled'] else 'تم التعطيل'}")
-        
     elif action == "goodbye_enabled":
         settings['goodbye_enabled'] = not settings['goodbye_enabled']
         await db_set_security_settings(chat_id, goodbye_enabled=settings['goodbye_enabled'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['goodbye_enabled'] else 'تم التعطيل'}")
-        
     elif action == "antiflood":
         settings['antiflood_enabled'] = not settings['antiflood_enabled']
         await db_set_security_settings(chat_id, antiflood_enabled=settings['antiflood_enabled'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['antiflood_enabled'] else 'تم التعطيل'}")
-        
     elif action == "night_mode":
         settings['night_mode_enabled'] = not settings['night_mode_enabled']
         await db_set_security_settings(chat_id, night_mode_enabled=settings['night_mode_enabled'])
-        await query.answer(f"✅ {'تم التفعيل' if settings['night_mode_enabled'] else 'تم التعطيل'}")
-
-    # ===================================================================
-    # إعدادات تتطلب إدخال قيمة (طلب رقم)
-    # ===================================================================
     elif action == "max_length":
-        # ✅ تم التصحيح: استخدام UserState بدلاً من النص
-        context.user_data['state'] = UserState.WAITING_MAX_LENGTH
+        context.user_data['state'] = "WAITING_MAX_LENGTH"
         context.user_data['security_chat_id'] = chat_id
         await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
-        return  # نخرج هنا لأننا ننتظر رد المستخدم
-
+        return
     elif action == "warn_settings":
-        # إعدادات التحذير (تظهر قائمة فرعية)
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔢 عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
              InlineKeyboardButton("⚖️ عقوبة التحذير", callback_data=f"warn_penalty:{chat_id}")],
             [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
         ])
-        await query.edit_message_text(
-            "⚠️ **إعدادات التحذير**\nاختر الإعداد المطلوب:",
-            reply_markup=keyboard,
-            parse_mode="MarkdownV2"
-        )
-        return  # نخرج هنا لأننا ننتقل إلى قائمة فرعية
-
+        await query.edit_message_text("⚠️ **إعدادات التحذير**\nاختر الإعداد المطلوب:", reply_markup=keyboard)
+        return
     else:
         await query.edit_message_text("❌ إجراء غير معروف")
         return
 
-    # ===================================================================
-    # تحديث لوحة الأمان (يتم تنفيذه فقط للحالات التي تم تبديلها)
-    # ===================================================================
-    # حذف الكاش لتحديث الإعدادات
     _security_cache.pop(chat_id, None)
-    
-    # تحديث لوحة الأمان
     await _update_security_panel(query, chat_id, user_id)
 
 # ===================================================================
@@ -10245,48 +10184,6 @@ async def db_get_random_participant(contest_id: int) -> int | None:
         row = await cur.fetchone()
         return row[0] if row else None
     return await execute_db(_get)
-elif state == UserState.WAITING_MAX_LENGTH:
-    try:
-        max_len = int(text.strip())
-        if max_len < 0:
-            await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم موجب أو 0.")
-            return
-        chat_id = context.user_data.get('security_chat_id')
-        if chat_id:
-            await db_set_security_settings(chat_id, max_message_length=max_len)
-            await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين الحد الأقصى لطول الرسالة إلى {max_len} حرف.")
-            # تحديث لوحة الأمان
-            if update.callback_query:
-                await _update_security_panel(update.callback_query, chat_id, user_id)
-            else:
-                await safe_send_markdown(context.bot, user_id, "يمكنك العودة إلى اللوحة من خلال /security")
-        else:
-            await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة.")
-    except ValueError:
-        await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم صحيح.")
-    context.user_data.pop('state', None)
-    context.user_data.pop('security_chat_id', None)
-    return
-
-elif state == UserState.WAITING_WARN_COUNT:
-    try:
-        count = int(text.strip())
-        if count < 1 or count > 10:
-            await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال عدد بين 1 و 10.")
-            return
-        chat_id = context.user_data.get('security_chat_id')
-        if chat_id:
-            await db_set_security_settings(chat_id, max_warnings=count)
-            await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين عدد التحذيرات إلى {count}.")
-            # العودة إلى إعدادات التحذير
-            await security_warn_settings_callback(update, context)
-        else:
-            await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة.")
-    except ValueError:
-        await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم صحيح.")
-    context.user_data.pop('state', None)
-    context.user_data.pop('security_chat_id', None)
-    return
 
 # ===================================================================
 # main()
@@ -10426,7 +10323,15 @@ async def main():
     application.add_handler(CallbackQueryHandler(set_publish_time_callback, pattern=f"^{CallbackData.SCHEDULE_SET_PUBLISH_TIME_PREFIX}"))
     application.add_handler(CallbackQueryHandler(day_select_callback, pattern=f"^{CallbackData.SCHEDULE_DAY_SELECT_PREFIX}"))
     application.add_handler(CallbackQueryHandler(save_days_callback, pattern=f"^{CallbackData.SCHEDULE_SAVE_DAYS}$"))
-    application.add_handler(CallbackQueryHandler(security_toggle_setting_callback, pattern=r"^security:(links|mentions|slow_mode|delete_videos|delete_service|delete_documents|delete_stickers|delete_audio|delete_animation|delete_forwarded|delete_polls|delete_games|delete_voice|delete_video_note|welcome_enabled|goodbye_enabled|antiflood|night_mode|max_length|warn_settings):[0-9-]+$"))
+    
+    # ===================================================================
+    # معالج أزرار الأمان (مع التصحيح النهائي)
+    # ===================================================================
+    application.add_handler(CallbackQueryHandler(
+        security_toggle_setting_callback, 
+        pattern=r"^security:(links|mentions|slow_mode|delete_videos|delete_service|delete_documents|delete_stickers|delete_audio|delete_animation|delete_forwarded|delete_polls|delete_games|delete_voice|delete_video_note|welcome_enabled|goodbye_enabled|antiflood|night_mode|max_length|warn_settings):[0-9-]+$"
+    ))
+    
     application.add_handler(CallbackQueryHandler(security_banned_words_menu_callback, pattern=f"^{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}"))
     application.add_handler(CallbackQueryHandler(security_delete_penalty_callback, pattern=f"^{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}"))
     application.add_handler(CallbackQueryHandler(security_warn_settings_callback, pattern="^security:warn_settings:"))
@@ -10571,7 +10476,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(user_auto_reply_toggle_callback, pattern=f"^{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}"))
 
     # ===================================================================
-    # تسجيل معالجات الرسائل (Message Handlers) - للإصدار 22.8
+    # تسجيل معالجات الرسائل (Message Handlers)
     # ===================================================================
     application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
@@ -10698,11 +10603,11 @@ async def security_advanced_actions_callback(update: Update, context: ContextTyp
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🛑 حظر", callback_data=f"{CallbackData.GROUP_ACTION_BAN}:{chat_id}"),
@@ -10724,7 +10629,7 @@ async def security_advanced_actions_callback(update: Update, context: ContextTyp
             InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")
         ]
     ])
-    
+
     await query.edit_message_text(
         "🛠️ **الإجراءات المتقدمة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
         "اختر الإجراء المطلوب للمستخدم:\n\n"
@@ -10743,11 +10648,11 @@ async def penalty_warn_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='warn')
     await query.answer("✅ تم تعيين عقوبة التحذير")
     await group_settings_callback(update, context)
@@ -10758,11 +10663,11 @@ async def penalty_restrict_callback(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='restrict')
     await query.answer("✅ تم تعيين عقوبة التقييد")
     await group_settings_callback(update, context)
@@ -10773,11 +10678,11 @@ async def penalty_none_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='none')
     await query.answer("✅ تم إلغاء العقوبة")
     await group_settings_callback(update, context)
@@ -10792,11 +10697,11 @@ async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("👢 طرد", callback_data=f"{CallbackData.PENALTY_KICK}:{chat_id}"),
@@ -10812,7 +10717,7 @@ async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
         ],
         [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
     ])
-    
+
     await query.edit_message_text(
         "⚖️ **اختر العقوبة التلقائية**\n"
         "سيتم تطبيق هذه العقوبة عند مخالفة القواعد:",
@@ -10830,21 +10735,21 @@ async def security_warn_settings_callback(update: Update, context: ContextTypes.
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     settings = await db_get_security_settings(chat_id)
     max_warnings = settings.get('max_warnings', 3)
     warn_penalty = settings.get('warn_penalty', 'ban')
-    
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"🔢 عدد التحذيرات: {max_warnings}", callback_data=f"warn_count:{chat_id}"),
          InlineKeyboardButton(f"⚖️ العقوبة: {warn_penalty}", callback_data=f"warn_penalty:{chat_id}")],
         [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
     ])
-    
+
     await query.edit_message_text(
         f"⚠️ **إعدادات التحذير**\n━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🔢 عدد التحذيرات: {max_warnings}\n"
@@ -10860,11 +10765,11 @@ async def security_warn_count_callback(update: Update, context: ContextTypes.DEF
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     context.user_data['state'] = "WAITING_WARN_COUNT"
     context.user_data['security_chat_id'] = chat_id
     await query.edit_message_text("🔢 أرسل عدد التحذيرات المسموح بها (1-10):\nمثال: 3")
@@ -10875,11 +10780,11 @@ async def security_warn_penalty_callback(update: Update, context: ContextTypes.D
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛑 حظر", callback_data=f"set_warn_penalty:ban:{chat_id}"),
          InlineKeyboardButton("👢 طرد", callback_data=f"set_warn_penalty:kick:{chat_id}")],
@@ -10887,7 +10792,7 @@ async def security_warn_penalty_callback(update: Update, context: ContextTypes.D
          InlineKeyboardButton("❌ لا شيء", callback_data=f"set_warn_penalty:none:{chat_id}")],
         [InlineKeyboardButton("🔙 رجوع", callback_data=f"security:warn_settings:{chat_id}")]
     ])
-    
+
     await query.edit_message_text(
         "⚖️ **اختر عقوبة التحذير**\n"
         "عند وصول المستخدم إلى الحد الأقصى للتحذيرات:",
@@ -10904,14 +10809,14 @@ async def set_warn_penalty_callback(update: Update, context: ContextTypes.DEFAUL
     if len(parts) != 3:
         await query.edit_message_text("❌ بيانات غير صالحة")
         return
-    
+
     penalty = parts[1]
     chat_id = int(parts[2])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, warn_penalty=penalty)
     await query.answer(f"✅ تم تعيين عقوبة التحذير إلى: {penalty}")
     await security_warn_settings_callback(update, context)
@@ -11439,22 +11344,22 @@ async def security_warn_settings_callback(update: Update, context: ContextTypes.
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     # جلب الإعدادات الحالية
     settings = await db_get_security_settings(chat_id)
     max_warnings = settings.get('max_warnings', 3)
     warn_penalty = settings.get('warn_penalty', 'ban')
-    
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"🔢 عدد التحذيرات: {max_warnings}", callback_data=f"warn_count:{chat_id}"),
          InlineKeyboardButton(f"⚖️ العقوبة: {warn_penalty}", callback_data=f"warn_penalty:{chat_id}")],
         [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
     ])
-    
+
     await query.edit_message_text(
         f"⚠️ **إعدادات التحذير**\n━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🔢 عدد التحذيرات: {max_warnings}\n"
@@ -11474,11 +11379,11 @@ async def security_warn_count_callback(update: Update, context: ContextTypes.DEF
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     context.user_data['state'] = "WAITING_WARN_COUNT"
     context.user_data['security_chat_id'] = chat_id
     await query.edit_message_text("🔢 أرسل عدد التحذيرات المسموح بها (1-10):\nمثال: 3")
@@ -11489,11 +11394,11 @@ async def security_warn_penalty_callback(update: Update, context: ContextTypes.D
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛑 حظر", callback_data=f"set_warn_penalty:ban:{chat_id}"),
          InlineKeyboardButton("👢 طرد", callback_data=f"set_warn_penalty:kick:{chat_id}")],
@@ -11501,7 +11406,7 @@ async def security_warn_penalty_callback(update: Update, context: ContextTypes.D
          InlineKeyboardButton("❌ لا شيء", callback_data=f"set_warn_penalty:none:{chat_id}")],
         [InlineKeyboardButton("🔙 رجوع", callback_data=f"security:warn_settings:{chat_id}")]
     ])
-    
+
     await query.edit_message_text(
         "⚖️ **اختر عقوبة التحذير**\n"
         "عند وصول المستخدم إلى الحد الأقصى للتحذيرات:",
@@ -11518,14 +11423,14 @@ async def set_warn_penalty_callback(update: Update, context: ContextTypes.DEFAUL
     if len(parts) != 3:
         await query.edit_message_text("❌ بيانات غير صالحة")
         return
-    
+
     penalty = parts[1]
     chat_id = int(parts[2])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, warn_penalty=penalty)
     await query.answer(f"✅ تم تعيين عقوبة التحذير إلى: {penalty}")
     await security_warn_settings_callback(update, context)
@@ -11535,9 +11440,8 @@ if __name__ == "__main__":
         os.environ["WEB_CONCURRENCY"] = "1"
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("🛑 تم إيقاف البوت")
+        logger.info("🛑 تم إيقافأ البوت")
     except Exception as e:
         logger.error(f"❌ خطأ فادح: {e}")
         traceback.print_exc()
         sys.exit(1)
-
