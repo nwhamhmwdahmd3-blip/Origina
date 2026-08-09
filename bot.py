@@ -4835,33 +4835,57 @@ async def _update_security_panel(query, chat_id, user_id):
 
 
 # ========== دوال مساعدة ==========
+async def _update_security_panel(query, chat_id, user_id):
+    """
+    تحديث لوحة إعدادات الأمان وعرض الإعدادات الحالية.
+    """
+    try:
+        # 1. جلب الإعدادات مع تجاوز الكاش
+        settings = await db_get_security_settings(chat_id, force_refresh=True)
+
+        # 2. بناء النص و الأزرار
+        text = _build_security_text(settings)
+        keyboard = _build_security_keyboard(chat_id)
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # 3. تعديل الرسالة بأمان (معالجة كل حالات الخطأ 400)
+        await _safe_edit_panel(query, text, reply_markup)
+
+    except Exception as e:
+        logger.error(f"خطأ في _update_security_panel: {e}", exc_info=True)
+        try:
+            await query.answer("❌ حدث خطأ غير متوقع", show_alert=True)
+        except:
+            pass
+
+
+# ========== الدوال المساعدة (ضعها في نفس الملف) ==========
 
 def _build_security_text(settings):
-    """إنتاج نص لوحة الإعدادات."""
+    """بناء نص لوحة إعدادات الأمان."""
     def st(val):
         return "✅" if val else "❌"
 
-    # قائمة الإعدادات: (الاسم, المفتاح, قيمة إضافية اختيارية)
     items = [
-        ("🔗 الروابط", "links"),
-        ("@ المعرفات", "mentions"),
-        ("⏱️ البطيء", "slow_mode",
-         lambda: f" ({settings.get('slow_mode_seconds', 5)}ث)" if settings.get("slow_mode") else ""),
-        ("🎯 الترحيب", "welcome_enabled"),
-        ("👋 الوداع", "goodbye_enabled"),
-        ("🎬 فيديوهات", "delete_videos"),
-        ("🎵 صوتيات", "delete_audio"),
-        ("🎞️ متحركات", "delete_animation"),
-        ("🛠️ الخدمة", "delete_service"),
-        ("📄 ملفات", "delete_documents"),
-        ("🖼️ ملصقات", "delete_stickers"),
-        ("📨 المُعاد", "delete_forwarded"),
-        ("📊 استطلاعات", "delete_polls"),
-        ("🎮 ألعاب", "delete_games"),
-        ("🎤 صوتيات", "delete_voice"),
-        ("🎥 فيديو نوت", "delete_video_note"),
-        ("🌊 مضاد الفيضان", "antiflood_enabled"),
-        ("🌙 ليلي", "night_mode_enabled"),
+        ("🔗 الروابط", settings.get('links')),
+        ("@ المعرفات", settings.get('mentions')),
+        ("⏱️ البطيء", settings.get('slow_mode'),
+         f" ({settings.get('slow_mode_seconds', 5)}ث)" if settings.get('slow_mode') else ""),
+        ("🎯 الترحيب", settings.get('welcome_enabled')),
+        ("👋 الوداع", settings.get('goodbye_enabled')),
+        ("🎬 فيديوهات", settings.get('delete_videos')),
+        ("🎵 صوتيات", settings.get('delete_audio')),
+        ("🎞️ متحركات", settings.get('delete_animation')),
+        ("🛠️ الخدمة", settings.get('delete_service')),
+        ("📄 ملفات", settings.get('delete_documents')),
+        ("🖼️ ملصقات", settings.get('delete_stickers')),
+        ("📨 المُعاد", settings.get('delete_forwarded')),
+        ("📊 استطلاعات", settings.get('delete_polls')),
+        ("🎮 ألعاب", settings.get('delete_games')),
+        ("🎤 صوتيات", settings.get('delete_voice')),
+        ("🎥 فيديو نوت", settings.get('delete_video_note')),
+        ("🌊 مضاد الفيضان", settings.get('antiflood_enabled')),
+        ("🌙 ليلي", settings.get('night_mode_enabled')),
     ]
 
     lines = [
@@ -4869,15 +4893,14 @@ def _build_security_text(settings):
         "━━━━━━━━━━━━━━━━━━━━━━"
     ]
 
-    for name, key, *extra in items:
-        value = settings.get(key, False)
-        extra_text = extra[0]() if extra else ""
+    for name, value, *extra in items:
+        extra_text = extra[0] if extra else ""
         lines.append(f"{name}: {st(value)}{extra_text}")
 
-    # إعدادات خاصة لا تتبع نمط ✅/❌
-    max_len = settings.get("max_message_length", 0)
+    # إعدادات خاصة
+    max_len = settings.get('max_message_length', 0)
     length_str = str(max_len) if max_len else "غير محدود"
-    penalty = settings.get("delete_penalty", "لا شيء")
+    penalty = settings.get('delete_penalty', 'لا شيء')
     lines.append(f"📏 الطول: {length_str}")
     lines.append(f"⚖️ العقوبة: {penalty}")
 
@@ -4887,8 +4910,7 @@ def _build_security_text(settings):
 
 
 def _build_security_keyboard(chat_id):
-    """إنتاج أزرار لوحة الأمان."""
-    # تعريف الصفوف (كل صف قائمة من الأزرار)
+    """بناء أزرار لوحة الأمان."""
     rows = [
         [
             ("🔗 روابط", f"security:links:{chat_id}"),
@@ -4947,11 +4969,9 @@ def _build_security_keyboard(chat_id):
     return keyboard
 
 
-async def _smart_edit_or_resend(query, text, reply_markup):
+async def _safe_edit_panel(query, text, reply_markup):
     """
-    تعديل الرسالة الحالية بذكاء:
-    - إذا لم يتغير المحتوى: لا شيء.
-    - إذا تعذر التعديل: حذف القديمة وإرسال جديدة.
+    تعديل رسالة لوحة الأمان مع معالجة ذكية لأخطاء 400.
     """
     try:
         await query.edit_message_text(
@@ -4960,27 +4980,37 @@ async def _smart_edit_or_resend(query, text, reply_markup):
             parse_mode="HTML"
         )
     except BadRequest as e:
-        error_msg = str(e).lower()
-        if "message is not modified" in error_msg:
-            # ليس خطأ، فقط تجاهل
-            return
-        elif "message can't be edited" in error_msg or "message to edit not found" in error_msg:
-            # لا يمكن التعديل، نرسل رسالة جديدة
+        err = str(e).lower()
+        if "message is not modified" in err:
+            return  # لا تفعل شيئًا، التعديل غير ضروري
+        elif "message can't be edited" in err or "message to edit not found" in err:
+            # الرسالة قديمة أو محذوفة، نرسل جديدة
             try:
                 await query.message.delete()
-            except Exception as del_err:
-                logger.debug(f"تعذر حذف الرسالة القديمة: {del_err}")
-            await query.message.reply_text(
+            except:
+                pass
+            await query.message.chat.send_message(
                 text=text,
                 reply_markup=reply_markup,
                 parse_mode="HTML"
             )
+        elif "can't parse entities" in err:
+            # مشكلة في تنسيق HTML، نحاول بدون تنسيق
+            await query.edit_message_text(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=None
+            )
         else:
-            raise  # إعادة رمي الأخطاء الأخرى غير المتوقعة
+            # أي خطأ آخر غير معروف
+            logger.warning(f"خطأ غير معالج في _safe_edit_panel: {e}")
+            await query.message.chat.send_message(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
     except Exception as e:
-        logger.error(f"خطأ أثناء تعديل/إرسال الرسالة: {e}", exc_info=True)
-        await _safe_answer(query, "❌ حدث خطأ أثناء تحديث الواجهة", show_alert=True)
-
+        logger.error(f"خطأ غير متوقع في _safe_edit_panel: {e}", exc_info=True)
 
 async def _safe_answer(query, text, show_alert=False):
     """إرسال إشعار (callback answer) بشكل آمن."""
