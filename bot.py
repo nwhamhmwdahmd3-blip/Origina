@@ -3344,76 +3344,54 @@ def get_advanced_mute_duration_keyboard(chat_id: int) -> InlineKeyboardMarkup:
 
 
 def security_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    """لوحة إعدادات الأمان الرئيسية (مرتبة ومصنفة)"""
+    """لوحة إعدادات الأمان - مقسمة إلى 3 أعمدة لتوفير المساحة"""
     return InlineKeyboardMarkup([
-        # الصف الأول: حذف الروابط والمعرفات
         [
-            InlineKeyboardButton("🔗 حذف الروابط", callback_data=f"security:links:{chat_id}"),
-            InlineKeyboardButton("@ حذف المعرفات", callback_data=f"security:mentions:{chat_id}")
+            InlineKeyboardButton("🔗 روابط", callback_data=f"security:links:{chat_id}"),
+            InlineKeyboardButton("@ معرفات", callback_data=f"security:mentions:{chat_id}"),
+            InlineKeyboardButton("⏱️ بطيء", callback_data=f"security:slow_mode:{chat_id}")
         ],
-        # الصف الثاني: كلمات محظورة ووضع بطيء
         [
-            InlineKeyboardButton("🚫 كلمات محظورة", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}"),
-            InlineKeyboardButton("⏱️ الوضع البطيء", callback_data=f"security:slow_mode:{chat_id}")
+            InlineKeyboardButton("🎯 ترحيب", callback_data=f"security:welcome_enabled:{chat_id}"),
+            InlineKeyboardButton("👋 وداع", callback_data=f"security:goodbye_enabled:{chat_id}"),
+            InlineKeyboardButton("🚫 كلمات", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}")
         ],
-        # الصف الثالث: حذف الفيديوهات ورسائل الخدمة
         [
-            InlineKeyboardButton("🎬 حذف الفيديوهات", callback_data=f"security:delete_videos:{chat_id}"),
-            InlineKeyboardButton("🛠️ حذف الخدمة", callback_data=f"security:delete_service:{chat_id}")
+            InlineKeyboardButton("🎬 فيديو", callback_data=f"security:delete_videos:{chat_id}"),
+            InlineKeyboardButton("🎵 صوت", callback_data=f"security:delete_audio:{chat_id}"),
+            InlineKeyboardButton("🎞️ متحرك", callback_data=f"security:delete_animation:{chat_id}")
         ],
-        # الصف الرابع: حذف الملفات والملصقات
         [
-            InlineKeyboardButton("📄 حذف الملفات", callback_data=f"security:delete_documents:{chat_id}"),
-            InlineKeyboardButton("🖼️ حذف الملصقات", callback_data=f"security:delete_stickers:{chat_id}")
+            InlineKeyboardButton("🛠️ خدمة", callback_data=f"security:delete_service:{chat_id}"),
+            InlineKeyboardButton("📄 ملفات", callback_data=f"security:delete_documents:{chat_id}"),
+            InlineKeyboardButton("🖼️ ملصقات", callback_data=f"security:delete_stickers:{chat_id}")
         ],
-        # الصف الخامس: حذف الصوتيات والمتحركات
         [
-            InlineKeyboardButton("🎵 حذف الصوتيات", callback_data=f"security:delete_audio:{chat_id}"),
-            InlineKeyboardButton("🎞️ حذف المتحركات", callback_data=f"security:delete_animation:{chat_id}")
+            InlineKeyboardButton("📨 مُعاد", callback_data=f"security:delete_forwarded:{chat_id}"),
+            InlineKeyboardButton("📊 استطلاع", callback_data=f"security:delete_polls:{chat_id}"),
+            InlineKeyboardButton("🎮 ألعاب", callback_data=f"security:delete_games:{chat_id}")
         ],
-        # الصف السادس: حذف المعاد توجيهه والاستطلاعات
         [
-            InlineKeyboardButton("📨 حذف المُعاد", callback_data=f"security:delete_forwarded:{chat_id}"),
-            InlineKeyboardButton("📊 حذف الاستطلاعات", callback_data=f"security:delete_polls:{chat_id}")
+            InlineKeyboardButton("🎤 صوتي", callback_data=f"security:delete_voice:{chat_id}"),
+            InlineKeyboardButton("🎥 نوت", callback_data=f"security:delete_video_note:{chat_id}"),
+            InlineKeyboardButton("🌊 فيضان", callback_data=f"security:antiflood:{chat_id}")
         ],
-        # الصف السابع: حذف الألعاب والرسائل الصوتية
         [
-            InlineKeyboardButton("🎮 حذف الألعاب", callback_data=f"security:delete_games:{chat_id}"),
-            InlineKeyboardButton("🎤 حذف الصوتيات", callback_data=f"security:delete_voice:{chat_id}")
+            InlineKeyboardButton("🌙 ليلي", callback_data=f"security:night_mode:{chat_id}"),
+            InlineKeyboardButton("📏 طول", callback_data=f"security:max_length:{chat_id}"),
+            InlineKeyboardButton("⚠️ تحذير", callback_data=f"security:warn_settings:{chat_id}")
         ],
-        # الصف الثامن: حذف ملاحظات الفيديو والوضع الليلي
         [
-            InlineKeyboardButton("🎥 حذف فيديو نوت", callback_data=f"security:delete_video_note:{chat_id}"),
-            InlineKeyboardButton("🌙 الوضع الليلي", callback_data=f"security:night_mode:{chat_id}")
-        ],
-        # الصف التاسع: مضاد الفيضان والحد الأقصى للرسالة
-        [
-            InlineKeyboardButton("🌊 مضاد الفيضان", callback_data=f"security:antiflood:{chat_id}"),
-            InlineKeyboardButton("📏 طول الرسالة", callback_data=f"security:max_length:{chat_id}")
-        ],
-        # الصف العاشر: تفعيل الكل وتعطيل الكل
-        [
+            InlineKeyboardButton("⚖️ عقوبة", callback_data=f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}"),
             InlineKeyboardButton("⚡ تفعيل الكل", callback_data=f"{CallbackData.SECURITY_ENABLE_ALL_PREFIX}{chat_id}"),
             InlineKeyboardButton("⛔ تعطيل الكل", callback_data=f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}")
         ],
-        # الصف الحادي عشر: عقوبة الحذف والترحيب
         [
-            InlineKeyboardButton("⚖️ عقوبة الحذف", callback_data=f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}"),
-            InlineKeyboardButton("🎯 الترحيب", callback_data=f"security:welcome_enabled:{chat_id}")
+            InlineKeyboardButton("⚖️ العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"),
+            InlineKeyboardButton("🛠️ متقدم", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}"),
+            InlineKeyboardButton("📜 سجل", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")
         ],
-        # الصف الثاني عشر: الوداع وإعدادات التحذير
         [
-            InlineKeyboardButton("👋 الوداع", callback_data=f"security:goodbye_enabled:{chat_id}"),
-            InlineKeyboardButton("⚠️ إعدادات التحذير", callback_data=f"security:warn_settings:{chat_id}")
-        ],
-        # الصف الثالث عشر: تحديد العقوبة والإجراءات المتقدمة
-        [
-            InlineKeyboardButton("⚖️ تحديد العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"),
-            InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")
-        ],
-        # الصف الرابع عشر: سجل الإجراءات وإغلاق
-        [
-            InlineKeyboardButton("📜 سجل الإجراءات", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}"),
             InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)
         ]
     ])
@@ -4929,126 +4907,97 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def _update_security_panel(query, chat_id: int, user_id: int):
-    settings = await db_get_security_settings(chat_id, force_refresh=True)
-
-    links_status = "✅ مفعل" if settings.get('links', False) else "❌ معطل"
-    mentions_status = "✅ مفعل" if settings.get('mentions', False) else "❌ معطل"
-    slow_mode_status = "✅ مفعل" if settings.get('slow_mode', False) else "❌ معطل"
-    slow_mode_seconds = settings.get('slow_mode_seconds', 5)
-    welcome_status = "✅ مفعل" if settings.get('welcome_enabled', False) else "❌ معطل"
-    goodbye_status = "✅ مفعل" if settings.get('goodbye_enabled', False) else "❌ معطل"
-    delete_videos_status = "✅ مفعل" if settings.get('delete_videos', False) else "❌ معطل"
-    delete_audio_status = "✅ مفعل" if settings.get('delete_audio', False) else "❌ معطل"
-    delete_animation_status = "✅ مفعل" if settings.get('delete_animation', False) else "❌ معطل"
-    delete_service_status = "✅ مفعل" if settings.get('delete_service', False) else "❌ معطل"
-    delete_documents_status = "✅ مفعل" if settings.get('delete_documents', False) else "❌ معطل"
-    delete_stickers_status = "✅ مفعل" if settings.get('delete_stickers', False) else "❌ معطل"
-    delete_forwarded_status = "✅ مفعل" if settings.get('delete_forwarded', False) else "❌ معطل"
-    delete_polls_status = "✅ مفعل" if settings.get('delete_polls', False) else "❌ معطل"
-    delete_games_status = "✅ مفعل" if settings.get('delete_games', False) else "❌ معطل"
-    delete_voice_status = "✅ مفعل" if settings.get('delete_voice', False) else "❌ معطل"
-    delete_video_note_status = "✅ مفعل" if settings.get('delete_video_note', False) else "❌ معطل"
-    delete_penalty = settings.get('delete_penalty', 'none')
-    penalty_text = "لا شيء" if delete_penalty == 'none' else delete_penalty
-
-    antiflood_status = "✅ مفعل" if settings.get('antiflood_enabled', False) else "❌ معطل"
-    night_mode_status = "✅ مفعل" if settings.get('night_mode_enabled', False) else "❌ معطل"
-    max_length = settings.get('max_message_length', 0)
-    max_length_text = f"{max_length} حرف" if max_length > 0 else "غير محدود"
-
-    text = f"""🔐 **إعدادات الأمان للمجموعة**
-━━━━━━━━━━━━━━━━━━━━━━
-🔗 **حذف الروابط:** {links_status}
-@ **حذف المعرفات:** {mentions_status}
-⏱️ **الوضع البطيء:** {slow_mode_status} ({slow_mode_seconds} ثانية)
-🎯 **الترحيب:** {welcome_status}
-👋 **الوداع:** {goodbye_status}
-🎬 **حذف الفيديوهات:** {delete_videos_status}
-🎵 **حذف الصوتيات:** {delete_audio_status}
-🎞️ **حذف المتحركات:** {delete_animation_status}
-🛠️ **حذف رسائل الخدمة:** {delete_service_status}
-📄 **حذف الملفات:** {delete_documents_status}
-🖼️ **حذف الملصقات:** {delete_stickers_status}
-📨 **حذف المعاد توجيهه:** {delete_forwarded_status}
-📊 **حذف الاستطلاعات:** {delete_polls_status}
-🎮 **حذف الألعاب:** {delete_games_status}
-🎤 **حذف الصوتيات:** {delete_voice_status}
-🎥 **حذف ملاحظات الفيديو:** {delete_video_note_status}
-🌊 **مضاد الفيضان:** {antiflood_status}
-🌙 **الوضع الليلي:** {night_mode_status}
-📏 **الحد الأقصى للرسالة:** {max_length_text}
-⚖️ **عقوبة الحذف:** {penalty_text}
-━━━━━━━━━━━━━━━━━━━━━━
-اختر الإعدادات المطلوبة:"""
-
-    keyboard = [
-        [
-            InlineKeyboardButton(f"🔗 حذف الروابط", callback_data=f"security:links:{chat_id}"),
-            InlineKeyboardButton(f"@ حذف المعرفات", callback_data=f"security:mentions:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton("🚫 كلمات محظورة", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}"),
-            InlineKeyboardButton(f"⏱️ الوضع البطيء", callback_data=f"security:slow_mode:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton(f"🎬 حذف الفيديوهات", callback_data=f"security:delete_videos:{chat_id}"),
-            InlineKeyboardButton(f"🛠️ حذف رسائل الخدمة", callback_data=f"security:delete_service:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton(f"📄 حذف الملفات", callback_data=f"security:delete_documents:{chat_id}"),
-            InlineKeyboardButton(f"🖼️ حذف الملصقات", callback_data=f"security:delete_stickers:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton(f"🎵 حذف الصوتيات", callback_data=f"security:delete_audio:{chat_id}"),
-            InlineKeyboardButton(f"🎞️ حذف المتحركات", callback_data=f"security:delete_animation:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton(f"📨 حذف المعاد توجيهه", callback_data=f"security:delete_forwarded:{chat_id}"),
-            InlineKeyboardButton(f"📊 حذف الاستطلاعات", callback_data=f"security:delete_polls:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton(f"🎮 حذف الألعاب", callback_data=f"security:delete_games:{chat_id}"),
-            InlineKeyboardButton(f"🎤 حذف الصوتيات", callback_data=f"security:delete_voice:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton(f"🎥 حذف ملاحظات الفيديو", callback_data=f"security:delete_video_note:{chat_id}"),
-            InlineKeyboardButton(f"🌙 الوضع الليلي", callback_data=f"security:night_mode:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton(f"🌊 مضاد الفيضان", callback_data=f"security:antiflood:{chat_id}"),
-            InlineKeyboardButton(f"📏 الحد الأقصى للرسالة", callback_data=f"security:max_length:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton("⚡ تفعيل الكل", callback_data=f"{CallbackData.SECURITY_ENABLE_ALL_PREFIX}{chat_id}"),
-            InlineKeyboardButton("⛔ تعطيل الكل", callback_data=f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}")
-        ],
-        [
-            InlineKeyboardButton(f"⚖️ عقوبة الحذف", callback_data=f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}"),
-            InlineKeyboardButton(f"🎯 الترحيب", callback_data=f"security:welcome_enabled:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton(f"👋 الوداع", callback_data=f"security:goodbye_enabled:{chat_id}"),
-            InlineKeyboardButton(f"⚠️ إعدادات التحذير", callback_data=f"security:warn_settings:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton("⚖️ تحديد العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"),
-            InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")
-        ],
-        [
-            InlineKeyboardButton("📜 سجل الإجراءات", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}"),
-            InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)
-        ]
-    ]
-
+    """تحديث لوحة الأمان بعد تغيير الإعداد - مقسمة إلى 3 أعمدة"""
     try:
-        await safe_edit_markdown(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+        settings = await db_get_security_settings(chat_id, force_refresh=True)
+        
+        # بناء النص
+        def status(val): return "✅" if val else "❌"
+        
+        text = f"""🔐 **إعدادات الأمان للمجموعة**
+━━━━━━━━━━━━━━━━━━━━━━
+🔗 الروابط: {status(settings.get('links'))}
+@ المعرفات: {status(settings.get('mentions'))}
+⏱️ البطيء: {status(settings.get('slow_mode'))} ({settings.get('slow_mode_seconds', 5)}ث)
+🎯 الترحيب: {status(settings.get('welcome_enabled'))}
+👋 الوداع: {status(settings.get('goodbye_enabled'))}
+🎬 فيديوهات: {status(settings.get('delete_videos'))}
+🎵 صوتيات: {status(settings.get('delete_audio'))}
+🎞️ متحركات: {status(settings.get('delete_animation'))}
+🛠️ الخدمة: {status(settings.get('delete_service'))}
+📄 ملفات: {status(settings.get('delete_documents'))}
+🖼️ ملصقات: {status(settings.get('delete_stickers'))}
+📨 المُعاد: {status(settings.get('delete_forwarded'))}
+📊 استطلاعات: {status(settings.get('delete_polls'))}
+🎮 ألعاب: {status(settings.get('delete_games'))}
+🎤 صوتيات: {status(settings.get('delete_voice'))}
+🎥 فيديو نوت: {status(settings.get('delete_video_note'))}
+🌊 مضاد الفيضان: {status(settings.get('antiflood_enabled'))}
+🌙 ليلي: {status(settings.get('night_mode_enabled'))}
+📏 الطول: {settings.get('max_message_length', 0) or 'غير محدود'}
+⚖️ العقوبة: {settings.get('delete_penalty', 'لا شيء')}
+━━━━━━━━━━━━━━━━━━━━━━
+📌 اختر الإعداد:"""
+
+        # كيبورد مقسم إلى 3 أعمدة
+        keyboard = [
+            [
+                InlineKeyboardButton("🔗 روابط", callback_data=f"security:links:{chat_id}"),
+                InlineKeyboardButton("@ معرفات", callback_data=f"security:mentions:{chat_id}"),
+                InlineKeyboardButton("⏱️ بطيء", callback_data=f"security:slow_mode:{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("🎯 ترحيب", callback_data=f"security:welcome_enabled:{chat_id}"),
+                InlineKeyboardButton("👋 وداع", callback_data=f"security:goodbye_enabled:{chat_id}"),
+                InlineKeyboardButton("🚫 كلمات", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("🎬 فيديو", callback_data=f"security:delete_videos:{chat_id}"),
+                InlineKeyboardButton("🎵 صوت", callback_data=f"security:delete_audio:{chat_id}"),
+                InlineKeyboardButton("🎞️ متحرك", callback_data=f"security:delete_animation:{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("🛠️ خدمة", callback_data=f"security:delete_service:{chat_id}"),
+                InlineKeyboardButton("📄 ملفات", callback_data=f"security:delete_documents:{chat_id}"),
+                InlineKeyboardButton("🖼️ ملصقات", callback_data=f"security:delete_stickers:{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("📨 مُعاد", callback_data=f"security:delete_forwarded:{chat_id}"),
+                InlineKeyboardButton("📊 استطلاع", callback_data=f"security:delete_polls:{chat_id}"),
+                InlineKeyboardButton("🎮 ألعاب", callback_data=f"security:delete_games:{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("🎤 صوتي", callback_data=f"security:delete_voice:{chat_id}"),
+                InlineKeyboardButton("🎥 نوت", callback_data=f"security:delete_video_note:{chat_id}"),
+                InlineKeyboardButton("🌊 فيضان", callback_data=f"security:antiflood:{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("🌙 ليلي", callback_data=f"security:night_mode:{chat_id}"),
+                InlineKeyboardButton("📏 طول", callback_data=f"security:max_length:{chat_id}"),
+                InlineKeyboardButton("⚠️ تحذير", callback_data=f"security:warn_settings:{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("⚖️ عقوبة", callback_data=f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}"),
+                InlineKeyboardButton("⚡ تفعيل الكل", callback_data=f"{CallbackData.SECURITY_ENABLE_ALL_PREFIX}{chat_id}"),
+                InlineKeyboardButton("⛔ تعطيل الكل", callback_data=f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("⚖️ العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"),
+                InlineKeyboardButton("🛠️ متقدم", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}"),
+                InlineKeyboardButton("📜 سجل", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")
+            ],
+            [
+                InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)
+            ]
+        ]
+        
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="MarkdownV2")
     except Exception as e:
-        logger.warning(f"فشل تعديل رسالة الأمان: {e}")
+        logger.error(f"خطأ في تحديث لوحة الأمان: {e}")
         try:
-            await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="MarkdownV2")
+            await query.edit_message_text("❌ حدث خطأ أثناء تحديث الإعدادات.")
         except:
             pass
-
 
 async def settings_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
