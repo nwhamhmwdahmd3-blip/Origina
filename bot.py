@@ -39,6 +39,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
+logging.basicConfig(level=logging.DEBUG)
 # ===================================================================
 # 1. المتغيرات البيئية والإعدادات الأساسية
 # ===================================================================
@@ -7985,16 +7986,10 @@ async def main():
         await run_polling_safe(application)
 
 # ===================================================================
-# 62. تشغيل البوت
-# ===================================================================
-
 if __name__ == "__main__":
     try:
-        os.environ["WEB_CONCURRENCY"] = "1"
         asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("🛑 تم إيقاف البوت")
     except Exception as e:
-        logger.error(f"❌ خطأ فادح: {e}")
-        traceback.print_exc()
+        logging.error(f"❌ خطأ فادح: {e}")
+        logging.error(traceback.format_exc())
         sys.exit(1)
