@@ -3241,7 +3241,7 @@ class CallbackData:
 # ===================================================================
 # 27. حالات المستخدم (UserState)
 # ===================================================================
-  class UserState(Enum):
+class UserState(Enum):
     NONE = auto()
     ADDING_POSTS = auto()
     WAITING_CHANNEL_ID = auto()
@@ -3294,8 +3294,6 @@ class CallbackData:
     WAITING_MAX_LENGTH = auto()
     WAITING_SCHEDULE = auto()
     WAITING_CONFIRM = auto()
-
-
 # ===================================================================
 # 28. دوال الكيبوردات (Keyboard Functions) - نسخة محسنة
 # ===================================================================
