@@ -3148,6 +3148,19 @@ async def get_moderation_log(chat_id: int, limit: int = 20) -> str:
         reason_text = f"\n   📝 السبب: {reason[:50]}" if reason else ""
         text += f"• `{user_id}` → {action}{duration_text}{reason_text}\n   🕐 {time_str}\n\n"
     return text
+async def db_get_user_level(user_id: int) -> dict:
+    """استرجاع بيانات مستوى المستخدم"""
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT level, points, experience FROM users WHERE user_id = ?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        # إرجاع قيم افتراضية إذا لم يكن المستخدم موجوداً
+        return {"level": 0, "points": 0, "experience": 0}
+    return await execute_db(_get)
 
 # ===================================================================
 # 27. معرفات الأزرار
