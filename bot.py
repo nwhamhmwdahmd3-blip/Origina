@@ -4907,14 +4907,13 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def _update_security_panel(query, chat_id: int, user_id: int):
-    """تحديث لوحة الأمان بعد تغيير الإعداد - مقسمة إلى 3 أعمدة"""
+    """تحديث لوحة الأمان بعد تغيير الإعداد - يستخدم HTML لتجنب أخطاء التنسيق"""
     try:
         settings = await db_get_security_settings(chat_id, force_refresh=True)
         
-        # بناء النص
         def status(val): return "✅" if val else "❌"
         
-        text = f"""🔐 **إعدادات الأمان للمجموعة**
+        text = f"""<b>🔐 إعدادات الأمان للمجموعة</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 🔗 الروابط: {status(settings.get('links'))}
 @ المعرفات: {status(settings.get('mentions'))}
@@ -4939,7 +4938,6 @@ async def _update_security_panel(query, chat_id: int, user_id: int):
 ━━━━━━━━━━━━━━━━━━━━━━
 📌 اختر الإعداد:"""
 
-        # كيبورد مقسم إلى 3 أعمدة
         keyboard = [
             [
                 InlineKeyboardButton("🔗 روابط", callback_data=f"security:links:{chat_id}"),
@@ -4991,7 +4989,7 @@ async def _update_security_panel(query, chat_id: int, user_id: int):
             ]
         ]
         
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="MarkdownV2")
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     except Exception as e:
         logger.error(f"خطأ في تحديث لوحة الأمان: {e}")
         try:
