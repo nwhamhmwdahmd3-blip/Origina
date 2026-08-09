@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.DEBUG)
 # 1. المتغيرات البيئية والإعدادات الأساسية
 # ===================================================================
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 PRIMARY_OWNER_ID = int(os.getenv("PRIMARY_OWNER_ID", "0"))
 BOT_USERNAME = os.getenv("BOT_USERNAME", "Reelaaaxbot")
 
