@@ -3282,6 +3282,7 @@ class UserState(Enum):
     WAITING_EXPORT_DATA = auto()
     WAITING_CRON = auto()
     WAITING_MAX_LENGTH = auto()
+    WAITING_WARN_COUNT = auto()
     WAITING_SCHEDULE = auto()
     WAITING_CONFIRM = auto()
 
@@ -10244,6 +10245,48 @@ async def db_get_random_participant(contest_id: int) -> int | None:
         row = await cur.fetchone()
         return row[0] if row else None
     return await execute_db(_get)
+elif state == UserState.WAITING_MAX_LENGTH:
+    try:
+        max_len = int(text.strip())
+        if max_len < 0:
+            await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم موجب أو 0.")
+            return
+        chat_id = context.user_data.get('security_chat_id')
+        if chat_id:
+            await db_set_security_settings(chat_id, max_message_length=max_len)
+            await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين الحد الأقصى لطول الرسالة إلى {max_len} حرف.")
+            # تحديث لوحة الأمان
+            if update.callback_query:
+                await _update_security_panel(update.callback_query, chat_id, user_id)
+            else:
+                await safe_send_markdown(context.bot, user_id, "يمكنك العودة إلى اللوحة من خلال /security")
+        else:
+            await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة.")
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم صحيح.")
+    context.user_data.pop('state', None)
+    context.user_data.pop('security_chat_id', None)
+    return
+
+elif state == UserState.WAITING_WARN_COUNT:
+    try:
+        count = int(text.strip())
+        if count < 1 or count > 10:
+            await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال عدد بين 1 و 10.")
+            return
+        chat_id = context.user_data.get('security_chat_id')
+        if chat_id:
+            await db_set_security_settings(chat_id, max_warnings=count)
+            await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين عدد التحذيرات إلى {count}.")
+            # العودة إلى إعدادات التحذير
+            await security_warn_settings_callback(update, context)
+        else:
+            await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة.")
+    except ValueError:
+        await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم صحيح.")
+    context.user_data.pop('state', None)
+    context.user_data.pop('security_chat_id', None)
+    return
 
 # ===================================================================
 # main()
