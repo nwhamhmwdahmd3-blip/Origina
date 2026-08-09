@@ -9644,6 +9644,50 @@ async def db_get_random_participant(contest_id: int) -> int | None:
         row = await cur.fetchone()
         return row[0] if row else None
     return await execute_db(_get)
+# ===================================================================
+# دوال الإجراءات المتقدمة - مكتملة
+# ===================================================================
+
+async def security_advanced_actions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """الإجراءات المتقدمة للمجموعة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🛑 حظر", callback_data=f"{CallbackData.GROUP_ACTION_BAN}:{chat_id}"),
+            InlineKeyboardButton("🔇 كتم", callback_data=f"{CallbackData.GROUP_ACTION_MUTE}:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("⚠️ تحذير", callback_data=f"{CallbackData.GROUP_ACTION_WARN}:{chat_id}"),
+            InlineKeyboardButton("👢 طرد", callback_data=f"{CallbackData.GROUP_ACTION_KICK}:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔒 تقييد", callback_data=f"{CallbackData.GROUP_ACTION_RESTRICT}:{chat_id}"),
+            InlineKeyboardButton("📌 تثبيت", callback_data=f"{CallbackData.GROUP_ACTION_PIN}:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔓 إلغاء حظر", callback_data=f"{CallbackData.GROUP_ACTION_UNBAN}:{chat_id}"),
+            InlineKeyboardButton("📜 سجل الإجراءات", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")
+        ]
+    ])
+
+    await query.edit_message_text(
+        "🛠️ **الإجراءات المتقدمة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "اختر الإجراء المطلوب للمستخدم:\n\n"
+        "📌 **ملاحظة:** سيُطلب منك إدخال معرف المستخدم في الخطوة التالية.",
+        reply_markup=keyboard,
+        parse_mode="MarkdownV2"
+    )
 
 # ===================================================================
 # 47. main()
