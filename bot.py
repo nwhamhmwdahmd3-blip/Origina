@@ -11560,6 +11560,27 @@ async def remove_bot_admin(user_id: int) -> bool:
         await conn.commit()
         return True
     return await execute_db(_remove)
+# ===================================================================
+# دوال حفظ واسترجاع لغة المستخدم من قاعدة البيانات
+# ===================================================================
+
+async def db_get_user_language(user_id: int) -> str | None:
+    """جلب لغة المستخدم من قاعدة البيانات"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT lang FROM user_translation WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def db_set_user_language(user_id: int, lang: str) -> None:
+    """حفظ لغة المستخدم في قاعدة البيانات"""
+    async def _set(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_translation (user_id, lang) VALUES (?, ?)",
+            (user_id, lang)
+        )
+        await conn.commit()
+    await execute_db(_set)
 
 if __name__ == "__main__":
     try:
