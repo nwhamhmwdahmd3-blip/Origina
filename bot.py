@@ -4802,12 +4802,16 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
         except:
             pass
 
-async def _update_security_panel(query, chat_id: int, user_id: int):
+async def _update_security_panel(query, chat_id, user_id):
+    """
+    تحديث لوحة إعدادات الأمان وعرض الإعدادات الحالية.
+    """
     try:
         settings = await db_get_security_settings(chat_id, force_refresh=True)
-        
-        def st(val): return "✅" if val else "❌"
-        
+
+        def st(val):
+            return "✅" if val else "❌"
+
         text = f"""🔐 إعدادات الأمان للمجموعة
 ━━━━━━━━━━━━━━━━━━━━━━
 🔗 الروابط: {st(settings.get('links'))}
@@ -4883,7 +4887,7 @@ async def _update_security_panel(query, chat_id: int, user_id: int):
                 InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)
             ]
         ]
-        
+
         try:
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         except BadRequest as e:
@@ -4893,10 +4897,7 @@ async def _update_security_panel(query, chat_id: int, user_id: int):
                 raise e
     except Exception as e:
         logger.error(f"خطأ في تحديث لوحة الأمان: {e}")
-        try:
-            await query.edit_message_text("❌ حدث خطأ أثناء تحديث الإعدادات.")
-        except:
-            pass
+        await query.answer("❌ حدث خطأ أثناء التحديث", show_alert=True)
 
 async def settings_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -5668,16 +5669,16 @@ async def security_toggle_setting_callback(update: Update, context: ContextTypes
     """تبديل إعداد أمان معين في المجموعة"""
     query = update.callback_query
     await query.answer()
-    
+
     logger.info(f"🔔 كولباك الأمان: {query.data}")
-    
+
     user_id = update.effective_user.id
     parts = query.data.split(":")
-    
+
     if len(parts) < 3:
         await query.edit_message_text("❌ بيانات غير صالحة")
         return
-    
+
     action = parts[1]
     try:
         chat_id = int(parts[2])
@@ -5691,78 +5692,134 @@ async def security_toggle_setting_callback(update: Update, context: ContextTypes
 
     settings = await db_get_security_settings(chat_id, force_refresh=True)
 
+    # ===================================================================
+    # تبديل الإعدادات (Toggle)
+    # ===================================================================
     if action == "links":
         settings['links'] = not settings['links']
         await db_set_security_settings(chat_id, links=settings['links'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['links'] else 'تم التعطيل'}")
+        
     elif action == "mentions":
         settings['mentions'] = not settings['mentions']
         await db_set_security_settings(chat_id, mentions=settings['mentions'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['mentions'] else 'تم التعطيل'}")
+        
     elif action == "slow_mode":
         settings['slow_mode'] = not settings['slow_mode']
         await db_set_security_settings(chat_id, slow_mode=settings['slow_mode'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['slow_mode'] else 'تم التعطيل'}")
+        
     elif action == "delete_videos":
         settings['delete_videos'] = not settings['delete_videos']
         await db_set_security_settings(chat_id, delete_videos=settings['delete_videos'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_videos'] else 'تم التعطيل'}")
+        
     elif action == "delete_service":
         settings['delete_service'] = not settings['delete_service']
         await db_set_security_settings(chat_id, delete_service=settings['delete_service'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_service'] else 'تم التعطيل'}")
+        
     elif action == "delete_documents":
         settings['delete_documents'] = not settings['delete_documents']
         await db_set_security_settings(chat_id, delete_documents=settings['delete_documents'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_documents'] else 'تم التعطيل'}")
+        
     elif action == "delete_stickers":
         settings['delete_stickers'] = not settings['delete_stickers']
         await db_set_security_settings(chat_id, delete_stickers=settings['delete_stickers'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_stickers'] else 'تم التعطيل'}")
+        
     elif action == "delete_audio":
         settings['delete_audio'] = not settings['delete_audio']
         await db_set_security_settings(chat_id, delete_audio=settings['delete_audio'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_audio'] else 'تم التعطيل'}")
+        
     elif action == "delete_animation":
         settings['delete_animation'] = not settings['delete_animation']
         await db_set_security_settings(chat_id, delete_animation=settings['delete_animation'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_animation'] else 'تم التعطيل'}")
+        
     elif action == "delete_forwarded":
         settings['delete_forwarded'] = not settings['delete_forwarded']
         await db_set_security_settings(chat_id, delete_forwarded=settings['delete_forwarded'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_forwarded'] else 'تم التعطيل'}")
+        
     elif action == "delete_polls":
         settings['delete_polls'] = not settings['delete_polls']
         await db_set_security_settings(chat_id, delete_polls=settings['delete_polls'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_polls'] else 'تم التعطيل'}")
+        
     elif action == "delete_games":
         settings['delete_games'] = not settings['delete_games']
         await db_set_security_settings(chat_id, delete_games=settings['delete_games'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_games'] else 'تم التعطيل'}")
+        
     elif action == "delete_voice":
         settings['delete_voice'] = not settings['delete_voice']
         await db_set_security_settings(chat_id, delete_voice=settings['delete_voice'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_voice'] else 'تم التعطيل'}")
+        
     elif action == "delete_video_note":
         settings['delete_video_note'] = not settings['delete_video_note']
         await db_set_security_settings(chat_id, delete_video_note=settings['delete_video_note'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['delete_video_note'] else 'تم التعطيل'}")
+        
     elif action == "welcome_enabled":
         settings['welcome_enabled'] = not settings['welcome_enabled']
         await db_set_security_settings(chat_id, welcome_enabled=settings['welcome_enabled'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['welcome_enabled'] else 'تم التعطيل'}")
+        
     elif action == "goodbye_enabled":
         settings['goodbye_enabled'] = not settings['goodbye_enabled']
         await db_set_security_settings(chat_id, goodbye_enabled=settings['goodbye_enabled'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['goodbye_enabled'] else 'تم التعطيل'}")
+        
     elif action == "antiflood":
         settings['antiflood_enabled'] = not settings['antiflood_enabled']
         await db_set_security_settings(chat_id, antiflood_enabled=settings['antiflood_enabled'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['antiflood_enabled'] else 'تم التعطيل'}")
+        
     elif action == "night_mode":
         settings['night_mode_enabled'] = not settings['night_mode_enabled']
         await db_set_security_settings(chat_id, night_mode_enabled=settings['night_mode_enabled'])
+        await query.answer(f"✅ {'تم التفعيل' if settings['night_mode_enabled'] else 'تم التعطيل'}")
+
+    # ===================================================================
+    # إعدادات تتطلب إدخال قيمة (طلب رقم)
+    # ===================================================================
     elif action == "max_length":
-        context.user_data['state'] = "WAITING_MAX_LENGTH"
+        # ✅ تم التصحيح: استخدام UserState بدلاً من النص
+        context.user_data['state'] = UserState.WAITING_MAX_LENGTH
         context.user_data['security_chat_id'] = chat_id
         await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
-        return
+        return  # نخرج هنا لأننا ننتظر رد المستخدم
+
     elif action == "warn_settings":
+        # إعدادات التحذير (تظهر قائمة فرعية)
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔢 عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
              InlineKeyboardButton("⚖️ عقوبة التحذير", callback_data=f"warn_penalty:{chat_id}")],
             [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
         ])
-        await query.edit_message_text("⚠️ **إعدادات التحذير**\nاختر الإعداد المطلوب:", reply_markup=keyboard)
-        return
+        await query.edit_message_text(
+            "⚠️ **إعدادات التحذير**\nاختر الإعداد المطلوب:",
+            reply_markup=keyboard,
+            parse_mode="MarkdownV2"
+        )
+        return  # نخرج هنا لأننا ننتقل إلى قائمة فرعية
+
     else:
         await query.edit_message_text("❌ إجراء غير معروف")
         return
 
+    # ===================================================================
+    # تحديث لوحة الأمان (يتم تنفيذه فقط للحالات التي تم تبديلها)
+    # ===================================================================
+    # حذف الكاش لتحديث الإعدادات
     _security_cache.pop(chat_id, None)
+    
+    # تحديث لوحة الأمان
     await _update_security_panel(query, chat_id, user_id)
 
 # ===================================================================
