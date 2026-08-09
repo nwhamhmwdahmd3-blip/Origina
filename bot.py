@@ -4802,182 +4802,192 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
             else:
                 await safe_send_markdown(context.bot, uid, f"❌ حدث خطأ:\n`{str(e)[:300]}`\n(الرمز: `{error_id}`)")
         except:
+            pass
+
+import logging
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
+
+logger = logging.getLogger(__name__)
+
+# يفترض وجود كلاس CallbackData معرف مسبقًا
+# from .constants import CallbackData
+
 async def _update_security_panel(query, chat_id, user_id):
     """
     تحديث لوحة إعدادات الأمان وعرض الإعدادات الحالية.
     """
     try:
-        # جلب الإعدادات مع فرض التحديث
+        # 1. جلب الإعدادات مع تجاوز الكاش
         settings = await db_get_security_settings(chat_id, force_refresh=True)
-        
-        # بناء النص والأزرار
-        text = _build_security_panel_text(settings)
-        keyboard = _build_security_panel_keyboard(chat_id)
+
+        # 2. بناء النص و الأزرار
+        text = _build_security_text(settings)
+        keyboard = _build_security_keyboard(chat_id)
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        # التعامل مع التحديث بسلاسة
+
+        # 3. محاولة تعديل الرسالة أو إعادة إرسالها
         await _smart_edit_or_resend(query, text, reply_markup)
-        
+
     except Exception as e:
         logger.error(f"خطأ في _update_security_panel: {e}", exc_info=True)
-        await _safe_answer(query, "❌ حدث خطأ غير متوقع")
+        await _safe_answer(query, "❌ حدث خطأ غير متوقع", show_alert=True)
 
 
-def _build_security_panel_text(settings):
-    """بناء نص لوحة الأمان."""
+# ========== دوال مساعدة ==========
+
+def _build_security_text(settings):
+    """إنتاج نص لوحة الإعدادات."""
     def st(val):
         return "✅" if val else "❌"
-    
-    # تعريف الإعدادات مع أيقوناتها وترجمتها
-    security_items = [
-        ("🔗 الروابط", settings.get('links')),
-        ("@ المعرفات", settings.get('mentions')),
-        ("⏱️ البطيء", settings.get('slow_mode'), f" ({settings.get('slow_mode_seconds', 5)}ث)" if settings.get('slow_mode') else ""),
-        ("🎯 الترحيب", settings.get('welcome_enabled')),
-        ("👋 الوداع", settings.get('goodbye_enabled')),
-        ("🎬 فيديوهات", settings.get('delete_videos')),
-        ("🎵 صوتيات", settings.get('delete_audio')),
-        ("🎞️ متحركات", settings.get('delete_animation')),
-        ("🛠️ الخدمة", settings.get('delete_service')),
-        ("📄 ملفات", settings.get('delete_documents')),
-        ("🖼️ ملصقات", settings.get('delete_stickers')),
-        ("📨 المُعاد", settings.get('delete_forwarded')),
-        ("📊 استطلاعات", settings.get('delete_polls')),
-        ("🎮 ألعاب", settings.get('delete_games')),
-        ("🎤 صوتيات", settings.get('delete_voice')),
-        ("🎥 فيديو نوت", settings.get('delete_video_note')),
-        ("🌊 مضاد الفيضان", settings.get('antiflood_enabled')),
-        ("🌙 ليلي", settings.get('night_mode_enabled')),
-        ("📏 الطول", True, f": {settings.get('max_message_length', 0) or 'غير محدود'}"),
-        ("⚖️ العقوبة", True, f": {settings.get('delete_penalty', 'لا شيء')}"),
+
+    # قائمة الإعدادات: (الاسم, المفتاح, قيمة إضافية اختيارية)
+    items = [
+        ("🔗 الروابط", "links"),
+        ("@ المعرفات", "mentions"),
+        ("⏱️ البطيء", "slow_mode",
+         lambda: f" ({settings.get('slow_mode_seconds', 5)}ث)" if settings.get("slow_mode") else ""),
+        ("🎯 الترحيب", "welcome_enabled"),
+        ("👋 الوداع", "goodbye_enabled"),
+        ("🎬 فيديوهات", "delete_videos"),
+        ("🎵 صوتيات", "delete_audio"),
+        ("🎞️ متحركات", "delete_animation"),
+        ("🛠️ الخدمة", "delete_service"),
+        ("📄 ملفات", "delete_documents"),
+        ("🖼️ ملصقات", "delete_stickers"),
+        ("📨 المُعاد", "delete_forwarded"),
+        ("📊 استطلاعات", "delete_polls"),
+        ("🎮 ألعاب", "delete_games"),
+        ("🎤 صوتيات", "delete_voice"),
+        ("🎥 فيديو نوت", "delete_video_note"),
+        ("🌊 مضاد الفيضان", "antiflood_enabled"),
+        ("🌙 ليلي", "night_mode_enabled"),
     ]
-    
-    # بناء النص ديناميكياً
-    lines = ["🔐 إعدادات الأمان للمجموعة", "━━━━━━━━━━━━━━━━━━━━━━"]
-    for item in security_items:
-        name = item[0]
-        value = item[1]
-        extra = item[2] if len(item) > 2 else ""
-        lines.append(f"{name}: {st(value)}{extra}")
-    
+
+    lines = [
+        "🔐 إعدادات الأمان للمجموعة",
+        "━━━━━━━━━━━━━━━━━━━━━━"
+    ]
+
+    for name, key, *extra in items:
+        value = settings.get(key, False)
+        extra_text = extra[0]() if extra else ""
+        lines.append(f"{name}: {st(value)}{extra_text}")
+
+    # إعدادات خاصة لا تتبع نمط ✅/❌
+    max_len = settings.get("max_message_length", 0)
+    length_str = str(max_len) if max_len else "غير محدود"
+    penalty = settings.get("delete_penalty", "لا شيء")
+    lines.append(f"📏 الطول: {length_str}")
+    lines.append(f"⚖️ العقوبة: {penalty}")
+
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("📌 اختر الإعداد:")
-    
     return "\n".join(lines)
 
 
-def _build_security_panel_keyboard(chat_id):
-    """بناء أزرار لوحة الأمان."""
-    
-    # تعريف الأزرار في شبكة 3×n
-    button_groups = [
-        # الصف 1
+def _build_security_keyboard(chat_id):
+    """إنتاج أزرار لوحة الأمان."""
+    # تعريف الصفوف (كل صف قائمة من الأزرار)
+    rows = [
         [
             ("🔗 روابط", f"security:links:{chat_id}"),
             ("@ معرفات", f"security:mentions:{chat_id}"),
-            ("⏱️ بطيء", f"security:slow_mode:{chat_id}"),
+            ("⏱️ بطيء", f"security:slow_mode:{chat_id}")
         ],
-        # الصف 2
         [
             ("🎯 ترحيب", f"security:welcome_enabled:{chat_id}"),
             ("👋 وداع", f"security:goodbye_enabled:{chat_id}"),
-            ("🚫 كلمات", f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}"),
+            ("🚫 كلمات", f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}")
         ],
-        # الصف 3 - حذف المحتوى
         [
             ("🎬 فيديو", f"security:delete_videos:{chat_id}"),
             ("🎵 صوت", f"security:delete_audio:{chat_id}"),
-            ("🎞️ متحرك", f"security:delete_animation:{chat_id}"),
+            ("🎞️ متحرك", f"security:delete_animation:{chat_id}")
         ],
-        # الصف 4
         [
             ("🛠️ خدمة", f"security:delete_service:{chat_id}"),
             ("📄 ملفات", f"security:delete_documents:{chat_id}"),
-            ("🖼️ ملصقات", f"security:delete_stickers:{chat_id}"),
+            ("🖼️ ملصقات", f"security:delete_stickers:{chat_id}")
         ],
-        # الصف 5
         [
             ("📨 مُعاد", f"security:delete_forwarded:{chat_id}"),
             ("📊 استطلاع", f"security:delete_polls:{chat_id}"),
-            ("🎮 ألعاب", f"security:delete_games:{chat_id}"),
+            ("🎮 ألعاب", f"security:delete_games:{chat_id}")
         ],
-        # الصف 6
         [
             ("🎤 صوتي", f"security:delete_voice:{chat_id}"),
             ("🎥 نوت", f"security:delete_video_note:{chat_id}"),
-            ("🌊 فيضان", f"security:antiflood:{chat_id}"),
+            ("🌊 فيضان", f"security:antiflood:{chat_id}")
         ],
-        # الصف 7 - إعدادات متقدمة
         [
             ("🌙 ليلي", f"security:night_mode:{chat_id}"),
             ("📏 طول", f"security:max_length:{chat_id}"),
-            ("⚠️ تحذير", f"security:warn_settings:{chat_id}"),
+            ("⚠️ تحذير", f"security:warn_settings:{chat_id}")
         ],
-        # الصف 8 - أزرار التحكم الرئيسية
         [
+            ("⚖️ عقوبة", f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}"),
             ("⚡ تفعيل الكل", f"{CallbackData.SECURITY_ENABLE_ALL_PREFIX}{chat_id}"),
-            ("⛔ تعطيل الكل", f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}"),
-            ("⚖️ عقوبة", f"{CallbackData.PENALTY_MENU}:{chat_id}"),
+            ("⛔ تعطيل الكل", f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}")
         ],
-        # الصف 9 - التنقل
         [
+            ("⚖️ العقوبة", f"{CallbackData.PENALTY_MENU}:{chat_id}"),
             ("🛠️ متقدم", f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}"),
-            ("📜 سجل", f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}"),
-            ("🔙 إغلاق", CallbackData.SECURITY_CLOSE),
+            ("📜 سجل", f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")
         ],
+        [
+            ("🔙 إغلاق", CallbackData.SECURITY_CLOSE)
+        ]
     ]
-    
-    # تحويل إلى InlineKeyboardButton
+
     keyboard = []
-    for group in button_groups:
-        row = [InlineKeyboardButton(text, callback_data=cb) for text, cb in group]
-        keyboard.append(row)
-    
+    for row in rows:
+        buttons = [InlineKeyboardButton(text, callback_data=cb) for text, cb in row]
+        keyboard.append(buttons)
     return keyboard
 
 
 async def _smart_edit_or_resend(query, text, reply_markup):
-    """تعديل الرسالة بذكاء أو إعادة إرسالها عند الحاجة."""
+    """
+    تعديل الرسالة الحالية بذكاء:
+    - إذا لم يتغير المحتوى: لا شيء.
+    - إذا تعذر التعديل: حذف القديمة وإرسال جديدة.
+    """
     try:
         await query.edit_message_text(
-            text,
+            text=text,
             reply_markup=reply_markup,
             parse_mode="HTML"
         )
     except BadRequest as e:
         error_msg = str(e).lower()
-        
-        # تجاهل خطأ "لم يتم التعديل" لأنه ليس خطأ حقيقي
         if "message is not modified" in error_msg:
-            return  # الخروج بصمت
-        
-        # إذا كانت الرسالة قديمة جداً
+            # ليس خطأ، فقط تجاهل
+            return
         elif "message can't be edited" in error_msg or "message to edit not found" in error_msg:
-            await _resend_message(query, text, reply_markup)
+            # لا يمكن التعديل، نرسل رسالة جديدة
+            try:
+                await query.message.delete()
+            except Exception as del_err:
+                logger.debug(f"تعذر حذف الرسالة القديمة: {del_err}")
+            await query.message.reply_text(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
         else:
-            raise  # إعادة رمي الأخطاء الأخرى
-
-
-async def _resend_message(query, text, reply_markup):
-    """إعادة إرسال الرسالة مع حذف القديمة."""
-    try:
-        await query.message.delete()
+            raise  # إعادة رمي الأخطاء الأخرى غير المتوقعة
     except Exception as e:
-        logger.debug(f"تعذر حذف الرسالة القديمة: {e}")
-    
-    await query.message.reply_text(
-        text,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
+        logger.error(f"خطأ أثناء تعديل/إرسال الرسالة: {e}", exc_info=True)
+        await _safe_answer(query, "❌ حدث خطأ أثناء تحديث الواجهة", show_alert=True)
 
 
 async def _safe_answer(query, text, show_alert=False):
-    """إرسال إشعار بشكل آمن."""
+    """إرسال إشعار (callback answer) بشكل آمن."""
     try:
-        await query.answer(text, show_alert=show_alert)
-    except Exception:
-        pass
+        await query.answer(text=text, show_alert=show_alert)
+    except Exception as e:
+        logger.debug(f"تعذر إرسال query.answer: {e}")
 
 async def settings_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
