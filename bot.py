@@ -11325,6 +11325,16 @@ async def nsfw_threshold_set_callback(update: Update, context: ContextTypes.DEFA
     
     context.user_data['state'] = UserState.WAITING_NSFW_THRESHOLD
     await query.edit_message_text("⚙️ **تغيير نسبة حساسية NSFW**\n\nأرسل النسبة المطلوبة (0-100):\nمثال: 70")
+async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض رسالة المساعدة"""
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "📌 **قائمة المساعدة**\n\n"
+        "• /start - بدء البوت\n"
+        "• /help - عرض هذه الرسالة\n"
+        "• /security - إعدادات الأمان",
+        parse_mode="Markdown"
+    )
 
 # ===================================================================
 # 47. main()
