@@ -10049,6 +10049,39 @@ async def main():
         await application.bot.delete_webhook()
         await run_polling_safe(application)
 
+# ===================================================================
+# دوال إعدادات التحذير - مكتملة
+# ===================================================================
+
+async def security_warn_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعدادات التحذير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+
+    settings = await db_get_security_settings(chat_id)
+    max_warnings = settings.get('max_warnings', 3)
+    warn_penalty = settings.get('warn_penalty', 'ban')
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🔢 عدد التحذيرات: {max_warnings}", callback_data=f"warn_count:{chat_id}"),
+         InlineKeyboardButton(f"⚖️ العقوبة: {warn_penalty}", callback_data=f"warn_penalty:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+
+    await query.edit_message_text(
+        f"⚠️ **إعدادات التحذير**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔢 عدد التحذيرات: {max_warnings}\n"
+        f"⚖️ عقوبة الوصول للحد الأقصى: {warn_penalty}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"اختر الإعداد المطلوب:",
+        reply_markup=keyboard,
+        parse_mode="MarkdownV2"
+    )
 
 if __name__ == "__main__":
     try:
