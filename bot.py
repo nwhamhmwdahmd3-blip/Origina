@@ -4907,13 +4907,13 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def _update_security_panel(query, chat_id: int, user_id: int):
-    """تحديث لوحة الأمان بعد تغيير الإعداد - يستخدم HTML لتجنب أخطاء التنسيق"""
+    """تحديث لوحة الأمان بعد تغيير الإعداد"""
     try:
         settings = await db_get_security_settings(chat_id, force_refresh=True)
         
         def status(val): return "✅" if val else "❌"
         
-        text = f"""<b>🔐 إعدادات الأمان للمجموعة</b>
+        text = f"""🔐 إعدادات الأمان للمجموعة
 ━━━━━━━━━━━━━━━━━━━━━━
 🔗 الروابط: {status(settings.get('links'))}
 @ المعرفات: {status(settings.get('mentions'))}
