@@ -3,7 +3,7 @@
 
 """
 ريلاكس مانيجر - بوت متكامل لإدارة القنوات والمجموعات
-الإصدار: 21.0.0 - النسخة العالمية الكاملة مع جميع الميزات
+الإصدار: 21.0.0 - النسخة العالمية الكاملة مع جميع الميزات (مصححة)
 المطور: @RelaxMgr
 """
 
@@ -1658,7 +1658,7 @@ async def db_add_channel(user_id: int, channel_id: str, channel_name: str) -> in
         )
         if await cur.fetchone():
             return None
-        
+
         # إضافة القناة
         cur = await conn.execute(
             """INSERT INTO user_channels 
@@ -1705,6 +1705,12 @@ async def db_get_channel_info(channel_db_id: int):
 
 async def db_delete_channel_by_id(user_id: int, channel_db_id: int) -> bool:
     async def _delete(conn):
+        # جلب channel_id قبل الحذف لحذفه من bot_channels أيضاً
+        cur = await conn.execute("SELECT channel_id FROM user_channels WHERE id=? AND user_id=?", (channel_db_id, user_id))
+        row = await cur.fetchone()
+        if row:
+            channel_tele_id = row[0]
+            await conn.execute("DELETE FROM bot_channels WHERE channel_id=?", (channel_tele_id,))
         await conn.execute("DELETE FROM user_channels WHERE id=? AND user_id=?", (channel_db_id, user_id))
         await conn.execute("DELETE FROM posts WHERE channel_db_id=?", (channel_db_id,))
         await conn.execute("DELETE FROM schedule WHERE channel_db_id=?", (channel_db_id,))
@@ -1828,6 +1834,7 @@ async def db_get_published_count(channel_db_id: int) -> int:
 
 async def db_reset_all_posts_to_unpublished(channel_db_id: int) -> int:
     async def _reset(conn):
+        # ترتيب عشوائي لتجنب تكرار نفس التسلسل
         await conn.execute("UPDATE posts SET published=0, fail_count=0 WHERE channel_db_id=?", (channel_db_id,))
         await conn.commit()
         cur = await conn.execute("SELECT COUNT(*) FROM posts WHERE channel_db_id=?", (channel_db_id,))
@@ -1943,7 +1950,11 @@ async def db_update_next_publish_date(channel_db_id: int):
         schedule = await db_get_schedule(channel_db_id)
         last_publish_cur = await conn.execute("SELECT last_publish_time FROM last_publish WHERE channel_db_id=?", (channel_db_id,))
         last_row = await last_publish_cur.fetchone()
-        last_time = datetime.fromisoformat(last_row[0]) if last_row else utc_now()
+        # إذا كانت الجدولة من نوع days أو dates، نبدأ من الوقت الحالي لتجنب التواريخ الماضية
+        if schedule['type'] in ['days', 'dates']:
+            last_time = utc_now()
+        else:
+            last_time = datetime.fromisoformat(last_row[0]) if last_row else utc_now()
         schedule_type = schedule['type']
         publish_time_str = schedule.get('publish_time', '00:00')
         if ':' not in publish_time_str:
@@ -3173,6 +3184,8 @@ async def db_create_contest(creator_id: int, title: str, description: str, prize
                             end_date: datetime, contest_type: str = 'raffle') -> int:
     """إنشاء مسابقة جديدة"""
     try:
+        if end_date <= utc_now():
+            raise ValueError("end_date must be in future")
         async def _create(conn):
             if not isinstance(end_date, datetime):
                 raise ValueError("end_date must be datetime object")
@@ -3474,8 +3487,8 @@ async def db_get_channel_stats(channel_db_id: int) -> dict:
             SELECT COUNT(*) as total_posts,
                    SUM(CASE WHEN published = 1 THEN 1 ELSE 0 END) as published_posts,
                    SUM(CASE WHEN published = 0 THEN 1 ELSE 0 END) as unpublished_posts,
-                   SUM(views_count) as total_views,
-                   AVG(views_count) as avg_views,
+                   SUM(COALESCE(views_count, 0)) as total_views,
+                   AVG(COALESCE(views_count, 0)) as avg_views,
                    MAX(created_at) as last_post_time,
                    MIN(created_at) as first_post_time
             FROM posts
@@ -3533,7 +3546,7 @@ async def db_get_channel_growth(channel_db_id: int, days: int = 30) -> dict:
         cur = await conn.execute("""
             SELECT date(created_at) as post_date,
                    COUNT(*) as count,
-                   SUM(views_count) as views
+                   SUM(COALESCE(views_count, 0)) as views
             FROM posts
             WHERE channel_db_id = ? AND created_at >= ?
             GROUP BY date(created_at)
@@ -3605,8 +3618,8 @@ async def db_get_user_channel_stats(user_id: int, channel_db_id: int) -> dict:
             SELECT COUNT(*) as total_posts,
                    SUM(CASE WHEN published = 1 THEN 1 ELSE 0 END) as published_posts,
                    SUM(CASE WHEN published = 0 THEN 1 ELSE 0 END) as unpublished_posts,
-                   SUM(views_count) as total_views,
-                   AVG(views_count) as avg_views,
+                   SUM(COALESCE(views_count, 0)) as total_views,
+                   AVG(COALESCE(views_count, 0)) as avg_views,
                    MAX(created_at) as last_post_time,
                    MIN(created_at) as first_post_time
             FROM posts
@@ -4013,24 +4026,25 @@ async def panel_lock_callback_handler(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     if query:
         await query.answer()
-    
+
     uid = update.effective_user.id
     chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('panel_chat_id')
-    
+
     if not chat_id:
         return
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, uid):
         if query:
             await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_chat_lock(chat_id, True, uid)
-    
+
     if query:
         await safe_edit_markdown(query, "🔒 **تم قفل المجموعة بنجاح!**\n\nالآن لا يمكن لأي عضو إرسال رسائل.")
-    
-    await panel_command_handler(update, context)
+
+    # تحديث قائمة المجموعات
+    await my_groups_callback(update, context)
 
 
 async def panel_unlock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4038,24 +4052,25 @@ async def panel_unlock_callback_handler(update: Update, context: ContextTypes.DE
     query = update.callback_query
     if query:
         await query.answer()
-    
+
     uid = update.effective_user.id
     chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('panel_chat_id')
-    
+
     if not chat_id:
         return
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, uid):
         if query:
             await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_chat_lock(chat_id, False)
-    
+
     if query:
         await safe_edit_markdown(query, "🔓 **تم فتح المجموعة بنجاح!**\n\nيمكن للأعضاء إرسال رسائل الآن.")
-    
-    await panel_command_handler(update, context)
+
+    # تحديث قائمة المجموعات
+    await my_groups_callback(update, context)
 
 
 async def panel_close_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4071,29 +4086,29 @@ async def panel_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
         await safe_send_markdown(context.bot, update.effective_user.id, "🔒 هذا الأمر يعمل فقط في المجموعات!")
         return
-    
+
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح!")
         return
-    
+
     current_lock_status = await is_chat_locked(chat_id)
-    
+
     if current_lock_status:
         lock_button = InlineKeyboardButton("🔓 فتح المجموعة", callback_data=f"{CallbackData.PANEL_UNLOCK_PREFIX}{chat_id}")
         lock_status_text = "🔒 **مقفلة**"
     else:
         lock_button = InlineKeyboardButton("🔒 قفل المجموعة", callback_data=f"{CallbackData.PANEL_LOCK_PREFIX}{chat_id}")
         lock_status_text = "🔓 **مفتوحة**"
-    
+
     kb = InlineKeyboardMarkup([
         [lock_button],
         [InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")],
         [InlineKeyboardButton("🔙 إغلاق اللوحة", callback_data=CallbackData.PANEL_CLOSE)]
     ])
-    
+
     text = f"""🔧 **لوحة تحكم المجموعة**
 ━━━━━━━━━━━━━━
 📌 **المجموعة:** {update.effective_chat.title}
@@ -4116,46 +4131,46 @@ async def send_error_to_log_channel(bot, error: Exception, context: dict = None,
         if not log_channel_id:
             logger.warning("⚠️ لم يتم تعيين قناة التقارير")
             return
-        
+
         # إنشاء معرف فريد للخطأ
         error_id = secrets.token_hex(6)
-        
+
         # تحليل نوع الخطأ
         error_type = type(error).__name__
         error_message = str(error)
-        
+
         # تحديد سبب المشكلة والحل بناءً على نوع الخطأ
         cause = ""
         solution = ""
-        
+
         if isinstance(error, NameError):
             cause = f"✅ **السبب:** دالة أو متغير غير معرف: `{error_message}`"
             solution = "🔧 **الحل:** تأكد من تعريف الدالة أو المتغير المطلوب، أو أضف الاستيراد المناسب."
-            
+
         elif isinstance(error, AttributeError):
             cause = f"✅ **السبب:** خاصية أو دالة غير موجودة في الكائن: `{error_message}`"
             solution = "🔧 **الحل:** تأكد من وجود الخاصية أو الدالة في الكائن المطلوب، أو استخدم الإصدار الصحيح."
-            
+
         elif isinstance(error, KeyError):
             cause = f"✅ **السبب:** مفتاح غير موجود في القاموس: `{error_message}`"
             solution = "🔧 **الحل:** تأكد من وجود المفتاح المطلوب في القاموس، أو استخدم `.get()` لتجنب الخطأ."
-            
+
         elif isinstance(error, ValueError):
             cause = f"✅ **السبب:** قيمة غير صالحة: `{error_message}`"
             solution = "🔧 **الحل:** تأكد من إدخال قيمة صحيحة، أو تحقق من تنسيق البيانات."
-            
+
         elif isinstance(error, TypeError):
             cause = f"✅ **السبب:** نوع بيانات غير صحيح: `{error_message}`"
             solution = "🔧 **الحل:** تأكد من استخدام النوع الصحيح للبيانات، أو قم بتحويلها قبل الاستخدام."
-            
+
         elif isinstance(error, sqlite3.OperationalError):
             cause = f"✅ **السبب:** خطأ في قاعدة البيانات: `{error_message}`"
             solution = "🔧 **الحل:** تأكد من صحة استعلام SQL، أو تحقق من وجود الجداول المطلوبة."
-            
+
         elif isinstance(error, sqlite3.IntegrityError):
             cause = f"✅ **السبب:** تكرار أو انتهاك قيود قاعدة البيانات: `{error_message}`"
             solution = "🔧 **الحل:** تأكد من عدم تكرار البيانات، أو تحقق من العلاقات بين الجداول."
-            
+
         elif isinstance(error, BadRequest):
             cause = f"✅ **السبب:** طلب غير صحيح إلى Telegram API: `{error_message}`"
             if "message is not modified" in error_message.lower():
@@ -4166,27 +4181,27 @@ async def send_error_to_log_channel(bot, error: Exception, context: dict = None,
                 solution = "🔧 **الحل:** تأكد من أن البوت عضو في المجموعة ولديه الصلاحيات المطلوبة."
             else:
                 solution = f"🔧 **الحل:** تحقق من صحة البيانات المرسلة إلى Telegram API."
-                
+
         elif isinstance(error, Forbidden):
             cause = f"✅ **السبب:** البوت محظور أو ليس لديه صلاحيات: `{error_message}`"
             solution = "🔧 **الحل:** تأكد من أن البوت مشرف في المجموعة ولديه الصلاحيات المطلوبة، أو اطلب إلغاء حظر البوت."
-            
+
         elif isinstance(error, TimedOut):
             cause = f"✅ **السبب:** انتهت مهلة الاتصال بـ Telegram: `{error_message}`"
             solution = "🔧 **الحل:** حاول مرة أخرى، أو تحقق من سرعة الاتصال بالإنترنت."
-            
+
         elif isinstance(error, NetworkError):
             cause = f"✅ **السبب:** مشكلة في الشبكة أو الاتصال بـ Telegram: `{error_message}`"
             solution = "🔧 **الحل:** تحقق من اتصال الإنترنت، أو حاول مرة أخرى بعد فترة."
-            
+
         elif isinstance(error, Conflict):
             cause = f"✅ **السبب:** تعارض في التحديثات (بوت مكرر): `{error_message}`"
             solution = "🔧 **الحل:** تأكد من عدم تشغيل نسخة أخرى من البوت بنفس التوكن."
-            
+
         else:
             cause = f"✅ **السبب:** خطأ غير معروف: `{error_message}`"
             solution = "🔧 **الحل:** راجع سجلات البوت (logs) لمعرفة التفاصيل، أو تواصل مع المطور."
-        
+
         # بناء رسالة الخطأ
         error_text = f"""🚨 **خطأ في البوت**
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -4210,33 +4225,33 @@ async def send_error_to_log_channel(bot, error: Exception, context: dict = None,
                         safe_context[key] = value
                     else:
                         safe_context[key] = str(value)[:100]
-            
+
             if safe_context:
                 error_text += "\n📌 **سياق الخطأ:**\n"
                 for key, value in safe_context.items():
                     error_text += f"• `{key}`: `{value}`\n"
-        
+
         # إضافة معلومات عن المستخدم (إن وجد)
         if update and update.effective_user:
             user_id = update.effective_user.id
             username = update.effective_user.username or "بدون يوزر"
             error_text += f"\n👤 **المستخدم:** `{user_id}` (@{username})"
-        
+
         # إضافة معلومات عن المجموعة (إن وجد)
         if update and update.effective_chat:
             chat_id = update.effective_chat.id
             chat_title = update.effective_chat.title or "خاص"
             error_text += f"\n💬 **المجموعة:** `{chat_id}` ({chat_title})"
-        
+
         # إضافة الأمر أو الرسالة (إن وجد)
         if update and update.effective_message and update.effective_message.text:
             msg_text = update.effective_message.text[:100]
             error_text += f"\n📝 **الرسالة:** `{msg_text}`"
-        
+
         # إضافة وقت الخطأ
         error_text += f"\n\n🕐 **الوقت:** {mecca_now().strftime('%Y-%m-%d %H:%M:%S')}"
         error_text += f"\n📌 **الحالة:** `⚠️ قيد المعالجة`"
-        
+
         # إرسال إلى قناة التقارير
         try:
             await bot.send_message(
@@ -4249,7 +4264,7 @@ async def send_error_to_log_channel(bot, error: Exception, context: dict = None,
         except Exception as e:
             logger.error(f"❌ فشل إرسال الخطأ إلى قناة التقارير: {e}")
             return None
-            
+
     except Exception as e:
         logger.error(f"❌ فشل في نظام إرسال الأخطاء: {e}")
         return None
@@ -4267,7 +4282,7 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             'chat_id': update.effective_chat.id if update and update.effective_chat else None,
             'message': update.effective_message.text if update and update.effective_message else None
         })
-        
+
         # إرسال الخطأ إلى قناة التقارير
         context_data = {
             'user_id': update.effective_user.id if update and update.effective_user else None,
@@ -4275,14 +4290,14 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             'message': update.effective_message.text if update and update.effective_message else None,
             'error_id': error_id
         }
-        
+
         await send_error_to_log_channel(context.bot, error, context_data, update)
-        
+
         # التعامل مع أنواع الأخطاء المختلفة
         if isinstance(error, Conflict):
             logger.warning(f"⚠️ تعارض في التحديثات (Conflict): {error}")
             return
-            
+
         if isinstance(error, Forbidden):
             logger.warning(f"⚠️ البوت محظور أو ليس لديه صلاحيات: {error}")
             if update and update.effective_chat:
@@ -4296,11 +4311,11 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 except:
                     pass
             return
-            
+
         if isinstance(error, TimedOut):
             logger.warning(f"⏱️ انتهت المهلة: {error}")
             return
-            
+
         # إرسال رسالة للمستخدم (إن أمكن)
         if update and update.effective_user and context and context.bot:
             if not await is_user_bot(context.bot, update.effective_user.id):
@@ -4312,7 +4327,7 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     )
                 except:
                     pass
-                    
+
         # إرسال إشعار للمطور الأساسي
         if PRIMARY_OWNER_ID and context and context.bot:
             try:
@@ -4322,7 +4337,7 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 await safe_send_markdown(context.bot, PRIMARY_OWNER_ID, error_text)
             except Exception as e:
                 logger.error(f"فشل إرسال إشعار الخطأ للمطور: {e}")
-                
+
     except Exception as e:
         logger.error(f"فشل معالج الأخطاء نفسه: {e}")
 
@@ -4339,92 +4354,67 @@ async def set_log_channel_command_handler(update: Update, context: ContextTypes.
         await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
         return
 
-    args = context.args
-    # إذا كانت الحالة WAITING_LOG_CHANNEL، نأخذ النص من الرسالة
-    if not args and context.user_data.get('state') == UserState.WAITING_LOG_CHANNEL:
-        if update.message and update.message.text:
+    # محاولة قراءة المعرف من الوسائط أولاً
+    if context.args:
+        identifier = " ".join(context.args).strip()
+    else:
+        # إذا كانت الحالة WAITING_LOG_CHANNEL، نأخذ النص من الرسالة
+        if context.user_data.get('state') == UserState.WAITING_LOG_CHANNEL and update.message and update.message.text:
             identifier = update.message.text.strip()
-            args = [identifier]
-    
-    if not args:
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            "📝 **الاستخدام:**\n`/set_log_channel معرف_القناة`\n\nمثال: `/set_log_channel -1001234567890`\nأو `/set_log_channel @username`\n\nيمكنك أيضاً إرسال المعرف مباشرة بعد الضغط على الزر."
-        )
-        return
-
-    identifier = args[0].strip()
-    if identifier.startswith('@'):
-        identifier = identifier[1:]
-
-    try:
-        # محاولة الحصول على معرف القناة
-        if identifier.startswith('-100') or identifier.lstrip('-').isdigit():
-            chat_id = int(identifier)
         else:
-            chat = await context.bot.get_chat(f"@{identifier}")
-            chat_id = chat.id
-
-        # التحقق من أن البوت مشرف في القناة
-        try:
-            bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
-            if bot_member.status not in ['administrator', 'creator']:
-                await safe_send_markdown(
-                    context.bot,
-                    user_id,
-                    "❌ **البوت ليس مشرفاً في هذه القناة.**\n\nيرجى إضافة البوت كمشرف في القناة ثم المحاولة مرة أخرى."
-                )
-                context.user_data.pop('state', None)
-                context.user_data.pop('temp_log_channel_identifier', None)
-                return
-            if not bot_member.can_post_messages:
-                await safe_send_markdown(
-                    context.bot,
-                    user_id,
-                    "❌ **البوت لا يملك صلاحية الإرسال في هذه القناة.**\n\nيرجى منح البوت صلاحية 'نشر الرسائل' في القناة."
-                )
-                context.user_data.pop('state', None)
-                context.user_data.pop('temp_log_channel_identifier', None)
-                return
-        except Exception as e:
             await safe_send_markdown(
                 context.bot,
                 user_id,
-                f"❌ لا يمكن الوصول للقناة: {str(e)[:100]}\n\nتأكد من أن المعرف صحيح وأن البوت مشرف في القناة."
+                "📝 **الاستخدام:**\n`/set_log_channel معرف_القناة`\n\nأو اضغط على الزر وأرسل المعرف في رسالة منفصلة."
             )
+            return
+
+    if not identifier:
+        await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد القناة.")
+        context.user_data.pop('state', None)
+        context.user_data.pop('temp_log_channel_identifier', None)
+        return
+
+    try:
+        chat = await context.bot.get_chat(identifier)
+        if chat.type != 'channel':
+            await safe_send_markdown(context.bot, user_id, "❌ المعرف ليس لقناة!")
             context.user_data.pop('state', None)
             context.user_data.pop('temp_log_channel_identifier', None)
             return
 
-        # حفظ معرف القناة في قاعدة البيانات
-        await db_set_log_channel_id(str(chat_id))
-        
+        # التحقق من صلاحية البوت في القناة
+        bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+        if bot_member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(context.bot, user_id, "❌ البوت ليس مشرفاً في هذه القناة!")
+            context.user_data.pop('state', None)
+            context.user_data.pop('temp_log_channel_identifier', None)
+            return
+
+        if not bot_member.can_post_messages:
+            await safe_send_markdown(context.bot, user_id, "❌ البوت لا يملك صلاحية الإرسال في هذه القناة!")
+            context.user_data.pop('state', None)
+            context.user_data.pop('temp_log_channel_identifier', None)
+            return
+
+        await db_set_log_channel_id(str(chat.id))
+
         # إرسال رسالة تأكيد للقناة
         try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="✅ **تم تعيين هذه القناة كقناة للتقارير الأمنية!**\n\nسيتم إرسال جميع التقارير الأمنية والإشعارات المهمة إلى هنا."
-            )
-        except Exception as e:
-            logger.warning(f"فشل إرسال رسالة التأكيد للقناة: {e}")
+            await context.bot.send_message(chat.id, "✅ تم تعيين هذه القناة كقناة للتقارير الأمنية!")
+        except:
+            pass
 
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            f"✅ **تم تعيين قناة التقارير بنجاح!**\n\n📌 معرف القناة: `{chat_id}`\n📢 تم إرسال رسالة تأكيد للقناة."
-        )
+        await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين قناة التقارير: {chat.title}")
 
     except Exception as e:
-        await safe_send_markdown(
-            context.bot,
-            user_id,
-            f"❌ فشل تعيين القناة: {str(e)[:100]}\n\nتأكد من:\n1. المعرف صحيح\n2. القناة عامة أو البوت عضو فيها\n3. البوت مشرف في القناة"
-        )
+        await safe_send_markdown(context.bot, user_id, f"❌ فشل تعيين القناة: {str(e)[:100]}")
 
-    # تنظيف الحالة
-    context.user_data.pop('state', None)
-    context.user_data.pop('temp_log_channel_identifier', None)
+    finally:
+        context.user_data.pop('state', None)
+        context.user_data.pop('temp_log_channel_identifier', None)
+        # العودة إلى لوحة الأدمن
+        await admin_panel_callback(update, context)
 
 
 # ===================================================================
@@ -4436,13 +4426,13 @@ async def show_log_channel_callback(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     if query:
         await query.answer()
-    
+
     user_id = update.effective_user.id
-    
+
     if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     channel_id = await db_get_log_channel_id()
     if channel_id:
         try:
@@ -4452,11 +4442,11 @@ async def show_log_channel_callback(update: Update, context: ContextTypes.DEFAUL
             text = f"📋 **قناة التقارير الحالية:**\n\n🆔 المعرف: `{channel_id}`\n⚠️ لا يمكن الوصول إلى القناة"
     else:
         text = "📋 **لا توجد قناة تقارير محددة.**\n\nاستخدم `/set_log_channel` لتعيين قناة."
-    
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
     ])
-    
+
     if query:
         await safe_edit_markdown(query, text, reply_markup=keyboard)
     else:
@@ -4776,16 +4766,16 @@ async def penalty_mute_duration_callback(update: Update, context: ContextTypes.D
     """تعيين مدة الكتم"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = update.effective_user.id
     parts = query.data.split(":")
-    
+
     if len(parts) < 2:
         await query.answer("❌ بيانات غير صالحة", show_alert=True)
         return
-    
+
     duration_str = parts[0].split("_")[-1] if "_" in parts[0] else parts[1]
-    
+
     if duration_str == "permanent":
         duration = -1
         duration_text = "دائم"
@@ -4801,19 +4791,19 @@ async def penalty_mute_duration_callback(update: Update, context: ContextTypes.D
         except ValueError:
             await query.answer("❌ مدة غير صالحة", show_alert=True)
             return
-    
+
     try:
         chat_id = int(parts[-1])
     except (ValueError, IndexError):
         await query.answer("❌ معرف المجموعة غير صالح", show_alert=True)
         return
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='mute', auto_mute_duration=duration if duration > 0 else 60)
-    
+
     await query.answer(f"✅ تم تعيين مدة الكتم إلى: {duration_text}")
     await penalty_menu_callback(update, context)
 
@@ -4825,17 +4815,17 @@ async def mute_duration_menu_callback(update: Update, context: ContextTypes.DEFA
     """قائمة مدة الكتم"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
-    
+
     if not chat_id:
         return
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     keyboard = [
         [
             InlineKeyboardButton("⏱️ 5 دقائق", callback_data=f"mute_duration:5:{chat_id}"),
@@ -4854,7 +4844,7 @@ async def mute_duration_menu_callback(update: Update, context: ContextTypes.DEFA
             InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}")
         ]
     ]
-    
+
     await query.edit_message_text("🔇 **اختر مدة الكتم**", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ===================================================================
@@ -4865,21 +4855,21 @@ async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
     """قائمة العقوبات"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
-    
+
     if not chat_id:
         return
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     context.user_data['penalty_chat_id'] = chat_id
-    
+
     settings = await db_get_penalty_settings(chat_id)
-    
+
     text = f"""⚖️ **العقوبات**
 ━━━━━━━━━━━━━━━━━━━━━━
 🔴 العقوبة التلقائية: {settings['auto_penalty']}
@@ -4890,7 +4880,7 @@ async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
 🌙 العقوبة الليلية: {settings['night_mode_action']}
 ━━━━━━━━━━━━━━━━━━━━━━
 اختر العقوبة المطلوبة:"""
-    
+
     keyboard = [
         [
             InlineKeyboardButton("👢 طرد", callback_data=f"{CallbackData.PENALTY_KICK}:{chat_id}"),
@@ -4911,7 +4901,7 @@ async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
             InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")
         ]
     ]
-    
+
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ===================================================================
@@ -4923,11 +4913,11 @@ async def penalty_kick_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='kick')
     await query.answer("✅ تم تعيين عقوبة الطرد")
     await penalty_menu_callback(update, context)
@@ -4937,11 +4927,11 @@ async def penalty_ban_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='ban')
     await query.answer("✅ تم تعيين عقوبة الحظر")
     await penalty_menu_callback(update, context)
@@ -4951,11 +4941,11 @@ async def penalty_mute_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='mute')
     await query.answer("✅ تم تعيين عقوبة الكتم")
     await penalty_menu_callback(update, context)
@@ -4965,11 +4955,11 @@ async def penalty_warn_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='warn')
     await query.answer("✅ تم تعيين عقوبة التحذير")
     await penalty_menu_callback(update, context)
@@ -4979,11 +4969,11 @@ async def penalty_restrict_callback(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='restrict')
     await query.answer("✅ تم تعيين عقوبة التقييد")
     await penalty_menu_callback(update, context)
@@ -4993,11 +4983,11 @@ async def penalty_none_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     user_id = update.effective_user.id
     chat_id = int(query.data.split(":")[-1])
-    
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
-    
+
     await db_set_security_settings(chat_id, auto_penalty='none')
     await query.answer("✅ تم إلغاء العقوبة")
     await penalty_menu_callback(update, context)
@@ -5142,7 +5132,7 @@ async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.effective_user.id
         username = update.effective_user.username or ""
         first_name = update.effective_user.first_name or ""
-        
+
         # تسجيل المستخدم
         await db_register_user(user_id)
         await db_update_user_cache(user_id, username, first_name)
@@ -5182,7 +5172,7 @@ async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await safe_edit_markdown(update.callback_query, title, reply_markup=kb)
         else:
             await safe_send_markdown(context.bot, user_id, title, reply_markup=kb)
-            
+
     except Exception as e:
         logger.error(f"خطأ في start_command_handler: {e}")
         # محاولة إرسال رسالة خطأ أبسط
@@ -5873,6 +5863,7 @@ async def delete_channel_callback(update: Update, context: ContextTypes.DEFAULT_
             await query.edit_message_text(get_text(user_id, 'channel_deleted'))
         else:
             await safe_send_markdown(context.bot, user_id, get_text(user_id, 'channel_deleted'))
+        # تحديث قائمة القنوات
         await my_channels_callback(update, context)
     else:
         if query:
@@ -6269,98 +6260,108 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
 async def _update_security_panel(query, chat_id: int, user_id: int):
     try:
         settings = await db_get_security_settings(chat_id, force_refresh=True)
-        
-        def st(val): return "✅" if val else "❌"
-        
-        text = f"""🔐 إعدادات الأمان للمجموعة
+        text = _build_security_text(settings)
+        keyboard = _build_security_keyboard(chat_id)
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # استخدم edit بدلاً من delete + send
+        await query.edit_message_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        logger.info(f"✅ تم تحديث لوحة الأمان للمجموعة {chat_id}")
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            await query.answer("✅ الإعدادات محدثة", show_alert=False)
+        else:
+            raise
+    except Exception as e:
+        logger.error(f"خطأ في _update_security_panel: {e}")
+        await query.answer("❌ حدث خطأ، حاول مرة أخرى", show_alert=True)
+
+def _build_security_text(settings: dict) -> str:
+    """بناء نص لوحة الأمان"""
+    def st(val):
+        return "✅" if val else "❌"
+    text = f"""🔐 إعدادات الأمان للمجموعة
 ━━━━━━━━━━━━━━━━━━━━━━
-🔗 الروابط: {st(settings.get('links'))}
-@ المعرفات: {st(settings.get('mentions'))}
-⏱️ البطيء: {st(settings.get('slow_mode'))} ({settings.get('slow_mode_seconds', 5)}ث)
-🎯 الترحيب: {st(settings.get('welcome_enabled'))}
-👋 الوداع: {st(settings.get('goodbye_enabled'))}
-🎬 فيديوهات: {st(settings.get('delete_videos'))}
-🎵 صوتيات: {st(settings.get('delete_audio'))}
-🎞️ متحركات: {st(settings.get('delete_animation'))}
-🛠️ الخدمة: {st(settings.get('delete_service'))}
-📄 ملفات: {st(settings.get('delete_documents'))}
-🖼️ ملصقات: {st(settings.get('delete_stickers'))}
-📨 المُعاد: {st(settings.get('delete_forwarded'))}
-📊 استطلاعات: {st(settings.get('delete_polls'))}
-🎮 ألعاب: {st(settings.get('delete_games'))}
-🎤 صوتيات: {st(settings.get('delete_voice'))}
-🎥 فيديو نوت: {st(settings.get('delete_video_note'))}
-🌊 مضاد الفيضان: {st(settings.get('antiflood_enabled'))}
-🌙 ليلي: {st(settings.get('night_mode_enabled'))}
+🔗 الروابط: {st(settings.get('links', 0))}
+@ المعرفات: {st(settings.get('mentions', 0))}
+⏱️ البطيء: {st(settings.get('slow_mode', 0))} ({settings.get('slow_mode_seconds', 5)}ث)
+🎯 الترحيب: {st(settings.get('welcome_enabled', 0))}
+👋 الوداع: {st(settings.get('goodbye_enabled', 0))}
+🎬 فيديوهات: {st(settings.get('delete_videos', 0))}
+🎵 صوتيات: {st(settings.get('delete_audio', 0))}
+🎞️ متحركات: {st(settings.get('delete_animation', 0))}
+🛠️ الخدمة: {st(settings.get('delete_service', 0))}
+📄 ملفات: {st(settings.get('delete_documents', 0))}
+🖼️ ملصقات: {st(settings.get('delete_stickers', 0))}
+📨 المُعاد: {st(settings.get('delete_forwarded', 0))}
+📊 استطلاعات: {st(settings.get('delete_polls', 0))}
+🎮 ألعاب: {st(settings.get('delete_games', 0))}
+🎤 صوتيات: {st(settings.get('delete_voice', 0))}
+🎥 فيديو نوت: {st(settings.get('delete_video_note', 0))}
+🌊 مضاد الفيضان: {st(settings.get('antiflood_enabled', 0))}
+🌙 ليلي: {st(settings.get('night_mode_enabled', 0))}
 📏 الطول: {settings.get('max_message_length', 0) or 'غير محدود'}
 ⚖️ العقوبة: {settings.get('delete_penalty', 'لا شيء')}
 ━━━━━━━━━━━━━━━━━━━━━━
 📌 اختر الإعداد:"""
+    return text
 
-        keyboard = [
-            [
-                InlineKeyboardButton("🔗 روابط", callback_data=f"security:links:{chat_id}"),
-                InlineKeyboardButton("@ معرفات", callback_data=f"security:mentions:{chat_id}"),
-                InlineKeyboardButton("⏱️ بطيء", callback_data=f"security:slow_mode:{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("🎯 ترحيب", callback_data=f"security:welcome_enabled:{chat_id}"),
-                InlineKeyboardButton("👋 وداع", callback_data=f"security:goodbye_enabled:{chat_id}"),
-                InlineKeyboardButton("🚫 كلمات", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("🎬 فيديو", callback_data=f"security:delete_videos:{chat_id}"),
-                InlineKeyboardButton("🎵 صوت", callback_data=f"security:delete_audio:{chat_id}"),
-                InlineKeyboardButton("🎞️ متحرك", callback_data=f"security:delete_animation:{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("🛠️ خدمة", callback_data=f"security:delete_service:{chat_id}"),
-                InlineKeyboardButton("📄 ملفات", callback_data=f"security:delete_documents:{chat_id}"),
-                InlineKeyboardButton("🖼️ ملصقات", callback_data=f"security:delete_stickers:{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("📨 مُعاد", callback_data=f"security:delete_forwarded:{chat_id}"),
-                InlineKeyboardButton("📊 استطلاع", callback_data=f"security:delete_polls:{chat_id}"),
-                InlineKeyboardButton("🎮 ألعاب", callback_data=f"security:delete_games:{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("🎤 صوتي", callback_data=f"security:delete_voice:{chat_id}"),
-                InlineKeyboardButton("🎥 نوت", callback_data=f"security:delete_video_note:{chat_id}"),
-                InlineKeyboardButton("🌊 فيضان", callback_data=f"security:antiflood:{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("🌙 ليلي", callback_data=f"security:night_mode:{chat_id}"),
-                InlineKeyboardButton("📏 طول", callback_data=f"security:max_length:{chat_id}"),
-                InlineKeyboardButton("⚠️ تحذير", callback_data=f"security:warn_settings:{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("⚖️ عقوبة", callback_data=f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}"),
-                InlineKeyboardButton("⚡ تفعيل الكل", callback_data=f"{CallbackData.SECURITY_ENABLE_ALL_PREFIX}{chat_id}"),
-                InlineKeyboardButton("⛔ تعطيل الكل", callback_data=f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("⚖️ العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"),
-                InlineKeyboardButton("🛠️ متقدم", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}"),
-                InlineKeyboardButton("📜 سجل", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)
-            ]
+def _build_security_keyboard(chat_id: int) -> list:
+    """بناء أزرار لوحة الأمان"""
+    return [
+        [
+            InlineKeyboardButton("🔗 روابط", callback_data=f"security:links:{chat_id}"),
+            InlineKeyboardButton("@ معرفات", callback_data=f"security:mentions:{chat_id}"),
+            InlineKeyboardButton("⏱️ بطيء", callback_data=f"security:slow_mode:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🎯 ترحيب", callback_data=f"security:welcome_enabled:{chat_id}"),
+            InlineKeyboardButton("👋 وداع", callback_data=f"security:goodbye_enabled:{chat_id}"),
+            InlineKeyboardButton("🚫 كلمات", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🎬 فيديو", callback_data=f"security:delete_videos:{chat_id}"),
+            InlineKeyboardButton("🎵 صوت", callback_data=f"security:delete_audio:{chat_id}"),
+            InlineKeyboardButton("🎞️ متحرك", callback_data=f"security:delete_animation:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🛠️ خدمة", callback_data=f"security:delete_service:{chat_id}"),
+            InlineKeyboardButton("📄 ملفات", callback_data=f"security:delete_documents:{chat_id}"),
+            InlineKeyboardButton("🖼️ ملصقات", callback_data=f"security:delete_stickers:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("📨 مُعاد", callback_data=f"security:delete_forwarded:{chat_id}"),
+            InlineKeyboardButton("📊 استطلاع", callback_data=f"security:delete_polls:{chat_id}"),
+            InlineKeyboardButton("🎮 ألعاب", callback_data=f"security:delete_games:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🎤 صوتي", callback_data=f"security:delete_voice:{chat_id}"),
+            InlineKeyboardButton("🎥 نوت", callback_data=f"security:delete_video_note:{chat_id}"),
+            InlineKeyboardButton("🌊 فيضان", callback_data=f"security:antiflood:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🌙 ليلي", callback_data=f"security:night_mode:{chat_id}"),
+            InlineKeyboardButton("📏 طول", callback_data=f"security:max_length:{chat_id}"),
+            InlineKeyboardButton("⚠️ تحذير", callback_data=f"security:warn_settings:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("⚖️ عقوبة", callback_data=f"{CallbackData.SECURITY_DELETE_PENALTY_PREFIX}{chat_id}"),
+            InlineKeyboardButton("⚡ تفعيل الكل", callback_data=f"{CallbackData.SECURITY_ENABLE_ALL_PREFIX}{chat_id}"),
+            InlineKeyboardButton("⛔ تعطيل الكل", callback_data=f"{CallbackData.SECURITY_DISABLE_ALL_PREFIX}{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("⚖️ العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"),
+            InlineKeyboardButton("🛠️ متقدم", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}"),
+            InlineKeyboardButton("📜 سجل", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)
         ]
-        
-        try:
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        except BadRequest as e:
-            if "message is not modified" in str(e).lower():
-                await query.answer("✅ تم التغيير", show_alert=False)
-            else:
-                raise e
-    except Exception as e:
-        logger.error(f"خطأ في تحديث لوحة الأمان: {e}")
-        try:
-            await query.edit_message_text("❌ حدث خطأ أثناء تحديث الإعدادات.")
-        except:
-            pass
+    ]
 
 async def settings_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -6927,6 +6928,8 @@ async def panel_lock_callback_handler(update: Update, context: ContextTypes.DEFA
             await safe_edit_markdown(query, get_text(uid, 'locked'))
         else:
             await safe_send_markdown(context.bot, uid, get_text(uid, 'locked'))
+        # تحديث قائمة المجموعات
+        await my_groups_callback(update, context)
     else:
         if query:
             await query.answer(get_text(uid, 'admin_only'), show_alert=True)
@@ -6947,6 +6950,8 @@ async def panel_unlock_callback_handler(update: Update, context: ContextTypes.DE
             await safe_edit_markdown(query, get_text(uid, 'unlocked'))
         else:
             await safe_send_markdown(context.bot, uid, get_text(uid, 'unlocked'))
+        # تحديث قائمة المجموعات
+        await my_groups_callback(update, context)
     else:
         if query:
             await query.answer(get_text(uid, 'admin_only'), show_alert=True)
@@ -7874,6 +7879,7 @@ async def admin_set_log_channel_callback(update: Update, context: ContextTypes.D
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
     context.user_data['state'] = UserState.WAITING_LOG_CHANNEL
+    context.user_data['temp_log_channel_identifier'] = None  # سيتم تعيينه من النص لاحقاً
     await query.edit_message_text("📝 أرسل معرف قناة التقارير (مثال: -100123456789)")
 
 async def admin_replies_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8245,6 +8251,8 @@ async def db_get_contest(contest_id: int) -> dict | None:
 async def db_create_contest(creator_id: int, title: str, description: str, prize: str,
                             end_date: datetime, contest_type: str = 'raffle') -> int:
     try:
+        if end_date <= utc_now():
+            raise ValueError("end_date must be in future")
         async def _create(conn):
             if not isinstance(end_date, datetime):
                 raise ValueError("end_date must be datetime object")
@@ -8430,7 +8438,8 @@ async def auto_publish_loop_improved(bot):
     consecutive_errors = 0
     backoff = 10
     max_backoff = 60
-    semaphore = asyncio.Semaphore(5)
+    semaphore = asyncio.Semaphore(5)  # نقل semaphore إلى النطاق الخارجي
+
     async def publish_one(row):
         async with semaphore:
             ch_db_id, ch_tele_id, user_id = row
@@ -9997,7 +10006,7 @@ async def security_select_group_callback(update: Update, context: ContextTypes.D
     user_id = update.effective_user.id
     if query:
         await query.answer()
-    
+
     if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
         groups = await db_get_user_groups(user_id)
         if not groups:
@@ -10011,14 +10020,14 @@ async def security_select_group_callback(update: Update, context: ContextTypes.D
             cur = await conn.execute("SELECT chat_id, chat_name, username, banned FROM bot_groups ORDER BY chat_name")
             return await cur.fetchall()
         groups = await execute_db(_get_all_groups)
-    
+
     if not groups:
         if query:
             await query.edit_message_text("📭 لا توجد مجموعات مسجلة.")
         else:
             await safe_send_markdown(context.bot, user_id, "📭 لا توجد مجموعات مسجلة.")
         return
-    
+
     keyboard = []
     for chat_id, chat_name, username, banned in groups:
         if not await is_authorized_in_group(context.bot, chat_id, user_id) and user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
@@ -10026,19 +10035,19 @@ async def security_select_group_callback(update: Update, context: ContextTypes.D
         status_icon = "⛔" if banned else "✅"
         display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
         keyboard.append([InlineKeyboardButton(f"{status_icon} {display_name}", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")])
-    
+
     if not keyboard:
         if query:
             await query.edit_message_text("🔒 لا توجد مجموعات لديك صلاحية عليها.")
         else:
             await safe_send_markdown(context.bot, user_id, "🔒 لا توجد مجموعات لديك صلاحية عليها.")
         return
-    
+
     keyboard.append([
         InlineKeyboardButton("🔄 تحديث", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
         InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)
     ])
-    
+
     if query:
         await query.edit_message_text("🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
@@ -10071,6 +10080,8 @@ async def panel_lock_callback_handler(update: Update, context: ContextTypes.DEFA
             await safe_edit_markdown(query, "🔒 تم قفل المجموعة")
         else:
             await safe_send_markdown(context.bot, uid, "🔒 تم قفل المجموعة")
+        # تحديث قائمة المجموعات
+        await my_groups_callback(update, context)
     else:
         if query:
             await query.answer("🔒 غير مصرح", show_alert=True)
@@ -10092,6 +10103,8 @@ async def panel_unlock_callback_handler(update: Update, context: ContextTypes.DE
             await safe_edit_markdown(query, "🔓 تم فتح المجموعة")
         else:
             await safe_send_markdown(context.bot, uid, "🔓 تم فتح المجموعة")
+        # تحديث قائمة المجموعات
+        await my_groups_callback(update, context)
     else:
         if query:
             await query.answer("🔒 غير مصرح", show_alert=True)
@@ -10357,16 +10370,16 @@ async def security_toggle_setting_callback(update: Update, context: ContextTypes
     """تبديل إعداد أمان معين في المجموعة"""
     query = update.callback_query
     await query.answer()
-    
+
     logger.info(f"🔔 كولباك الأمان: {query.data}")
-    
+
     user_id = update.effective_user.id
     parts = query.data.split(":")
-    
+
     if len(parts) < 3:
         await query.edit_message_text("❌ بيانات غير صالحة")
         return
-    
+
     action = parts[1]
     try:
         chat_id = int(parts[2])
@@ -10380,7 +10393,7 @@ async def security_toggle_setting_callback(update: Update, context: ContextTypes
 
     # جلب الإعدادات الحالية
     settings = await db_get_security_settings(chat_id, force_refresh=True)
-    
+
     # تبديل الإعداد المطلوب
     if action == "links":
         settings['links'] = 1 if settings.get('links', 0) == 0 else 0
@@ -11349,9 +11362,9 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
     state = context.user_data.get('state')
 
     # ===== حالة إضافة قناة =====
-    if state == UserState.WAITING_CHANNEL_ID:  # ✅ استخدام Enum بدلاً من نص
+    if state == UserState.WAITING_CHANNEL_ID:
         channel_id = text.strip()
-        
+
         # التحقق من صيغة المعرف
         if not (channel_id.startswith('@') or channel_id.lstrip('-').isdigit()):
             await safe_send_markdown(
@@ -11360,15 +11373,43 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
                 "❌ صيغة المعرف غير صحيحة! استخدم @username أو المعرف الرقمي.\nمثال: @my_channel أو -1001234567890"
             )
             return
-        
+
         try:
             # محاولة جلب معلومات القناة
             chat = await context.bot.get_chat(channel_id)
             channel_name = chat.title or "بدون اسم"
-            
+
+            # التحقق من صلاحية البوت في القناة
+            try:
+                bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+                if bot_member.status not in ['administrator', 'creator']:
+                    await safe_send_markdown(
+                        context.bot,
+                        user_id,
+                        f"❌ **البوت ليس مشرفاً في القناة `{channel_name}`!**\n\nيرجى إضافة البوت كمشرف في القناة ثم المحاولة مرة أخرى."
+                    )
+                    context.user_data.pop('state', None)
+                    return
+                if not bot_member.can_post_messages:
+                    await safe_send_markdown(
+                        context.bot,
+                        user_id,
+                        f"❌ **البوت لا يملك صلاحية النشر في القناة `{channel_name}`!**\n\nيرجى منح البوت صلاحية 'نشر الرسائل' في القناة."
+                    )
+                    context.user_data.pop('state', None)
+                    return
+            except Exception as e:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"❌ **لا يمكن الوصول إلى القناة:** {str(e)[:100]}\n\nتأكد من أن المعرف صحيح وأن القناة عامة أو البوت عضو فيها."
+                )
+                context.user_data.pop('state', None)
+                return
+
             # حفظ القناة في قاعدة البيانات
             result = await db_add_channel(user_id, channel_id, channel_name)
-            
+
             if result:
                 await safe_send_markdown(
                     context.bot,
@@ -11377,38 +11418,28 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
                 # تسجيل القناة في جدول bot_channels أيضاً
                 await db_register_channel(chat.id, channel_name, user_id)
+                # تحديث قائمة القنوات
+                await my_channels_callback(update, context)
             else:
                 await safe_send_markdown(
                     context.bot,
                     user_id,
                     get_text(user_id, 'channel_exists')
                 )
-                
+
         except Exception as e:
             await safe_send_markdown(
                 context.bot,
                 user_id,
-                f"❌ خطأ: {str(e)[:100]}"
+                f"❌ خطأ: {str(e)[:100]}\nتأكد من صحة المعرف."
             )
-        
+
         # إزالة الحالة والعودة للقائمة الرئيسية
         context.user_data.pop('state', None)
-        await main_menu_callback(update, context)
         return
 
     # ===== باقي الحالات الأخرى =====
     elif state == UserState.ADDING_POSTS:
-        # ... كود إضافة المنشورات ...
-        pass
-    
-    elif state == UserState.WAITING_INTERVAL_MINUTES:
-        # ... كود الدقائق ...
-        pass
-    
-    # ... باقي الحالات ...
-
-    # حالة إضافة منشورات
-    elif state == "ADDING_POSTS":
         session_posts = context.user_data.get(f"session_{user_id}", [])
         target_count = context.user_data.get(f"session_target_{user_id}", 15)
 
@@ -11476,7 +11507,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # حالات أخرى (فترات زمنية، إلخ)
-    elif state == "WAITING_INTERVAL_MINUTES":
+    elif state == UserState.WAITING_INTERVAL_MINUTES:
         try:
             minutes = int(text)
             if minutes < 1 or minutes > 1440:
@@ -11501,7 +11532,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             await safe_send_markdown(context.bot, user_id, get_text(user_id, 'invalid_number'))
         return
 
-    elif state == "WAITING_INTERVAL_HOURS":
+    elif state == UserState.WAITING_INTERVAL_HOURS:
         try:
             hours = int(text)
             if hours < 1 or hours > 168:
@@ -11521,7 +11552,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             await safe_send_markdown(context.bot, user_id, get_text(user_id, 'invalid_number'))
         return
 
-    elif state == "WAITING_INTERVAL_DAYS":
+    elif state == UserState.WAITING_INTERVAL_DAYS:
         try:
             days = int(text)
             if days < 1 or days > 365:
@@ -11541,7 +11572,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             await safe_send_markdown(context.bot, user_id, get_text(user_id, 'invalid_number'))
         return
 
-    elif state == "WAITING_DATES":
+    elif state == UserState.WAITING_DATES:
         dates = [d.strip() for d in text.split(',') if d.strip()]
         valid_dates = []
         for d in dates:
@@ -11566,7 +11597,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await main_menu_callback(update, context)
         return
 
-    elif state == "WAITING_PUBLISH_TIME":
+    elif state == UserState.WAITING_PUBLISH_TIME:
         if re.match(r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$', text):
             ch_id = context.user_data.get('schedule_ch_id')
             if ch_id:
@@ -11582,7 +11613,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             await safe_send_markdown(context.bot, user_id, get_text(user_id, 'invalid_time'))
         return
 
-    elif state == "WAITING_CRON":
+    elif state == UserState.WAITING_CRON:
         cron_expr = text.strip()
         if cron_expr:
             ch_id = context.user_data.get('schedule_ch_id')
@@ -11599,7 +11630,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال تعبير CRON صالح.")
         return
 
-    elif state == "WAITING_MAX_LENGTH":
+    elif state == UserState.WAITING_MAX_LENGTH:
         try:
             max_len = int(text.strip())
             if max_len < 0:
@@ -11621,7 +11652,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop('security_chat_id', None)
         return
 
-    elif state == "WAITING_WARN_COUNT":
+    elif state == UserState.WAITING_WARN_COUNT:
         try:
             count = int(text.strip())
             if count < 1 or count > 10:
@@ -11640,7 +11671,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop('security_chat_id', None)
         return
 
-    elif state == "WAITING_ADMIN_ID_ADD":
+    elif state == UserState.WAITING_ADMIN_ID_ADD:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11660,7 +11691,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await admin_panel_callback(update, context)
         return
 
-    elif state == "WAITING_ADMIN_ID_REMOVE":
+    elif state == UserState.WAITING_ADMIN_ID_REMOVE:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11680,7 +11711,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await admin_panel_callback(update, context)
         return
 
-    elif state == "WAITING_BROADCAST":
+    elif state == UserState.WAITING_BROADCAST:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11698,7 +11729,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await safe_send_markdown(context.bot, user_id, f"📨 **مراجعة الرسالة:**\n\n{broadcast_text[:500]}\n\nهل أنت متأكد من إرسالها لجميع المستخدمين؟", reply_markup=keyboard)
         return
 
-    elif state == "WAITING_UPDATE_TEXT":
+    elif state == UserState.WAITING_UPDATE_TEXT:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11718,10 +11749,10 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             await safe_send_markdown(context.bot, user_id, f"❌ فشل النشر: {str(e)[:100]}")
         context.user_data.pop('state', None)
-        await admin_panel_callback(update, context)
+        await admin_updates_callback(update, context)
         return
 
-    elif state == "WAITING_UPDATE_CHANNEL":
+    elif state == UserState.WAITING_UPDATE_CHANNEL:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11734,10 +11765,10 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             await safe_send_markdown(context.bot, user_id, "❌ فشل تعيين القناة.")
         context.user_data.pop('state', None)
-        await admin_panel_callback(update, context)
+        await admin_updates_callback(update, context)
         return
 
-    elif state == "WAITING_FORCE_CHANNEL":
+    elif state == UserState.WAITING_FORCE_CHANNEL:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11748,10 +11779,10 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await db_set_force_subscribe_channel(channel)
         await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين قناة الاشتراك الإجباري: @{channel}")
         context.user_data.pop('state', None)
-        await admin_panel_callback(update, context)
+        await admin_force_subscribe_callback(update, context)
         return
 
-    elif state == "WAITING_SENDCODE_USER":
+    elif state == UserState.WAITING_SENDCODE_USER:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11766,7 +11797,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await admin_panel_callback(update, context)
         return
 
-    elif state == "WAITING_LOG_CHANNEL":
+    elif state == UserState.WAITING_LOG_CHANNEL:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11777,15 +11808,33 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             if chat.type != 'channel':
                 await safe_send_markdown(context.bot, user_id, "❌ المعرف ليس لقناة!")
                 return
+            # التحقق من صلاحية البوت
+            bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+            if bot_member.status not in ['administrator', 'creator']:
+                await safe_send_markdown(context.bot, user_id, "❌ البوت ليس مشرفاً في هذه القناة!")
+                context.user_data.pop('state', None)
+                context.user_data.pop('temp_log_channel_identifier', None)
+                return
+            if not bot_member.can_post_messages:
+                await safe_send_markdown(context.bot, user_id, "❌ البوت لا يملك صلاحية الإرسال في هذه القناة!")
+                context.user_data.pop('state', None)
+                context.user_data.pop('temp_log_channel_identifier', None)
+                return
             await db_set_log_channel_id(str(chat.id))
+            # إرسال رسالة تأكيد للقناة
+            try:
+                await context.bot.send_message(chat.id, "✅ تم تعيين هذه القناة كقناة للتقارير الأمنية!")
+            except:
+                pass
             await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين قناة التقارير: {chat.title}")
         except Exception as e:
             await safe_send_markdown(context.bot, user_id, f"❌ فشل تعيين القناة: {str(e)[:100]}")
         context.user_data.pop('state', None)
+        context.user_data.pop('temp_log_channel_identifier', None)
         await admin_panel_callback(update, context)
         return
 
-    elif state == "WAITING_GROUP_BANNED_WORD":
+    elif state == UserState.WAITING_GROUP_BANNED_WORD:
         chat_id = context.user_data.get('banned_words_chat_id')
         if not chat_id:
             await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة.")
@@ -11807,7 +11856,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await security_banned_words_menu_callback(update, context)
         return
 
-    elif state == "WAITING_REMOVE_GROUP_BANNED_WORD":
+    elif state == UserState.WAITING_REMOVE_GROUP_BANNED_WORD:
         chat_id = context.user_data.get('banned_words_chat_id')
         if not chat_id:
             await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة.")
@@ -11824,7 +11873,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await security_banned_words_menu_callback(update, context)
         return
 
-    elif state == "WAITING_GLOBAL_BANNED_WORD":
+    elif state == UserState.WAITING_GLOBAL_BANNED_WORD:
         if not await is_bot_admin(user_id):
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11841,7 +11890,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await admin_banned_words_callback(update, context)
         return
 
-    elif state == "WAITING_REMOVE_GLOBAL_BANNED_WORD":
+    elif state == UserState.WAITING_REMOVE_GLOBAL_BANNED_WORD:
         if not await is_bot_admin(user_id):
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -11853,18 +11902,18 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await admin_banned_words_callback(update, context)
         return
 
-    elif state == "WAITING_KEYWORD":
+    elif state == UserState.WAITING_KEYWORD:
         if not await is_bot_admin(user_id):
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
             return
         keyword = text.lower().strip()
         context.user_data['reply_keyword'] = keyword
-        context.user_data['state'] = "WAITING_REPLY"
+        context.user_data['state'] = UserState.WAITING_REPLY
         await safe_send_markdown(context.bot, user_id, f"📝 الكلمة المفتاحية: {keyword}\nالآن أرسل الرد المطلوب:")
         return
 
-    elif state == "WAITING_REPLY":
+    elif state == UserState.WAITING_REPLY:
         if context.user_data.get('admin_del_reply'):
             keyword = text.lower().strip()
             if await db_del_reply(keyword):
@@ -11891,7 +11940,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await admin_replies_callback(update, context)
         return
 
-    elif state == "WAITING_REMINDER_DAYS":
+    elif state == UserState.WAITING_REMINDER_DAYS:
         try:
             days = int(text)
             if days < 1 or days > 10:
@@ -11905,7 +11954,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم صحيح.")
         return
 
-    elif state == "WAITING_SCHEDULE_POST":
+    elif state == UserState.WAITING_SCHEDULE_POST:
         parts = text.split(' ', 2)
         if len(parts) >= 3:
             try:
@@ -11928,8 +11977,8 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
             await safe_send_markdown(context.bot, user_id, "❌ الصيغة غير صحيحة! استخدم: YYYY-MM-DD HH:MM نص المنشور")
         return
 
-    elif state in ["WAITING_BAN_USER", "WAITING_MUTE_USER", "WAITING_WARN_USER",
-                   "WAITING_KICK_USER", "WAITING_RESTRICT_USER", "WAITING_UNBAN_USER"]:
+    elif state in [UserState.WAITING_BAN_USER, UserState.WAITING_MUTE_USER, UserState.WAITING_WARN_USER,
+                   UserState.WAITING_KICK_USER, UserState.WAITING_RESTRICT_USER, UserState.WAITING_UNBAN_USER]:
         chat_id = context.user_data.get('advanced_chat_id')
         if not chat_id:
             await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة.")
@@ -11970,7 +12019,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop('mute_minutes', None)
         return
 
-    elif state == "WAITING_PIN_MESSAGE":
+    elif state == UserState.WAITING_PIN_MESSAGE:
         chat_id = context.user_data.get('advanced_chat_id')
         if not chat_id:
             await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة.")
@@ -11988,34 +12037,34 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop('state', None)
         return
 
-    elif state == "WAITING_CONTEST_TITLE":
+    elif state == UserState.WAITING_CONTEST_TITLE:
         if not text:
             await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال عنوان صحيح.")
             return
         context.user_data['contest_title'] = text
-        context.user_data['state'] = "WAITING_CONTEST_DESCRIPTION"
+        context.user_data['state'] = UserState.WAITING_CONTEST_DESCRIPTION
         await safe_send_markdown(context.bot, user_id, "📝 أرسل وصف المسابقة:")
         return
 
-    elif state == "WAITING_CONTEST_DESCRIPTION":
+    elif state == UserState.WAITING_CONTEST_DESCRIPTION:
         if not text:
             await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال وصف صحيح.")
             return
         context.user_data['contest_description'] = text
-        context.user_data['state'] = "WAITING_CONTEST_PRIZE"
+        context.user_data['state'] = UserState.WAITING_CONTEST_PRIZE
         await safe_send_markdown(context.bot, user_id, "🎁 أرسل جائزة المسابقة:")
         return
 
-    elif state == "WAITING_CONTEST_PRIZE":
+    elif state == UserState.WAITING_CONTEST_PRIZE:
         if not text:
             await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال جائزة صحيحة.")
             return
         context.user_data['contest_prize'] = text
-        context.user_data['state'] = "WAITING_CONTEST_END_DATE"
+        context.user_data['state'] = UserState.WAITING_CONTEST_END_DATE
         await safe_send_markdown(context.bot, user_id, "📅 أرسل تاريخ انتهاء المسابقة (صيغة: YYYY-MM-DD HH:MM) بتوقيت مكة:")
         return
 
-    elif state == "WAITING_CONTEST_END_DATE":
+    elif state == UserState.WAITING_CONTEST_END_DATE:
         try:
             end_date = datetime.strptime(text, "%Y-%m-%d %H:%M")
             now_mecca = mecca_now()
@@ -12042,7 +12091,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await main_menu_callback(update, context)
         return
 
-    elif state == "WAITING_CONTEST_ANSWER":
+    elif state == UserState.WAITING_CONTEST_ANSWER:
         contest_id = context.user_data.get('contest_join_id')
         if not contest_id:
             await safe_send_markdown(context.bot, user_id, "❌ لم يتم العثور على المسابقة.")
@@ -12061,7 +12110,7 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
         await contests_command_handler(update, context)
         return
 
-    elif state == "WAITING_NSFW_THRESHOLD":
+    elif state == UserState.WAITING_NSFW_THRESHOLD:
         if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
             await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح")
             context.user_data.pop('state', None)
@@ -13104,6 +13153,8 @@ async def db_create_contest(creator_id: int, title: str, description: str, prize
                             end_date: datetime, contest_type: str = 'raffle') -> int:
     """إنشاء مسابقة جديدة"""
     try:
+        if end_date <= utc_now():
+            raise ValueError("end_date must be in future")
         async def _create(conn):
             if not isinstance(end_date, datetime):
                 raise ValueError("end_date must be datetime object")
@@ -13877,4 +13928,3 @@ if __name__ == "__main__":
         logger.error(f"❌ خطأ فادح: {e}")
         traceback.print_exc()
         sys.exit(1)
-
