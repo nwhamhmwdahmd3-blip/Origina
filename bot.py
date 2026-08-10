@@ -8364,6 +8364,322 @@ async def db_get_user_participation(user_id: int, contest_id: int) -> dict | Non
             return {'id': row['id'], 'answer': row['answer'], 'joined_at': row['joined_at']}
         return None
     return await execute_db(_get)
+# ===================================================================
+# تعريف المتغيرات والدوال المفقودة
+# ===================================================================
+
+# متغيرات عامة
+start_time = time_module.time()
+CLOUD_BACKUP_ENABLED = False
+NSFW_ENABLED = os.getenv("NSFW_ENABLED", "False").lower() == "true"
+NSFW_THRESHOLD = float(os.getenv("NSFW_THRESHOLD", "0.7"))
+NSFW_CACHE = {}
+LEVEL_REQUIREMENTS = {1: 0, 2: 10, 3: 25, 4: 50, 5: 100, 6: 200, 7: 400, 8: 800, 9: 1600, 10: 3200}
+
+# معالج الأخطاء العالمي
+async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        error = context.error
+        error_id = advanced_logger.log_error("خطأ في تحديث", error, {
+            'user_id': update.effective_user.id if update and update.effective_user else None,
+            'chat_id': update.effective_chat.id if update and update.effective_chat else None,
+            'message': update.effective_message.text if update and update.effective_message else None
+        })
+        if isinstance(error, Conflict):
+            logger.warning(f"⚠️ تعارض في التحديثات (Conflict): {error}")
+            return
+        if isinstance(error, Forbidden):
+            logger.warning(f"⚠️ البوت محظور أو ليس لديه صلاحيات: {error}")
+            return
+        if isinstance(error, TimedOut):
+            logger.warning(f"⏱️ انتهت المهلة: {error}")
+            return
+        if update and update.effective_user and context and context.bot:
+            if not await is_user_bot(context.bot, update.effective_user.id):
+                await safe_send_markdown(context.bot, update.effective_user.id, f"❌ حدث خطأ:\n`{str(error)[:300]}`\n(الرمز: `{error_id}`)")
+        if PRIMARY_OWNER_ID and context and context.bot:
+            try:
+                error_text = f"🚨 **خطأ في البوت** (الرمز: {error_id})\n\n📌 المستخدم: {update.effective_user.id if update and update.effective_user else 'غير معروف'}\n⚠️ الخطأ: `{str(error)[:300]}`\n"
+                if update and update.effective_message and update.effective_message.text:
+                    error_text += f"📝 الرسالة: `{update.effective_message.text[:100]}`\n"
+                await safe_send_markdown(context.bot, PRIMARY_OWNER_ID, error_text)
+            except:
+                pass
+    except Exception as e:
+        logger.error(f"فشل معالج الأخطاء نفسه: {e}")
+
+# دوال النقاط والمستويات (تنفيذ مبسط)
+async def db_get_user_level(user_id: int) -> dict:
+    async def _get(conn):
+        cur = await conn.execute("SELECT points, level FROM user_levels WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'points': row[0], 'level': row[1]}
+        await conn.execute("INSERT INTO user_levels (user_id, points, level) VALUES (?, 0, 1)", (user_id,))
+        await conn.commit()
+        return {'points': 0, 'level': 1}
+    return await execute_db(_get)
+
+async def db_update_user_level(user_id: int, points: int, level: int):
+    async def _update(conn):
+        await conn.execute("INSERT OR REPLACE INTO user_levels (user_id, points, level) VALUES (?, ?, ?)", (user_id, points, level))
+        await conn.commit()
+    return await execute_db(_update)
+
+async def get_rank(user_id: int) -> dict:
+    data = await db_get_user_level(user_id)
+    level = data['level']
+    points = data['points']
+    next_level = level + 1
+    next_points = LEVEL_REQUIREMENTS.get(next_level, points + 100)
+    return {'level': level, 'points': points, 'next_level_points': next_points}
+
+async def get_top_users(limit: int = 10) -> list:
+    async def _get(conn):
+        cur = await conn.execute("SELECT user_id, points, level FROM user_levels ORDER BY points DESC LIMIT ?", (limit,))
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+# دوال الإحالات (اختصار)
+async def db_get_referral_code(user_id: int) -> str:
+    async def _get(conn):
+        cur = await conn.execute("SELECT referral_code FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row and row[0]:
+            return row[0]
+        code = secrets.token_urlsafe(6)
+        await conn.execute("UPDATE users SET referral_code=? WHERE user_id=?", (code, user_id))
+        await conn.commit()
+        return code
+    return await execute_db(_get)
+
+async def db_generate_referral_code(user_id: int) -> str:
+    return await db_get_referral_code(user_id)
+
+async def db_get_referral_stats(user_id: int) -> dict:
+    async def _get(conn):
+        cur = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
+        total = (await cur.fetchone())[0]
+        cur = await conn.execute("SELECT COALESCE(SUM(reward_days), 0) FROM referral_rewards WHERE user_id=?", (user_id,))
+        reward_days = (await cur.fetchone())[0]
+        cur = await conn.execute("SELECT claimed_reward_days FROM referral_rewards WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        claimed = row[0] if row else 0
+        return {'total_referrals': total, 'available_days': reward_days - claimed}
+    return await execute_db(_get)
+
+async def db_get_referral_settings() -> dict:
+    async def _get(conn):
+        cur = await conn.execute("SELECT key, value FROM referral_settings")
+        rows = await cur.fetchall()
+        return {row[0]: row[1] for row in rows}
+    return await execute_db(_get)
+
+async def db_claim_referral_reward(user_id: int) -> int:
+    async def _claim(conn):
+        cur = await conn.execute("SELECT claimed_reward_days, total_reward_days FROM referral_rewards WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        claimed = row[0]
+        total = row[1]
+        if total > claimed:
+            days = total - claimed
+            await conn.execute("UPDATE referral_rewards SET claimed_reward_days=? WHERE user_id=?", (total, user_id))
+            await conn.execute("UPDATE users SET subscription_end = datetime('now', '+' || ? || ' days') WHERE user_id=?", (days, user_id))
+            await conn.commit()
+            return days
+        return 0
+    return await execute_db(_claim)
+
+async def db_add_referral(referrer_id: int, referred_id: int) -> bool:
+    async def _add(conn):
+        try:
+            await conn.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, referred_id))
+            await conn.execute("UPDATE referral_rewards SET referral_count = referral_count + 1, total_reward_days = total_reward_days + 3 WHERE user_id=?", (referrer_id,))
+            await conn.commit()
+            return True
+        except:
+            return False
+    return await execute_db(_add)
+
+async def db_auto_reward_referral(referrer_id: int, referred_id: int) -> int:
+    return 3
+
+async def db_get_user_by_referral_code(code: str) -> int:
+    async def _get(conn):
+        cur = await conn.execute("SELECT user_id FROM users WHERE referral_code=?", (code,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+# دوال التذاكر
+async def db_get_next_ticket_number() -> int:
+    async def _get(conn):
+        cur = await conn.execute("SELECT value FROM settings WHERE key='last_ticket_number'")
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+    return await execute_db(_get)
+
+async def db_save_ticket(user_id: int, username: str, message: str, ticket_num: int):
+    async def _save(conn):
+        await conn.execute("INSERT INTO support_tickets (user_id, username, message, ticket_number, created_at, status) VALUES (?, ?, ?, ?, ?, 'pending')", (user_id, username, message, ticket_num, utc_now_iso()))
+        await conn.commit()
+    return await execute_db(_save)
+
+async def db_get_all_tickets(limit: int = 20):
+    async def _get(conn):
+        cur = await conn.execute("SELECT id, user_id, username, message, ticket_number, status, created_at FROM support_tickets ORDER BY created_at DESC LIMIT ?", (limit,))
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def db_delete_all_tickets():
+    async def _del(conn):
+        await conn.execute("DELETE FROM support_tickets")
+        await conn.commit()
+    return await execute_db(_del)
+
+async def db_mark_ticket_replied(ticket_id: int):
+    async def _mark(conn):
+        await conn.execute("UPDATE support_tickets SET status='replied', replied=1 WHERE id=?", (ticket_id,))
+        await conn.commit()
+    return await execute_db(_mark)
+
+# دوال اللغة والترجمة
+async def db_set_user_language(user_id: int, lang: str):
+    async def _set(conn):
+        await conn.execute("INSERT OR REPLACE INTO user_lang (user_id, lang) VALUES (?, ?)", (user_id, lang))
+        await conn.commit()
+    return await execute_db(_set)
+
+async def db_get_user_language(user_id: int) -> str:
+    async def _get(conn):
+        cur = await conn.execute("SELECT lang FROM user_lang WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 'ar'
+    return await execute_db(_get)
+
+async def get_user_translation_language(user_id: int) -> str:
+    async def _get(conn):
+        cur = await conn.execute("SELECT lang FROM user_translation WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 'off'
+    return await execute_db(_get)
+
+async def set_user_translation_language(user_id: int, lang: str):
+    async def _set(conn):
+        await conn.execute("INSERT OR REPLACE INTO user_translation (user_id, lang) VALUES (?, ?)", (user_id, lang))
+        await conn.commit()
+    return await execute_db(_set)
+
+async def translate_text(text: str, target_lang: str) -> str:
+    try:
+        translator = GoogleTranslator(target=target_lang)
+        return translator.translate(text)
+    except:
+        return text
+
+# دوال NSFW (محاكاة)
+async def check_nsfw_cached(image_bytes: bytes) -> dict:
+    return {'nsfw': False}
+
+async def check_nsfw_video(video_bytes: bytes) -> dict:
+    return {'nsfw': False}
+
+async def achievement_system(user_id: int, achievement: str):
+    # تجاهل
+    pass
+
+# دوال التذكيرات
+async def db_get_user_reminder_settings(user_id: int) -> dict:
+    async def _get(conn):
+        cur = await conn.execute("SELECT subscription_reminder, daily_stats_reminder, weekly_report, reminder_days_before, notification_lang FROM user_reminder_settings WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'subscription_reminder': bool(row[0]), 'daily_stats_reminder': bool(row[1]), 'weekly_report': bool(row[2]), 'reminder_days_before': row[3], 'notification_lang': row[4]}
+        await conn.execute("INSERT INTO user_reminder_settings (user_id) VALUES (?)", (user_id,))
+        await conn.commit()
+        return {'subscription_reminder': True, 'daily_stats_reminder': False, 'weekly_report': True, 'reminder_days_before': 3, 'notification_lang': 'ar'}
+    return await execute_db(_get)
+
+async def db_update_reminder_settings(user_id: int, **kwargs):
+    async def _update(conn):
+        fields = []
+        values = []
+        for key, val in kwargs.items():
+            fields.append(f"{key}=?")
+            values.append(val)
+        values.append(user_id)
+        await conn.execute(f"UPDATE user_reminder_settings SET {', '.join(fields)} WHERE user_id=?", values)
+        await conn.commit()
+    return await execute_db(_update)
+
+async def db_get_users_needing_reminder():
+    # محاكاة
+    return []
+
+async def db_update_last_reminder_sent(user_id: int, reminder_type: str):
+    # تجاهل
+    pass
+
+# دوال الردود التلقائية
+async def db_get_reply(keyword: str) -> str:
+    async def _get(conn):
+        cur = await conn.execute("SELECT reply FROM group_replies WHERE keyword=?", (keyword,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def db_add_reply(keyword: str, reply: str):
+    async def _add(conn):
+        await conn.execute("INSERT OR REPLACE INTO group_replies (keyword, reply) VALUES (?, ?)", (keyword, reply))
+        await conn.commit()
+    return await execute_db(_add)
+
+async def db_del_reply(keyword: str) -> bool:
+    async def _del(conn):
+        await conn.execute("DELETE FROM group_replies WHERE keyword=?", (keyword,))
+        await conn.commit()
+        return True
+    return await execute_db(_del)
+
+async def db_get_all_replies():
+    async def _get(conn):
+        cur = await conn.execute("SELECT keyword, reply FROM group_replies")
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def db_get_auto_reply_settings(chat_id: int) -> dict:
+    async def _get(conn):
+        cur = await conn.execute("SELECT enabled, only_admins, ignore_bots FROM auto_reply_settings WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'enabled': bool(row[0]), 'only_admins': bool(row[1]), 'ignore_bots': bool(row[2])}
+        await conn.execute("INSERT INTO auto_reply_settings (chat_id) VALUES (?)", (chat_id,))
+        await conn.commit()
+        return {'enabled': True, 'only_admins': False, 'ignore_bots': True}
+    return await execute_db(_get)
+
+async def db_toggle_auto_reply(chat_id: int) -> bool:
+    settings = await db_get_auto_reply_settings(chat_id)
+    new_status = not settings['enabled']
+    async def _toggle(conn):
+        await conn.execute("UPDATE auto_reply_settings SET enabled=? WHERE chat_id=?", (1 if new_status else 0, chat_id))
+        await conn.commit()
+    await execute_db(_toggle)
+    return new_status
+
+async def db_set_auto_reply_only_admins(chat_id: int, only_admins: bool):
+    async def _set(conn):
+        await conn.execute("UPDATE auto_reply_settings SET only_admins=? WHERE chat_id=?", (1 if only_admins else 0, chat_id))
+        await conn.commit()
+    return await execute_db(_set)
+
+# دوال الإحصائيات المفقودة
+async def db_get_user_channel_stats(user_id: int, channel_db_id: int) -> dict:
+    stats = await db_get_channel_stats(channel_db_id)
+    return stats
+
 
 # ===================================================================
 # 49. الوظيفة الرئيسية (main)
