@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -8680,6 +8681,169 @@ async def db_get_user_channel_stats(user_id: int, channel_db_id: int) -> dict:
     stats = await db_get_channel_stats(channel_db_id)
     return stats
 
+# ===================================================================
+# دوال الأمان المفقودة
+# ===================================================================
+async def security_select_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة المجموعات لإعدادات الأمان"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    
+    # جلب المجموعات التي يمتلكها المستخدم
+    groups = await db_get_user_groups(user_id)
+    
+    if not groups:
+        if query:
+            await query.edit_message_text("📭 لا توجد مجموعات مسجلة لديك.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "📭 لا توجد مجموعات مسجلة لديك.")
+        return
+    
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        # التحقق من صلاحية المستخدم
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            continue
+        status_icon = "⛔" if banned else "✅"
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        keyboard.append([InlineKeyboardButton(
+            f"{status_icon} {display_name}", 
+            callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}"
+        )])
+    
+    if not keyboard:
+        if query:
+            await query.edit_message_text("🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        return
+    
+    keyboard.append([
+        InlineKeyboardButton("🔄 تحديث", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
+        InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)
+    ])
+    
+    text = "🔐 **اختر مجموعة لإعدادات الأمان:**"
+    if query:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def security_refresh_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحديث قائمة المجموعات"""
+    await security_select_group_callback(update, context)
+
+
+async def security_banned_words_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة إدارة الكلمات المحظورة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    
+    if not chat_id:
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    context.user_data['banned_words_chat_id'] = chat_id
+    
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"{CallbackData.BANNED_WORDS_ADD_PREFIX}{chat_id}"),
+            InlineKeyboardButton("📋 عرض الكلمات", callback_data=f"{CallbackData.BANNED_WORDS_LIST_PREFIX}{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"{CallbackData.BANNED_WORDS_REMOVE_PREFIX}{chat_id}"),
+            InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")
+        ]
+    ])
+    
+    await query.edit_message_text("🚫 **الكلمات المحظورة**\nاختر الإجراء المطلوب:", reply_markup=keyboard)
+
+
+async def banned_words_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إضافة كلمة محظورة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    
+    if not chat_id:
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_GROUP_BANNED_WORD
+    context.user_data['banned_words_chat_id'] = chat_id
+    await query.edit_message_text("✏️ أرسل الكلمة التي تريد إضافتها إلى قائمة المحظورات:")
+
+
+async def banned_words_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض الكلمات المحظورة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    
+    if not chat_id:
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    words = await db_get_banned_words(chat_id)
+    if not words:
+        await query.edit_message_text("📭 لا توجد كلمات محظورة.")
+        return
+    
+    text = "🚫 **الكلمات المحظورة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for word, added_by, added_at in words:
+        text += f"• `{word}` (أضيف بواسطة {added_by})\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}")]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def banned_words_remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف كلمة محظورة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    
+    if not chat_id:
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_REMOVE_GROUP_BANNED_WORD
+    context.user_data['banned_words_chat_id'] = chat_id
+    await query.edit_message_text("✏️ أرسل الكلمة التي تريد حذفها من قائمة المحظورات:")
+
+
+async def security_close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إغلاق لوحة الأمان"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.message.delete()
 
 # ===================================================================
 # 49. الوظيفة الرئيسية (main)
