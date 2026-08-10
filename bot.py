@@ -6783,6 +6783,58 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.error(f"فشل إرسال إشعار الخطأ للمطور: {e}")
     except Exception as e:
         logger.error(f"فشل معالج الأخطاء نفسه: {e}")
+# ===================================================================
+# دالة اختيار مجموعة للأمان (مفقودة)
+# ===================================================================
+async def security_select_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار مجموعة لإعدادات الأمان"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    if query:
+        await query.answer()
+
+    # جلب مجموعات المستخدم
+    groups = await db_get_user_groups(user_id)
+    
+    # إذا لم يكن مستخدم عادي، جلب كل المجموعات (للمشرفين)
+    if not groups and (user_id == PRIMARY_OWNER_ID or await is_bot_admin(user_id)):
+        async def _get_all_groups(conn):
+            cur = await conn.execute("SELECT chat_id, chat_name, username, banned FROM bot_groups ORDER BY chat_name")
+            return await cur.fetchall()
+        groups = await execute_db(_get_all_groups)
+
+    if not groups:
+        if query:
+            await query.edit_message_text("📭 لا توجد مجموعات مسجلة.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "📭 لا توجد مجموعات مسجلة.")
+        return
+
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        # التحقق من الصلاحية
+        if not await is_authorized_in_group(context.bot, chat_id, user_id) and user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+            continue
+        status_icon = "⛔" if banned else "✅"
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        keyboard.append([InlineKeyboardButton(f"{status_icon} {display_name}", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")])
+
+    if not keyboard:
+        if query:
+            await query.edit_message_text("🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        return
+
+    keyboard.append([
+        InlineKeyboardButton("🔄 تحديث", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
+        InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)
+    ])
+
+    if query:
+        await query.edit_message_text("🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_send_markdown(context.bot, user_id, "🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def main():
     # تهيئة قاعدة البيانات
