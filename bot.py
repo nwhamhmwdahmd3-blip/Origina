@@ -6835,6 +6835,133 @@ async def security_select_group_callback(update: Update, context: ContextTypes.D
         await query.edit_message_text("🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await safe_send_markdown(context.bot, user_id, "🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
+async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+        except:
+            pass
+    uid = update.effective_user.id
+    groups = await db_get_user_groups(uid)
+    valid_groups = []
+    for chat_id, chat_name, username, banned in groups:
+        is_admin = await is_currently_admin_in_group(context.bot, chat_id, uid)
+        if is_admin:
+            valid_groups.append((chat_id, chat_name, username, banned))
+        else:
+            async def _remove_admin(conn):
+                await conn.execute("DELETE FROM group_admins WHERE chat_id=? AND user_id=?", (chat_id, uid))
+                await conn.commit()
+            await execute_db(_remove_admin)
+    if not valid_groups:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ أضف البوت", url=f"https://t.me/{BOT_USERNAME}?startgroup")],
+            [InlineKeyboardButton("🔄 تحديث القائمة", callback_data="security_refresh_groups")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="back")]
+        ])
+        msg = "📭 لا توجد مجموعات مسجلة\n\nأضف البوت إلى مجموعة وستظهر هنا."
+        if query:
+            try:
+                await safe_edit_markdown(query, msg, reply_markup=kb)
+            except:
+                await query.edit_message_text(msg, reply_markup=kb)
+        else:
+            await safe_send_markdown(context.bot, uid, msg, reply_markup=kb)
+        return
+    keyboard = []
+    for chat_id, chat_name, username, banned in valid_groups:
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        status_icon = "⛔" if banned else "✅"
+        keyboard.append([InlineKeyboardButton(f"{status_icon} {display_name}", callback_data=f"groups:settings:{chat_id}")])
+        keyboard.append([
+            InlineKeyboardButton("🔐 الأمان", callback_data=f"security_select_group:{chat_id}"),
+            InlineKeyboardButton("📜 السجل", callback_data=f"group_action:log:{chat_id}"),
+            InlineKeyboardButton("⚙️ متقدم", callback_data=f"advanced_actions:{chat_id}")
+        ])
+        is_locked = await is_chat_locked(chat_id)
+        lock_label = "🔒 قفل" if not is_locked else "🔓 فتح"
+        lock_callback = f"panel:lock:{chat_id}" if not is_locked else f"panel:unlock:{chat_id}"
+        keyboard.append([
+            InlineKeyboardButton(lock_label, callback_data=lock_callback),
+            InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_group:{chat_id}")
+        ])
+        keyboard.append([InlineKeyboardButton("─" * 20, callback_data="noop")])
+    keyboard.append([
+        InlineKeyboardButton("🔄 تحديث القائمة", callback_data="security_refresh_groups"),
+        InlineKeyboardButton("🔙 رجوع", callback_data="back")
+    ])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = "👥 **مجموعاتي**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر مجموعة للتحكم بها:\n\n✅ = نشطة  |  ⛔ = محظورة"
+    if query:
+        try:
+            await safe_edit_markdown(query, text, reply_markup=reply_markup)
+        except:
+            await query.edit_message_text(text, reply_markup=reply_markup)
+    else:
+        await safe_send_markdown(context.bot, uid, text, reply_markup=reply_markup)
+
+async def rebuild_banned_patterns():
+    global BANNED_PATTERNS
+    async with _BANNED_PATTERNS_LOCK:
+        BANNED_PATTERNS = []
+        try:
+            async def _get_patterns(conn):
+                cur = await conn.execute("SELECT word FROM banned_words WHERE chat_id = -1")
+                rows = await cur.fetchall()
+                return [row[0] for row in rows]
+            words = await execute_db(_get_patterns)
+            for word in words:
+                if '*' in word or '?' in word or '+' in word:
+                    try:
+                        BANNED_PATTERNS.append(re.compile(word))
+                    except:
+                        pass
+            logger.info(f"✅ تم إعادة بناء {len(BANNED_PATTERNS)} نمط محظور")
+        except Exception as e:
+            logger.error(f"❌ فشل إعادة بناء الأنماط المحظورة: {e}")
+
+async def security_select_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = update.effective_user.id
+    if query:
+        await query.answer()
+    groups = await db_get_user_groups(user_id)
+    if not groups and (user_id == PRIMARY_OWNER_ID or await is_bot_admin(user_id)):
+        async def _get_all_groups(conn):
+            cur = await conn.execute("SELECT chat_id, chat_name, username, banned FROM bot_groups ORDER BY chat_name")
+            return await cur.fetchall()
+        groups = await execute_db(_get_all_groups)
+    if not groups:
+        if query:
+            await query.edit_message_text("📭 لا توجد مجموعات مسجلة.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "📭 لا توجد مجموعات مسجلة.")
+        return
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        if not await is_authorized_in_group(context.bot, chat_id, user_id) and user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+            continue
+        status_icon = "⛔" if banned else "✅"
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        keyboard.append([InlineKeyboardButton(f"{status_icon} {display_name}", callback_data=f"groups:settings:{chat_id}")])
+    if not keyboard:
+        if query:
+            await query.edit_message_text("🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        return
+    keyboard.append([
+        InlineKeyboardButton("🔄 تحديث", callback_data="security_refresh_groups"),
+        InlineKeyboardButton("🔙 رجوع", callback_data="back")
+    ])
+    if query:
+        await query.edit_message_text("🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_send_markdown(context.bot, user_id, "🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def security_refresh_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await security_select_group_callback(update, context)
 
 async def main():
     # تهيئة قاعدة البيانات
