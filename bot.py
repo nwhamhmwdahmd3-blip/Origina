@@ -11052,6 +11052,58 @@ async def notify_group_admins(bot, chat_id: int, user_id: int, chat_name: str):
             await asyncio.sleep(0.3)
     except Exception as e:
         logger.error(f"فشل إشعار مشرفي المجموعة {chat_id}: {e}")
+async def setup_unified_web_server(application, port: int):
+    from aiohttp import web
+    from telegram import Update
+    import json
+
+    if not hasattr(application, 'web_app') or application.web_app is None:
+        application.web_app = web.Application()
+
+    # مسار الصحة
+    async def health_check(request):
+        return web.Response(text="OK")
+
+    # الصفحة الرئيسية
+    async def index_handler(request):
+        html = """
+        <html>
+            <head><title>ريلاكس مانيجر</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px; direction: rtl;">
+                <h1>🌿 ريلاكس مانيجر</h1>
+                <p>✅ البوت يعمل بكفاءة</p>
+                <p>📊 <a href="/health">التحقق من الصحة</a></p>
+                <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
+                <p style="color: #666; font-size: 12px;">الإصدار 21.0.0</p>
+            </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html", charset="utf-8")
+
+    # Webhook handler
+    async def webhook_handler(request):
+        try:
+            data = await request.json()
+            update_id = data.get('update_id', 'unknown')
+            logger.info(f"📩 استقبال تحديث: {update_id}")
+            update = Update.de_json(data, application.bot)
+            await application.process_update(update)
+            return web.Response(status=200, text="OK")
+        except Exception as e:
+            logger.error(f"❌ خطأ في Webhook: {e}")
+            return web.Response(status=500, text="Error")
+
+    # إضافة المسارات
+    application.web_app.router.add_get('/', index_handler)
+    application.web_app.router.add_get('/health', health_check)
+    application.web_app.router.add_post(f"/{TOKEN}", webhook_handler)
+
+    runner = web.AppRunner(application.web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"✅ خادم الويب الموحد يعمل على المنفذ {port}")
+    return site
 
 # ===================================================================
 # 42. main()
