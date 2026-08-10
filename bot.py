@@ -12303,6 +12303,45 @@ async def set_delete_penalty_duration_callback(update: Update, context: ContextT
     context.user_data['state'] = "WAITING_DELETE_PENALTY_DURATION"
     context.user_data['security_chat_id'] = chat_id
     await query.edit_message_text("⏱️ **أرسل مدة عقوبة الحذف بالدقائق** (مثال: 60)\nأو أرسل 0 للكتم الدائم.")
+async def user_auto_reply_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل الردود التلقائية للمستخدم"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    target_user = int(query.data.split(":")[-1])
+    
+    # التحقق من الصلاحية
+    if user_id != target_user and user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    # تبديل الحالة
+    current = await db_get_user_auto_reply_status(target_user)
+    new_status = not current
+    await db_set_user_auto_reply_status(target_user, new_status)
+    
+    # تحديث الكيبورد
+    await query.edit_message_reply_markup(reply_markup=get_user_auto_reply_keyboard(target_user, new_status))
+    
+    # إشعار
+    status_text = "🟢 مفعل" if new_status else "🔴 معطل"
+    await query.answer(f"✅ تم تغيير حالة الردود التلقائية إلى: {status_text}")
+async def user_auto_reply_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة الردود التلقائية للمستخدم"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    enabled = await db_get_user_auto_reply_status(user_id)
+    
+    text = f"📝 **إعدادات الردود التلقائية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📌 الحالة: {'🟢 مفعل' if enabled else '🔴 معطل'}\n"
+    text += f"📌 الردود المدمجة: {len(ALL_REPLIES)} رد\n"
+    text += f"📌 يمكنك إضافة ردود مخصصة عبر /add_reply"
+    
+    keyboard = get_user_auto_reply_keyboard(user_id, enabled)
+    await safe_edit_markdown(query, text, reply_markup=keyboard)
 
 # ===================================================================
 # 44. الوظيفة الرئيسية (main)
