@@ -11576,6 +11576,312 @@ async def panel_close_callback_handler(update: Update, context: ContextTypes.DEF
     if query:
         await query.answer()
         await query.message.delete()
+# ===================================================================
+# ========== دوال تصفية الرسائل والتحقق من القفل والبطء ==========
+# ===================================================================
+
+async def is_chat_locked(chat_id: int) -> bool:
+    """التحقق من قفل المجموعة"""
+    async def _check(conn):
+        try:
+            cur = await conn.execute("SELECT 1 FROM chat_locks WHERE chat_id=? AND locked=1", (chat_id,))
+            return await cur.fetchone() is not None
+        except Exception as e:
+            logger.error(f"خطأ في التحقق من قفل المجموعة {chat_id}: {e}")
+            return False
+    return await execute_db(_check)
+
+async def db_set_chat_lock(chat_id: int, locked: bool, locked_by: int = None) -> bool:
+    """تعيين قفل المجموعة"""
+    if not isinstance(chat_id, int) or chat_id <= 0:
+        return False
+    async def _set(conn):
+        try:
+            if locked:
+                await conn.execute(
+                    "INSERT OR REPLACE INTO chat_locks (chat_id, locked, locked_at, locked_by) VALUES (?, 1, ?, ?)",
+                    (chat_id, utc_now_iso(), locked_by)
+                )
+            else:
+                await conn.execute("DELETE FROM chat_locks WHERE chat_id=?", (chat_id,))
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"خطأ في قفل المجموعة {chat_id}: {e}")
+            return False
+    return await execute_db(_set)
+
+async def db_check_slow_mode(chat_id: int, user_id: int) -> bool:
+    """التحقق من الوضع البطيء"""
+    settings = await db_get_security_settings(chat_id)
+    if not settings.get('slow_mode', False):
+        return True
+    seconds = settings.get('slow_mode_seconds', 5)
+    async def _check(conn):
+        cur = await conn.execute("SELECT message_time FROM user_messages WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        row = await cur.fetchone()
+        now = utc_now()
+        if row:
+            last_time = datetime.fromisoformat(row[0])
+            if (now - last_time).total_seconds() < seconds:
+                return False
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_messages (user_id, chat_id, message_time) VALUES (?, ?, ?)",
+            (user_id, chat_id, now.isoformat())
+        )
+        await conn.commit()
+        return True
+    return await execute_db(_check)
+
+async def delete_and_penalize(update: Update, context: ContextTypes.DEFAULT_TYPE, warning_message: str):
+    """حذف رسالة مخالفة وتطبيق عقوبة تلقائية"""
+    if not update.message:
+        return
+    message = update.message
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    try:
+        await message.delete()
+    except Exception as e:
+        logger.error(f"فشل حذف الرسالة: {e}")
+    try:
+        await safe_send_markdown(context.bot, chat_id, warning_message)
+    except:
+        pass
+    settings = await db_get_security_settings(chat_id)
+    penalty = settings.get('auto_penalty', 'none')
+    if penalty != 'none':
+        duration = settings.get('auto_mute_duration', 60)
+        await apply_penalty_with_duration(context.bot, chat_id, user_id, penalty, duration, reason="مخالفة قواعد المجموعة")
+
+async def get_moderation_log(chat_id: int, limit: int = 20) -> str:
+    """جلب سجل الإجراءات للمجموعة"""
+    async def _get_log(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("SELECT user_id, action, duration_minutes, reason, created_at FROM moderation_log WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?", (chat_id, limit))
+        return await cur.fetchall()
+    logs = await execute_db(_get_log)
+    if not logs:
+        return "📭 لا توجد سجلات إجراءات"
+    text = "📜 **سجل إجراءات المجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for log in logs:
+        user_id = log['user_id']
+        action = log['action']
+        duration = log['duration_minutes']
+        reason = log['reason']
+        created_at = log['created_at']
+        try:
+            dt = datetime.fromisoformat(created_at)
+            dt_mecca = utc_to_mecca(dt)
+            time_str = dt_mecca.strftime("%Y-%m-%d %H:%M")
+        except:
+            time_str = created_at[:16] if created_at else "?"
+        duration_text = ""
+        if action == 'mute' and duration:
+            if duration == -1:
+                duration_text = " (دائم)"
+            elif duration < 60:
+                duration_text = f" ({duration} دقيقة)"
+            elif duration < 1440:
+                duration_text = f" ({duration//60} ساعة)"
+            else:
+                duration_text = f" ({duration//1440} يوم)"
+        elif action == 'warn' and duration:
+            duration_text = f" (تحذير #{duration})"
+        reason_text = f"\n   📝 السبب: {reason[:50]}" if reason else ""
+        text += f"• `{user_id}` → {action}{duration_text}{reason_text}\n   🕐 {time_str}\n\n"
+    return text
+
+# ===================================================================
+# ========== معالج تصفية الرسائل (filter_messages_handler) ==========
+# ===================================================================
+
+async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تصفية الرسائل في المجموعات (حذف الوسائط، الروابط، المعرفات، الكلمات المحظورة، الفيضان، الوضع الليلي)"""
+    if update.message is None or update.effective_chat is None or update.effective_user is None:
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    message = update.message
+    text = message.text or message.caption or ""
+
+    # تجاهل رسائل البوت نفسه
+    if user_id == context.bot.id:
+        return
+
+    # يعمل فقط في المجموعات
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        return
+
+    # تجاهل البوتات الأخرى
+    if await is_user_bot(context.bot, user_id):
+        return
+
+    # التحقق من صلاحيات البوت في المجموعة
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    if not bot_perms.get('can_act', False):
+        return
+
+    # التحقق من قفل المجموعة
+    if await is_chat_locked(chat_id) and not await is_authorized_in_group(context.bot, chat_id, user_id):
+        try:
+            await message.delete()
+            await context.bot.send_message(chat_id, "🔒 المجموعة مقفلة، لا يمكنك إرسال رسائل.")
+        except:
+            pass
+        return
+
+    # التحقق من الوضع البطيء
+    if not await db_check_slow_mode(chat_id, user_id):
+        try:
+            await message.delete()
+            await context.bot.send_message(chat_id, "⏱️ الوضع البطيء مفعل، انتظر قبل إرسال رسالة أخرى.")
+        except:
+            pass
+        return
+
+    # جلب إعدادات الأمان
+    settings = await db_get_security_settings(chat_id)
+
+    # حذف الروابط
+    if settings.get('links', False) and contains_link(text):
+        await delete_and_penalize(update, context, "🚫 ممنوع إرسال الروابط!")
+        return
+
+    # حذف المعرفات (@username)
+    if settings.get('mentions', False) and contains_mention(text):
+        await delete_and_penalize(update, context, "🚫 ممنوع إرسال المعرفات (@username)!")
+        return
+
+    # حذف الكلمات المحظورة
+    if settings.get('delete_banned_words', False):
+        word = await db_contains_banned_word(text, chat_id)
+        if word:
+            await delete_and_penalize(update, context, f"🚫 كلمة محظورة: `{word}`")
+            return
+
+    # حذف أنواع الوسائط المحددة
+    delete_media = False
+    media_type = None
+
+    if settings.get('delete_videos', False) and message.video:
+        delete_media = True
+        media_type = "فيديو"
+    elif settings.get('delete_audio', False) and message.audio:
+        delete_media = True
+        media_type = "صوت"
+    elif settings.get('delete_animation', False) and message.animation:
+        delete_media = True
+        media_type = "متحرك"
+    elif settings.get('delete_documents', False) and message.document:
+        delete_media = True
+        media_type = "مستند"
+    elif settings.get('delete_stickers', False) and message.sticker:
+        delete_media = True
+        media_type = "ملصق"
+    elif settings.get('delete_forwarded', False) and message.forward_date:
+        delete_media = True
+        media_type = "معاد توجيهه"
+    elif settings.get('delete_polls', False) and message.poll:
+        delete_media = True
+        media_type = "استطلاع رأي"
+    elif settings.get('delete_games', False) and message.game:
+        delete_media = True
+        media_type = "لعبة"
+    elif settings.get('delete_voice', False) and message.voice:
+        delete_media = True
+        media_type = "رسالة صوتية"
+    elif settings.get('delete_video_note', False) and message.video_note:
+        delete_media = True
+        media_type = "ملاحظة فيديو"
+
+    if delete_media:
+        try:
+            await message.delete()
+            await context.bot.send_message(chat_id, f"🚫 ممنوع إرسال {media_type}!")
+        except:
+            pass
+        penalty = settings.get('delete_penalty', settings.get('auto_penalty', 'none'))
+        if penalty != 'none':
+            duration = settings.get('delete_penalty_duration', settings.get('auto_mute_duration', 60))
+            await apply_penalty_with_duration(context.bot, chat_id, user_id, penalty, duration)
+        return
+
+    # الحد الأقصى لطول الرسالة
+    max_len = settings.get('max_message_length', 0)
+    if max_len > 0 and len(text) > max_len:
+        try:
+            await message.delete()
+            await context.bot.send_message(chat_id, f"📏 الرسالة طويلة جداً! الحد الأقصى {max_len} حرف.")
+        except:
+            pass
+        return
+
+    # مضاد الفيضان
+    if settings.get('antiflood_enabled', False) and await db_check_antiflood(chat_id, user_id):
+        try:
+            await message.delete()
+            await context.bot.send_message(chat_id, "🌊 تم اكتشاف فيضان! يرجى التهدئة.")
+        except:
+            pass
+        penalty = settings.get('antiflood_penalty', 'mute')
+        await apply_penalty_with_duration(context.bot, chat_id, user_id, penalty, 60)
+        return
+
+    # الوضع الليلي
+    if settings.get('night_mode_enabled', False):
+        now = utc_now()
+        try:
+            start = datetime.strptime(settings['night_mode_start'], '%H:%M').time()
+            end = datetime.strptime(settings['night_mode_end'], '%H:%M').time()
+            current = now.time()
+            is_night = False
+            if start < end:
+                is_night = start <= current <= end
+            else:
+                is_night = current >= start or current <= end
+            if is_night:
+                penalty = settings.get('night_mode_action', 'mute')
+                if penalty != 'none':
+                    await apply_penalty_with_duration(context.bot, chat_id, user_id, penalty, 60, "الوضع الليلي مفعل")
+                    try:
+                        await message.delete()
+                        await context.bot.send_message(chat_id, "🌙 الوضع الليلي مفعل، يرجى الانتظار حتى الصباح.")
+                    except:
+                        pass
+                    return
+        except:
+            pass
+
+    # إضافة نقاط للمستخدم
+    if not user_id == context.bot.id:
+        await add_points(user_id, update, context)
+
+    # الردود التلقائية
+    if text:
+        auto_reply_settings = await db_get_auto_reply_settings(chat_id)
+        if auto_reply_settings.get('enabled', False):
+            # التحقق من صلاحية الردود (للمشرفين فقط أو للجميع)
+            if not (auto_reply_settings.get('only_admins', False) and not await is_authorized_in_group(context.bot, chat_id, user_id)):
+                # تجاهل البوتات إذا كان الإعداد يطلب ذلك
+                if not (auto_reply_settings.get('ignore_bots', True) and update.effective_user.is_bot):
+                    # البحث عن رد مخصص للمجموعة أولاً
+                    reply = await db_get_reply(f"{chat_id}:{text.lower()}")
+                    if not reply:
+                        reply = await db_get_reply(text.lower())
+                    # البحث في الردود المدمجة
+                    if not reply:
+                        import re
+                        for key, value in ALL_REPLIES.items():
+                            if re.search(r'\b' + re.escape(key) + r'\b', text, re.IGNORECASE):
+                                reply = value if isinstance(value, str) else random.choice(value) if isinstance(value, list) else value
+                                break
+                    if reply:
+                        try:
+                            await message.reply_text(reply)
+                        except:
+                            pass
 
 # ===================================================================
 # 44. الوظيفة الرئيسية (main)
