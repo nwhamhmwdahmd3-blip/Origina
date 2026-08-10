@@ -11887,6 +11887,64 @@ async def db_get_all_active_users_for_report() -> list:
         cur = await conn.execute("SELECT user_id FROM users_cache WHERE last_updated >= ?", (thirty_days_ago,))
         return [row[0] for row in await cur.fetchall()]
     return await execute_db(_get)
+async def db_get_auto_reply_settings(chat_id: int) -> dict:
+    """
+    جلب إعدادات الرد التلقائي للمجموعة.
+    إذا لم تكن موجودة، تنشئ إعدادات افتراضية.
+    """
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT * FROM auto_reply_settings WHERE chat_id = ?", 
+            (chat_id,)
+        )
+        row = await cur.fetchone()
+        
+        if row:
+            return dict(row)
+        
+        # إعدادات افتراضية
+        defaults = {
+            'chat_id': chat_id,
+            'enabled': 0,
+            'reply_type': 'smart',  # smart, random, fixed
+            'fixed_reply': 'أهلاً بك في المجموعة 🌹',
+            'cooldown_seconds': 10,
+            'max_replies_per_hour': 30,
+            'ignore_bots': 1,
+            'ignore_admins': 0,
+            'match_accuracy': 70,  # نسبة تطابق الكلمات المفتاحية
+            'custom_keywords': '{}',  # JSON للكلمات المخصصة
+        }
+        
+        columns = ', '.join(defaults.keys())
+        placeholders = ', '.join(['?' for _ in defaults])
+        await conn.execute(
+            f"INSERT OR IGNORE INTO auto_reply_settings ({columns}) VALUES ({placeholders})",
+            tuple(defaults.values())
+        )
+        await conn.commit()
+        return defaults
+    
+    return await execute_db(_get)
+
+
+async def db_set_auto_reply_settings(chat_id: int, **kwargs):
+    """تحديث إعدادات الرد التلقائي"""
+    async def _update(conn):
+        await conn.execute(
+            "INSERT OR IGNORE INTO auto_reply_settings (chat_id) VALUES (?)",
+            (chat_id,)
+        )
+        if kwargs:
+            set_parts = [f"{key} = ?" for key in kwargs.keys()]
+            values = list(kwargs.values()) + [chat_id]
+            await conn.execute(
+                f"UPDATE auto_reply_settings SET {', '.join(set_parts)} WHERE chat_id = ?",
+                tuple(values)
+            )
+            await conn.commit()
+    
+    await execute_db(_update)
 
 # ===================================================================
 # 47. main()
