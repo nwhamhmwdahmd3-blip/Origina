@@ -11303,26 +11303,64 @@ async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYP
     text = update.message.text.strip() if update.message.text else ""
     state = context.user_data.get('state')
 
-    # حالة إضافة قناة
-    if state == "WAITING_CHANNEL_ID":
-        channel_id = text
-        if channel_id.startswith('@') or channel_id.lstrip('-').isdigit():
-            try:
-                chat = await context.bot.get_chat(channel_id)
-                channel_name = chat.title or "بدون اسم"
-                result = await db_add_channel(user_id, channel_id, channel_name)
-                if result:
-                    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'channel_added').format(channel_name))
-                    await db_register_channel(chat.id, channel_name, user_id)
-                else:
-                    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'channel_exists'))
-            except Exception as e:
-                await safe_send_markdown(context.bot, user_id, f"❌ خطأ: {str(e)[:100]}")
-            context.user_data.pop('state', None)
-            await main_menu_callback(update, context)
-        else:
-            await safe_send_markdown(context.bot, user_id, "❌ صيغة المعرف غير صحيحة! استخدم @username أو المعرف الرقمي.")
+    # ===== حالة إضافة قناة =====
+    if state == UserState.WAITING_CHANNEL_ID:  # ✅ استخدام Enum بدلاً من نص
+        channel_id = text.strip()
+        
+        # التحقق من صيغة المعرف
+        if not (channel_id.startswith('@') or channel_id.lstrip('-').isdigit()):
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ صيغة المعرف غير صحيحة! استخدم @username أو المعرف الرقمي.\nمثال: @my_channel أو -1001234567890"
+            )
+            return
+        
+        try:
+            # محاولة جلب معلومات القناة
+            chat = await context.bot.get_chat(channel_id)
+            channel_name = chat.title or "بدون اسم"
+            
+            # حفظ القناة في قاعدة البيانات
+            result = await db_add_channel(user_id, channel_id, channel_name)
+            
+            if result:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    get_text(user_id, 'channel_added').format(channel_name)
+                )
+                # تسجيل القناة في جدول bot_channels أيضاً
+                await db_register_channel(chat.id, channel_name, user_id)
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    get_text(user_id, 'channel_exists')
+                )
+                
+        except Exception as e:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"❌ خطأ: {str(e)[:100]}"
+            )
+        
+        # إزالة الحالة والعودة للقائمة الرئيسية
+        context.user_data.pop('state', None)
+        await main_menu_callback(update, context)
         return
+
+    # ===== باقي الحالات الأخرى =====
+    elif state == UserState.ADDING_POSTS:
+        # ... كود إضافة المنشورات ...
+        pass
+    
+    elif state == UserState.WAITING_INTERVAL_MINUTES:
+        # ... كود الدقائق ...
+        pass
+    
+    # ... باقي الحالات ...
 
     # حالة إضافة منشورات
     elif state == "ADDING_POSTS":
