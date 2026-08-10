@@ -7173,6 +7173,31 @@ async def security_toggle_setting_callback(update: Update, context: ContextTypes
         await query.edit_message_text("⚠️ **إعدادات التحذير**\nاختر الإعداد المطلوب:", reply_markup=keyboard)
     else:
         await query.edit_message_text("❌ إجراء غير معروف")
+async def security_banned_words_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة الكلمات المحظورة للمجموعة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['banned_words_chat_id'] = chat_id
+    
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"banned_words:add:{chat_id}"),
+            InlineKeyboardButton("📋 عرض الكلمات", callback_data=f"banned_words:list:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"banned_words:remove:{chat_id}"),
+            InlineKeyboardButton("🔙 رجوع", callback_data=f"groups:settings:{chat_id}")
+        ]
+    ])
+    await query.edit_message_text("🚫 **الكلمات المحظورة**\nاختر الإجراء المطلوب:", reply_markup=keyboard)
 
 async def main():
     # تهيئة قاعدة البيانات
