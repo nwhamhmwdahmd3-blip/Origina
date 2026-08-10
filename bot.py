@@ -3993,6 +3993,321 @@ class UserState(Enum):
 # ===================================================================
 # 28. دوال الكيبوردات
 # ===================================================================
+# ===================================================================
+# نظام إرسال الأخطاء إلى قناة التقارير
+# ===================================================================
+
+async def send_error_to_log_channel(bot, error: Exception, context: dict = None, update: Update = None):
+    """
+    إرسال تقرير الخطأ إلى قناة التقارير مع تفاصيل المشكلة والسبب والحل
+    """
+    try:
+        # جلب معرف قناة التقارير
+        log_channel_id = await db_get_log_channel_id()
+        if not log_channel_id:
+            logger.warning("⚠️ لم يتم تعيين قناة التقارير")
+            return
+        
+        # إنشاء معرف فريد للخطأ
+        error_id = secrets.token_hex(6)
+        
+        # تحليل نوع الخطأ
+        error_type = type(error).__name__
+        error_message = str(error)
+        
+        # تحديد سبب المشكلة والحل بناءً على نوع الخطأ
+        cause = ""
+        solution = ""
+        
+        if isinstance(error, NameError):
+            cause = f"✅ **السبب:** دالة أو متغير غير معرف: `{error_message}`"
+            solution = "🔧 **الحل:** تأكد من تعريف الدالة أو المتغير المطلوب، أو أضف الاستيراد المناسب."
+            
+        elif isinstance(error, AttributeError):
+            cause = f"✅ **السبب:** خاصية أو دالة غير موجودة في الكائن: `{error_message}`"
+            solution = "🔧 **الحل:** تأكد من وجود الخاصية أو الدالة في الكائن المطلوب، أو استخدم الإصدار الصحيح."
+            
+        elif isinstance(error, KeyError):
+            cause = f"✅ **السبب:** مفتاح غير موجود في القاموس: `{error_message}`"
+            solution = "🔧 **الحل:** تأكد من وجود المفتاح المطلوب في القاموس، أو استخدم `.get()` لتجنب الخطأ."
+            
+        elif isinstance(error, ValueError):
+            cause = f"✅ **السبب:** قيمة غير صالحة: `{error_message}`"
+            solution = "🔧 **الحل:** تأكد من إدخال قيمة صحيحة، أو تحقق من تنسيق البيانات."
+            
+        elif isinstance(error, TypeError):
+            cause = f"✅ **السبب:** نوع بيانات غير صحيح: `{error_message}`"
+            solution = "🔧 **الحل:** تأكد من استخدام النوع الصحيح للبيانات، أو قم بتحويلها قبل الاستخدام."
+            
+        elif isinstance(error, sqlite3.OperationalError):
+            cause = f"✅ **السبب:** خطأ في قاعدة البيانات: `{error_message}`"
+            solution = "🔧 **الحل:** تأكد من صحة استعلام SQL، أو تحقق من وجود الجداول المطلوبة."
+            
+        elif isinstance(error, sqlite3.IntegrityError):
+            cause = f"✅ **السبب:** تكرار أو انتهاك قيود قاعدة البيانات: `{error_message}`"
+            solution = "🔧 **الحل:** تأكد من عدم تكرار البيانات، أو تحقق من العلاقات بين الجداول."
+            
+        elif isinstance(error, BadRequest):
+            cause = f"✅ **السبب:** طلب غير صحيح إلى Telegram API: `{error_message}`"
+            if "message is not modified" in error_message.lower():
+                solution = "🔧 **الحل:** لا تحاول تعديل رسالة بنفس المحتوى، استخدم `send_message` بدلاً من `edit_message`."
+            elif "user is not a member" in error_message.lower():
+                solution = "🔧 **الحل:** تأكد من أن المستخدم عضو في المجموعة قبل تنفيذ الإجراء."
+            elif "bot is not a member" in error_message.lower():
+                solution = "🔧 **الحل:** تأكد من أن البوت عضو في المجموعة ولديه الصلاحيات المطلوبة."
+            else:
+                solution = f"🔧 **الحل:** تحقق من صحة البيانات المرسلة إلى Telegram API."
+                
+        elif isinstance(error, Forbidden):
+            cause = f"✅ **السبب:** البوت محظور أو ليس لديه صلاحيات: `{error_message}`"
+            solution = "🔧 **الحل:** تأكد من أن البوت مشرف في المجموعة ولديه الصلاحيات المطلوبة، أو اطلب إلغاء حظر البوت."
+            
+        elif isinstance(error, TimedOut):
+            cause = f"✅ **السبب:** انتهت مهلة الاتصال بـ Telegram: `{error_message}`"
+            solution = "🔧 **الحل:** حاول مرة أخرى، أو تحقق من سرعة الاتصال بالإنترنت."
+            
+        elif isinstance(error, NetworkError):
+            cause = f"✅ **السبب:** مشكلة في الشبكة أو الاتصال بـ Telegram: `{error_message}`"
+            solution = "🔧 **الحل:** تحقق من اتصال الإنترنت، أو حاول مرة أخرى بعد فترة."
+            
+        elif isinstance(error, Conflict):
+            cause = f"✅ **السبب:** تعارض في التحديثات (بوت مكرر): `{error_message}`"
+            solution = "🔧 **الحل:** تأكد من عدم تشغيل نسخة أخرى من البوت بنفس التوكن."
+            
+        else:
+            cause = f"✅ **السبب:** خطأ غير معروف: `{error_message}`"
+            solution = "🔧 **الحل:** راجع سجلات البوت (logs) لمعرفة التفاصيل، أو تواصل مع المطور."
+        
+        # بناء رسالة الخطأ
+        error_text = f"""🚨 **خطأ في البوت**
+━━━━━━━━━━━━━━━━━━━━━━
+🆔 **معرف الخطأ:** `{error_id}`
+📌 **نوع الخطأ:** `{error_type}`
+📝 **الرسالة:** `{error_message}`
+
+📋 **السبب:**
+{cause}
+
+🔧 **الحل المقترح:**
+{solution}
+━━━━━━━━━━━━━━━━━━━━━━"""
+
+        # إضافة معلومات إضافية عن السياق
+        if context:
+            safe_context = {}
+            for key, value in context.items():
+                if key not in ['token', 'password', 'key', 'secret', 'bot_token']:
+                    if isinstance(value, (str, int, float, bool)):
+                        safe_context[key] = value
+                    else:
+                        safe_context[key] = str(value)[:100]
+            
+            if safe_context:
+                error_text += "\n📌 **سياق الخطأ:**\n"
+                for key, value in safe_context.items():
+                    error_text += f"• `{key}`: `{value}`\n"
+        
+        # إضافة معلومات عن المستخدم (إن وجد)
+        if update and update.effective_user:
+            user_id = update.effective_user.id
+            username = update.effective_user.username or "بدون يوزر"
+            error_text += f"\n👤 **المستخدم:** `{user_id}` (@{username})"
+        
+        # إضافة معلومات عن المجموعة (إن وجد)
+        if update and update.effective_chat:
+            chat_id = update.effective_chat.id
+            chat_title = update.effective_chat.title or "خاص"
+            error_text += f"\n💬 **المجموعة:** `{chat_id}` ({chat_title})"
+        
+        # إضافة الأمر أو الرسالة (إن وجد)
+        if update and update.effective_message and update.effective_message.text:
+            msg_text = update.effective_message.text[:100]
+            error_text += f"\n📝 **الرسالة:** `{msg_text}`"
+        
+        # إضافة وقت الخطأ
+        error_text += f"\n\n🕐 **الوقت:** {mecca_now().strftime('%Y-%m-%d %H:%M:%S')}"
+        error_text += f"\n📌 **الحالة:** `⚠️ قيد المعالجة`"
+        
+        # إرسال إلى قناة التقارير
+        try:
+            await bot.send_message(
+                chat_id=log_channel_id,
+                text=error_text,
+                parse_mode="MarkdownV2"
+            )
+            logger.info(f"✅ تم إرسال تقرير الخطأ {error_id} إلى قناة التقارير")
+            return error_id
+        except Exception as e:
+            logger.error(f"❌ فشل إرسال الخطأ إلى قناة التقارير: {e}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"❌ فشل في نظام إرسال الأخطاء: {e}")
+        return None
+
+
+# ===================================================================
+# تحديث معالج الأخطاء العالمي
+# ===================================================================
+
+async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        error = context.error
+        error_id = advanced_logger.log_error("خطأ في تحديث", error, {
+            'user_id': update.effective_user.id if update and update.effective_user else None,
+            'chat_id': update.effective_chat.id if update and update.effective_chat else None,
+            'message': update.effective_message.text if update and update.effective_message else None
+        })
+        
+        # إرسال الخطأ إلى قناة التقارير
+        context_data = {
+            'user_id': update.effective_user.id if update and update.effective_user else None,
+            'chat_id': update.effective_chat.id if update and update.effective_chat else None,
+            'message': update.effective_message.text if update and update.effective_message else None,
+            'error_id': error_id
+        }
+        
+        await send_error_to_log_channel(context.bot, error, context_data, update)
+        
+        # التعامل مع أنواع الأخطاء المختلفة
+        if isinstance(error, Conflict):
+            logger.warning(f"⚠️ تعارض في التحديثات (Conflict): {error}")
+            return
+            
+        if isinstance(error, Forbidden):
+            logger.warning(f"⚠️ البوت محظور أو ليس لديه صلاحيات: {error}")
+            if update and update.effective_chat:
+                try:
+                    await send_error_to_log_channel(
+                        context.bot, 
+                        error, 
+                        {'chat_id': update.effective_chat.id, 'chat_title': update.effective_chat.title},
+                        update
+                    )
+                except:
+                    pass
+            return
+            
+        if isinstance(error, TimedOut):
+            logger.warning(f"⏱️ انتهت المهلة: {error}")
+            return
+            
+        # إرسال رسالة للمستخدم (إن أمكن)
+        if update and update.effective_user and context and context.bot:
+            if not await is_user_bot(context.bot, update.effective_user.id):
+                try:
+                    await safe_send_markdown(
+                        context.bot, 
+                        update.effective_user.id, 
+                        f"❌ حدث خطأ:\n`{str(error)[:300]}`\n(الرمز: `{error_id}`)"
+                    )
+                except:
+                    pass
+                    
+        # إرسال إشعار للمطور الأساسي
+        if PRIMARY_OWNER_ID and context and context.bot:
+            try:
+                error_text = f"🚨 **خطأ في البوت** (الرمز: {error_id})\n\n📌 المستخدم: {update.effective_user.id if update and update.effective_user else 'غير معروف'}\n⚠️ الخطأ: `{str(error)[:300]}`\n"
+                if update and update.effective_message and update.effective_message.text:
+                    error_text += f"📝 الرسالة: `{update.effective_message.text[:100]}`\n"
+                await safe_send_markdown(context.bot, PRIMARY_OWNER_ID, error_text)
+            except Exception as e:
+                logger.error(f"فشل إرسال إشعار الخطأ للمطور: {e}")
+                
+    except Exception as e:
+        logger.error(f"فشل معالج الأخطاء نفسه: {e}")
+
+
+# ===================================================================
+# أمر تعيين قناة التقارير
+# ===================================================================
+
+async def set_log_channel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين قناة التقارير - /set_log_channel"""
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 هذا الأمر للمشرفين فقط!")
+        return
+    
+    args = context.args
+    if not args:
+        await safe_send_markdown(
+            context.bot, 
+            user_id, 
+            "📝 **الاستخدام:**\n`/set_log_channel معرف_القناة`\n\nمثال: `/set_log_channel -100123456789`\nأو: `/set_log_channel @channel`"
+        )
+        return
+    
+    channel_id = args[0]
+    try:
+        # محاولة جلب معلومات القناة
+        chat = await context.bot.get_chat(channel_id)
+        if chat.type != 'channel':
+            await safe_send_markdown(context.bot, user_id, "❌ المعرف ليس لقناة!")
+            return
+        
+        # حفظ معرف القناة
+        await db_set_log_channel_id(str(chat.id))
+        
+        # إرسال رسالة تأكيد للقناة
+        try:
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text="✅ **تم تعيين هذه القناة لقناة التقارير!**\n\nسيتم إرسال جميع الأخطاء والإشعارات هنا."
+            )
+        except:
+            pass
+        
+        await safe_send_markdown(
+            context.bot, 
+            user_id, 
+            f"✅ **تم تعيين قناة التقارير بنجاح!**\n\n📌 القناة: {chat.title}\n🆔 المعرف: `{chat.id}`"
+        )
+        
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot, 
+            user_id, 
+            f"❌ فشل تعيين القناة: {str(e)[:100]}"
+        )
+
+
+# ===================================================================
+# أمر عرض قناة التقارير الحالية
+# ===================================================================
+
+async def show_log_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قناة التقارير الحالية"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    channel_id = await db_get_log_channel_id()
+    if channel_id:
+        try:
+            chat = await context.bot.get_chat(channel_id)
+            text = f"📋 **قناة التقارير الحالية:**\n\n📌 الاسم: {chat.title}\n🆔 المعرف: `{channel_id}`"
+        except:
+            text = f"📋 **قناة التقارير الحالية:**\n\n🆔 المعرف: `{channel_id}`\n⚠️ لا يمكن الوصول إلى القناة"
+    else:
+        text = "📋 **لا توجد قناة تقارير محددة.**\n\nاستخدم `/set_log_channel` لتعيين قناة."
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
 def get_advanced_group_actions_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
