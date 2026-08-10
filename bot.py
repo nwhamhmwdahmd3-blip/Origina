@@ -1649,10 +1649,17 @@ async def db_get_user_total_posts(user_id: int) -> int:
 # 18. دوال القنوات
 # ===================================================================
 async def db_add_channel(user_id: int, channel_id: str, channel_name: str) -> int:
+    """إضافة قناة للمستخدم"""
     async def _add(conn):
-        cur = await conn.execute("SELECT id FROM user_channels WHERE user_id=? AND channel_id=?", (user_id, channel_id))
+        # التحقق من عدم التكرار
+        cur = await conn.execute(
+            "SELECT id FROM user_channels WHERE user_id=? AND channel_id=?", 
+            (user_id, channel_id)
+        )
         if await cur.fetchone():
             return None
+        
+        # إضافة القناة
         cur = await conn.execute(
             """INSERT INTO user_channels 
                (user_id, channel_id, channel_name, created_at) 
@@ -1665,6 +1672,7 @@ async def db_add_channel(user_id: int, channel_id: str, channel_name: str) -> in
     return await execute_db(_add)
 
 async def db_get_channels(user_id: int):
+
     async def _get(conn):
         try:
             cur = await conn.execute(
@@ -13211,6 +13219,90 @@ async def db_get_all_replies() -> list:
         cur = await conn.execute("SELECT keyword, reply FROM group_replies ORDER BY keyword")
         return await cur.fetchall()
     return await execute_db(_get)
+# ===================================================================
+# دالة إصلاح الأعمدة المفقودة في قاعدة البيانات
+# ===================================================================
+
+async def fix_missing_columns():
+    """إصلاح الأعمدة المفقودة في قاعدة البيانات"""
+    async def _fix(conn):
+        # إضافة عمود level في جدول users إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1")
+        except:
+            pass
+
+        # إضافة عمود subscription_end إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN subscription_end TEXT")
+        except:
+            pass
+
+        # إضافة عمود referral_code إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
+        except:
+            pass
+
+        # إضافة عمود referred_by إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
+        except:
+            pass
+
+        # إضافة عمود last_daily_reward إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN last_daily_reward TEXT")
+        except:
+            pass
+
+        # إضافة عمود last_weekly_reward إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN last_weekly_reward TEXT")
+        except:
+            pass
+
+        # إضافة عمود achievements إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN achievements TEXT DEFAULT '[]'")
+        except:
+            pass
+
+        # إنشاء جدول user_levels إذا لم يكن موجوداً
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_levels (
+                user_id INTEGER PRIMARY KEY,
+                points INTEGER DEFAULT 0,
+                level INTEGER DEFAULT 1
+            )
+        """)
+
+        # إنشاء جدول group_rules إذا لم يكن موجوداً
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_rules (
+                chat_id INTEGER PRIMARY KEY,
+                rules_text TEXT,
+                updated_by INTEGER,
+                updated_at TEXT
+            )
+        """)
+
+        # إنشاء جدول announcements إذا لم يكن موجوداً
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS announcements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                text TEXT,
+                created_by INTEGER,
+                created_at TEXT,
+                scheduled_for TEXT,
+                status TEXT DEFAULT 'pending'
+            )
+        """)
+
+        await conn.commit()
+        logger.info("✅ تم إصلاح الأعمدة المفقودة")
+    await execute_db(_fix)
 
 async def main():
     """
