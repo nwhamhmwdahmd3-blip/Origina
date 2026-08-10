@@ -4334,52 +4334,97 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 async def set_log_channel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """تعيين قناة التقارير - /set_log_channel"""
     user_id = update.effective_user.id
-    
+
     if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
-        await safe_send_markdown(context.bot, user_id, "🔒 هذا الأمر للمشرفين فقط!")
+        await safe_send_markdown(context.bot, user_id, get_text(user_id, 'admin_only'))
         return
-    
+
     args = context.args
+    # إذا كانت الحالة WAITING_LOG_CHANNEL، نأخذ النص من الرسالة
+    if not args and context.user_data.get('state') == UserState.WAITING_LOG_CHANNEL:
+        if update.message and update.message.text:
+            identifier = update.message.text.strip()
+            args = [identifier]
+    
     if not args:
         await safe_send_markdown(
-            context.bot, 
-            user_id, 
-            "📝 **الاستخدام:**\n`/set_log_channel معرف_القناة`\n\nمثال: `/set_log_channel -100123456789`\nأو: `/set_log_channel @channel`"
+            context.bot,
+            user_id,
+            "📝 **الاستخدام:**\n`/set_log_channel معرف_القناة`\n\nمثال: `/set_log_channel -1001234567890`\nأو `/set_log_channel @username`\n\nيمكنك أيضاً إرسال المعرف مباشرة بعد الضغط على الزر."
         )
         return
-    
-    channel_id = args[0]
+
+    identifier = args[0].strip()
+    if identifier.startswith('@'):
+        identifier = identifier[1:]
+
     try:
-        # محاولة جلب معلومات القناة
-        chat = await context.bot.get_chat(channel_id)
-        if chat.type != 'channel':
-            await safe_send_markdown(context.bot, user_id, "❌ المعرف ليس لقناة!")
+        # محاولة الحصول على معرف القناة
+        if identifier.startswith('-100') or identifier.lstrip('-').isdigit():
+            chat_id = int(identifier)
+        else:
+            chat = await context.bot.get_chat(f"@{identifier}")
+            chat_id = chat.id
+
+        # التحقق من أن البوت مشرف في القناة
+        try:
+            bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+            if bot_member.status not in ['administrator', 'creator']:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **البوت ليس مشرفاً في هذه القناة.**\n\nيرجى إضافة البوت كمشرف في القناة ثم المحاولة مرة أخرى."
+                )
+                context.user_data.pop('state', None)
+                context.user_data.pop('temp_log_channel_identifier', None)
+                return
+            if not bot_member.can_post_messages:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **البوت لا يملك صلاحية الإرسال في هذه القناة.**\n\nيرجى منح البوت صلاحية 'نشر الرسائل' في القناة."
+                )
+                context.user_data.pop('state', None)
+                context.user_data.pop('temp_log_channel_identifier', None)
+                return
+        except Exception as e:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"❌ لا يمكن الوصول للقناة: {str(e)[:100]}\n\nتأكد من أن المعرف صحيح وأن البوت مشرف في القناة."
+            )
+            context.user_data.pop('state', None)
+            context.user_data.pop('temp_log_channel_identifier', None)
             return
-        
-        # حفظ معرف القناة
-        await db_set_log_channel_id(str(chat.id))
+
+        # حفظ معرف القناة في قاعدة البيانات
+        await db_set_log_channel_id(str(chat_id))
         
         # إرسال رسالة تأكيد للقناة
         try:
             await context.bot.send_message(
-                chat_id=chat.id,
-                text="✅ **تم تعيين هذه القناة لقناة التقارير!**\n\nسيتم إرسال جميع الأخطاء والإشعارات هنا."
+                chat_id=chat_id,
+                text="✅ **تم تعيين هذه القناة كقناة للتقارير الأمنية!**\n\nسيتم إرسال جميع التقارير الأمنية والإشعارات المهمة إلى هنا."
             )
-        except:
-            pass
-        
+        except Exception as e:
+            logger.warning(f"فشل إرسال رسالة التأكيد للقناة: {e}")
+
         await safe_send_markdown(
-            context.bot, 
-            user_id, 
-            f"✅ **تم تعيين قناة التقارير بنجاح!**\n\n📌 القناة: {chat.title}\n🆔 المعرف: `{chat.id}`"
+            context.bot,
+            user_id,
+            f"✅ **تم تعيين قناة التقارير بنجاح!**\n\n📌 معرف القناة: `{chat_id}`\n📢 تم إرسال رسالة تأكيد للقناة."
         )
-        
+
     except Exception as e:
         await safe_send_markdown(
-            context.bot, 
-            user_id, 
-            f"❌ فشل تعيين القناة: {str(e)[:100]}"
+            context.bot,
+            user_id,
+            f"❌ فشل تعيين القناة: {str(e)[:100]}\n\nتأكد من:\n1. المعرف صحيح\n2. القناة عامة أو البوت عضو فيها\n3. البوت مشرف في القناة"
         )
+
+    # تنظيف الحالة
+    context.user_data.pop('state', None)
+    context.user_data.pop('temp_log_channel_identifier', None)
 
 
 # ===================================================================
