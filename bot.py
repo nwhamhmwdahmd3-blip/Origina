@@ -3996,6 +3996,107 @@ class UserState(Enum):
 # ===================================================================
 # نظام إرسال الأخطاء إلى قناة التقارير
 # ===================================================================
+# ===================================================================
+# دوال قفل وفتح المجموعة - كاملة
+# ===================================================================
+
+async def panel_lock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قفل المجموعة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('panel_chat_id')
+    
+    if not chat_id:
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_chat_lock(chat_id, True, uid)
+    
+    if query:
+        await safe_edit_markdown(query, "🔒 **تم قفل المجموعة بنجاح!**\n\nالآن لا يمكن لأي عضو إرسال رسائل.")
+    
+    await panel_command_handler(update, context)
+
+
+async def panel_unlock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """فتح المجموعة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('panel_chat_id')
+    
+    if not chat_id:
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_chat_lock(chat_id, False)
+    
+    if query:
+        await safe_edit_markdown(query, "🔓 **تم فتح المجموعة بنجاح!**\n\nيمكن للأعضاء إرسال رسائل الآن.")
+    
+    await panel_command_handler(update, context)
+
+
+async def panel_close_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إغلاق لوحة التحكم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.message.delete()
+
+
+async def panel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لوحة تحكم المجموعة"""
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, "🔒 هذا الأمر يعمل فقط في المجموعات!")
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(context.bot, user_id, "🔒 غير مصرح!")
+        return
+    
+    current_lock_status = await is_chat_locked(chat_id)
+    
+    if current_lock_status:
+        lock_button = InlineKeyboardButton("🔓 فتح المجموعة", callback_data=f"{CallbackData.PANEL_UNLOCK_PREFIX}{chat_id}")
+        lock_status_text = "🔒 **مقفلة**"
+    else:
+        lock_button = InlineKeyboardButton("🔒 قفل المجموعة", callback_data=f"{CallbackData.PANEL_LOCK_PREFIX}{chat_id}")
+        lock_status_text = "🔓 **مفتوحة**"
+    
+    kb = InlineKeyboardMarkup([
+        [lock_button],
+        [InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")],
+        [InlineKeyboardButton("🔙 إغلاق اللوحة", callback_data=CallbackData.PANEL_CLOSE)]
+    ])
+    
+    text = f"""🔧 **لوحة تحكم المجموعة**
+━━━━━━━━━━━━━━
+📌 **المجموعة:** {update.effective_chat.title}
+🔐 **الحالة:** {lock_status_text}
+━━━━━━━━━━━━━━
+📌 استخدم الأزرار للتحكم في المجموعة:"""
+
+    if update.callback_query:
+        await safe_edit_markdown(update.callback_query, text, reply_markup=kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=kb)
 
 async def send_error_to_log_channel(bot, error: Exception, context: dict = None, update: Update = None):
     """
