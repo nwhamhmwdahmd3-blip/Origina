@@ -3654,6 +3654,7 @@ class UserState(Enum):
     WAITING_WARN_COUNT = auto()
     WAITING_SCHEDULE = auto()
     WAITING_CONFIRM = auto()
+    WAITING_DELETE_PENALTY_DURATION = auto()  # <--- هذه الحالة المفقودة
 
 # ===================================================================
 # 28. دوال الكيبوردات
