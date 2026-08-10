@@ -13120,11 +13120,12 @@ async def main():
     # ===================================================================
     # 1. تهيئة قاعدة البيانات والجداول
     # ===================================================================
-    await init_db_improved()                # إنشاء الجداول الأساسية
-    await init_security_table()             # إنشاء جدول إعدادات الأمان (group_security_settings)
+    await init_db_improved()
+    await init_security_table()
+    await fix_missing_columns()  # إصلاح الأعمدة المفقودة
 
     # ===================================================================
-    # 2. تحميل الكلمات المحظورة من الملف وإعادة بناء الأنماط
+    # 2. تحميل الكلمات المحظورة
     # ===================================================================
     try:
         words = load_banned_words_from_file(BANNED_WORDS_FILE)
@@ -13154,7 +13155,7 @@ async def main():
     load_all_languages()
 
     # ===================================================================
-    # 4. إعداد Application (مع أو بدون بروكسي)
+    # 4. إعداد Application
     # ===================================================================
     if USE_PROXY:
         request_kwargs = {
@@ -13248,7 +13249,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(pending_stats_callback, pattern=f"^{CallbackData.STATS_PENDING}$"))
     application.add_handler(CallbackQueryHandler(full_stats_callback, pattern=f"^{CallbackData.STATS_FULL}$"))
 
-    # المجموعات وإعداداتها
+    # المجموعات
     application.add_handler(CallbackQueryHandler(my_groups_callback, pattern=f"^{CallbackData.GROUPS_MY}$"))
     application.add_handler(CallbackQueryHandler(group_settings_callback, pattern=f"^{CallbackData.GROUPS_SETTINGS_PREFIX}"))
 
@@ -13269,7 +13270,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(day_select_callback, pattern=f"^{CallbackData.SCHEDULE_DAY_SELECT_PREFIX}"))
     application.add_handler(CallbackQueryHandler(save_days_callback, pattern=f"^{CallbackData.SCHEDULE_SAVE_DAYS}$"))
 
-    # الأمان - تبديل الإعدادات (معالج موحد)
+    # الأمان - تبديل الإعدادات
     application.add_handler(CallbackQueryHandler(
         security_toggle_setting_callback,
         pattern=r"^security:(links|mentions|slow_mode|delete_videos|delete_service|delete_documents|delete_stickers|delete_audio|delete_animation|delete_forwarded|delete_polls|delete_games|delete_voice|delete_video_note|welcome_enabled|goodbye_enabled|antiflood|night_mode|max_length|warn_settings):[0-9-]+$"
@@ -13308,13 +13309,8 @@ async def main():
     application.add_handler(CallbackQueryHandler(penalty_warn_callback, pattern="^penalty:warn:"))
     application.add_handler(CallbackQueryHandler(penalty_restrict_callback, pattern="^penalty:restrict:"))
     application.add_handler(CallbackQueryHandler(penalty_none_callback, pattern="^penalty:none:"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_5}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_30}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_60}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_720}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_1440}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_10080}"))
-    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern=f"^{CallbackData.GROUP_MUTE_DURATION_PERMANENT}"))
+    application.add_handler(CallbackQueryHandler(mute_duration_menu_callback, pattern="^mute_duration_menu:"))
+    application.add_handler(CallbackQueryHandler(penalty_mute_duration_callback, pattern="^mute_duration:"))
 
     # الإجراءات المتقدمة للمجموعة
     application.add_handler(CallbackQueryHandler(advanced_actions_callback, pattern=f"^{CallbackData.ADVANCED_ACTIONS}"))
@@ -13442,7 +13438,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(admin_show_log_channel_callback, pattern=f"^{CallbackData.ADMIN_SHOW_LOG_CHANNEL}$"))
     application.add_handler(CallbackQueryHandler(admin_set_log_channel_callback, pattern=f"^{CallbackData.ADMIN_SET_LOG_CHANNEL}$"))
 
-    # إدارة الردود والكلمات المحظورة (أدمن)
+    # إدارة الردود والكلمات المحظورة
     application.add_handler(CallbackQueryHandler(admin_replies_callback, pattern=f"^{CallbackData.ADMIN_REPLIES}$"))
     application.add_handler(CallbackQueryHandler(admin_add_reply_callback, pattern=f"^{CallbackData.ADMIN_ADD_REPLY}$"))
     application.add_handler(CallbackQueryHandler(admin_list_replies_callback, pattern=f"^{CallbackData.ADMIN_LIST_REPLIES}$"))
@@ -13457,7 +13453,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(admin_declare_winner_callback, pattern=f"^{CallbackData.ADMIN_DECLARE_WINNER}$"))
     application.add_handler(CallbackQueryHandler(admin_del_contest_callback, pattern=f"^{CallbackData.ADMIN_DEL_CONTEST_PREFIX}"))
 
-    # الردود التلقائية (أدمن)
+    # الردود التلقائية
     application.add_handler(CallbackQueryHandler(admin_auto_reply_callback, pattern=f"^{CallbackData.ADMIN_AUTO_REPLY}$"))
     application.add_handler(CallbackQueryHandler(auto_reply_menu_callback, pattern=f"^{CallbackData.AUTO_REPLY_MENU_PREFIX}"))
     application.add_handler(CallbackQueryHandler(auto_reply_toggle_callback, pattern=f"^{CallbackData.AUTO_REPLY_TOGGLE_PREFIX}"))
@@ -13466,12 +13462,10 @@ async def main():
     application.add_handler(CallbackQueryHandler(auto_reply_confirm_reset_callback, pattern=f"^{CallbackData.AUTO_REPLY_CONFIRM_RESET_PREFIX}"))
     application.add_handler(CallbackQueryHandler(auto_reply_cancel_callback, pattern=f"^{CallbackData.AUTO_REPLY_CANCEL_PREFIX}"))
     application.add_handler(CallbackQueryHandler(auto_reply_stats_callback, pattern=f"^{CallbackData.AUTO_REPLY_STATS_PREFIX}"))
-
-    # الردود التلقائية للمستخدم
     application.add_handler(CallbackQueryHandler(user_auto_reply_toggle_callback, pattern=f"^{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}"))
 
     # ===================================================================
-    # 8. تسجيل معالجات الرسائل (Message Handlers) - باستخدام الفلاتر الصحيحة
+    # 8. تسجيل معالجات الرسائل (Message Handlers)
     # ===================================================================
     application.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
     application.add_handler(MessageHandler(filters.CAPTION & filters.ChatType.GROUPS & ~filters.COMMAND, filter_messages_handler))
@@ -13481,7 +13475,6 @@ async def main():
     application.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, message_handler_main))
     application.add_handler(MessageHandler(filters.ANIMATION & filters.ChatType.PRIVATE, message_handler_main))
-    # تصحيح: استخدام filters.Document.ALL بدلاً من filters.DOCUMENT (غير موجود)
     application.add_handler(MessageHandler(filters.Document.ALL & filters.ChatType.PRIVATE, message_handler_main))
 
     # ===================================================================
@@ -13556,12 +13549,12 @@ async def main():
     task_manager.create_task(safe_loop(memory_optimizer_loop, "memory_optimizer"))
 
     # ===================================================================
-    # 12. تشغيل البوت (Webhook أو Polling) مع خادم ويب واحد
+    # 12. تشغيل البوت (Webhook أو Polling)
     # ===================================================================
     port = int(os.getenv("PORT", "10000"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
 
-    # بدء خادم الويب الموحد (يحتوي على /health و / و webhook)
+    # بدء خادم الويب الموحد
     try:
         await setup_unified_web_server(application, port)
         logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
@@ -13570,7 +13563,7 @@ async def main():
         raise
 
     if hostname:
-        # بيئة سحابية: استخدام Webhook
+        # بيئة سحابية: Webhook
         await application.initialize()
         await application.start()
         webhook_url = f"https://{hostname}/{TOKEN}"
@@ -13590,7 +13583,7 @@ async def main():
         except KeyboardInterrupt:
             logger.info("🛑 تم إيقاف البوت")
     else:
-        # بيئة محلية: استخدام Polling
+        # بيئة محلية: Polling
         logger.info("🔄 استخدام Polling (بدون Webhook)")
         await application.bot.delete_webhook()
         await run_polling_safe(application)
