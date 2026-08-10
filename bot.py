@@ -6962,6 +6962,217 @@ async def security_select_group_callback(update: Update, context: ContextTypes.D
 
 async def security_refresh_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await security_select_group_callback(update, context)
+# ===================================================================
+# جميع الدوال المفقودة - أضفها هنا (قبل main)
+# ===================================================================
+
+async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعدادات المجموعة - عرض لوحة الأمان"""
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+        except:
+            pass
+    uid = update.effective_user.id
+    chat_id = None
+    try:
+        if query and query.data:
+            try:
+                chat_id = int(query.data.split(":")[-1])
+            except (ValueError, IndexError) as e:
+                error_id = advanced_logger.log_error("فشل استخراج chat_id من الكولباك", e, {"data": query.data})
+                await query.edit_message_text(f"❌ بيانات الكولباك غير صالحة (الرمز: `{error_id}`)")
+                return
+        else:
+            chat_id = context.user_data.get('group_chat_id')
+        if not chat_id:
+            if query:
+                await query.edit_message_text("❌ لم يتم تحديد المجموعة")
+            else:
+                await safe_send_markdown(context.bot, uid, "❌ لم يتم تحديد المجموعة")
+            return
+        if not await is_authorized_in_group(context.bot, chat_id, uid):
+            if query:
+                await query.edit_message_text("🔒 غير مصرح")
+            else:
+                await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+            return
+        await _update_security_panel(query, chat_id, uid)
+    except Exception as e:
+        error_id = advanced_logger.log_error("خطأ غير متوقع في group_settings_callback", e, {"chat_id": chat_id, "user_id": uid})
+        try:
+            if query:
+                await query.edit_message_text(f"❌ حدث خطأ:\n`{str(e)[:300]}`\n(الرمز: `{error_id}`)")
+            else:
+                await safe_send_markdown(context.bot, uid, f"❌ حدث خطأ:\n`{str(e)[:300]}`\n(الرمز: `{error_id}`)")
+        except:
+            pass
+
+async def _update_security_panel(query, chat_id: int, user_id: int):
+    """تحديث لوحة الأمان"""
+    try:
+        settings = await db_get_security_settings(chat_id, force_refresh=True)
+        text = _build_security_text(settings)
+        keyboard = _build_security_keyboard(chat_id)
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        try:
+            await query.message.delete()
+        except Exception as e:
+            logger.debug(f"لم نتمكن من حذف الرسالة القديمة: {e}")
+        await query.message.chat.send_message(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        logger.info(f"✅ تم تحديث لوحة الأمان للمجموعة {chat_id}")
+    except Exception as e:
+        logger.error(f"خطأ في _update_security_panel: {e}", exc_info=True)
+        try:
+            await query.answer("❌ حدث خطأ، حاول مرة أخرى", show_alert=True)
+        except:
+            pass
+
+def _build_security_text(settings: dict) -> str:
+    """بناء نص لوحة الأمان"""
+    def st(val):
+        return "✅" if val else "❌"
+    text = f"""🔐 إعدادات الأمان للمجموعة
+━━━━━━━━━━━━━━━━━━━━━━
+🔗 الروابط: {st(settings.get('links', 0))}
+@ المعرفات: {st(settings.get('mentions', 0))}
+⏱️ البطيء: {st(settings.get('slow_mode', 0))} ({settings.get('slow_mode_seconds', 5)}ث)
+🎯 الترحيب: {st(settings.get('welcome_enabled', 0))}
+👋 الوداع: {st(settings.get('goodbye_enabled', 0))}
+🎬 فيديوهات: {st(settings.get('delete_videos', 0))}
+🎵 صوتيات: {st(settings.get('delete_audio', 0))}
+🎞️ متحركات: {st(settings.get('delete_animation', 0))}
+🛠️ الخدمة: {st(settings.get('delete_service', 0))}
+📄 ملفات: {st(settings.get('delete_documents', 0))}
+🖼️ ملصقات: {st(settings.get('delete_stickers', 0))}
+📨 المُعاد: {st(settings.get('delete_forwarded', 0))}
+📊 استطلاعات: {st(settings.get('delete_polls', 0))}
+🎮 ألعاب: {st(settings.get('delete_games', 0))}
+🎤 صوتيات: {st(settings.get('delete_voice', 0))}
+🎥 فيديو نوت: {st(settings.get('delete_video_note', 0))}
+🌊 مضاد الفيضان: {st(settings.get('antiflood_enabled', 0))}
+🌙 ليلي: {st(settings.get('night_mode_enabled', 0))}
+📏 الطول: {settings.get('max_message_length', 0) or 'غير محدود'}
+⚖️ العقوبة: {settings.get('delete_penalty', 'لا شيء')}
+━━━━━━━━━━━━━━━━━━━━━━
+📌 اختر الإعداد:"""
+    return text
+
+def _build_security_keyboard(chat_id: int) -> list:
+    """بناء أزرار لوحة الأمان"""
+    return [
+        [
+            InlineKeyboardButton("🔗 روابط", callback_data=f"security:links:{chat_id}"),
+            InlineKeyboardButton("@ معرفات", callback_data=f"security:mentions:{chat_id}"),
+            InlineKeyboardButton("⏱️ بطيء", callback_data=f"security:slow_mode:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🎯 ترحيب", callback_data=f"security:welcome_enabled:{chat_id}"),
+            InlineKeyboardButton("👋 وداع", callback_data=f"security:goodbye_enabled:{chat_id}"),
+            InlineKeyboardButton("🚫 كلمات", callback_data=f"security:banned_words_menu:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🎬 فيديو", callback_data=f"security:delete_videos:{chat_id}"),
+            InlineKeyboardButton("🎵 صوت", callback_data=f"security:delete_audio:{chat_id}"),
+            InlineKeyboardButton("🎞️ متحرك", callback_data=f"security:delete_animation:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🛠️ خدمة", callback_data=f"security:delete_service:{chat_id}"),
+            InlineKeyboardButton("📄 ملفات", callback_data=f"security:delete_documents:{chat_id}"),
+            InlineKeyboardButton("🖼️ ملصقات", callback_data=f"security:delete_stickers:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("📨 مُعاد", callback_data=f"security:delete_forwarded:{chat_id}"),
+            InlineKeyboardButton("📊 استطلاع", callback_data=f"security:delete_polls:{chat_id}"),
+            InlineKeyboardButton("🎮 ألعاب", callback_data=f"security:delete_games:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🎤 صوتي", callback_data=f"security:delete_voice:{chat_id}"),
+            InlineKeyboardButton("🎥 نوت", callback_data=f"security:delete_video_note:{chat_id}"),
+            InlineKeyboardButton("🌊 فيضان", callback_data=f"security:antiflood:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🌙 ليلي", callback_data=f"security:night_mode:{chat_id}"),
+            InlineKeyboardButton("📏 طول", callback_data=f"security:max_length:{chat_id}"),
+            InlineKeyboardButton("⚠️ تحذير", callback_data=f"security:warn_settings:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("⚖️ عقوبة", callback_data=f"security:delete_penalty:{chat_id}"),
+            InlineKeyboardButton("⚡ تفعيل الكل", callback_data=f"security:enable_all:{chat_id}"),
+            InlineKeyboardButton("⛔ تعطيل الكل", callback_data=f"security:disable_all:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("⚖️ العقوبة", callback_data=f"penalty_menu:{chat_id}"),
+            InlineKeyboardButton("🛠️ متقدم", callback_data=f"advanced_actions:{chat_id}"),
+            InlineKeyboardButton("📜 سجل", callback_data=f"group_action:log:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔙 إغلاق", callback_data="security:close")
+        ]
+    ]
+
+async def security_toggle_setting_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل إعداد أمان معين"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    if len(parts) < 3:
+        await query.edit_message_text("❌ بيانات غير صالحة")
+        return
+    action = parts[1]
+    try:
+        chat_id = int(parts[2])
+    except ValueError:
+        await query.edit_message_text("❌ معرف المجموعة غير صالح")
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    toggle_map = {
+        "links": "links",
+        "mentions": "mentions",
+        "slow_mode": "slow_mode",
+        "delete_videos": "delete_videos",
+        "delete_service": "delete_service",
+        "delete_documents": "delete_documents",
+        "delete_stickers": "delete_stickers",
+        "delete_audio": "delete_audio",
+        "delete_animation": "delete_animation",
+        "delete_forwarded": "delete_forwarded",
+        "delete_polls": "delete_polls",
+        "delete_games": "delete_games",
+        "delete_voice": "delete_voice",
+        "delete_video_note": "delete_video_note",
+        "welcome_enabled": "welcome_enabled",
+        "goodbye_enabled": "goodbye_enabled",
+        "antiflood": "antiflood_enabled",
+        "night_mode": "night_mode_enabled",
+    }
+    if action in toggle_map:
+        key = toggle_map[action]
+        settings[key] = 1 if settings.get(key, 0) == 0 else 0
+        await db_set_security_settings(chat_id, **{key: settings[key]})
+        await _update_security_panel(query, chat_id, user_id)
+    elif action == "max_length":
+        context.user_data['state'] = "WAITING_MAX_LENGTH"
+        context.user_data['security_chat_id'] = chat_id
+        await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
+    elif action == "warn_settings":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔢 عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
+             InlineKeyboardButton("⚖️ عقوبة التحذير", callback_data=f"warn_penalty:{chat_id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"groups:settings:{chat_id}")]
+        ])
+        await query.edit_message_text("⚠️ **إعدادات التحذير**\nاختر الإعداد المطلوب:", reply_markup=keyboard)
+    else:
+        await query.edit_message_text("❌ إجراء غير معروف")
 
 async def main():
     # تهيئة قاعدة البيانات
