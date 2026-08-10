@@ -8274,6 +8274,96 @@ async def run_polling_safe(application):
         except Exception as e:
             logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
             await asyncio.sleep(10)
+# ===================================================================
+# ========== إضافة المفقودات ==========
+# ===================================================================
+
+# 1. معالج الكولباك للأوامر النصية
+async def handle_text_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج للكولباك التي تأتي من أزرار نصية (بدون بيانات إضافية)"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    data = query.data
+    if data == "rank":
+        await rank_command_handler(update, context)
+    elif data == "top":
+        await top_command_handler(update, context)
+    elif data == "schedule_post":
+        await schedule_command_handler(update, context)
+    elif data == "language":
+        await language_command_handler(update, context)
+    else:
+        await query.edit_message_text("❌ إجراء غير معروف")
+
+# 2. تسجيل الأحداث الأمنية (تحل محل security_audit.log)
+async def log_security_event(event_type: str, chat_id: int, user_id: int, details: dict = None, severity: str = "info"):
+    """تسجيل حدث أمني في قاعدة البيانات وسجلات النص"""
+    async def _log(conn):
+        await conn.execute(
+            "INSERT INTO security_events (event_type, chat_id, user_id, details, severity, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (event_type, chat_id, user_id, json.dumps(details) if details else None, severity, utc_now_iso())
+        )
+        await conn.commit()
+    await execute_db(_log)
+    # تسجيل أيضاً في سجل الأمان النصي
+    advanced_logger.log_security(event_type, user_id, details, severity.upper())
+
+# 3. نظام الإنجازات
+async def achievement_system(user_id: int, achievement: str):
+    """منح إنجاز للمستخدم (تطبيق بسيط)"""
+    async def _update(conn):
+        cur = await conn.execute("SELECT achievements FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        achievements = json.loads(row[0]) if row and row[0] else []
+        if achievement not in achievements:
+            achievements.append(achievement)
+            await conn.execute("UPDATE users SET achievements=? WHERE user_id=?", (json.dumps(achievements), user_id))
+            await conn.commit()
+    await execute_db(_update)
+
+# 4. جلب المسابقات النشطة مع عدد المشاركين
+async def db_get_active_contests_with_participants(limit: int = 10) -> list:
+    """جلب المسابقات النشطة مع عدد المشاركين لكل منها"""
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        now = utc_now().isoformat()
+        cur = await conn.execute("""
+            SELECT c.id, c.title, c.description, c.prize, c.end_date, c.contest_type,
+                   COALESCE((SELECT COUNT(*) FROM contest_participants cp WHERE cp.contest_id = c.id), 0) as participants
+            FROM contests c
+            WHERE c.status = 'active' AND c.end_date > ?
+            ORDER BY c.end_date ASC LIMIT ?
+        """, (now, limit))
+        rows = await cur.fetchall()
+        result = []
+        for row in rows:
+            result.append((
+                row['id'],
+                row['title'],
+                row['description'],
+                row['prize'],
+                row['end_date'],
+                row['participants'],
+                row['contest_type'] if 'contest_type' in row.keys() else 'raffle'
+            ))
+        return result
+    return await execute_db(_get)
+
+# 5. التحقق من مشاركة المستخدم في مسابقة
+async def db_get_user_participation(user_id: int, contest_id: int) -> dict | None:
+    """جلب بيانات مشاركة المستخدم في مسابقة معينة"""
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute(
+            "SELECT id, answer, joined_at FROM contest_participants WHERE user_id = ? AND contest_id = ?",
+            (user_id, contest_id)
+        )
+        row = await cur.fetchone()
+        if row:
+            return {'id': row['id'], 'answer': row['answer'], 'joined_at': row['joined_at']}
+        return None
+    return await execute_db(_get)
 
 # ===================================================================
 # 49. الوظيفة الرئيسية (main)
