@@ -12285,6 +12285,23 @@ async def fix_group_security_table():
         logger.info("✅ تم تحديث جدول group_security بنجاح")
     
     await execute_db(_fix)
+# ===================================================================
+# ========== إصلاح دالة set_delete_penalty_duration_callback ==========
+# ===================================================================
+
+async def set_delete_penalty_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب إدخال مدة عقوبة الحذف"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    # استخدم سلسلة نصية بدلاً من UserState
+    context.user_data['state'] = "WAITING_DELETE_PENALTY_DURATION"
+    context.user_data['security_chat_id'] = chat_id
+    await query.edit_message_text("⏱️ **أرسل مدة عقوبة الحذف بالدقائق** (مثال: 60)\nأو أرسل 0 للكتم الدائم.")
 
 # ===================================================================
 # 44. الوظيفة الرئيسية (main)
