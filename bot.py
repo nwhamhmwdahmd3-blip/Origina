@@ -10722,6 +10722,860 @@ async def security_select_group_callback(update: Update, context: ContextTypes.D
 async def security_refresh_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """تحديث قائمة المجموعات للأمان"""
     await security_select_group_callback(update, context)
+# ===================================================================
+# ========== دوال العقوبات (Penalty Callbacks) ==========
+# ===================================================================
+
+async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة العقوبات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['penalty_chat_id'] = chat_id
+    await query.edit_message_text("⚖️ **اختر العقوبة التلقائية**", reply_markup=penalty_keyboard(chat_id))
+
+async def penalty_kick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await db_set_security_settings(chat_id, auto_penalty='kick')
+    await query.answer("✅ تم تعيين عقوبة الطرد")
+    await _update_security_panel(query, chat_id, user_id)
+
+async def penalty_ban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await db_set_security_settings(chat_id, auto_penalty='ban')
+    await query.answer("✅ تم تعيين عقوبة الحظر")
+    await _update_security_panel(query, chat_id, user_id)
+
+async def penalty_mute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    # عرض قائمة المدة
+    await query.edit_message_text("🔇 **اختر مدة الكتم**", reply_markup=mute_duration_keyboard(chat_id, source="penalty"))
+
+async def penalty_warn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await db_set_security_settings(chat_id, auto_penalty='warn')
+    await query.answer("✅ تم تعيين عقوبة التحذير")
+    await _update_security_panel(query, chat_id, user_id)
+
+async def penalty_restrict_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await db_set_security_settings(chat_id, auto_penalty='restrict')
+    await query.answer("✅ تم تعيين عقوبة التقييد")
+    await _update_security_panel(query, chat_id, user_id)
+
+async def penalty_none_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await db_set_security_settings(chat_id, auto_penalty='none')
+    await query.answer("✅ تم إلغاء العقوبة")
+    await _update_security_panel(query, chat_id, user_id)
+
+# ===================================================================
+# ========== دوال مدة الكتم (Mute Duration) ==========
+# ===================================================================
+
+async def mute_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج موحد لاختيار مدة الكتم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        await query.answer("❌ بيانات غير صالحة", show_alert=True)
+        return
+    try:
+        minutes = int(parts[1])
+        chat_id = int(parts[2])
+    except ValueError:
+        await query.answer("❌ مدة أو معرف غير صالح", show_alert=True)
+        return
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+
+    # التحقق من صلاحية البوت
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    if not bot_perms.get('can_restrict', False):
+        await query.answer("❌ البوت لا يملك صلاحية تقييد الأعضاء!", show_alert=True)
+        return
+
+    # حفظ المدة
+    if minutes == -1:
+        duration = -1
+        duration_text = "دائم"
+    else:
+        duration = minutes
+        if minutes < 60:
+            duration_text = f"{minutes} دقيقة"
+        elif minutes < 1440:
+            duration_text = f"{minutes // 60} ساعة"
+        else:
+            duration_text = f"{minutes // 1440} يوم"
+
+    await db_set_security_settings(chat_id, auto_penalty='mute', auto_mute_duration=duration if duration > 0 else 60)
+    await query.answer(f"✅ تم تعيين مدة الكتم إلى: {duration_text}")
+
+    # تحديث لوحة الأمان
+    await _update_security_panel(query, chat_id, user_id)
+
+# ===================================================================
+# ========== دوال عقوبة الحذف (Delete Penalty) ==========
+# ===================================================================
+
+async def security_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔴 طرد", callback_data=f"set_delete_penalty:kick:{chat_id}"),
+         InlineKeyboardButton("🛑 حظر", callback_data=f"set_delete_penalty:ban:{chat_id}")],
+        [InlineKeyboardButton("🔇 كتم", callback_data=f"set_delete_penalty:mute:{chat_id}"),
+         InlineKeyboardButton("⚠️ تحذير", callback_data=f"set_delete_penalty:warn:{chat_id}")],
+        [InlineKeyboardButton("⏱️ مدة العقوبة", callback_data=f"set_delete_penalty_duration:{chat_id}"),
+         InlineKeyboardButton("❌ لا شيء", callback_data=f"set_delete_penalty:none:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+    msg = "⚖️ **اختر عقوبة الحذف التلقائي**\n\nسيتم تطبيق هذه العقوبة عند حذف رسالة مخالفة:"
+    await query.edit_message_text(msg, reply_markup=keyboard)
+
+async def set_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    parts = query.data.split(":") if query else context.user_data.get('delete_penalty_data', '').split(":")
+    if len(parts) == 3:
+        penalty = parts[1]
+        chat_id = int(parts[2])
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await query.answer("🔒 غير مصرح", show_alert=True)
+            return
+        await db_set_security_settings(chat_id, delete_penalty=penalty, delete_penalty_duration=60)
+        await query.answer(f"✅ تم تعيين عقوبة الحذف إلى: {penalty}")
+        await _update_security_panel(query, chat_id, user_id)
+
+async def set_delete_penalty_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب إدخال مدة عقوبة الحذف"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = "WAITING_DELETE_PENALTY_DURATION"
+    context.user_data['security_chat_id'] = chat_id
+    await query.edit_message_text("⏱️ **أرسل مدة عقوبة الحذف بالدقائق** (مثال: 60)\nأو أرسل 0 للكتم الدائم.")
+
+# ===================================================================
+# ========== دوال تفعيل/تعطيل الكل ==========
+# ===================================================================
+
+async def security_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم، تفعيل الكل", callback_data=f"confirm_enable_all:{chat_id}")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+    await query.edit_message_text("⚠️ **تأكيد تفعيل الكل**\n\nسيتم تفعيل جميع أنواع الحذف:\n• الفيديوهات\n• الصوتيات\n• المتحركات\n• رسائل الخدمة\n• الملفات\n• الملصقات\n\nهل أنت متأكد؟", reply_markup=keyboard, parse_mode="Markdown")
+
+async def confirm_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    for key in keys:
+        settings[key] = 1
+    await db_set_security_settings(chat_id, **{k: settings[k] for k in keys})
+    await query.answer("✅ تم تفعيل جميع خيارات الحذف")
+    await _update_security_panel(query, chat_id, user_id)
+
+async def security_disable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    for key in keys:
+        settings[key] = 0
+    await db_set_security_settings(chat_id, **{k: settings[k] for k in keys})
+    await query.answer("✅ تم تعطيل الكل")
+    await _update_security_panel(query, chat_id, user_id)
+
+# ===================================================================
+# ========== دوال إعدادات التحذير ==========
+# ===================================================================
+
+async def security_warn_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    settings = await db_get_security_settings(chat_id)
+    max_warnings = settings.get('max_warnings', 3)
+    warn_penalty = settings.get('warn_penalty', 'ban')
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🔢 عدد التحذيرات: {max_warnings}", callback_data=f"warn_count:{chat_id}"),
+         InlineKeyboardButton(f"⚖️ العقوبة: {warn_penalty}", callback_data=f"warn_penalty:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+    await query.edit_message_text(
+        f"⚠️ **إعدادات التحذير**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔢 عدد التحذيرات: {max_warnings}\n"
+        f"⚖️ عقوبة الوصول للحد الأقصى: {warn_penalty}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"اختر الإعداد المطلوب:",
+        reply_markup=keyboard,
+        parse_mode="MarkdownV2"
+    )
+
+async def security_warn_count_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = "WAITING_WARN_COUNT"
+    context.user_data['security_chat_id'] = chat_id
+    await query.edit_message_text("🔢 أرسل عدد التحذيرات المسموح بها (1-10):\nمثال: 3")
+
+async def set_warn_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        await query.edit_message_text("❌ بيانات غير صالحة")
+        return
+    penalty = parts[1]
+    chat_id = int(parts[2])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await db_set_security_settings(chat_id, warn_penalty=penalty)
+    await query.answer(f"✅ تم تعيين عقوبة التحذير إلى: {penalty}")
+    await security_warn_settings_callback(update, context)
+
+# ===================================================================
+# ========== دوال تبديل إعدادات الأمان (Security Toggle) ==========
+# ===================================================================
+
+async def security_toggle_setting_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل إعداد أمان معين في المجموعة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    if len(parts) < 3:
+        await query.edit_message_text("❌ بيانات غير صالحة")
+        return
+    action = parts[1]
+    try:
+        chat_id = int(parts[2])
+    except ValueError:
+        await query.edit_message_text("❌ معرف المجموعة غير صالح")
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    if action == "links":
+        settings['links'] = 1 if settings.get('links', 0) == 0 else 0
+        await db_set_security_settings(chat_id, links=settings['links'])
+    elif action == "mentions":
+        settings['mentions'] = 1 if settings.get('mentions', 0) == 0 else 0
+        await db_set_security_settings(chat_id, mentions=settings['mentions'])
+    elif action == "slow_mode":
+        settings['slow_mode'] = 1 if settings.get('slow_mode', 0) == 0 else 0
+        await db_set_security_settings(chat_id, slow_mode=settings['slow_mode'])
+    elif action == "delete_videos":
+        settings['delete_videos'] = 1 if settings.get('delete_videos', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_videos=settings['delete_videos'])
+    elif action == "delete_service":
+        settings['delete_service'] = 1 if settings.get('delete_service', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_service=settings['delete_service'])
+    elif action == "delete_documents":
+        settings['delete_documents'] = 1 if settings.get('delete_documents', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_documents=settings['delete_documents'])
+    elif action == "delete_stickers":
+        settings['delete_stickers'] = 1 if settings.get('delete_stickers', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_stickers=settings['delete_stickers'])
+    elif action == "delete_audio":
+        settings['delete_audio'] = 1 if settings.get('delete_audio', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_audio=settings['delete_audio'])
+    elif action == "delete_animation":
+        settings['delete_animation'] = 1 if settings.get('delete_animation', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_animation=settings['delete_animation'])
+    elif action == "delete_forwarded":
+        settings['delete_forwarded'] = 1 if settings.get('delete_forwarded', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_forwarded=settings['delete_forwarded'])
+    elif action == "delete_polls":
+        settings['delete_polls'] = 1 if settings.get('delete_polls', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_polls=settings['delete_polls'])
+    elif action == "delete_games":
+        settings['delete_games'] = 1 if settings.get('delete_games', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_games=settings['delete_games'])
+    elif action == "delete_voice":
+        settings['delete_voice'] = 1 if settings.get('delete_voice', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_voice=settings['delete_voice'])
+    elif action == "delete_video_note":
+        settings['delete_video_note'] = 1 if settings.get('delete_video_note', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_video_note=settings['delete_video_note'])
+    elif action == "welcome_enabled":
+        settings['welcome_enabled'] = 1 if settings.get('welcome_enabled', 0) == 0 else 0
+        await db_set_security_settings(chat_id, welcome_enabled=settings['welcome_enabled'])
+    elif action == "goodbye_enabled":
+        settings['goodbye_enabled'] = 1 if settings.get('goodbye_enabled', 0) == 0 else 0
+        await db_set_security_settings(chat_id, goodbye_enabled=settings['goodbye_enabled'])
+    elif action == "antiflood":
+        settings['antiflood_enabled'] = 1 if settings.get('antiflood_enabled', 0) == 0 else 0
+        await db_set_security_settings(chat_id, antiflood_enabled=settings['antiflood_enabled'])
+    elif action == "night_mode":
+        settings['night_mode_enabled'] = 1 if settings.get('night_mode_enabled', 0) == 0 else 0
+        await db_set_security_settings(chat_id, night_mode_enabled=settings['night_mode_enabled'])
+    elif action == "max_length":
+        context.user_data['state'] = "WAITING_MAX_LENGTH"
+        context.user_data['security_chat_id'] = chat_id
+        await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
+        return
+    elif action == "warn_settings":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔢 عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
+             InlineKeyboardButton("⚖️ عقوبة التحذير", callback_data=f"warn_penalty:{chat_id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+        ])
+        await query.edit_message_text("⚠️ **إعدادات التحذير**\nاختر الإعداد المطلوب:", reply_markup=keyboard)
+        return
+    else:
+        await query.edit_message_text("❌ إجراء غير معروف")
+        return
+    await _update_security_panel(query, chat_id, user_id)
+
+# ===================================================================
+# ========== دوال الكلمات المحظورة (Banned Words) - مكرر للتأكيد ==========
+# ===================================================================
+
+async def security_banned_words_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة الكلمات المحظورة للمجموعة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['banned_words_chat_id'] = chat_id
+    await query.edit_message_text(
+        "🚫 **الكلمات المحظورة**\nاختر الإجراء المطلوب:",
+        reply_markup=get_group_banned_words_keyboard(chat_id)
+    )
+
+async def banned_words_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = "WAITING_GROUP_BANNED_WORD"
+    context.user_data['banned_words_chat_id'] = chat_id
+    await query.edit_message_text("✏️ أرسل الكلمة التي تريد إضافتها إلى قائمة المحظورات:")
+
+async def banned_words_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    words = await db_get_banned_words(chat_id)
+    if not words:
+        await query.edit_message_text("📭 لا توجد كلمات محظورة.")
+        return
+    text = "🚫 **الكلمات المحظورة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for word, added_by, added_at in words:
+        text += f"• `{word}` (أضيف بواسطة {added_by})\n"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}")]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def banned_words_remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('banned_words_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = "WAITING_REMOVE_GROUP_BANNED_WORD"
+    context.user_data['banned_words_chat_id'] = chat_id
+    await query.edit_message_text("✏️ أرسل الكلمة التي تريد حذفها من قائمة المحظورات:")
+
+async def security_close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+# ===================================================================
+# ========== دوال الكلمات المحظورة العامة (للمشرفين) ==========
+# ===================================================================
+
+async def admin_add_banned_word_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_GLOBAL_BANNED_WORD
+    await query.edit_message_text("✏️ أرسل الكلمة التي تريد إضافتها إلى قائمة المحظورات العامة:")
+
+async def admin_list_banned_words_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    words = await db_get_banned_words(-1)
+    if not words:
+        await query.edit_message_text("📭 لا توجد كلمات محظورة عامة.")
+        return
+    text = "🚫 **الكلمات المحظورة العامة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for word, added_by, added_at in words:
+        text += f"• `{word}` (أضيف بواسطة {added_by})\n"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_BANNED_WORDS)]])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_remove_banned_word_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_REMOVE_GLOBAL_BANNED_WORD
+    await query.edit_message_text("✏️ أرسل الكلمة التي تريد حذفها من قائمة المحظورات العامة:")
+
+async def admin_banned_words_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await query.edit_message_text("🚫 **الكلمات المحظورة العامة**\nاختر الإجراء المطلوب:", reply_markup=get_banned_words_admin_keyboard())
+
+# ===================================================================
+# ========== دوال اختيار مجموعة الأمان ==========
+# ===================================================================
+
+async def security_select_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار مجموعة لإعدادات الأمان"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    if query:
+        await query.answer()
+
+    if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
+        groups = await db_get_user_groups(user_id)
+        if not groups:
+            if query:
+                await query.edit_message_text("📭 لا توجد مجموعات مسجلة لديك.")
+            else:
+                await safe_send_markdown(context.bot, user_id, "📭 لا توجد مجموعات مسجلة لديك.")
+            return
+    else:
+        async def _get_all_groups(conn):
+            cur = await conn.execute("SELECT chat_id, chat_name, username, banned FROM bot_groups ORDER BY chat_name")
+            return await cur.fetchall()
+        groups = await execute_db(_get_all_groups)
+
+    if not groups:
+        if query:
+            await query.edit_message_text("📭 لا توجد مجموعات مسجلة.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "📭 لا توجد مجموعات مسجلة.")
+        return
+
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        if not await is_authorized_in_group(context.bot, chat_id, user_id) and user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+            continue
+        status_icon = "⛔" if banned else "✅"
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        keyboard.append([InlineKeyboardButton(f"{status_icon} {display_name}", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")])
+
+    if not keyboard:
+        if query:
+            await query.edit_message_text("🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        return
+
+    keyboard.append([
+        InlineKeyboardButton("🔄 تحديث", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
+        InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)
+    ])
+
+    if query:
+        await query.edit_message_text("🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_send_markdown(context.bot, user_id, "🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def security_refresh_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحديث قائمة المجموعات للأمان"""
+    await security_select_group_callback(update, context)
+
+# ===================================================================
+# ========== دوال الإجراءات المتقدمة ==========
+# ===================================================================
+
+async def advanced_actions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    if chat_id == 0:
+        if query:
+            await query.edit_message_text("⚠️ يرجى اختيار مجموعة أولاً")
+        else:
+            await safe_send_markdown(context.bot, uid, "⚠️ يرجى اختيار مجموعة أولاً")
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    msg = "🛠️ **الإجراءات المتقدمة للمجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر الإجراء المطلوب:"
+    if query:
+        await safe_edit_markdown(query, msg, reply_markup=get_advanced_group_actions_keyboard(chat_id))
+    else:
+        await safe_send_markdown(context.bot, uid, msg, reply_markup=get_advanced_group_actions_keyboard(chat_id))
+
+async def group_action_ban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    context.user_data['state'] = "WAITING_BAN_USER"
+    context.user_data['advanced_chat_id'] = chat_id
+    msg = "🚫 **حظر مستخدم**\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /ban\n\nيمكنك إضافة سبب بعد المعرف: `/ban 123456789 السبب`"
+    if query:
+        await safe_edit_markdown(query, msg)
+    else:
+        await safe_send_markdown(context.bot, uid, msg)
+
+async def group_action_mute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    msg = "🔇 **اختر مدة الكتم**"
+    if query:
+        await safe_edit_markdown(query, msg, reply_markup=mute_duration_keyboard(chat_id, source="advanced"))
+    else:
+        await safe_send_markdown(context.bot, uid, msg, reply_markup=mute_duration_keyboard(chat_id, source="advanced"))
+
+async def group_action_warn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    context.user_data['state'] = "WAITING_WARN_USER"
+    context.user_data['advanced_chat_id'] = chat_id
+    msg = "⚠️ **تحذير مستخدم**\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /warn\n\nيمكنك إضافة سبب: `/warn 123456789 السبب`"
+    if query:
+        await safe_edit_markdown(query, msg)
+    else:
+        await safe_send_markdown(context.bot, uid, msg)
+
+async def group_action_kick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    context.user_data['state'] = "WAITING_KICK_USER"
+    context.user_data['advanced_chat_id'] = chat_id
+    msg = "👢 **طرد مستخدم**\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /kick\n\nيمكنك إضافة سبب: `/kick 123456789 السبب`"
+    if query:
+        await safe_edit_markdown(query, msg)
+    else:
+        await safe_send_markdown(context.bot, uid, msg)
+
+async def group_action_restrict_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    context.user_data['state'] = "WAITING_RESTRICT_USER"
+    context.user_data['advanced_chat_id'] = chat_id
+    msg = "🔒 **تقييد مستخدم**\n\nأرسل معرف المستخدم (user_id) أو قم بالرد على رسالة المستخدم ثم أرسل /restrict\n\nيمكنك إضافة سبب: `/restrict 123456789 السبب`"
+    if query:
+        await safe_edit_markdown(query, msg)
+    else:
+        await safe_send_markdown(context.bot, uid, msg)
+
+async def group_action_pin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    context.user_data['state'] = "WAITING_PIN_MESSAGE"
+    context.user_data['advanced_chat_id'] = chat_id
+    msg = "📌 **تثبيت رسالة**\n\nقم بالرد على الرسالة التي تريد تثبيتها ثم أرسل /pin"
+    if query:
+        await safe_edit_markdown(query, msg)
+    else:
+        await safe_send_markdown(context.bot, uid, msg)
+
+async def group_action_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    log_text = await get_moderation_log(chat_id, limit=20)
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")]])
+    if query:
+        await safe_edit_markdown(query, log_text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, uid, log_text, reply_markup=keyboard)
+
+async def group_action_unban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('advanced_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    context.user_data['state'] = "WAITING_UNBAN_USER"
+    context.user_data['advanced_chat_id'] = chat_id
+    msg = "🔓 **إلغاء حظر مستخدم**\n\nأرسل معرف المستخدم (user_id):\nمثال: `/unban 123456789`"
+    if query:
+        await safe_edit_markdown(query, msg)
+    else:
+        await safe_send_markdown(context.bot, uid, msg)
+
+# ===================================================================
+# ========== دوال لوحة التحكم (قفل/فتح) ==========
+# ===================================================================
+
+async def panel_lock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قفل المجموعة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('panel_chat_id')
+    if not chat_id:
+        return
+    if await is_authorized_in_group(context.bot, chat_id, uid):
+        await db_set_chat_lock(chat_id, True, uid)
+        if query:
+            await safe_edit_markdown(query, "🔒 تم قفل المجموعة")
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 تم قفل المجموعة")
+        await my_groups_callback(update, context)
+    else:
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+
+async def panel_unlock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """فتح المجموعة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('panel_chat_id')
+    if not chat_id:
+        return
+    if await is_authorized_in_group(context.bot, chat_id, uid):
+        await db_set_chat_lock(chat_id, False)
+        if query:
+            await safe_edit_markdown(query, "🔓 تم فتح المجموعة")
+        else:
+            await safe_send_markdown(context.bot, uid, "🔓 تم فتح المجموعة")
+        await my_groups_callback(update, context)
+    else:
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+
+async def panel_close_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إغلاق لوحة التحكم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.message.delete()
 
 # ===================================================================
 # 44. الوظيفة الرئيسية (main)
