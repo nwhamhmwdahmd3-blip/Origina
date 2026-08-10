@@ -8844,6 +8844,175 @@ async def security_close_callback(update: Update, context: ContextTypes.DEFAULT_
     if query:
         await query.answer()
         await query.message.delete()
+# ===================================================================
+# دوال الأمان الإضافية - التنفيذ الكامل
+# ===================================================================
+
+async def security_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تفعيل جميع خيارات الأمان في المجموعة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    # قائمة الإعدادات التي سيتم تفعيلها
+    keys = [
+        'delete_videos', 'delete_audio', 'delete_animation', 
+        'delete_service', 'delete_documents', 'delete_stickers',
+        'delete_forwarded', 'delete_polls', 'delete_games',
+        'delete_voice', 'delete_video_note', 'links',
+        'mentions', 'antiflood_enabled', 'night_mode_enabled'
+    ]
+    
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    for key in keys:
+        settings[key] = True
+    
+    # تحديث الإعدادات في قاعدة البيانات
+    update_dict = {k: settings[k] for k in keys}
+    await db_set_security_settings(chat_id, **update_dict)
+    
+    # مسح الكاش
+    _security_cache.pop(chat_id, None)
+    
+    await query.answer("✅ تم تفعيل جميع خيارات الأمان")
+    await _update_security_panel(query, chat_id, user_id)
+
+
+async def security_disable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعطيل جميع خيارات الأمان في المجموعة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    # قائمة الإعدادات التي سيتم تعطيلها
+    keys = [
+        'delete_videos', 'delete_audio', 'delete_animation', 
+        'delete_service', 'delete_documents', 'delete_stickers',
+        'delete_forwarded', 'delete_polls', 'delete_games',
+        'delete_voice', 'delete_video_note', 'links',
+        'mentions', 'antiflood_enabled', 'night_mode_enabled',
+        'slow_mode', 'welcome_enabled', 'goodbye_enabled',
+        'delete_banned_words'
+    ]
+    
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    for key in keys:
+        settings[key] = False
+    
+    # تحديث الإعدادات في قاعدة البيانات
+    update_dict = {k: settings[k] for k in keys}
+    await db_set_security_settings(chat_id, **update_dict)
+    
+    # مسح الكاش
+    _security_cache.pop(chat_id, None)
+    
+    await query.answer("✅ تم تعطيل جميع خيارات الأمان")
+    await _update_security_panel(query, chat_id, user_id)
+
+
+async def security_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعداد عقوبة الحذف التلقائي"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    # عرض خيارات العقوبات
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("👢 طرد", callback_data=f"set_delete_penalty:kick:{chat_id}"),
+            InlineKeyboardButton("🛑 حظر", callback_data=f"set_delete_penalty:ban:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔇 كتم", callback_data=f"set_delete_penalty:mute:{chat_id}"),
+            InlineKeyboardButton("⚠️ تحذير", callback_data=f"set_delete_penalty:warn:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("❌ لا شيء", callback_data=f"set_delete_penalty:none:{chat_id}"),
+            InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")
+        ]
+    ])
+    
+    msg = "⚖️ **اختر عقوبة الحذف التلقائي**\n\nسيتم تطبيق هذه العقوبة عند حذف رسالة مخالفة:"
+    await query.edit_message_text(msg, reply_markup=keyboard)
+
+
+async def set_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين عقوبة الحذف التلقائي"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    
+    if len(parts) != 3:
+        await query.answer("❌ بيانات غير صالحة", show_alert=True)
+        return
+    
+    penalty = parts[1]
+    chat_id = int(parts[2])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    # حفظ العقوبة
+    await db_set_security_settings(chat_id, delete_penalty=penalty, delete_penalty_duration=60)
+    
+    # مسح الكاش
+    _security_cache.pop(chat_id, None)
+    
+    penalty_names = {
+        'kick': 'طرد',
+        'ban': 'حظر',
+        'mute': 'كتم',
+        'warn': 'تحذير',
+        'none': 'لا شيء'
+    }
+    
+    await query.answer(f"✅ تم تعيين عقوبة الحذف إلى: {penalty_names.get(penalty, penalty)}")
+    await _update_security_panel(query, chat_id, user_id)
+
+
+async def set_delete_penalty_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين مدة عقوبة الحذف التلقائي"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    
+    if len(parts) != 3:
+        await query.answer("❌ بيانات غير صالحة", show_alert=True)
+        return
+    
+    duration = int(parts[1])
+    chat_id = int(parts[2])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    # حفظ مدة العقوبة
+    await db_set_security_settings(chat_id, delete_penalty_duration=duration)
+    
+    # مسح الكاش
+    _security_cache.pop(chat_id, None)
+    
+    await query.answer(f"✅ تم تعيين مدة العقوبة إلى {duration} دقيقة")
+    await _update_security_panel(query, chat_id, user_id)
 
 # ===================================================================
 # 49. الوظيفة الرئيسية (main)
