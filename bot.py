@@ -1,4 +1,5 @@
 
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -11945,6 +11946,45 @@ async def db_set_auto_reply_settings(chat_id: int, **kwargs):
             await conn.commit()
     
     await execute_db(_update)
+async def fix_missing_columns():
+    """إصلاح الأعمدة المفقودة في قاعدة البيانات"""
+    async def _fix(conn):
+        # إضافة عمود level في جدول users إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1")
+        except:
+            pass
+        
+        # إضافة عمود subscription_end إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN subscription_end TEXT")
+        except:
+            pass
+        
+        # إضافة عمود referral_code إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
+        except:
+            pass
+        
+        # إضافة عمود referred_by إذا لم يكن موجوداً
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
+        except:
+            pass
+        
+        # إنشاء جدول user_levels إذا لم يكن موجوداً
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_levels (
+                user_id INTEGER PRIMARY KEY,
+                points INTEGER DEFAULT 0,
+                level INTEGER DEFAULT 1
+            )
+        """)
+        
+        await conn.commit()
+        logger.info("✅ تم إصلاح الأعمدة المفقودة")
+    await execute_db(_fix)
 
 # ===================================================================
 # 47. main()
