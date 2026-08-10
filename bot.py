@@ -11105,9 +11105,7 @@ async def setup_unified_web_server(application, port: int):
     logger.info(f"✅ خادم الويب الموحد يعمل على المنفذ {port}")
     return site
 
-# ===================================================================
-# 42. main()
-# ===================================================================
+
 async def main():
     """
     الوظيفة الرئيسية لتشغيل البوت.
@@ -11553,52 +11551,21 @@ async def main():
     task_manager.create_task(safe_loop(memory_optimizer_loop, "memory_optimizer"))
 
     # ===================================================================
-    # 12. تشغيل البوت (Webhook أو Polling) مع خادم الصحة
+    # 12. تشغيل البوت (Webhook أو Polling) مع خادم ويب واحد
     # ===================================================================
     port = int(os.getenv("PORT", "10000"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
 
-    # بدء خادم HTTP بسيط للصحة (لضمان فتح المنفذ على Render)
-    from aiohttp import web
-    health_app = web.Application()
+    # بدء خادم الويب الموحد (يحتوي على /health و / و webhook)
+    try:
+        await setup_unified_web_server(application, port)
+        logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
+    except Exception as e:
+        logger.error(f"❌ فشل بدء خادم الويب: {e}")
+        raise
 
-    async def health_check(request):
-        return web.Response(text="OK")
-
-    async def index_handler(request):
-        html = """
-        <html>
-            <head><title>ريلاكس مانيجر</title></head>
-            <body style="font-family: Arial; text-align: center; padding: 50px; direction: rtl;">
-                <h1>🌿 ريلاكس مانيجر</h1>
-                <p>✅ البوت يعمل بكفاءة</p>
-                <p>📊 <a href="/health">التحقق من الصحة</a></p>
-                <p>🤖 <a href="https://t.me/Reelaaaxbot">البوت على تيليجرام</a></p>
-                <p style="color: #666; font-size: 12px;">الإصدار 21.0.0</p>
-            </body>
-        </html>
-        """
-        return web.Response(text=html, content_type="text/html", charset="utf-8")
-
-    health_app.router.add_get('/health', health_check)
-    health_app.router.add_get('/', index_handler)
-
-    runner = web.AppRunner(health_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    logger.info(f"✅ خادم الصحة يعمل على المنفذ {port}")
-
-    # إذا كان هناك hostname (بيئة سحابية) نستخدم Webhook
     if hostname:
-        logger.info(f"🌐 سيتم تشغيل خادم الويب على المنفذ {port} باستخدام hostname: {hostname}")
-        try:
-            await setup_unified_web_server(application, port)
-            logger.info("✅ تم بدء خادم الويب الموحد بنجاح")
-        except Exception as e:
-            logger.error(f"❌ فشل بدء خادم الويب الموحد: {e}")
-            raise
-
+        # بيئة سحابية: استخدام Webhook
         await application.initialize()
         await application.start()
         webhook_url = f"https://{hostname}/{TOKEN}"
@@ -11618,6 +11585,7 @@ async def main():
         except KeyboardInterrupt:
             logger.info("🛑 تم إيقاف البوت")
     else:
+        # بيئة محلية: استخدام Polling
         logger.info("🔄 استخدام Polling (بدون Webhook)")
         await application.bot.delete_webhook()
         await run_polling_safe(application)
