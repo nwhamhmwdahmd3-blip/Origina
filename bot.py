@@ -12221,6 +12221,70 @@ async def detect_owner_type(bot, chat_id: int) -> dict:
     except Exception as e:
         logger.error(f"فشل كشف المالك في {chat_id}: {e}")
         return {'is_hidden': True, 'user_id': None}
+# ===================================================================
+# ========== إصلاح جدول group_security (إضافة الأعمدة المفقودة) ==========
+# ===================================================================
+
+async def fix_group_security_table():
+    """إضافة الأعمدة المفقودة إلى جدول group_security"""
+    async def _fix(conn):
+        # قائمة الأعمدة المطلوبة مع أنواعها
+        required_columns = {
+            'links': 'INTEGER DEFAULT 0',
+            'mentions': 'INTEGER DEFAULT 0',
+            'warn_message': 'INTEGER DEFAULT 1',
+            'slow_mode': 'INTEGER DEFAULT 0',
+            'slow_mode_seconds': 'INTEGER DEFAULT 5',
+            'welcome_enabled': 'INTEGER DEFAULT 0',
+            'welcome_text': 'TEXT DEFAULT "مرحباً {user} في {chat} 🤍"',
+            'goodbye_enabled': 'INTEGER DEFAULT 0',
+            'goodbye_text': 'TEXT DEFAULT "وداعاً {user} 👋"',
+            'delete_banned_words': 'INTEGER DEFAULT 0',
+            'auto_penalty': 'TEXT DEFAULT "none"',
+            'auto_mute_duration': 'INTEGER DEFAULT 60',
+            'delete_videos': 'INTEGER DEFAULT 0',
+            'delete_audio': 'INTEGER DEFAULT 0',
+            'delete_animation': 'INTEGER DEFAULT 0',
+            'delete_service': 'INTEGER DEFAULT 0',
+            'delete_documents': 'INTEGER DEFAULT 0',
+            'delete_stickers': 'INTEGER DEFAULT 0',
+            'delete_forwarded': 'INTEGER DEFAULT 0',
+            'delete_polls': 'INTEGER DEFAULT 0',
+            'delete_games': 'INTEGER DEFAULT 0',
+            'delete_voice': 'INTEGER DEFAULT 0',
+            'delete_video_note': 'INTEGER DEFAULT 0',
+            'delete_penalty': 'TEXT DEFAULT "none"',
+            'delete_penalty_duration': 'INTEGER DEFAULT 0',
+            'antiflood_enabled': 'INTEGER DEFAULT 0',
+            'antiflood_messages': 'INTEGER DEFAULT 5',
+            'antiflood_seconds': 'INTEGER DEFAULT 10',
+            'antiflood_penalty': 'TEXT DEFAULT "mute"',
+            'max_warnings': 'INTEGER DEFAULT 3',
+            'warn_penalty': 'TEXT DEFAULT "ban"',
+            'max_message_length': 'INTEGER DEFAULT 0',
+            'night_mode_enabled': 'INTEGER DEFAULT 0',
+            'night_mode_start': 'TEXT DEFAULT "23:00"',
+            'night_mode_end': 'TEXT DEFAULT "06:00"',
+            'night_mode_action': 'TEXT DEFAULT "mute"'
+        }
+        
+        # جلب الأعمدة الموجودة حالياً
+        cur = await conn.execute("PRAGMA table_info(group_security)")
+        existing_columns = [row[1] for row in await cur.fetchall()]
+        
+        # إضافة الأعمدة المفقودة
+        for col_name, col_type in required_columns.items():
+            if col_name not in existing_columns:
+                try:
+                    await conn.execute(f"ALTER TABLE group_security ADD COLUMN {col_name} {col_type}")
+                    logger.info(f"✅ تم إضافة العمود {col_name} إلى جدول group_security")
+                except Exception as e:
+                    logger.error(f"❌ فشل إضافة العمود {col_name}: {e}")
+        
+        await conn.commit()
+        logger.info("✅ تم تحديث جدول group_security بنجاح")
+    
+    await execute_db(_fix)
 
 # ===================================================================
 # 44. الوظيفة الرئيسية (main)
@@ -12235,7 +12299,7 @@ async def main():
     await init_db_improved()
     await init_security_table()
     await fix_missing_columns()
-
+    await fix_group_security_table()
     # تحميل الكلمات المحظورة
     try:
         words = load_banned_words_from_file(BANNED_WORDS_FILE)
