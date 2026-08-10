@@ -11882,6 +11882,345 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
                             await message.reply_text(reply)
                         except:
                             pass
+# ===================================================================
+# ========== معالجات الأحداث (Event Handlers) ==========
+# ===================================================================
+
+async def chat_join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج طلبات الانضمام للمجموعات المحمية"""
+    join_request = update.chat_join_request
+    if not join_request:
+        return
+    user = join_request.from_user
+    chat = join_request.chat
+    chat_id = chat.id
+    user_id = user.id
+    try:
+        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        if not bot_member.can_invite_users:
+            logger.warning(f"⚠️ البوت ليس لديه صلاحية دعوة المستخدمين في المجموعة {chat_id}")
+            return
+    except:
+        return
+    settings = await db_get_security_settings(chat_id)
+    try:
+        await join_request.approve()
+        logger.info(f"✅ تم قبول طلب انضمام المستخدم {user_id} إلى المجموعة {chat_id}")
+        if settings.get('welcome_enabled', False):
+            welcome_text = settings.get('welcome_text', "مرحباً {user} في {chat} 🤍")
+            welcome_text = format_welcome_message(welcome_text, user.full_name or user.first_name or str(user_id), chat.title)
+            try:
+                await context.bot.send_message(chat_id, welcome_text)
+            except:
+                pass
+    except Exception as e:
+        logger.error(f"❌ فشل قبول طلب انضمام المستخدم {user_id} في المجموعة {chat_id}: {e}")
+
+async def new_chat_members_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الأعضاء الجدد في المجموعة"""
+    if not update.message or not update.message.new_chat_members:
+        return
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        return
+    chat_id = chat.id
+    settings = await db_get_security_settings(chat_id)
+    for member in update.message.new_chat_members:
+        if member.id == context.bot.id:
+            continue
+        # حذف رسالة الخدمة إذا كان الإعداد مفعلاً
+        if settings.get('delete_service', False):
+            try:
+                await update.message.delete()
+                logger.info(f"🗑️ تم حذف رسالة دخول العضو {member.id} في المجموعة {chat_id}")
+            except Exception as e:
+                logger.error(f"❌ فشل حذف رسالة دخول العضو {member.id}: {e}")
+        # إرسال رسالة ترحيب
+        if settings.get('welcome_enabled', False):
+            welcome_text = settings.get('welcome_text', "مرحباً {user} في {chat} 🤍")
+            welcome_text = format_welcome_message(welcome_text, member.full_name or member.first_name or str(member.id), chat.title)
+            try:
+                await context.bot.send_message(chat_id, welcome_text)
+            except Exception as e:
+                logger.error(f"❌ فشل إرسال رسالة ترحيب للعضو {member.id}: {e}")
+        # تحديث كاش المستخدم
+        await db_update_user_cache(member.id, member.username or "", member.first_name or "")
+
+async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج مغادرة الأعضاء"""
+    if not update.message or not update.message.left_chat_member:
+        return
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        return
+    chat_id = chat.id
+    left_member = update.message.left_chat_member
+    settings = await db_get_security_settings(chat_id)
+    # حذف رسالة الخدمة
+    if settings.get('delete_service', False):
+        try:
+            await update.message.delete()
+            logger.info(f"🗑️ تم حذف رسالة مغادرة العضو {left_member.id} في المجموعة {chat_id}")
+        except Exception as e:
+            logger.error(f"❌ فشل حذف رسالة مغادرة العضو {left_member.id}: {e}")
+    # إرسال رسالة وداع
+    if settings.get('goodbye_enabled', False):
+        goodbye_text = settings.get('goodbye_text', "وداعاً {user} 👋")
+        goodbye_text = goodbye_text.replace('{user}', left_member.full_name or left_member.first_name or str(left_member.id))
+        goodbye_text = goodbye_text.replace('{chat}', chat.title)
+        try:
+            await context.bot.send_message(chat_id, goodbye_text)
+        except Exception as e:
+            logger.error(f"❌ فشل إرسال رسالة وداع للعضو {left_member.id}: {e}")
+    # تنظيف بيانات المستخدم
+    if left_member.id != context.bot.id:
+        async def _clean_user_data(conn):
+            await conn.execute("DELETE FROM user_warnings WHERE user_id=? AND chat_id=?", (left_member.id, chat_id))
+            await conn.execute("DELETE FROM user_messages WHERE user_id=? AND chat_id=?", (left_member.id, chat_id))
+            await conn.commit()
+        await execute_db(_clean_user_data)
+
+async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إضافة البوت إلى مجموعة أو قناة"""
+    if not update.message or not update.message.new_chat_members:
+        return
+    bot_id = context.bot.id
+    chat = update.effective_chat
+    inviter = update.effective_user
+    if chat.type not in ['group', 'supergroup']:
+        return
+    for member in update.message.new_chat_members:
+        if member.id == bot_id:
+            added_by_id = inviter.id if inviter else 0
+            chat_name = chat.title or "بدون اسم"
+            chat_type_name = "مجموعة" if chat.type == 'group' else "سوبر جروب"
+            await db_register_group(chat.id, chat_name, added_by_id, chat.username)
+            is_admin = False
+            for attempt in range(3):
+                try:
+                    member_obj = await context.bot.get_chat_member(chat.id, added_by_id)
+                    if member_obj.status in ['administrator', 'creator']:
+                        is_admin = True
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        await log_security_event("VERIFICATION_FAILED", chat.id, added_by_id, {"attempts": 3}, "high")
+                    await asyncio.sleep(1)
+            if is_admin:
+                await db_register_hidden_owner_group(chat.id, added_by_id)
+                invalidate_auth_cache(chat.id, added_by_id)
+                logger.info(f"🔒 تم تسجيل المضيف {added_by_id} كمالك مخفي للمجموعة {chat.id}")
+            else:
+                logger.info(f"ℹ️ المضيف {added_by_id} ليس مشرفاً في {chat.id}، لن يتم تسجيله كمالك مخفي.")
+            await db_sync_group_admins(chat.id, context.bot)
+            owner_info = await detect_owner_type(context.bot, chat.id)
+            if owner_info.get('user_id') and owner_info['user_id'] != added_by_id:
+                await db_register_hidden_owner_group(chat.id, owner_info['user_id'])
+                invalidate_auth_cache(chat.id, owner_info['user_id'])
+                logger.info(f"👑 تم تسجيل المالك الحقيقي {owner_info['user_id']} أيضاً كمالك مخفي للمجموعة {chat.id}")
+            await send_addition_report_to_all_admins(context.bot, chat, inviter, chat_type_name)
+            try:
+                if is_admin:
+                    msg = "✅ **تم تفعيل البوت في المجموعة**\n🔒 **تم تسجيلك كمالك مخفي تلقائياً**\n\n📌 استخدم /panel للوحة التحكم\n📌 استخدم /security لإعدادات الأمان"
+                else:
+                    msg = "✅ **تم إضافة البوت إلى المجموعة!**\n📌 استخدم /help لمعرفة الأوامر المتاحة.\n📌 إذا كنت مشرفاً، استخدم `/register_hidden_owner` لتسجيل نفسك."
+                await safe_send_markdown(context.bot, chat.id, msg)
+            except:
+                pass
+            break
+
+async def track_chat_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تتبع إضافة البوت إلى مجموعات وقنوات جديدة"""
+    result = update.my_chat_member
+    if not result:
+        return
+    new_status = result.new_chat_member.status
+    old_status = result.old_chat_member.status
+    if new_status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]:
+        is_new = old_status in [ChatMember.LEFT, ChatMember.BANNED, ChatMember.RESTRICTED]
+        if is_new:
+            chat = result.chat
+            adder = result.from_user
+            if chat.type == 'channel':
+                await db_register_channel(chat.id, chat.title or "بدون اسم", adder.id)
+                try:
+                    await context.bot.send_message(
+                        chat_id=adder.id,
+                        text=f"✅ **تم إضافة البوت إلى القناة**\n\n📌 الاسم: {chat.title}\n🆔 المعرف: {chat.id}",
+                        parse_mode="MarkdownV2"
+                    )
+                except:
+                    pass
+            elif chat.type in ['group', 'supergroup']:
+                await send_addition_report_to_all_admins(context.bot, chat, adder, "مجموعة" if chat.type == 'group' else "سوبر جروب")
+                await db_register_group(chat.id, chat.title or "بدون اسم", adder.id, chat.username)
+                await db_register_hidden_owner_group(chat.id, adder.id)
+                invalidate_auth_cache(chat.id, adder.id)
+                await db_sync_group_admins(chat.id, context.bot, adder.id)
+                owner_info = await detect_owner_type(context.bot, chat.id)
+                if owner_info.get('user_id') and owner_info['user_id'] != adder.id:
+                    await db_register_hidden_owner_group(chat.id, owner_info['user_id'])
+                    invalidate_auth_cache(chat.id, owner_info['user_id'])
+            else:
+                return
+
+async def pre_checkout_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الدفع المسبق (اشتراكات النجوم)"""
+    query = update.pre_checkout_query
+    if query.invoice_payload.startswith("sub_"):
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="بيانات غير صالحة")
+
+async def successful_payment_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الدفع الناجح (تفعيل الاشتراك)"""
+    if update.message is None or update.effective_user is None:
+        return
+    user_id = update.effective_user.id
+    payment = update.message.successful_payment
+    try:
+        parts = payment.invoice_payload.split('_')
+        days = int(parts[1]) if len(parts) >= 2 else 30
+    except:
+        days = 30
+    await db_activate_subscription(user_id, days)
+    await safe_send_markdown(context.bot, user_id, f"✅ **تم تفعيل اشتراكك لمدة {days} يوماً!**\nشكراً لدعمك ❤️")
+
+async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف رسائل الخدمة تلقائياً"""
+    if not update.message or not update.effective_chat:
+        return
+    chat_id = update.effective_chat.id
+    message = update.message
+    try:
+        settings = await db_get_security_settings(chat_id)
+        if not settings.get('delete_service', False):
+            return
+    except Exception as e:
+        logger.error(f"[delete_service] خطأ في جلب الإعدادات للمجموعة {chat_id}: {e}")
+        return
+    is_service = bool(message.service_message)
+    service_flags = [
+        message.new_chat_members,
+        message.left_chat_member,
+        message.new_chat_photo,
+        message.delete_chat_photo,
+        message.group_chat_created,
+        message.supergroup_chat_created,
+        message.channel_chat_created,
+        message.migrate_to_chat_id,
+        message.migrate_from_chat_id,
+        message.pinned_message,
+        message.successful_payment,
+        message.invoice,
+        message.connected_website,
+        message.boost_added,
+    ]
+    if any(service_flags):
+        is_service = True
+    if not is_service:
+        return
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            await message.delete()
+            logger.info(f"🗑️ [delete_service] تم حذف رسالة خدمة في المجموعة {chat_id} (المحاولة {attempt+1})")
+            return True
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "message can't be deleted" in error_msg:
+                logger.debug(f"⚠️ [delete_service] لا يمكن حذف رسالة الخدمة: قديمة جداً (المجموعة {chat_id})")
+                return False
+            elif "not enough rights" in error_msg or "bot is not admin" in error_msg:
+                logger.warning(f"⚠️ [delete_service] البوت ليس لديه صلاحية الحذف في المجموعة {chat_id}")
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ **تنبيه:** البوت يحتاج صلاحية 'حذف الرسائل' ليعمل بشكل صحيح.\nيرجى منح البوت الصلاحيات المطلوبة.",
+                        parse_mode="MarkdownV2"
+                    )
+                except:
+                    pass
+                return False
+            elif "timeout" in error_msg or "timed out" in error_msg:
+                logger.warning(f"⏱️ [delete_service] انتهت المهلة في المحاولة {attempt+1} (المجموعة {chat_id})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+                return False
+            else:
+                logger.error(f"❌ [delete_service] فشل حذف رسالة خدمة (المجموعة {chat_id}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+                return False
+    return False
+
+# ===================================================================
+# ========== دوال مساعدة للأحداث ==========
+# ===================================================================
+
+async def send_addition_report_to_all_admins(bot, chat, adder, chat_type_name):
+    """إرسال تقرير إضافة البوت إلى جميع المشرفين"""
+    try:
+        if not chat or not adder:
+            return
+        admins = await bot.get_chat_administrators(chat.id)
+        for admin in admins:
+            user = admin.user
+            if user.id == adder.id:
+                try:
+                    await bot.send_message(
+                        chat_id=user.id,
+                        text=(
+                            f"✅ **تم إضافة البوت إلى {chat_type_name}**\n\n"
+                            f"📌 الاسم: {chat.title}\n"
+                            f"🆔 المعرف: {chat.id}\n"
+                            f"👤 أضيف بواسطة: {adder.full_name or adder.first_name or adder.id}\n\n"
+                            f"🔒 **تم تسجيلك كمالك مخفي تلقائياً**\n"
+                            f"🔐 استخدم /security لإعدادات الأمان\n"
+                            f"🛠️ استخدم /panel للوحة التحكم\n\n"
+                            f"📌 **ملاحظة:** إذا لم تظهر لك المجموعة، استخدم /syncgroup في المجموعة"
+                        ),
+                        parse_mode="MarkdownV2"
+                    )
+                    logger.info(f"✅ تم إرسال تقرير التفعيل الكامل للمشرف {user.id} في {chat.title}")
+                except Exception as e:
+                    logger.error(f"❌ فشل إرسال رسالة للمضيف {user.id}: {e}")
+            else:
+                try:
+                    await bot.send_message(
+                        chat_id=user.id,
+                        text=(
+                            f"📢 **تم إضافة البوت إلى {chat_type_name}**\n\n"
+                            f"📌 الاسم: {chat.title}\n"
+                            f"🆔 المعرف: {chat.id}\n"
+                            f"👤 أضيف بواسطة: {adder.full_name or adder.first_name or adder.id}\n\n"
+                            f"🔹 **لتفعيل البوت:** استخدم `/syncgroup` في المجموعة.\n"
+                            f"🔹 **لتسجيل نفسك كمالك مخفي:** استخدم `/register_hidden_owner`.\n"
+                            f"🔹 **لإعدادات الأمان:** استخدم `/security`.\n\n"
+                            f"🔹 **ملاحظة:** إذا كنت تريد إدارة البوت، تأكد من أنك مشرف في المجموعة."
+                        ),
+                        parse_mode="MarkdownV2"
+                    )
+                    logger.info(f"✅ تم إرسال إشعار للمشرف {user.id} في {chat.title}")
+                except Exception as e:
+                    logger.error(f"❌ فشل إرسال إشعار للمشرف {user.id}: {e}")
+            await asyncio.sleep(0.3)
+    except Exception as e:
+        logger.error(f"❌ فشل إرسال الإشعارات للمشرفين في {chat.id}: {e}")
+
+async def detect_owner_type(bot, chat_id: int) -> dict:
+    """كشف نوع المالك في المجموعة"""
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        for admin in admins:
+            if admin.status == 'creator':
+                return {'is_hidden': False, 'user_id': admin.user.id}
+        return {'is_hidden': True, 'user_id': None}
+    except Exception as e:
+        logger.error(f"فشل كشف المالك في {chat_id}: {e}")
+        return {'is_hidden': True, 'user_id': None}
 
 # ===================================================================
 # 44. الوظيفة الرئيسية (main)
