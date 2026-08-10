@@ -4263,6 +4263,275 @@ def get_user_auto_reply_keyboard(user_id: int, enabled: bool) -> InlineKeyboardM
         ],
         [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
     ])
+# ===================================================================
+# دوال إعدادات مدة العقوبة - المفقودة
+# ===================================================================
+
+async def db_get_penalty_settings(chat_id: int) -> dict:
+    """جلب إعدادات العقوبات للمجموعة"""
+    async def _get(conn):
+        cur = await conn.execute("""
+            SELECT auto_penalty, auto_mute_duration, delete_penalty, delete_penalty_duration,
+                   max_warnings, warn_penalty, antiflood_penalty, night_mode_action
+            FROM group_security WHERE chat_id=?
+        """, (chat_id,))
+        row = await cur.fetchone()
+        if row:
+            return {
+                'auto_penalty': row[0] or 'none',
+                'auto_mute_duration': row[1] or 60,
+                'delete_penalty': row[2] or 'none',
+                'delete_penalty_duration': row[3] or 0,
+                'max_warnings': row[4] or 3,
+                'warn_penalty': row[5] or 'ban',
+                'antiflood_penalty': row[6] or 'mute',
+                'night_mode_action': row[7] or 'mute'
+            }
+        return {
+            'auto_penalty': 'none',
+            'auto_mute_duration': 60,
+            'delete_penalty': 'none',
+            'delete_penalty_duration': 0,
+            'max_warnings': 3,
+            'warn_penalty': 'ban',
+            'antiflood_penalty': 'mute',
+            'night_mode_action': 'mute'
+        }
+    return await execute_db(_get)
+
+# ===================================================================
+# دوال مدة العقوبة - زر المدة
+# ===================================================================
+
+async def penalty_mute_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين مدة الكتم"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    
+    if len(parts) < 2:
+        await query.answer("❌ بيانات غير صالحة", show_alert=True)
+        return
+    
+    duration_str = parts[0].split("_")[-1] if "_" in parts[0] else parts[1]
+    
+    if duration_str == "permanent":
+        duration = -1
+        duration_text = "دائم"
+    else:
+        try:
+            duration = int(duration_str)
+            if duration < 60:
+                duration_text = f"{duration} دقيقة"
+            elif duration < 1440:
+                duration_text = f"{duration // 60} ساعة"
+            else:
+                duration_text = f"{duration // 1440} يوم"
+        except ValueError:
+            await query.answer("❌ مدة غير صالحة", show_alert=True)
+            return
+    
+    try:
+        chat_id = int(parts[-1])
+    except (ValueError, IndexError):
+        await query.answer("❌ معرف المجموعة غير صالح", show_alert=True)
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_security_settings(chat_id, auto_penalty='mute', auto_mute_duration=duration if duration > 0 else 60)
+    
+    await query.answer(f"✅ تم تعيين مدة الكتم إلى: {duration_text}")
+    await penalty_menu_callback(update, context)
+
+# ===================================================================
+# دوال قائمة مدة الكتم
+# ===================================================================
+
+async def mute_duration_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة مدة الكتم"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
+    
+    if not chat_id:
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("⏱️ 5 دقائق", callback_data=f"mute_duration:5:{chat_id}"),
+            InlineKeyboardButton("⏱️ 30 دقيقة", callback_data=f"mute_duration:30:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("⏱️ 1 ساعة", callback_data=f"mute_duration:60:{chat_id}"),
+            InlineKeyboardButton("⏱️ 12 ساعة", callback_data=f"mute_duration:720:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("📆 يوم", callback_data=f"mute_duration:1440:{chat_id}"),
+            InlineKeyboardButton("📆 أسبوع", callback_data=f"mute_duration:10080:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔇 كتم دائم", callback_data=f"mute_duration:permanent:{chat_id}"),
+            InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}")
+        ]
+    ]
+    
+    await query.edit_message_text("🔇 **اختر مدة الكتم**", reply_markup=InlineKeyboardMarkup(keyboard))
+
+# ===================================================================
+# دوال قائمة العقوبات
+# ===================================================================
+
+async def penalty_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة العقوبات"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('penalty_chat_id')
+    
+    if not chat_id:
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['penalty_chat_id'] = chat_id
+    
+    settings = await db_get_penalty_settings(chat_id)
+    
+    text = f"""⚖️ **العقوبات**
+━━━━━━━━━━━━━━━━━━━━━━
+🔴 العقوبة التلقائية: {settings['auto_penalty']}
+⏱️ مدة الكتم: {settings['auto_mute_duration']} دقيقة
+🗑️ عقوبة الحذف: {settings['delete_penalty']}
+⚠️ عقوبة التحذير: {settings['warn_penalty']}
+🌊 عقوبة الفيضان: {settings['antiflood_penalty']}
+🌙 العقوبة الليلية: {settings['night_mode_action']}
+━━━━━━━━━━━━━━━━━━━━━━
+اختر العقوبة المطلوبة:"""
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("👢 طرد", callback_data=f"{CallbackData.PENALTY_KICK}:{chat_id}"),
+            InlineKeyboardButton("🛑 حظر", callback_data=f"{CallbackData.PENALTY_BAN}:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔇 كتم", callback_data=f"{CallbackData.PENALTY_MUTE}:{chat_id}"),
+            InlineKeyboardButton("⚠️ تحذير", callback_data=f"penalty:warn:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔒 تقييد", callback_data=f"penalty:restrict:{chat_id}"),
+            InlineKeyboardButton("❌ لا شيء", callback_data=f"penalty:none:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("⏱️ مدة الكتم", callback_data=f"mute_duration_menu:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")
+        ]
+    ]
+    
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+# ===================================================================
+# دوال العقوبات - تحويل من اسم إلى كولباك
+# ===================================================================
+
+async def penalty_kick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_security_settings(chat_id, auto_penalty='kick')
+    await query.answer("✅ تم تعيين عقوبة الطرد")
+    await penalty_menu_callback(update, context)
+
+async def penalty_ban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_security_settings(chat_id, auto_penalty='ban')
+    await query.answer("✅ تم تعيين عقوبة الحظر")
+    await penalty_menu_callback(update, context)
+
+async def penalty_mute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_security_settings(chat_id, auto_penalty='mute')
+    await query.answer("✅ تم تعيين عقوبة الكتم")
+    await penalty_menu_callback(update, context)
+
+async def penalty_warn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_security_settings(chat_id, auto_penalty='warn')
+    await query.answer("✅ تم تعيين عقوبة التحذير")
+    await penalty_menu_callback(update, context)
+
+async def penalty_restrict_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_security_settings(chat_id, auto_penalty='restrict')
+    await query.answer("✅ تم تعيين عقوبة التقييد")
+    await penalty_menu_callback(update, context)
+
+async def penalty_none_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_set_security_settings(chat_id, auto_penalty='none')
+    await query.answer("✅ تم إلغاء العقوبة")
+    await penalty_menu_callback(update, context)
 
 async def get_main_keyboard(user_id: int):
     channels = await db_get_channels(user_id)
