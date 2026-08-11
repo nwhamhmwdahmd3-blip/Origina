@@ -13144,6 +13144,37 @@ async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_
                 )
         except:
             pass
+async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة المستخدمين (لوحة الأدمن)"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    # التحقق من صلاحية المشرف
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    # جلب جميع المستخدمين
+    users = await db_get_all_users()
+    
+    text = "👥 **قائمة المستخدمين**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    if not users:
+        text += "📭 لا يوجد مستخدمين."
+    else:
+        for uid, banned in users:
+            try:
+                user = await context.bot.get_chat(uid)
+                name = user.first_name or str(uid)
+            except:
+                name = str(uid)
+            status = "⛔ محظور" if banned else "✅ نشط"
+            text += f"• {name} (`{uid}`) - {status}\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard)
 
 async def main():
     """الوظيفة الرئيسية لتشغيل البوت"""
