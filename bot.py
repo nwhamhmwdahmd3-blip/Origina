@@ -14839,6 +14839,176 @@ async def get_main_keyboard(user_id: int):
         error_text = f"⚠️ حدث خطأ في تحميل القائمة (الرمز: `{error_id}`)"
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]])
         return keyboard, error_text, None
+# ===================================================================
+# معالج الأخطاء المتطور - يعرض تفاصيل الخطأ للمستخدم
+# ===================================================================
+
+async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    معالج أخطاء متطور يعرض تفاصيل دقيقة عن أي خطأ يحدث.
+    """
+    try:
+        # 1. استخراج معلومات الخطأ
+        error = context.error
+        error_type = type(error).__name__
+        error_message = str(error)
+        
+        # 2. استخراج معلومات المستخدم والرسالة
+        user_id = update.effective_user.id if update and update.effective_user else "غير معروف"
+        chat_id = update.effective_chat.id if update and update.effective_chat else "غير معروف"
+        message_text = update.effective_message.text if update and update.effective_message else "غير معروف"
+        
+        # 3. إنشاء معرف فريد للخطأ
+        error_id = secrets.token_hex(4)
+        
+        # 4. تحديد سبب الخطأ بناءً على نوعه
+        cause = "غير معروف"
+        solution = "يرجى إعادة المحاولة أو التواصل مع المطور."
+        
+        if isinstance(error, NameError):
+            cause = f"دالة أو متغير غير معرف: `{error_message}`"
+            solution = "تأكد من تعريف الدالة أو المتغير المطلوب."
+        elif isinstance(error, AttributeError):
+            cause = f"خاصية غير موجودة: `{error_message}`"
+            solution = "تأكد من وجود الخاصية في الكائن المطلوب."
+        elif isinstance(error, KeyError):
+            cause = f"مفتاح غير موجود في القاموس: `{error_message}`"
+            solution = "تأكد من وجود المفتاح المطلوب."
+        elif isinstance(error, ValueError):
+            cause = f"قيمة غير صالحة: `{error_message}`"
+            solution = "تأكد من إدخال قيمة صحيحة."
+        elif isinstance(error, TypeError):
+            cause = f"نوع بيانات غير صحيح: `{error_message}`"
+            solution = "تأكد من استخدام النوع الصحيح للبيانات."
+        elif isinstance(error, sqlite3.OperationalError):
+            cause = f"خطأ في قاعدة البيانات: `{error_message}`"
+            solution = "تأكد من صحة استعلام SQL أو وجود الجداول المطلوبة."
+        elif isinstance(error, BadRequest):
+            cause = f"طلب غير صحيح إلى Telegram API: `{error_message}`"
+            if "message is not modified" in error_message.lower():
+                solution = "لا تحاول تعديل رسالة بنفس المحتوى."
+            elif "user is not a member" in error_message.lower():
+                solution = "تأكد من أن المستخدم عضو في المجموعة."
+            elif "bot is not a member" in error_message.lower():
+                solution = "تأكد من أن البوت عضو في المجموعة."
+            else:
+                solution = "تحقق من صحة البيانات المرسلة."
+        elif isinstance(error, Forbidden):
+            cause = f"البوت محظور أو ليس لديه صلاحيات: `{error_message}`"
+            solution = "تأكد من أن البوت مشرف ولديه الصلاحيات المطلوبة."
+        elif isinstance(error, TimedOut):
+            cause = f"انتهت مهلة الاتصال بـ Telegram: `{error_message}`"
+            solution = "حاول مرة أخرى، أو تحقق من سرعة الاتصال."
+        elif isinstance(error, NetworkError):
+            cause = f"مشكلة في الشبكة: `{error_message}`"
+            solution = "تحقق من اتصال الإنترنت، وحاول مرة أخرى."
+        elif isinstance(error, Conflict):
+            cause = f"تعارض في التحديثات (بوت مكرر): `{error_message}`"
+            solution = "تأكد من عدم تشغيل نسخة أخرى من البوت بنفس التوكن."
+        else:
+            cause = f"خطأ غير معروف: `{error_message}`"
+            solution = "راجع سجلات البوت (logs) لمعرفة التفاصيل."
+        
+        # 5. بناء رسالة الخطأ المفصلة
+        error_text = f"""🚨 **خطأ في البوت**
+━━━━━━━━━━━━━━━━━━━━━━
+🆔 **معرف الخطأ:** `{error_id}`
+📌 **نوع الخطأ:** `{error_type}`
+📝 **الرسالة:** `{error_message}`
+
+📋 **السبب:**
+{cause}
+
+🔧 **الحل المقترح:**
+{solution}
+━━━━━━━━━━━━━━━━━━━━━━
+👤 **المستخدم:** `{user_id}`
+💬 **المجموعة:** `{chat_id}`
+📝 **الرسالة:** `{message_text[:100]}`
+🕐 **الوقت:** {mecca_now().strftime('%Y-%m-%d %H:%M:%S')}
+━━━━━━━━━━━━━━━━━━━━━━
+📌 **حالة الخطأ:** ⚠️ قيد المعالجة"""
+
+        # 6. إرسال التفاصيل إلى المستخدم (إذا كان موجوداً)
+        if update and update.effective_user:
+            try:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    error_text
+                )
+            except Exception as e:
+                # إذا فشل إرسال التفاصيل، أرسل رسالة مبسطة
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"❌ حدث خطأ (الرمز: `{error_id}`)\nنوع الخطأ: `{error_type}`"
+                    )
+                except:
+                    pass
+        
+        # 7. إرسال إلى قناة التقارير (إذا كانت محددة)
+        log_channel_id = await db_get_log_channel_id()
+        if log_channel_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=log_channel_id,
+                    text=error_text,
+                    parse_mode="MarkdownV2"
+                )
+            except:
+                pass
+        
+        # 8. تسجيل في سجل الأخطاء
+        advanced_logger.log_error(
+            f"خطأ في التحديث ({error_id})",
+            error,
+            {
+                'user_id': user_id,
+                'chat_id': chat_id,
+                'message': message_text[:200],
+                'error_id': error_id
+            }
+        )
+        
+        # 9. إرسال إشعار للمطور الأساسي (للأخطاء الحرجة)
+        if isinstance(error, (Forbidden, Conflict, sqlite3.OperationalError)):
+            try:
+                await context.bot.send_message(
+                    chat_id=PRIMARY_OWNER_ID,
+                    text=f"🚨 **خطأ حرج في البوت**\n\n🆔 `{error_id}`\n📌 `{error_type}`\n📝 `{error_message[:200]}`\n👤 المستخدم: `{user_id}`",
+                    parse_mode="MarkdownV2"
+                )
+            except:
+                pass
+        
+        return True
+        
+    except Exception as e:
+        # معالج الطوارئ - في حالة فشل معالج الأخطاء نفسه
+        logger.error(f"فشل معالج الأخطاء نفسه: {e}")
+        try:
+            if update and update.effective_user:
+                await context.bot.send_message(
+                    chat_id=update.effective_user.id,
+                    text="❌ حدث خطأ غير متوقع. تم إبلاغ المطور."
+                )
+        except:
+            pass
+        return True
+
+
+# ===================================================================
+# دالة مساعدة لاختبار معالج الأخطاء (للتأكد من عمله)
+# ===================================================================
+
+async def test_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    أمر اختبار لإنشاء خطأ متعمد والتحقق من عمل معالج الأخطاء.
+    """
+    # هذا سيخلق خطأ NameError متعمداً
+    undefined_variable = some_undefined_variable  # خطأ متعمد
+    await update.message.reply_text("هذا النص لن يظهر")
 
 # ===================================================================
 # 34. دالة main() النهائية
