@@ -9380,7 +9380,7 @@ LEVEL_REQUIREMENTS = {
     10: 50000
 }
 # ===================================================================
-# دوال الإحالات - أضفها قبل main()
+# دوال الإحالات - أضفها 
 # ===================================================================
 
 async def db_get_referral_code(user_id: int) -> str:
@@ -9499,6 +9499,166 @@ async def db_get_referral_settings() -> dict:
         cur = await conn.execute("SELECT key, value FROM referral_settings")
         rows = await cur.fetchall()
         return {row[0]: row[1] for row in rows}
+    return await execute_db(_get)
+# ===================================================================
+# دوال المسابقات - أضفها قبل main()
+# ===================================================================
+
+async def db_get_contest(contest_id: int) -> dict | None:
+    """جلب بيانات مسابقة محددة"""
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("""
+            SELECT id, title, description, prize, end_date, status, winner_id, creator_id, created_at, contest_type
+            FROM contests WHERE id = ?
+        """, (contest_id,))
+        row = await cur.fetchone()
+        if row:
+            return {
+                'id': row['id'],
+                'title': row['title'],
+                'description': row['description'],
+                'prize': row['prize'],
+                'end_date': row['end_date'],
+                'status': row['status'],
+                'winner_id': row['winner_id'],
+                'creator_id': row['creator_id'],
+                'created_at': row['created_at'],
+                'contest_type': row['contest_type'] if 'contest_type' in row.keys() else 'raffle'
+            }
+        return None
+    return await execute_db(_get)
+
+async def db_get_active_contests_with_participants(limit: int = 10) -> list:
+    """جلب المسابقات النشطة مع عدد المشاركين"""
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        now = utc_now().isoformat()
+        cur = await conn.execute("""
+            SELECT c.id, c.title, c.description, c.prize, c.end_date, c.contest_type,
+                   COALESCE((SELECT COUNT(*) FROM contest_participants cp WHERE cp.contest_id = c.id), 0) as participants
+            FROM contests c
+            WHERE c.status = 'active' AND c.end_date > ?
+            ORDER BY c.end_date ASC LIMIT ?
+        """, (now, limit))
+        rows = await cur.fetchall()
+        result = []
+        for row in rows:
+            result.append((
+                row['id'],
+                row['title'],
+                row['description'],
+                row['prize'],
+                row['end_date'],
+                row['participants'],
+                row['contest_type'] if 'contest_type' in row.keys() else 'raffle'
+            ))
+        return result
+    return await execute_db(_get)
+
+async def db_get_user_participation(user_id: int, contest_id: int) -> dict | None:
+    """جلب بيانات مشاركة المستخدم في مسابقة"""
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute(
+            "SELECT id, answer, joined_at FROM contest_participants WHERE user_id = ? AND contest_id = ?",
+            (user_id, contest_id)
+        )
+        row = await cur.fetchone()
+        if row:
+            return {'id': row['id'], 'answer': row['answer'], 'joined_at': row['joined_at']}
+        return None
+    return await execute_db(_get)
+
+async def db_create_contest(creator_id: int, title: str, description: str, prize: str,
+                            end_date: datetime, contest_type: str = 'raffle') -> int:
+    """إنشاء مسابقة جديدة"""
+    try:
+        if end_date <= utc_now():
+            raise ValueError("end_date must be in future")
+        async def _create(conn):
+            if not isinstance(end_date, datetime):
+                raise ValueError("end_date must be datetime object")
+            end_date_str = end_date.isoformat()
+            created_at_str = utc_now_iso()
+            cur = await conn.execute("""
+                INSERT INTO contests (creator_id, title, description, prize, end_date, status, created_at, contest_type)
+                VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+            """, (creator_id, title, description, prize, end_date_str, created_at_str, contest_type))
+            await conn.commit()
+            return cur.lastrowid
+        contest_id = await execute_db(_create)
+        if contest_id:
+            logger.info(f"✅ تم إنشاء مسابقة جديدة (ID: {contest_id}) بواسطة المستخدم {creator_id}")
+        return contest_id
+    except Exception as e:
+        logger.error(f"❌ خطأ في db_create_contest: {e}")
+        return None
+
+async def db_participate_in_contest(user_id: int, contest_id: int, answer: str = "") -> bool:
+    """المشاركة في مسابقة"""
+    async def _participate(conn):
+        try:
+            await conn.execute(
+                "INSERT INTO contest_participants (user_id, contest_id, answer, joined_at) VALUES (?, ?, ?, ?)",
+                (user_id, contest_id, answer, utc_now_iso())
+            )
+            await conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+    return await execute_db(_participate)
+
+async def db_set_contest_winner(contest_id: int, winner_id: int) -> bool:
+    """تعيين فائز في المسابقة"""
+    async def _set(conn):
+        await conn.execute(
+            "UPDATE contests SET status = 'finished', winner_id = ? WHERE id = ?",
+            (winner_id, contest_id)
+        )
+        await conn.execute(
+            "INSERT INTO contest_winners (contest_id, winner_id, announced_at) VALUES (?, ?, ?)",
+            (contest_id, winner_id, utc_now_iso())
+        )
+        await conn.commit()
+        return True
+    return await execute_db(_set)
+
+async def db_get_contest_winners(limit: int = 10) -> list:
+    """الحصول على الفائزين السابقين"""
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("""
+            SELECT c.id, c.title, c.prize, cw.winner_id, cw.announced_at
+            FROM contest_winners cw
+            JOIN contests c ON cw.contest_id = c.id
+            ORDER BY cw.announced_at DESC LIMIT ?
+        """, (limit,))
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def db_delete_contest(contest_id: int, user_id: int) -> bool:
+    """حذف مسابقة"""
+    async def _delete(conn):
+        cur = await conn.execute("SELECT creator_id FROM contests WHERE id = ?", (contest_id,))
+        row = await cur.fetchone()
+        if row and (row[0] == user_id or await is_bot_admin(user_id)):
+            await conn.execute("DELETE FROM contest_participants WHERE contest_id = ?", (contest_id,))
+            await conn.execute("DELETE FROM contests WHERE id = ?", (contest_id,))
+            await conn.commit()
+            return True
+        return False
+    return await execute_db(_delete)
+
+async def db_get_random_participant(contest_id: int) -> int | None:
+    """الحصول على مشارك عشوائي في المسابقة"""
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT user_id FROM contest_participants WHERE contest_id = ? ORDER BY RANDOM() LIMIT 1",
+            (contest_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] if row else None
     return await execute_db(_get)
 
 async def main():
