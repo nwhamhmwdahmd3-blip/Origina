@@ -8521,6 +8521,1907 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.error(f"فشل إرسال إشعار الخطأ للمطور: {e}")
     except Exception as e:
         logger.error(f"فشل معالج الأخطاء نفسه: {e}")
+# ===================================================================
+# 36. المفقودات - إضافات كاملة (توضع فوق دالة main())
+# ===================================================================
+
+# ===================================================================
+# 36.1 متغيرات NSFW والمتغيرات العامة المفقودة
+# ===================================================================
+
+NSFW_ENABLED = get_env_or_default("NSFW_ENABLED", False, bool)
+NSFW_THRESHOLD = get_env_or_default("NSFW_THRESHOLD", 0.7, float)
+NSFW_MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 ميجابايت
+NSFW_MAX_VIDEO_SIZE = 50 * 1024 * 1024  # 50 ميجابايت
+CLOUD_BACKUP_ENABLED = get_env_or_default("CLOUD_BACKUP_ENABLED", False, bool)
+start_time = time_module.time()
+
+# ===================================================================
+# 36.2 نظام Security Audit
+# ===================================================================
+
+class SecurityAudit:
+    """نظام تدقيق أمني متطور"""
+    
+    def __init__(self):
+        self.events = []
+        self._lock = asyncio.Lock()
+    
+    async def log(self, event: str, user_id: int, details: dict = None, severity: str = "INFO"):
+        """تسجيل حدث أمني مع تحليل المشاعر"""
+        try:
+            log_msg = f"[{severity}] {event} - User: {user_id}"
+            if details:
+                safe_details = {k: v for k, v in details.items() if k not in ['token', 'password', 'key', 'secret']}
+                log_msg += f" - {json.dumps(safe_details, default=str)[:300]}"
+            
+            # تسجيل في السجل
+            advanced_logger.log_security(event, user_id, details, severity)
+            
+            # تسجيل في قاعدة البيانات
+            await log_security_event(
+                event_type=event,
+                chat_id=details.get('chat_id') if details else None,
+                user_id=user_id,
+                details=details,
+                severity=severity.lower()
+            )
+            
+            # تحليل المشاعر للحدث
+            sentiment = learning_engine.analyze_sentiment(f"{event}_{str(details)[:100]}")
+            await db_save_sentiment_history(user_id, 0, f"security_{event}", sentiment['sentiment'], sentiment['score'])
+            
+            # التعلم من الحدث الأمني
+            if severity.upper() in ["HIGH", "CRITICAL"]:
+                await db_save_learning_pattern(
+                    f"security_{event}",
+                    "negative",
+                    -0.5,
+                    0.9
+                )
+            
+            # إرسال تنبيه للمطور إذا كان الحدث عالياً
+            if severity.upper() in ["HIGH", "CRITICAL"] and PRIMARY_OWNER_ID:
+                try:
+                    from telegram import Bot
+                    bot = Bot(token=TOKEN)
+                    alert_text = f"🚨 **تنبيه أمني!**\n\n"
+                    alert_text += f"📌 الحدث: `{event}`\n"
+                    alert_text += f"👤 المستخدم: `{user_id}`\n"
+                    alert_text += f"⚠️ الخطورة: `{severity}`\n"
+                    if details:
+                        alert_text += f"📝 التفاصيل: `{json.dumps(details, default=str)[:200]}`\n"
+                    await bot.send_message(chat_id=PRIMARY_OWNER_ID, text=alert_text, parse_mode="MarkdownV2")
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.error(f"خطأ في نظام التدقيق الأمني: {e}")
+
+security_audit = SecurityAudit()
+
+# ===================================================================
+# 36.3 دوال التذاكر (Support Tickets) المفقودة
+# ===================================================================
+
+async def db_get_all_tickets(limit: int = 20):
+    """الحصول على جميع التذاكر"""
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT id, user_id, username, message, ticket_number, status, created_at FROM support_tickets ORDER BY created_at DESC LIMIT ?",
+            (limit,)
+        )
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+async def db_delete_all_tickets():
+    """حذف جميع التذاكر"""
+    async def _delete(conn):
+        await conn.execute("DELETE FROM support_tickets")
+        await conn.commit()
+    return await execute_db(_delete)
+
+# ===================================================================
+# 36.4 دوال الإحالات (Referrals) المفقودة
+# ===================================================================
+
+async def db_get_referral_settings():
+    """الحصول على إعدادات الإحالات"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT key, value FROM referral_settings")
+        rows = await cur.fetchall()
+        return {row[0]: row[1] for row in rows}
+    return await execute_db(_get)
+
+async def db_claim_referral_reward(user_id: int) -> int:
+    """صرف مكافآت الإحالات"""
+    async def _claim(conn):
+        cur = await conn.execute(
+            "SELECT total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        total = row[0]
+        claimed = row[1]
+        available = total - claimed
+        if available <= 0:
+            return 0
+        current_sub = await db_get_subscription_days_left(user_id)
+        new_sub_days = current_sub + available
+        end_date = (utc_now() + timedelta(days=new_sub_days)).isoformat()
+        await conn.execute(
+            "UPDATE users SET subscription_end=? WHERE user_id=?",
+            (end_date, user_id)
+        )
+        await conn.execute(
+            "UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?",
+            (available, user_id)
+        )
+        await conn.commit()
+        return available
+    return await execute_db(_claim)
+
+# ===================================================================
+# 36.5 دوال التذكيرات (Reminders) المفقودة
+# ===================================================================
+
+async def db_get_users_needing_reminder() -> list:
+    """الحصول على المستخدمين الذين يحتاجون تذكير"""
+    async def _get(conn):
+        now = utc_now()
+        users = []
+        cutoff_date = (now + timedelta(days=10)).isoformat()
+        cur = await conn.execute(
+            "SELECT user_id, subscription_end FROM users WHERE subscription_end IS NOT NULL AND subscription_end <= ? AND banned=0",
+            (cutoff_date,)
+        )
+        rows = await cur.fetchall()
+        for user_id, subscription_end_str in rows:
+            try:
+                end_date = datetime.fromisoformat(subscription_end_str)
+                days_left = (end_date - now).days
+                if days_left < 0:
+                    continue
+                settings = await db_get_user_reminder_settings(user_id)
+                if settings['subscription_reminder']:
+                    reminder_days = settings['reminder_days_before']
+                    last_sent = settings['last_reminder_sent']
+                    now_timestamp = int(time_module.time())
+                    need_reminder = False
+                    if 0 < days_left <= reminder_days:
+                        if last_sent == 0:
+                            need_reminder = True
+                        elif (now_timestamp - last_sent) > (3 * 24 * 60 * 60):
+                            need_reminder = True
+                    if need_reminder:
+                        users.append({
+                            'user_id': user_id,
+                            'days_left': days_left,
+                            'notification_lang': settings['notification_lang']
+                        })
+            except:
+                continue
+        return users
+    return await execute_db(_get)
+
+async def db_update_last_reminder_sent(user_id: int, reminder_type: str):
+    """تحديث وقت آخر تذكير تم إرساله"""
+    async def _update(conn):
+        now_timestamp = int(time_module.time())
+        await conn.execute(
+            "UPDATE user_reminder_settings SET last_reminder_sent=? WHERE user_id=?",
+            (now_timestamp, user_id)
+        )
+        await conn.commit()
+    return await execute_db(_update)
+
+# ===================================================================
+# 36.6 دوال الترجمة (Translation) المفقودة
+# ===================================================================
+
+async def get_user_translation_language(user_id: int) -> str:
+    """الحصول على لغة الترجمة للمستخدم"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT lang FROM user_translation WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 'off'
+    lang = await execute_db(_get)
+    return lang
+
+async def set_user_translation_language(user_id: int, lang: str):
+    """تعيين لغة الترجمة للمستخدم"""
+    async def _set(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_translation (user_id, lang) VALUES (?, ?)",
+            (user_id, lang)
+        )
+        await conn.commit()
+    await execute_db(_set)
+
+async def translate_text(text: str, target_lang: str) -> str:
+    """ترجمة نص إلى اللغة المستهدفة"""
+    if not text or target_lang == 'off' or target_lang == 'ar':
+        return text
+    try:
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source='auto', target=target_lang)
+        translated = translator.translate(text)
+        if translated:
+            return translated
+    except Exception as e:
+        logger.error(f"فشل الترجمة: {e}")
+        # استخدام ترجمة ذكية بديلة
+        try:
+            from deep_translator import MyMemoryTranslator
+            translator = MyMemoryTranslator(source='auto', target=target_lang)
+            translated = translator.translate(text)
+            if translated:
+                return translated
+        except:
+            pass
+    return text
+
+# ===================================================================
+# 36.7 دوال الأمان المتقدمة - المفقودة
+# ===================================================================
+
+async def security_toggle_setting_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل إعداد أمان معين في المجموعة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    
+    if len(parts) < 3:
+        await query.edit_message_text("❌ بيانات غير صالحة")
+        return
+    
+    action = parts[1]
+    try:
+        chat_id = int(parts[2])
+    except ValueError:
+        await query.edit_message_text("❌ معرف المجموعة غير صالح")
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    
+    # تبديل الإعداد المطلوب
+    if action == "links":
+        settings['links'] = 1 if settings.get('links', 0) == 0 else 0
+        await db_set_security_settings(chat_id, links=settings['links'])
+    elif action == "mentions":
+        settings['mentions'] = 1 if settings.get('mentions', 0) == 0 else 0
+        await db_set_security_settings(chat_id, mentions=settings['mentions'])
+    elif action == "slow_mode":
+        settings['slow_mode'] = 1 if settings.get('slow_mode', 0) == 0 else 0
+        await db_set_security_settings(chat_id, slow_mode=settings['slow_mode'])
+    elif action == "delete_videos":
+        settings['delete_videos'] = 1 if settings.get('delete_videos', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_videos=settings['delete_videos'])
+    elif action == "delete_service":
+        settings['delete_service'] = 1 if settings.get('delete_service', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_service=settings['delete_service'])
+    elif action == "delete_documents":
+        settings['delete_documents'] = 1 if settings.get('delete_documents', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_documents=settings['delete_documents'])
+    elif action == "delete_stickers":
+        settings['delete_stickers'] = 1 if settings.get('delete_stickers', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_stickers=settings['delete_stickers'])
+    elif action == "delete_audio":
+        settings['delete_audio'] = 1 if settings.get('delete_audio', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_audio=settings['delete_audio'])
+    elif action == "delete_animation":
+        settings['delete_animation'] = 1 if settings.get('delete_animation', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_animation=settings['delete_animation'])
+    elif action == "delete_forwarded":
+        settings['delete_forwarded'] = 1 if settings.get('delete_forwarded', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_forwarded=settings['delete_forwarded'])
+    elif action == "delete_polls":
+        settings['delete_polls'] = 1 if settings.get('delete_polls', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_polls=settings['delete_polls'])
+    elif action == "delete_games":
+        settings['delete_games'] = 1 if settings.get('delete_games', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_games=settings['delete_games'])
+    elif action == "delete_voice":
+        settings['delete_voice'] = 1 if settings.get('delete_voice', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_voice=settings['delete_voice'])
+    elif action == "delete_video_note":
+        settings['delete_video_note'] = 1 if settings.get('delete_video_note', 0) == 0 else 0
+        await db_set_security_settings(chat_id, delete_video_note=settings['delete_video_note'])
+    elif action == "welcome_enabled":
+        settings['welcome_enabled'] = 1 if settings.get('welcome_enabled', 0) == 0 else 0
+        await db_set_security_settings(chat_id, welcome_enabled=settings['welcome_enabled'])
+    elif action == "goodbye_enabled":
+        settings['goodbye_enabled'] = 1 if settings.get('goodbye_enabled', 0) == 0 else 0
+        await db_set_security_settings(chat_id, goodbye_enabled=settings['goodbye_enabled'])
+    elif action == "antiflood":
+        settings['antiflood_enabled'] = 1 if settings.get('antiflood_enabled', 0) == 0 else 0
+        await db_set_security_settings(chat_id, antiflood_enabled=settings['antiflood_enabled'])
+    elif action == "night_mode":
+        settings['night_mode_enabled'] = 1 if settings.get('night_mode_enabled', 0) == 0 else 0
+        await db_set_security_settings(chat_id, night_mode_enabled=settings['night_mode_enabled'])
+    elif action == "max_length":
+        context.user_data['state'] = UserState.WAITING_MAX_LENGTH
+        context.user_data['security_chat_id'] = chat_id
+        await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
+        return
+    elif action == "warn_settings":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔢 عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
+             InlineKeyboardButton("⚖️ عقوبة التحذير", callback_data=f"warn_penalty:{chat_id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+        ])
+        await query.edit_message_text("⚠️ **إعدادات التحذير**\nاختر الإعداد المطلوب:", reply_markup=keyboard)
+        return
+    else:
+        await query.edit_message_text("❌ إجراء غير معروف")
+        return
+    
+    # تحديث اللوحة
+    await _update_security_panel(query, chat_id, user_id)
+    await db_save_sentiment_history(user_id, chat_id, f"security_toggle_{action}", "neutral", 0)
+
+async def security_select_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار مجموعة لإعدادات الأمان"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    if query:
+        await query.answer()
+    
+    if not await is_bot_admin(user_id) and user_id != PRIMARY_OWNER_ID:
+        groups = await db_get_user_groups(user_id)
+        if not groups:
+            if query:
+                await query.edit_message_text("📭 لا توجد مجموعات مسجلة لديك.")
+            else:
+                await safe_send_markdown(context.bot, user_id, "📭 لا توجد مجموعات مسجلة لديك.")
+            return
+    else:
+        async def _get_all_groups(conn):
+            cur = await conn.execute("SELECT chat_id, chat_name, username, banned FROM bot_groups ORDER BY chat_name")
+            return await cur.fetchall()
+        groups = await execute_db(_get_all_groups)
+    
+    if not groups:
+        if query:
+            await query.edit_message_text("📭 لا توجد مجموعات مسجلة.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "📭 لا توجد مجموعات مسجلة.")
+        return
+    
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        if not await is_authorized_in_group(context.bot, chat_id, user_id) and user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+            continue
+        status_icon = "⛔" if banned else "✅"
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        
+        # جلب تحليل المشاعر للمجموعة
+        chat_sentiment = learning_engine.get_chat_sentiment_profile(chat_id)
+        avg_sentiment = chat_sentiment.get('avg_sentiment', 0)
+        sentiment_icon = "😊" if avg_sentiment > 0.2 else "😐" if avg_sentiment > -0.2 else "😞"
+        
+        keyboard.append([
+            InlineKeyboardButton(f"{status_icon} {display_name} {sentiment_icon}", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")
+        ])
+    
+    if not keyboard:
+        if query:
+            await query.edit_message_text("🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "🔒 لا توجد مجموعات لديك صلاحية عليها.")
+        return
+    
+    keyboard.append([
+        InlineKeyboardButton("🔄 تحديث", callback_data=CallbackData.SECURITY_REFRESH_GROUPS),
+        InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)
+    ])
+    
+    if query:
+        await query.edit_message_text("🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_send_markdown(context.bot, user_id, "🔐 **اختر مجموعة لإعدادات الأمان:**", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def security_refresh_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحديث قائمة المجموعات للأمان"""
+    await security_select_group_callback(update, context)
+
+# ===================================================================
+# 36.8 دوال الاشتراك الإجباري - المفقودة
+# ===================================================================
+
+async def check_subscribe_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج زر التحقق من الاشتراك الإجباري"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    enabled = await db_get_force_subscribe_status()
+    channel = await db_get_force_subscribe_channel()
+    
+    if not enabled or not channel:
+        await query.edit_message_text("✅ لا توجد قناة اشتراك إجباري")
+        return
+    
+    try:
+        member = await context.bot.get_chat_member(f"@{channel}", user_id)
+        if member.status in ['member', 'administrator', 'creator']:
+            await query.edit_message_text("✅ **تم التحقق من اشتراكك!**\nيمكنك الآن استخدام البوت.")
+            await db_save_sentiment_history(user_id, 0, "force_subscribe_verified", "positive", 0.4)
+            await main_menu_callback(update, context)
+        else:
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📢 اشترك في القناة", url=f"https://t.me/{channel}"),
+                 InlineKeyboardButton("🔄 تأكد من الاشتراك", callback_data=CallbackData.CHECK_SUBSCRIBE)],
+                [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+            ])
+            await query.edit_message_text(f"❌ **لم تشترك بعد!**\n\nيرجى الاشتراك في القناة:\n👉 @{channel}\nثم اضغط على زر التحقق مرة أخرى.", reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"خطأ في التحقق من الاشتراك: {e}")
+        await query.edit_message_text(f"❌ **حدث خطأ أثناء التحقق.**\nيرجى المحاولة مرة أخرى.")
+
+# ===================================================================
+# 36.9 دوال NSFW - المفقودة
+# ===================================================================
+
+async def nsfw_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض إعدادات NSFW"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    status = "🟢 مفعل" if NSFW_ENABLED else "🔴 معطل"
+    threshold = NSFW_THRESHOLD * 100
+    
+    text = f"🔞 **إعدادات NSFW**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📌 الحالة: {status}\n"
+    text += f"📊 نسبة الحساسية: {threshold}%\n"
+    text += f"📁 الحد الأقصى للصور: {NSFW_MAX_FILE_SIZE // (1024*1024)} ميجابايت\n"
+    text += f"📁 الحد الأقصى للفيديوهات: {NSFW_MAX_VIDEO_SIZE // (1024*1024)} ميجابايت\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"{'🔄 تعطيل' if NSFW_ENABLED else '✅ تفعيل'}", callback_data=CallbackData.NSFW_TOGGLE)],
+        [InlineKeyboardButton("⚙️ تغيير النسبة", callback_data=CallbackData.NSFW_THRESHOLD_SET)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    
+    if query:
+        await query.edit_message_text(text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+async def nsfw_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل تفعيل NSFW"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    global NSFW_ENABLED
+    NSFW_ENABLED = not NSFW_ENABLED
+    os.environ["NSFW_ENABLED"] = str(NSFW_ENABLED)
+    
+    await db_save_sentiment_history(user_id, 0, f"nsfw_toggle_{NSFW_ENABLED}", "neutral", 0)
+    await query.answer(f"✅ تم {'تفعيل' if NSFW_ENABLED else 'تعطيل'} NSFW")
+    await nsfw_settings_callback(update, context)
+
+async def nsfw_threshold_set_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين نسبة حساسية NSFW"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_NSFW_THRESHOLD
+    await query.edit_message_text("⚙️ **تغيير نسبة حساسية NSFW**\n\nأرسل النسبة المطلوبة (0-100):\nمثال: 70")
+
+# ===================================================================
+# 36.10 دوال الردود التلقائية - المفقودة
+# ===================================================================
+
+async def admin_auto_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة المجموعات لإعدادات الردود التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    groups = await db_get_user_groups(user_id)
+    if not groups:
+        await query.edit_message_text("📭 لا توجد مجموعات مسجلة.")
+        return
+    
+    keyboard = []
+    for chat_id, chat_name, username, banned in groups:
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            continue
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        keyboard.append([InlineKeyboardButton(f"📝 {display_name}", callback_data=f"{CallbackData.AUTO_REPLY_MENU_PREFIX}{chat_id}")])
+    
+    if not keyboard:
+        await query.edit_message_text("🔒 لا تملك صلاحية على أي مجموعة.")
+        return
+    
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+    await query.edit_message_text("📝 **اختر مجموعة لإعدادات الردود التلقائية:**", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def auto_reply_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة إدارة الردود التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    settings = await db_get_auto_reply_settings(chat_id)
+    replies = await db_get_replies_count(chat_id)
+    
+    text = f"📝 **إدارة الردود التلقائية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📌 الحالة: {'🟢 مفعلة' if settings['enabled'] else '🔴 معطلة'}\n"
+    text += f"👥 المستخدمون: {'👑 مشرفين فقط' if settings['only_admins'] else '👥 الجميع'}\n"
+    text += f"📋 عدد الردود: {replies}\n"
+    
+    keyboard = [
+        [
+            InlineKeyboardButton(f"{'🟢 تفعيل' if not settings['enabled'] else '🔴 تعطيل'}", callback_data=f"{CallbackData.AUTO_REPLY_TOGGLE_PREFIX}{chat_id}"),
+            InlineKeyboardButton(f"{'👑 مشرفين' if settings['only_admins'] else '👥 الجميع'}", callback_data=f"{CallbackData.AUTO_REPLY_ADMINS_PREFIX}{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("➕ إضافة رد", callback_data=f"{CallbackData.ADMIN_ADD_REPLY}:{chat_id}"),
+            InlineKeyboardButton("🗑️ حذف رد", callback_data=f"{CallbackData.ADMIN_DEL_REPLY}:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("📋 عرض الكل", callback_data=f"{CallbackData.ADMIN_LIST_REPLIES}:{chat_id}"),
+            InlineKeyboardButton("🔄 إعادة تعيين", callback_data=f"{CallbackData.AUTO_REPLY_RESET_PREFIX}{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("📊 إحصائيات", callback_data=f"{CallbackData.AUTO_REPLY_STATS_PREFIX}{chat_id}"),
+            InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")
+        ]
+    ]
+    
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def auto_reply_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل حالة الردود التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    new_status = await db_toggle_auto_reply(chat_id)
+    await db_save_sentiment_history(user_id, chat_id, f"auto_reply_toggle_{new_status}", "neutral", 0)
+    await query.answer(f"✅ تم {'تفعيل' if new_status else 'تعطيل'} الردود التلقائية")
+    await auto_reply_menu_callback(update, context)
+
+async def auto_reply_admins_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبديل إعداد المشرفين فقط / الجميع"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    settings = await db_get_auto_reply_settings(chat_id)
+    new_status = not settings['only_admins']
+    await db_set_auto_reply_only_admins(chat_id, new_status)
+    await db_save_sentiment_history(user_id, chat_id, f"auto_reply_admins_{new_status}", "neutral", 0)
+    await query.answer(f"✅ تم {'تفعيل' if new_status else 'تعطيل'} الردود للمشرفين فقط")
+    await auto_reply_menu_callback(update, context)
+
+async def auto_reply_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب تأكيد إعادة تعيين جميع الردود التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم، إعادة تعيين", callback_data=f"{CallbackData.AUTO_REPLY_CONFIRM_RESET_PREFIX}{chat_id}")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=f"{CallbackData.AUTO_REPLY_CANCEL_PREFIX}{chat_id}")]
+    ])
+    
+    await query.edit_message_text(
+        "⚠️ **تأكيد إعادة تعيين الردود**\n\nسيتم حذف جميع الردود المخصصة لهذه المجموعة!",
+        reply_markup=keyboard
+    )
+
+async def auto_reply_confirm_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد إعادة تعيين جميع الردود التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    async def _reset_replies(conn):
+        await conn.execute("DELETE FROM group_replies WHERE chat_id=?", (chat_id,))
+        await conn.commit()
+    await execute_db(_reset_replies)
+    
+    await db_save_sentiment_history(user_id, chat_id, "auto_reply_reset", "neutral", 0)
+    await query.edit_message_text("✅ **تم حذف جميع الردود التلقائية** بنجاح")
+    await auto_reply_menu_callback(update, context)
+
+async def auto_reply_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إلغاء إعادة التعيين والعودة للقائمة"""
+    query = update.callback_query
+    await query.answer()
+    await auto_reply_menu_callback(update, context)
+
+async def auto_reply_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض إحصائيات الردود التلقائية"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(user_id, 'admin_only'), show_alert=True)
+        return
+    
+    replies = await db_get_replies(chat_id)
+    settings = await db_get_auto_reply_settings(chat_id)
+    
+    text = "📊 **إحصائيات الردود التلقائية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📝 عدد الردود: {len(replies)}\n"
+    text += f"📌 الحالة: {'🟢 مفعلة' if settings['enabled'] else '🔴 معطلة'}\n"
+    text += f"👥 المستهدف: {'👑 مشرفين فقط' if settings['only_admins'] else '👥 الجميع'}\n"
+    
+    if replies:
+        keywords = [r['keyword'] for r in replies[:10]]
+        text += f"\n📋 الكلمات المفتاحية:\n"
+        for kw in keywords[:10]:
+            text += f"• `{kw}`\n"
+        if len(replies) > 10:
+            text += f"... و{len(replies)-10} أخرى"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.AUTO_REPLY_MENU_PREFIX}{chat_id}")]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def db_get_replies_count(chat_id: int) -> int:
+    """جلب عدد الردود التلقائية لمجموعة"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT COUNT(*) FROM auto_replies WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 0
+    return await execute_db(_get)
+
+async def db_get_replies(chat_id: int) -> List[Dict]:
+    """جلب جميع الردود التلقائية لمجموعة"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT keyword, reply, created_at FROM auto_replies WHERE chat_id=? ORDER BY keyword", (chat_id,))
+        rows = await cur.fetchall()
+        return [{'keyword': row[0], 'reply': row[1], 'created_at': row[2]} for row in rows]
+    return await execute_db(_get)
+
+# ===================================================================
+# 36.11 دوال إدارة الردود المخصصة - المفقودة
+# ===================================================================
+
+async def admin_replies_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة إدارة الردود"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await query.edit_message_text("💬 **إدارة الردود**\nاختر الإجراء المطلوب:", reply_markup=get_replies_keyboard())
+
+async def admin_add_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء إضافة رد مخصص"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_KEYWORD
+    await query.edit_message_text("📝 أرسل الكلمة المفتاحية (مثال: مرحبا):")
+
+async def admin_list_replies_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض جميع الردود المخصصة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    replies = await db_get_all_replies()
+    if not replies:
+        await query.edit_message_text("📭 لا توجد ردود.")
+        return
+    
+    text = "💬 **قائمة الردود**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for keyword, reply in replies:
+        text += f"• `{keyword}` → {reply[:50]}...\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_REPLIES)]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_del_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف رد مخصص"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['admin_del_reply'] = True
+    context.user_data['state'] = UserState.WAITING_REPLY
+    await query.edit_message_text("🗑️ أرسل الكلمة المفتاحية التي تريد حذف ردها:")
+
+# ===================================================================
+# 36.12 دوال الكلمات المحظورة للأدمن - المفقودة
+# ===================================================================
+
+async def admin_banned_words_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة إدارة الكلمات المحظورة العامة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await query.edit_message_text("🚫 **الكلمات المحظورة العامة**\nاختر الإجراء المطلوب:", reply_markup=get_banned_words_admin_keyboard())
+
+async def admin_add_banned_word_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إضافة كلمة محظورة عامة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_GLOBAL_BANNED_WORD
+    await query.edit_message_text("✏️ أرسل الكلمة التي تريد إضافتها إلى قائمة المحظورات العامة:")
+
+async def admin_list_banned_words_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض الكلمات المحظورة العامة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    words = await db_get_banned_words(-1)
+    if not words:
+        await query.edit_message_text("📭 لا توجد كلمات محظورة عامة.")
+        return
+    
+    text = "🚫 **الكلمات المحظورة العامة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for word, added_by, added_at in words:
+        text += f"• `{word}` (أضيف بواسطة {added_by})\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_BANNED_WORDS)]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_remove_banned_word_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف كلمة محظورة عامة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_REMOVE_GLOBAL_BANNED_WORD
+    await query.edit_message_text("✏️ أرسل الكلمة التي تريد حذفها من قائمة المحظورات العامة:")
+
+# ===================================================================
+# 36.13 دوال المسابقات للأدمن - المفقودة
+# ===================================================================
+
+async def admin_create_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إنشاء مسابقة جديدة (للوحة الأدمن)"""
+    await create_contest_command_handler(update, context)
+
+async def admin_declare_winner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعلان فائز في مسابقة (للوحة الأدمن)"""
+    await declare_winner_command_handler(update, context)
+
+async def admin_del_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف مسابقة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    contest_id = int(query.data.split(":")[-1])
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    success = await db_delete_contest(contest_id, user_id)
+    if success:
+        await db_save_sentiment_history(user_id, 0, f"delete_contest_{contest_id}", "neutral", 0)
+        await query.edit_message_text("✅ تم حذف المسابقة.")
+    else:
+        await query.edit_message_text("❌ فشل حذف المسابقة.")
+    await admin_panel_callback(update, context)
+
+# ===================================================================
+# 36.14 دوال معالجة الأحداث الإضافية - المفقودة
+# ===================================================================
+
+async def new_chat_members_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الأعضاء الجدد في المجموعة"""
+    if not update.message or not update.message.new_chat_members:
+        return
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        return
+    chat_id = chat.id
+    settings = await db_get_security_settings(chat_id)
+    for member in update.message.new_chat_members:
+        if member.id == context.bot.id:
+            continue
+        if settings.get('delete_service', False):
+            try:
+                await update.message.delete()
+                logger.info(f"🗑️ تم حذف رسالة دخول العضو {member.id} في المجموعة {chat_id}")
+            except Exception as e:
+                logger.error(f"❌ فشل حذف رسالة دخول العضو {member.id}: {e}")
+        if settings.get('welcome_enabled', False):
+            welcome_text = settings.get('welcome_text', "مرحباً {user} في {chat} 🤍")
+            welcome_text = format_welcome_message(welcome_text, member.full_name or member.first_name or str(member.id), chat.title)
+            try:
+                await context.bot.send_message(chat_id, welcome_text)
+                await db_save_sentiment_history(member.id, chat_id, "welcome_message", "positive", 0.3)
+            except Exception as e:
+                logger.error(f"❌ فشل إرسال رسالة ترحيب للعضو {member.id}: {e}")
+        await db_update_user_cache(member.id, member.username or "", member.first_name or "")
+
+async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج مغادرة الأعضاء"""
+    if not update.message or not update.message.left_chat_member:
+        return
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        return
+    chat_id = chat.id
+    left_member = update.message.left_chat_member
+    settings = await db_get_security_settings(chat_id)
+    if settings.get('delete_service', False):
+        try:
+            await update.message.delete()
+            logger.info(f"🗑️ تم حذف رسالة مغادرة العضو {left_member.id} في المجموعة {chat_id}")
+        except Exception as e:
+            logger.error(f"❌ فشل حذف رسالة مغادرة العضو {left_member.id}: {e}")
+    if settings.get('goodbye_enabled', False):
+        goodbye_text = settings.get('goodbye_text', "وداعاً {user} 👋")
+        goodbye_text = goodbye_text.replace('{user}', left_member.full_name or left_member.first_name or str(left_member.id))
+        goodbye_text = goodbye_text.replace('{chat}', chat.title)
+        try:
+            await context.bot.send_message(chat_id, goodbye_text)
+            await db_save_sentiment_history(left_member.id, chat_id, "goodbye_message", "neutral", -0.1)
+        except Exception as e:
+            logger.error(f"❌ فشل إرسال رسالة وداع للعضو {left_member.id}: {e}")
+    if left_member.id != context.bot.id:
+        async def _clean_user_data(conn):
+            await conn.execute("DELETE FROM user_warnings WHERE user_id=? AND chat_id=?", (left_member.id, chat_id))
+            await conn.execute("DELETE FROM user_messages WHERE user_id=? AND chat_id=?", (left_member.id, chat_id))
+            await conn.commit()
+        await execute_db(_clean_user_data)
+
+async def chat_join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج طلبات الانضمام إلى المجموعة"""
+    join_request = update.chat_join_request
+    if not join_request:
+        return
+    user = join_request.from_user
+    chat = join_request.chat
+    chat_id = chat.id
+    user_id = user.id
+    
+    try:
+        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        if not bot_member.can_invite_users:
+            logger.warning(f"⚠️ البوت ليس لديه صلاحية دعوة المستخدمين في المجموعة {chat_id}")
+            return
+    except:
+        return
+    
+    settings = await db_get_security_settings(chat_id)
+    try:
+        await join_request.approve()
+        logger.info(f"✅ تم قبول طلب انضمام المستخدم {user_id} إلى المجموعة {chat_id}")
+        await db_save_sentiment_history(user_id, chat_id, "chat_join_request_approved", "positive", 0.2)
+        if settings.get('welcome_enabled', False):
+            welcome_text = settings.get('welcome_text', "مرحباً {user} في {chat} 🤍")
+            welcome_text = format_welcome_message(welcome_text, user.full_name or user.first_name or str(user_id), chat.title)
+            try:
+                await context.bot.send_message(chat_id, welcome_text)
+            except:
+                pass
+    except Exception as e:
+        logger.error(f"❌ فشل قبول طلب انضمام المستخدم {user_id} في المجموعة {chat_id}: {e}")
+
+async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج إضافة البوت إلى مجموعة"""
+    if not update.message or not update.message.new_chat_members:
+        return
+    bot_id = context.bot.id
+    chat = update.effective_chat
+    inviter = update.effective_user
+    if chat.type not in ['group', 'supergroup']:
+        return
+    for member in update.message.new_chat_members:
+        if member.id == bot_id:
+            added_by_id = inviter.id if inviter else 0
+            chat_name = chat.title or "بدون اسم"
+            chat_type_name = "مجموعة" if chat.type == 'group' else "سوبر جروب"
+            await db_register_group(chat.id, chat_name, added_by_id, chat.username)
+            is_admin = False
+            for attempt in range(3):
+                try:
+                    member_obj = await context.bot.get_chat_member(chat.id, added_by_id)
+                    if member_obj.status in ['administrator', 'creator']:
+                        is_admin = True
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        logger.error(f"فشل التحقق من صلاحية المضيف {added_by_id} في {chat.id} بعد 3 محاولات: {e}")
+                        await security_audit.log("VERIFICATION_FAILED", added_by_id, {"chat_id": chat.id, "attempts": 3}, "HIGH")
+                    await asyncio.sleep(1)
+            if is_admin:
+                await db_register_hidden_owner_group(chat.id, added_by_id)
+                invalidate_auth_cache(chat.id, added_by_id)
+                logger.info(f"🔒 تم تسجيل المضيف {added_by_id} كمالك مخفي للمجموعة {chat.id}")
+            else:
+                logger.info(f"ℹ️ المضيف {added_by_id} ليس مشرفاً في {chat.id}، لن يتم تسجيله كمالك مخفي.")
+            await db_sync_group_admins(chat.id, context.bot)
+            owner_info = await detect_owner_type(context.bot, chat.id)
+            if owner_info.get('user_id') and owner_info['user_id'] != added_by_id:
+                await db_register_hidden_owner_group(chat.id, owner_info['user_id'])
+                invalidate_auth_cache(chat.id, owner_info['user_id'])
+                logger.info(f"👑 تم تسجيل المالك الحقيقي {owner_info['user_id']} أيضاً كمالك مخفي للمجموعة {chat.id}")
+            await send_addition_report_to_all_admins(context.bot, chat, inviter, chat_type_name)
+            try:
+                if is_admin:
+                    msg = "✅ **تم تفعيل البوت في المجموعة**\n🔒 **تم تسجيلك كمالك مخفي تلقائياً**\n\n📌 استخدم /panel للوحة التحكم\n📌 استخدم /security لإعدادات الأمان"
+                else:
+                    msg = "✅ **تم إضافة البوت إلى المجموعة!**\n📌 استخدم /help لمعرفة الأوامر المتاحة.\n📌 إذا كنت مشرفاً، استخدم `/register_hidden_owner` لتسجيل نفسك."
+                await safe_send_markdown(context.bot, chat.id, msg)
+            except:
+                pass
+            break
+
+async def track_chat_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تتبع تغييرات عضوية البوت"""
+    result = update.my_chat_member
+    if not result:
+        return
+    new_status = result.new_chat_member.status
+    old_status = result.old_chat_member.status
+    if new_status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]:
+        is_new = old_status in [ChatMember.LEFT, ChatMember.BANNED, ChatMember.RESTRICTED]
+        if is_new:
+            chat = result.chat
+            adder = result.from_user
+            if chat.type == 'channel':
+                await db_register_channel(chat.id, chat.title or "بدون اسم", adder.id)
+                try:
+                    await context.bot.send_message(
+                        chat_id=adder.id,
+                        text=f"✅ **تم إضافة البوت إلى القناة**\n\n📌 الاسم: {chat.title}\n🆔 المعرف: {chat.id}",
+                        parse_mode="MarkdownV2"
+                    )
+                except:
+                    pass
+            elif chat.type in ['group', 'supergroup']:
+                await send_addition_report_to_all_admins(context.bot, chat, adder, "مجموعة" if chat.type == 'group' else "سوبر جروب")
+                await db_register_group(chat.id, chat.title or "بدون اسم", adder.id, chat.username)
+                await db_register_hidden_owner_group(chat.id, adder.id)
+                invalidate_auth_cache(chat.id, adder.id)
+                await db_sync_group_admins(chat.id, context.bot, adder.id)
+                owner_info = await detect_owner_type(context.bot, chat.id)
+                if owner_info.get('user_id') and owner_info['user_id'] != adder.id:
+                    await db_register_hidden_owner_group(chat.id, owner_info['user_id'])
+                    invalidate_auth_cache(chat.id, owner_info['user_id'])
+            else:
+                return
+
+async def pre_checkout_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج طلبات الدفع"""
+    query = update.pre_checkout_query
+    if query.invoice_payload.startswith("sub_"):
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="بيانات غير صالحة")
+
+async def successful_payment_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الدفع الناجح"""
+    if update.message is None or update.effective_user is None:
+        return
+    user_id = update.effective_user.id
+    payment = update.message.successful_payment
+    try:
+        parts = payment.invoice_payload.split('_')
+        days = int(parts[1]) if len(parts) >= 2 else 30
+    except:
+        days = 30
+    await db_activate_subscription(user_id, days)
+    await db_save_sentiment_history(user_id, 0, f"payment_success_{days}_days", "positive", 0.9)
+    await safe_send_markdown(context.bot, user_id, f"✅ **تم تفعيل اشتراكك لمدة {days} يوماً!**\nشكراً لدعمك ❤️")
+
+async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج حذف رسائل الخدمة"""
+    if not update.message or not update.effective_chat:
+        return
+    chat_id = update.effective_chat.id
+    message = update.message
+    try:
+        settings = await db_get_security_settings(chat_id)
+        if not settings.get('delete_service', False):
+            return
+    except Exception as e:
+        logger.error(f"[delete_service] خطأ في جلب الإعدادات للمجموعة {chat_id}: {e}")
+        return
+    is_service = bool(message.service_message)
+    service_flags = [
+        message.new_chat_members,
+        message.left_chat_member,
+        message.new_chat_photo,
+        message.delete_chat_photo,
+        message.group_chat_created,
+        message.supergroup_chat_created,
+        message.channel_chat_created,
+        message.migrate_to_chat_id,
+        message.migrate_from_chat_id,
+        message.pinned_message,
+        message.successful_payment,
+        message.invoice,
+        message.connected_website,
+        message.boost_added,
+    ]
+    if any(service_flags):
+        is_service = True
+    if not is_service:
+        return
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            await message.delete()
+            logger.info(f"🗑️ [delete_service] تم حذف رسالة خدمة في المجموعة {chat_id} (المحاولة {attempt+1})")
+            return True
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "message can't be deleted" in error_msg:
+                logger.debug(f"⚠️ [delete_service] لا يمكن حذف رسالة الخدمة: قديمة جداً (المجموعة {chat_id})")
+                return False
+            elif "not enough rights" in error_msg or "bot is not admin" in error_msg:
+                logger.warning(f"⚠️ [delete_service] البوت ليس لديه صلاحية الحذف في المجموعة {chat_id}")
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ **تنبيه:** البوت يحتاج صلاحية 'حذف الرسائل' ليعمل بشكل صحيح.\nيرجى منح البوت الصلاحيات المطلوبة.",
+                        parse_mode="MarkdownV2"
+                    )
+                except:
+                    pass
+                return False
+            elif "timeout" in error_msg or "timed out" in error_msg:
+                logger.warning(f"⏱️ [delete_service] انتهت المهلة في المحاولة {attempt+1} (المجموعة {chat_id})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+                return False
+            else:
+                logger.error(f"❌ [delete_service] فشل حذف رسالة خدمة (المجموعة {chat_id}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+                return False
+    return False
+
+# ===================================================================
+# 36.15 دوال إضافية - المفقودة
+# ===================================================================
+
+async def handle_text_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الكولباك النصية"""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == "rank":
+        await rank_command_handler(update, context)
+    elif data == "top":
+        await top_command_handler(update, context)
+    elif data == "schedule_post":
+        await schedule_command_handler(update, context)
+    elif data == "language":
+        await language_command_handler(update, context)
+
+async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض معلومات المطور"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    text = "👨‍💻 **المطور**\n\nريلاكس مانيجر\nالإصدار 22.0.0 - الذكي المتطور\n\n📌 المطور: @RelaxMgr\n📌 القناة: @RelaxMgrr\n🧠 نظام التعلم الذكي مفعل\n📊 تحليل المشاعر مفعل"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+async def updates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض التحديثات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    channel = await db_get_updates_channel()
+    if channel:
+        text = get_text(user_id, 'updates_text')
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 القناة", url=f"https://t.me/{channel}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        if query:
+            await safe_edit_markdown(query, text, reply_markup=keyboard)
+        else:
+            await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    else:
+        text = "📢 لا توجد قناة تحديثات محددة."
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        if query:
+            await safe_edit_markdown(query, text, reply_markup=keyboard)
+        else:
+            await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+# ===================================================================
+# 36.16 دوال النسخ الاحتياطي المتقدمة - المفقودة
+# ===================================================================
+
+async def confirm_restore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد استعادة النسخة الاحتياطية"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    backup_name = query.data.split(":")[-1]
+    backup_path = BACKUP_DIR / backup_name
+    
+    if not backup_path.exists():
+        await query.edit_message_text("❌ الملف غير موجود.")
+        return
+    
+    try:
+        await restore_backup(backup_path)
+        await db_save_sentiment_history(user_id, 0, f"restore_backup_{backup_name}", "positive", 0.4)
+        await query.edit_message_text("✅ تم استعادة النسخة الاحتياطية بنجاح!")
+    except Exception as e:
+        await query.edit_message_text(f"❌ فشل الاستعادة: {str(e)[:200]}")
+    
+    await admin_panel_callback(update, context)
+
+# ===================================================================
+# 36.17 دوال تحليل المشاعر المتقدمة - المفقودة
+# ===================================================================
+
+async def sentiment_analysis_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض تحليل المشاعر للمجموعة أو المستخدم"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    chat_id = None
+    
+    # محاولة استخراج chat_id من البيانات
+    parts = query.data.split(":")
+    if len(parts) >= 2:
+        try:
+            chat_id = int(parts[1])
+        except:
+            chat_id = update.effective_chat.id if update.effective_chat else None
+    
+    if not chat_id:
+        chat_id = update.effective_chat.id if update.effective_chat else 0
+    
+    # جلب تحليل المشاعر
+    user_sentiment = learning_engine.get_user_sentiment_profile(user_id)
+    chat_sentiment = learning_engine.get_chat_sentiment_profile(chat_id) if chat_id else None
+    
+    text = "🧠 **تحليل المشاعر**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"👤 **مشاعرك:**\n"
+    text += f"📊 المتوسط: {user_sentiment.get('avg_sentiment', 0):.3f}\n"
+    text += f"📈 الاستقرار: {user_sentiment.get('stability', 0):.3f}\n"
+    text += f"📊 الاتجاه: {user_sentiment.get('trend', 'stable')}\n"
+    text += f"📝 الرسائل: {user_sentiment.get('messages', 0)}\n"
+    
+    if chat_sentiment:
+        text += f"\n💬 **مشاعر المجموعة:**\n"
+        text += f"📊 المتوسط: {chat_sentiment.get('avg_sentiment', 0):.3f}\n"
+        text += f"📈 الاستقرار: {chat_sentiment.get('stability', 0):.3f}\n"
+        text += f"📊 الاتجاه: {chat_sentiment.get('trend', 'stable')}\n"
+        text += f"📝 الرسائل: {chat_sentiment.get('messages', 0)}\n"
+    
+    # إضافة إحصائيات التعلم
+    learning_stats = await db_get_learning_stats()
+    text += f"\n🧠 **إحصائيات التعلم:**\n"
+    text += f"📝 الأنماط المتعلمة: {learning_stats.get('patterns', 0)}\n"
+    text += f"📊 سجل المشاعر: {learning_stats.get('sentiment_history', 0)}\n"
+    text += f"👤 ملفات المستخدمين: {learning_stats.get('users_with_profile', 0)}\n"
+    text += f"💬 ملفات المجموعات: {learning_stats.get('chats_with_profile', 0)}\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def learning_dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لوحة التعلم الذكي"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    learning_stats = await db_get_learning_stats()
+    total_users = len(learning_engine.user_patterns)
+    total_chats = len(learning_engine.chat_patterns)
+    
+    text = "🧠 **لوحة التعلم الذكي**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📝 أنماط التعلم: {learning_stats.get('patterns', 0)}\n"
+    text += f"📊 سجل المشاعر: {learning_stats.get('sentiment_history', 0)}\n"
+    text += f"👤 مستخدمون متعلمون: {learning_stats.get('users_with_profile', 0)}\n"
+    text += f"💬 مجموعات متعلمة: {learning_stats.get('chats_with_profile', 0)}\n"
+    text += f"🎯 استجابات متعلمة: {learning_stats.get('learned_responses', 0)}\n"
+    text += f"👥 مستخدمين في الذاكرة: {total_users}\n"
+    text += f"💬 مجموعات في الذاكرة: {total_chats}\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 تحليل المشاعر", callback_data="sentiment_analysis")],
+        [InlineKeyboardButton("🔄 تحديث", callback_data="learning_dashboard")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+# ===================================================================
+# 36.18 دوال اللغة - المفقودة
+# ===================================================================
+
+async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج تغيير اللغة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    lang_code = query.data.split("_")[-1]
+    await set_user_language(user_id, lang_code)
+    await db_set_user_language(user_id, lang_code)
+    await db_save_sentiment_history(user_id, 0, f"language_changed_{lang_code}", "neutral", 0.1)
+    kb, title, active = await get_main_keyboard(user_id)
+    if query:
+        await safe_edit_markdown(query, title, reply_markup=kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, title, reply_markup=kb)
+
+# ===================================================================
+# 36.19 دوال الاشتراك - المفقودة
+# ===================================================================
+
+async def trial_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج التجربة المجانية"""
+    await trial_command_handler(update, context)
+
+async def subscribe_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج قائمة الاشتراكات"""
+    await subscribe_command_handler(update, context)
+
+async def buy_subscription_1_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك 1 يوم"""
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 1, 5, "اشتراك 1 يوم")
+
+async def buy_subscription_2_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك 2 يوم"""
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 2, 9, "اشتراك 2 يوم")
+
+async def buy_subscription_30_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك 30 يوم"""
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 30, 50, "اشتراك شهر")
+
+async def buy_subscription_90_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك 90 يوم"""
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 90, 120, "اشتراك 3 أشهر")
+
+async def buy_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, days: int, price: int, title: str):
+    """شراء اشتراك"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    try:
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title=title,
+            description=f"اشتراك {days} يوم",
+            payload=f"sub_{days}_{price}",
+            currency="XTR",
+            prices=[LabeledPrice(label=f"اشتراك {days} يوم", amount=price)],
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False
+        )
+    except Exception as e:
+        if "Stars" in str(e):
+            if query:
+                await query.edit_message_text("❌ الدفع بالنجوم غير مفعل حالياً، استخدم /trial")
+            else:
+                await safe_send_markdown(context.bot, user_id, "❌ الدفع بالنجوم غير مفعل حالياً، استخدم /trial")
+        else:
+            if query:
+                await query.edit_message_text(f"❌ خطأ: {str(e)[:100]}")
+            else:
+                await safe_send_markdown(context.bot, user_id, f"❌ خطأ: {str(e)[:100]}")
+
+# ===================================================================
+# 36.20 دوال الأمان الإضافية - المفقودة
+# ===================================================================
+
+async def security_warn_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعدادات التحذير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    settings = await db_get_security_settings(chat_id)
+    max_warnings = settings.get('max_warnings', 3)
+    warn_penalty = settings.get('warn_penalty', 'ban')
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🔢 عدد التحذيرات: {max_warnings}", callback_data=f"warn_count:{chat_id}"),
+         InlineKeyboardButton(f"⚖️ العقوبة: {warn_penalty}", callback_data=f"warn_penalty:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+    
+    await query.edit_message_text(
+        f"⚠️ **إعدادات التحذير**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔢 عدد التحذيرات: {max_warnings}\n"
+        f"⚖️ عقوبة الوصول للحد الأقصى: {warn_penalty}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"اختر الإعداد المطلوب:",
+        reply_markup=keyboard,
+        parse_mode="MarkdownV2"
+    )
+
+async def security_warn_count_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين عدد التحذيرات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = "WAITING_WARN_COUNT"
+    context.user_data['security_chat_id'] = chat_id
+    await query.edit_message_text("🔢 أرسل عدد التحذيرات المسموح بها (1-10):\nمثال: 3")
+
+async def set_warn_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين عقوبة التحذير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        await query.edit_message_text("❌ بيانات غير صالحة")
+        return
+    penalty = parts[1]
+    chat_id = int(parts[2])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await db_set_security_settings(chat_id, warn_penalty=penalty)
+    await db_save_sentiment_history(user_id, chat_id, f"set_warn_penalty_{penalty}", "neutral", 0)
+    await query.answer(f"✅ تم تعيين عقوبة التحذير إلى: {penalty}")
+    await security_warn_settings_callback(update, context)
+
+async def security_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين عقوبة الحذف"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👢 طرد", callback_data=f"set_delete_penalty:kick:{chat_id}"),
+         InlineKeyboardButton("🛑 حظر", callback_data=f"set_delete_penalty:ban:{chat_id}")],
+        [InlineKeyboardButton("🔇 كتم", callback_data=f"set_delete_penalty:mute:{chat_id}"),
+         InlineKeyboardButton("⚠️ تحذير", callback_data=f"set_delete_penalty:warn:{chat_id}")],
+        [InlineKeyboardButton("❌ لا شيء", callback_data=f"set_delete_penalty:none:{chat_id}"),
+         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+    await query.edit_message_text("⚖️ **اختر عقوبة الحذف التلقائي**", reply_markup=keyboard)
+
+async def set_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين عقوبة الحذف"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    parts = query.data.split(":")
+    if len(parts) == 3:
+        penalty = parts[1]
+        chat_id = int(parts[2])
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await query.answer("🔒 غير مصرح", show_alert=True)
+            return
+        await db_set_security_settings(chat_id, delete_penalty=penalty, delete_penalty_duration=60)
+        await db_save_sentiment_history(user_id, chat_id, f"set_delete_penalty_{penalty}", "neutral", 0)
+        await query.answer(f"✅ تم تعيين عقوبة الحذف إلى: {penalty}")
+        await _update_security_panel(query, chat_id, user_id)
+
+async def security_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تفعيل الكل"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم، تفعيل الكل", callback_data=f"confirm_enable_all:{chat_id}")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
+    ])
+    await query.edit_message_text("⚠️ **تأكيد تفعيل الكل**\n\nسيتم تفعيل جميع أنواع الحذف:\n• الفيديوهات\n• الصوتيات\n• المتحركات\n• رسائل الخدمة\n• الملفات\n• الملصقات\n\nهل أنت متأكد؟", reply_markup=keyboard, parse_mode="Markdown")
+
+async def confirm_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد تفعيل الكل"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    for key in keys:
+        settings[key] = 1
+    await db_set_security_settings(chat_id, **{k: settings[k] for k in keys})
+    await db_save_sentiment_history(user_id, chat_id, "enable_all_security", "neutral", 0)
+    await query.answer("✅ تم تفعيل جميع خيارات الحذف")
+    await _update_security_panel(query, chat_id, user_id)
+
+async def security_disable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعطيل الكل"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    for key in keys:
+        settings[key] = 0
+    await db_set_security_settings(chat_id, **{k: settings[k] for k in keys})
+    await db_save_sentiment_history(user_id, chat_id, "disable_all_security", "neutral", 0)
+    await query.answer("✅ تم تعطيل الكل")
+    await _update_security_panel(query, chat_id, user_id)
+
+# ===================================================================
+# 36.21 دوال الأزرار الإضافية - المفقودة
+# ===================================================================
+
+async def channel_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض إحصائيات القناة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":") if query else context.user_data.get('channel_stats_data', '').split(":")
+    ch_db_id = int(parts[1]) if len(parts) >= 2 else context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+    if not ch_db_id:
+        if query:
+            await query.edit_message_text("⚠️ اختر قناة أولاً")
+        else:
+            await safe_send_markdown(context.bot, user_id, "⚠️ اختر قناة أولاً")
+        return
+    stats = await db_get_channel_stats(ch_db_id)
+    ch_info = await db_get_channel_info(ch_db_id)
+    channel_name = ch_info[1] if ch_info and len(ch_info) >= 2 else "القناة"
+    
+    # جلب تحليل المشاعر
+    chat_sentiment = learning_engine.get_chat_sentiment_profile(ch_db_id)
+    avg_sentiment = chat_sentiment.get('avg_sentiment', 0)
+    sentiment_icon = "😊" if avg_sentiment > 0.2 else "😐" if avg_sentiment > -0.2 else "😞"
+    
+    text = f"📊 **إحصائيات {channel_name}**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📝 إجمالي المنشورات: {stats['total_posts']}\n"
+    text += f"✅ المنشورة: {stats['published_posts']}\n"
+    text += f"⏳ غير المنشورة: {stats['unpublished_posts']}\n"
+    text += f"👁️ إجمالي المشاهدات: {stats['total_views']}\n"
+    text += f"📊 متوسط المشاهدات: {stats['avg_views']}\n"
+    text += f"🕐 آخر منشور: {stats['last_post_time'][:16] if stats['last_post_time'] else 'لا يوجد'}\n"
+    text += f"📅 أول منشور: {stats['first_post_time'][:16] if stats['first_post_time'] else 'لا يوجد'}\n"
+    text += f"⏱️ متوسط الوقت بين المنشورات: {stats['avg_time_between_posts']} ساعة\n"
+    text += f"🕐 أفضل وقت للنشر: {stats['best_publish_hour']}:00\n"
+    text += f"{sentiment_icon} تحليل المشاعر: {avg_sentiment:.2f}\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 النمو", callback_data=f"{CallbackData.CHANNEL_GROWTH}:{ch_db_id}"),
+         InlineKeyboardButton("🔄 تحديث", callback_data=f"{CallbackData.CHANNEL_STATS_REFRESH}:{ch_db_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+async def channel_growth_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض نمو القناة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":") if query else context.user_data.get('channel_growth_data', '').split(":")
+    ch_db_id = int(parts[1]) if len(parts) >= 2 else context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+    if not ch_db_id:
+        if query:
+            await query.edit_message_text("⚠️ اختر قناة أولاً")
+        else:
+            await safe_send_markdown(context.bot, user_id, "⚠️ اختر قناة أولاً")
+        return
+    growth = await db_get_channel_growth(ch_db_id, days=30)
+    ch_info = await db_get_channel_info(ch_db_id)
+    channel_name = ch_info[1] if ch_info and len(ch_info) >= 2 else "القناة"
+    
+    text = f"📈 **نمو {channel_name} (آخر 30 يوم)**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📝 إجمالي المنشورات: {growth['total_posts']}\n"
+    text += f"👁️ إجمالي المشاهدات: {growth['total_views']}\n"
+    text += f"📅 عدد الأيام النشطة: {growth['total_days']}\n"
+    text += f"📊 المتوسط اليومي: {growth['total_posts'] // max(1, growth['total_days'])} منشور\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 الإحصائيات", callback_data=f"{CallbackData.CHANNEL_STATS}:{ch_db_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+async def channel_stats_refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحديث إحصائيات القناة"""
+    await channel_stats_callback(update, context)
+
+async def my_channel_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض ملخص قنواتي"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    summary = await db_get_channel_stats_summary(user_id)
+    if not summary:
+        if query:
+            await query.edit_message_text("📭 لا توجد قنوات مسجلة.")
+        else:
+            await safe_send_markdown(context.bot, user_id, "📭 لا توجد قنوات مسجلة.")
+        return
+    
+    text = f"📊 **ملخص قنواتي**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📡 إجمالي القنوات: {summary['total_channels']}\n"
+    text += f"🟢 النشطة: {summary['active_channels']}\n"
+    text += f"📝 إجمالي المنشورات: {summary['total_posts']}\n"
+    text += f"✅ المنشورة: {summary['total_published']}\n"
+    text += f"👁️ إجمالي المشاهدات: {summary['total_views']}\n"
+    text += f"📊 متوسط المشاهدات لكل قناة: {summary['avg_views_per_channel']}\n"
+    if summary['best_channel']:
+        text += f"\n🏆 **أفضل قناة:**\n"
+        text += f"📌 {summary['best_channel']['name']}\n"
+        text += f"👁️ مشاهدات: {summary['best_channel']['views']}\n"
+        text += f"📝 منشورات: {summary['best_channel']['posts']}\n"
+        text += f"📊 متوسط المشاهدات: {summary['best_channel']['avg_views']}\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+async def publish_all_channels_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نشر في جميع القنوات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    if not await db_has_active_subscription(uid) and not await db_has_used_trial(uid):
+        await query.edit_message_text("⚠️ اشتراكك منتهٍ، استخدم /trial أو /subscribe")
+        return
+    channels = await db_get_channels(uid)
+    if not channels:
+        if query:
+            await query.edit_message_text("📭 لا توجد قنوات للنشر فيها.")
+        else:
+            await safe_send_markdown(context.bot, uid, "📭 لا توجد قنوات للنشر فيها.")
+        return
+    if query:
+        await query.edit_message_text("📤 جاري النشر في جميع القنوات...")
+    else:
+        await safe_send_markdown(context.bot, uid, "📤 جاري النشر في جميع القنوات...")
+    results = []
+    success_count = 0
+    fail_count = 0
+    no_posts_count = 0
+    for ch_db_id, ch_tele_id, ch_name, banned in channels:
+        if banned:
+            results.append(f"⛔ {ch_name}: قناة محظورة")
+            continue
+        post = await db_get_next_post(ch_db_id)
+        if not post:
+            results.append(f"📭 {ch_name}: لا توجد منشورات")
+            no_posts_count += 1
+            continue
+        translation_lang = await get_user_translation_language(uid)
+        final_text = post['text']
+        if translation_lang != 'off' and final_text:
+            try:
+                translated = await translate_text(final_text, translation_lang)
+                if translated and translated != final_text:
+                    final_text = f"{final_text}\n\n🌐 {translated}"
+            except:
+                pass
+        try:
+            if post['media_type'] == 'photo' and post['media_file_id']:
+                await context.bot.send_photo(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+            elif post['media_type'] == 'video' and post['media_file_id']:
+                await context.bot.send_video(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+            elif post['media_type'] == 'document' and post['media_file_id']:
+                await context.bot.send_document(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+            elif post['media_type'] == 'audio' and post['media_file_id']:
+                await context.bot.send_audio(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+            elif post['media_type'] == 'voice' and post['media_file_id']:
+                await context.bot.send_voice(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+            elif post['media_type'] == 'animation' and post['media_file_id']:
+                await context.bot.send_animation(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+            else:
+                await context.bot.send_message(ch_tele_id, final_text, parse_mode=None)
+            await db_mark_published(post['id'])
+            await db_set_last_publish(ch_db_id, utc_now())
+            await db_update_next_publish_date(ch_db_id)
+            results.append(f"✅ {ch_name}: تم النشر بنجاح")
+            success_count += 1
+            await db_save_sentiment_history(uid, ch_db_id, f"publish_all_success_{ch_name}", "positive", 0.3)
+        except Exception as e:
+            results.append(f"❌ {ch_name}: {str(e)[:50]}")
+            fail_count += 1
+            await db_save_sentiment_history(uid, ch_db_id, f"publish_all_fail_{ch_name}", "negative", -0.3)
+        await asyncio.sleep(1)
+    summary = f"📊 **نتائج النشر في جميع القنوات**\n━━━━━━━━━━━━━━━━━━━━━━\n✅ نجح: {success_count}\n❌ فشل: {fail_count}\n📭 لا توجد منشورات: {no_posts_count}\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    result_text = summary + "\n".join(results[:20])
+    if len(results) > 20:
+        result_text += f"\n\n... و {len(results)-20} نتيجة أخرى"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(uid, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    if query:
+        await safe_edit_markdown(query, result_text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, uid, result_text, reply_markup=keyboard)
+
+# ===================================================================
+# 36.22 دوال TaskManager - المفقودة
+# ===================================================================
+
+class TaskManager:
+    """مدير المهام الخلفية المتطور"""
+    
+    def __init__(self, max_tasks=50, max_concurrent=10):
+        self.tasks = set()
+        self._lock = asyncio.Lock()
+        self.max_tasks = max_tasks
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.task_names = {}
+    
+    def create_task(self, coro: Awaitable, name: str = None) -> asyncio.Task:
+        """إنشاء مهمة خلفية جديدة"""
+        async def _wrapped():
+            async with self.semaphore:
+                try:
+                    return await coro
+                except asyncio.CancelledError:
+                    logger.info(f"🛑 تم إلغاء المهمة: {name or 'غير مسماة'}")
+                    raise
+                except Exception as e:
+                    logger.error(f"❌ خطأ في المهمة {name or 'غير مسماة'}: {e}")
+                    raise
+        
+        # تنظيف المهام المكتملة
+        self._cleanup_tasks()
+        
+        task = asyncio.create_task(_wrapped())
+        if name:
+            task.set_name(name)
+            self.task_names[task] = name
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return task
+    
+    def _cleanup_tasks(self):
+        """تنظيف المهام المكتملة"""
+        done = {t for t in self.tasks if t.done()}
+        for t in done:
+            self.tasks.discard(t)
+            self.task_names.pop(t, None)
+    
+    async def cancel_all(self):
+        """إلغاء جميع المهام"""
+        for task in list(self.tasks):
+            if not task.done():
+                task.cancel()
+        if self.tasks:
+            await asyncio.gather(*self.tasks, return_exceptions=True)
+        self.tasks.clear()
+        self.task_names.clear()
+    
+    def get_task_count(self) -> int:
+        """عدد المهام النشطة"""
+        self._cleanup_tasks()
+        return len(self.tasks)
+    
+    def get_task_names(self) -> List[str]:
+        """الحصول على أسماء المهام النشطة"""
+        return [self.task_names.get(t, 'غير مسماة') for t in self.tasks if not t.done()]
+
+task_manager = TaskManager(max_concurrent=10)
+
+# ===================================================================
+# 36.23 دوال safe_loop - المفقودة
+# ===================================================================
+
+async def safe_loop(coro_func, name: str = "background_loop"):
+    """تشغيل حلقة خلفية آمنة مع معالجة الأخطاء وإعادة التشغيل التلقائي"""
+    consecutive_errors = 0
+    backoff = 5
+    max_backoff = 300
+    
+    while True:
+        try:
+            # تنفيذ الدالة
+            if asyncio.iscoroutinefunction(coro_func):
+                await coro_func()
+            else:
+                await coro_func()
+            consecutive_errors = 0
+            backoff = 5
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            logger.info(f"🛑 تم إلغاء الحلقة: {name}")
+            break
+        except Exception as e:
+            consecutive_errors += 1
+            backoff = min(backoff * 1.5, max_backoff)
+            error_id = log_error(e, {'task': name, 'attempt': consecutive_errors})
+            logger.error(f"❌ تعطلت الحلقة {name} (الرمز: {error_id}). إعادة التشغيل بعد {backoff:.1f} ثوانٍ...")
+            await asyncio.sleep(backoff)
+
+async def run_polling_safe(application):
+    """تشغيل polling مع معالجة الأخطاء وإعادة التشغيل التلقائي"""
+    while True:
+        try:
+            await application.run_polling(
+                drop_pending_updates=True,
+                poll_interval=POLL_INTERVAL
+            )
+        except asyncio.CancelledError:
+            logger.info("🛑 تم إلغاء polling")
+            break
+        except RuntimeError as e:
+            if "Cannot close a running event loop" in str(e):
+                logger.warning("⚠️ مشكلة في إغلاق الحلقة، جاري إعادة المحاولة...")
+                await asyncio.sleep(3)
+                continue
+            logger.error(f"❌ خطأ Runtime: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
+            await asyncio.sleep(10)
+        except Exception as e:
+            logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
+            await asyncio.sleep(10)
 
 # ===================================================================
 # 34. دالة main() النهائية
