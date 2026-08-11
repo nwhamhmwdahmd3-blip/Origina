@@ -9271,6 +9271,114 @@ async def ensure_security_columns(conn):
     except Exception as e:
         logger.error(f"❌ فشل تحديث أعمدة الأمان: {e}")
         return False
+# ===================================================================
+# الدوال المفقودة - أضفها هنا (قبل main)
+# ===================================================================
+
+async def db_get_user_language(user_id: int) -> str:
+    """جلب لغة المستخدم من قاعدة البيانات"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT lang FROM user_translation WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 'ar'
+    return await execute_db(_get)
+
+async def db_set_user_language(user_id: int, lang: str) -> None:
+    """حفظ لغة المستخدم في قاعدة البيانات"""
+    async def _set(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_translation (user_id, lang) VALUES (?, ?)",
+            (user_id, lang)
+        )
+        await conn.commit()
+    return await execute_db(_set)
+
+async def set_user_language(user_id: int, lang: str):
+    """تعيين لغة المستخدم في الذاكرة المؤقتة"""
+    user_language[user_id] = lang
+
+async def db_get_user_level(user_id: int) -> dict:
+    """جلب مستوى المستخدم ونقاطه"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT points, level FROM user_levels WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if row:
+            return {'points': row[0], 'level': row[1]}
+        await conn.execute("INSERT INTO user_levels (user_id, points, level) VALUES (?, 0, 1)", (user_id,))
+        await conn.commit()
+        return {'points': 0, 'level': 1}
+    return await execute_db(_get)
+
+async def db_update_user_level(user_id: int, points: int, level: int):
+    """تحديث مستوى المستخدم ونقاطه"""
+    async def _update(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_levels (user_id, points, level) VALUES (?, ?, ?)",
+            (user_id, points, level)
+        )
+        await conn.commit()
+    return await execute_db(_update)
+
+async def add_points(user_id: int, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None):
+    """إضافة نقاط للمستخدم"""
+    now = utc_now()
+    count, last_timestamp = user_points_last_hour.get(user_id, (0, 0.0))
+    if last_timestamp > 0:
+        last_time = datetime.fromtimestamp(last_timestamp)
+        last_time = to_naive(last_time)
+        if (now - last_time).total_seconds() < 3600:
+            if count >= 20:
+                return
+            new_count = count + 1
+        else:
+            new_count = 1
+    else:
+        new_count = 1
+    user_points_last_hour[user_id] = (new_count, now.timestamp())
+    data = await db_get_user_level(user_id)
+    points = data['points'] + 1
+    level = data['level']
+    new_levels = []
+    for lvl, pts in LEVEL_REQUIREMENTS.items():
+        if points >= pts and lvl > level:
+            new_levels.append(lvl)
+            level = lvl
+    if new_levels and update and update.effective_user and context:
+        try:
+            if len(new_levels) == 1:
+                msg = f"🎉 **تهانينا!**\nلقد وصلت إلى المستوى {new_levels[0]}! 🎉"
+            else:
+                msg = f"🎉 **تهانينا!**\nلقد تقدمت {len(new_levels)} مستويات إلى المستوى {new_levels[-1]}! 🎉"
+            await safe_send_to_user_or_group(update, context, msg)
+        except:
+            pass
+    await db_update_user_level(user_id, points, level)
+
+async def safe_send_to_user_or_group(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    """إرسال رسالة آمنة للمستخدم أو المجموعة"""
+    try:
+        if update.callback_query:
+            await safe_edit_markdown(update.callback_query, text)
+        elif update.message:
+            await safe_send_markdown(context.bot, update.message.chat_id, text)
+        else:
+            await safe_send_markdown(context.bot, update.effective_user.id, text)
+    except Exception as e:
+        logger.error(f"فشل إرسال رسالة في safe_send_to_user_or_group: {e}")
+
+# متطلبات المستويات
+LEVEL_REQUIREMENTS = {
+    1: 0,
+    2: 100,
+    3: 250,
+    4: 500,
+    5: 1000,
+    6: 2000,
+    7: 5000,
+    8: 10000,
+    9: 20000,
+    10: 50000
+}
 
 async def main():
     # تهيئة قاعدة البيانات
