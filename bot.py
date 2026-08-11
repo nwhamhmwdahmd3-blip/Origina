@@ -15055,6 +15055,15 @@ async def db_set_log_channel_id(channel_id: str):
     except Exception as e:
         logger.error(f"خطأ في db_set_log_channel_id: {e}")
         return False
+async def db_get_force_subscribe_status() -> bool:
+    """التحقق من تفعيل خاصية الاشتراك الإجباري"""
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT value FROM settings WHERE key = 'force_subscribe'"
+        )
+        row = await cur.fetchone()
+        return bool(row[0]) if row else False
+    return await execute_db(_get)
 
 # ===================================================================
 # 34. دالة main() النهائية
@@ -15064,7 +15073,9 @@ async def main():
     await init_db_improved()
     await init_security_table()
     await fix_missing_columns()
-    
+    global learning_engine
+    learning_engine = LearningEngine()
+    logger.info("✅ تم تهيئة محرك التعلم")    
     # تحميل الكلمات المحظورة
     try:
         words = load_banned_words_from_file(BANNED_WORDS_FILE)
