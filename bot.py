@@ -7812,7 +7812,7 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error(f"فشل معالج الأخطاء نفسه: {e}")
 # ===================================================================
-# ===== جميع الدوال المفقودة (كاملة) - ضعها قبل async def main(): =====
+# ===== جميع الدوال المفقودة (كاملة) - ضعها قب: =====
 # ===================================================================
 
 import re
@@ -8150,6 +8150,19 @@ async def rebuild_banned_patterns():
             logger.info(f"✅ تم إعادة بناء {len(BANNED_PATTERNS)} نمط محظور")
         except Exception as e:
             logger.error(f"❌ فشل إعادة بناء الأنماط المحظورة: {e}")
+async def language_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أمر /language - عرض أزرار اختيار اللغة"""
+    user_id = update.effective_user.id
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar"), InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
+        [InlineKeyboardButton("🇫🇷 Français", callback_data="lang_fr"), InlineKeyboardButton("🇹🇷 Türkçe", callback_data="lang_tr")],
+        [InlineKeyboardButton("🇨🇳 中文", callback_data="lang_zh"), InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+        [InlineKeyboardButton("🇩🇪 Deutsch", callback_data="lang_de"), InlineKeyboardButton("🇪🇸 Español", callback_data="lang_es")],
+        [InlineKeyboardButton("🇮🇹 Italiano", callback_data="lang_it"), InlineKeyboardButton("🇵🇹 Português", callback_data="lang_pt")],
+        [InlineKeyboardButton("🇯🇵 日本語", callback_data="lang_ja"), InlineKeyboardButton("🇰🇷 한국어", callback_data="lang_ko")],
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    await safe_send_markdown(context.bot, user_id, get_text(user_id, 'welcome'), reply_markup=keyboard)
 
 async def main():
     # تهيئة قاعدة البيانات
