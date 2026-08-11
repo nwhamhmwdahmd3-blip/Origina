@@ -12795,6 +12795,458 @@ async def updates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
     
     await db_save_sentiment_history(user_id, 0, "updates_viewed", "neutral", 0.1)
+# ===================================================================
+# دوال المسابقات (Contests Callbacks) - كاملة ومتطورة
+# ===================================================================
+
+async def contests_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض قائمة المسابقات النشطة.
+    تعرض جميع المسابقات المتاحة للمشاركة مع أزرار الانضمام.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. جلب المسابقات النشطة
+    contests = await db_get_active_contests_with_participants(limit=10)
+    
+    if not contests:
+        text = "📭 **لا توجد مسابقات نشطة حالياً.**\n\nتابع القناة لمعرفة المسابقات القادمة 📢"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏆 الفائزون السابقون", callback_data=CallbackData.CONTEST_WINNERS)],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+        return
+    
+    # 2. بناء النص
+    text = "🏆 **المسابقات النشطة**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    keyboard = []
+    
+    for contest in contests:
+        if len(contest) < 6:
+            continue
+        
+        cid = contest[0]
+        title = contest[1] or "بدون عنوان"
+        desc = contest[2] or ""
+        prize = contest[3] or "غير محددة"
+        end_date = contest[4]
+        participants = contest[5] if len(contest) > 5 else 0
+        contest_type = contest[6] if len(contest) > 6 else 'raffle'
+        
+        # حساب الوقت المتبقي
+        try:
+            end_dt = datetime.fromisoformat(end_date)
+            days_left = (end_dt - utc_now()).days
+            if days_left > 0:
+                time_left = f"⏳ متبقي {days_left} يوم"
+            else:
+                time_left = "🔴 انتهت"
+        except:
+            time_left = "📅 تاريخ غير صحيح"
+            days_left = 0
+        
+        # التحقق من مشاركة المستخدم
+        participated = await db_get_user_participation(user_id, cid)
+        status_icon = "✅" if participated else "📝"
+        
+        # أيقونة حسب نوع المسابقة
+        type_icon = {
+            'quiz': '📝',
+            'raffle': '🎲',
+            'vote': '🗳️',
+            'survey': '📊'
+        }.get(contest_type, '📤')
+        
+        # عرض المسابقة
+        text += f"📌 **{title}** {type_icon}\n"
+        text += f"📝 {(desc)[:100]}{'...' if len(desc) > 100 else ''}\n"
+        text += f"🎁 الجائزة: {prize}\n"
+        text += f"👥 المشاركون: {participants}\n"
+        text += f"🕐 {time_left}\n"
+        text += "━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        # إضافة زر المشاركة إذا كانت المسابقة نشطة والمستخدم غير مشارك
+        if not participated and days_left > 0:
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{status_icon} شارك في {title[:20]}",
+                    callback_data=f"{CallbackData.CONTEST_JOIN_PREFIX}{cid}"
+                )
+            ])
+    
+    # 3. أزرار إضافية
+    keyboard.append([
+        InlineKeyboardButton("🏆 الفائزون السابقون", callback_data=CallbackData.CONTEST_WINNERS)
+    ])
+    keyboard.append([
+        InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)
+    ])
+    
+    # 4. إرسال أو تعديل الرسالة
+    await safe_edit_markdown(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await db_save_sentiment_history(user_id, 0, "contests_menu_viewed", "neutral", 0.1)
+
+
+async def contest_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    المشاركة في مسابقة.
+    للمسابقات من نوع quiz، تطلب إجابة من المستخدم.
+    للمسابقات من نوع raffle، تسجل المشاركة مباشرة.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    contest_id = int(query.data.split(":")[-1])
+    
+    # 1. جلب معلومات المسابقة
+    contest = await db_get_contest(contest_id)
+    if not contest:
+        await query.edit_message_text("❌ المسابقة غير موجودة!")
+        return
+    
+    # 2. التحقق من حالة المسابقة
+    if contest['status'] != 'active':
+        await query.edit_message_text("❌ هذه المسابقة انتهت!")
+        return
+    
+    # 3. التحقق من المشاركة المسبقة
+    if await db_get_user_participation(user_id, contest_id):
+        await query.answer("❌ أنت مشترك بالفعل!", show_alert=True)
+        return
+    
+    # 4. معالجة أنواع المسابقات المختلفة
+    if contest.get('contest_type') == 'quiz':
+        # مسابقة اختبارية - تطلب إجابة
+        context.user_data['contest_join_id'] = contest_id
+        context.user_data['state'] = UserState.WAITING_CONTEST_ANSWER
+        
+        text = f"📝 **{contest['title']}**\n\n"
+        text += f"{contest['description']}\n\n"
+        text += "✏️ أرسل إجابتك، أو اكتب `/skip` للتخطي.\n"
+        text += f"⏳ الوقت المتبقي: {_get_time_left(contest['end_date'])}"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ إلغاء", callback_data=CallbackData.CONTESTS_MENU)]
+        ])
+        
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+    else:
+        # مسابقة سحب/تصويت - تسجيل مباشر
+        success = await db_participate_in_contest(user_id, contest_id, "")
+        
+        if success:
+            await db_save_sentiment_history(user_id, contest_id, f"contest_joined_{contest_id}", "positive", 0.5)
+            text = f"✅ **تم تسجيل مشاركتك في المسابقة بنجاح!**\n\n"
+            text += f"📌 {contest['title']}\n"
+            text += f"🎁 الجائزة: {contest['prize']}\n"
+            text += f"🍀 حظاً موفقاً!"
+        else:
+            text = "❌ فشل التسجيل في المسابقة. يرجى المحاولة مرة أخرى."
+        
+        await query.edit_message_text(text, parse_mode="MarkdownV2")
+        await contests_menu_callback(update, context)
+
+
+async def contest_winners_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض الفائزين السابقين في المسابقات.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. جلب الفائزين السابقين
+    winners = await db_get_contest_winners(limit=10)
+    
+    if not winners:
+        text = "📭 **لا توجد فائزين سابقين.**\n\nكن أول من يفوز في مسابقة! 🏆"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.CONTESTS_MENU)]
+        ])
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+        return
+    
+    # 2. بناء النص
+    text = "🏆 **الفائزون السابقون**\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    for idx, winner in enumerate(winners, 1):
+        try:
+            user = await context.bot.get_chat(winner['winner_id'])
+            name = user.first_name or str(winner['winner_id'])
+        except:
+            name = str(winner['winner_id'])
+        
+        # تنسيق التاريخ
+        try:
+            dt = datetime.fromisoformat(winner['announced_at'])
+            date_str = dt.strftime("%Y-%m-%d")
+        except:
+            date_str = "?"
+        
+        medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
+        text += f"{medal} **{winner['title']}**\n"
+        text += f"👤 {name}\n"
+        text += f"🎁 {winner['prize']}\n"
+        text += f"📅 {date_str}\n"
+        text += "━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.CONTESTS_MENU)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+    await db_save_sentiment_history(user_id, 0, "contest_winners_viewed", "neutral", 0.1)
+
+
+async def contests_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    العودة من المسابقات إلى القائمة الرئيسية.
+    """
+    await main_menu_callback(update, context)
+
+
+# ===================================================================
+# دوال المسابقات للأدمن (Admin Contest Callbacks)
+# ===================================================================
+
+async def admin_create_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    إنشاء مسابقة جديدة من لوحة الأدمن.
+    """
+    await create_contest_command_handler(update, context)
+
+
+async def admin_declare_winner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    إعلان فائز في مسابقة من لوحة الأدمن.
+    """
+    await declare_winner_command_handler(update, context)
+
+
+async def admin_del_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    حذف مسابقة من لوحة الأدمن.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    contest_id = int(query.data.split(":")[-1])
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    success = await db_delete_contest(contest_id, user_id)
+    if success:
+        await db_save_sentiment_history(user_id, 0, f"delete_contest_{contest_id}", "neutral", 0)
+        await query.edit_message_text("✅ تم حذف المسابقة.")
+    else:
+        await query.edit_message_text("❌ فشل حذف المسابقة.")
+    
+    await admin_panel_callback(update, context)
+
+
+# ===================================================================
+# دوال قاعدة بيانات المسابقات (إذا كانت مفقودة)
+# ===================================================================
+
+async def db_get_active_contests_with_participants(limit: int = 10) -> list:
+    """
+    جلب المسابقات النشطة مع عدد المشاركين.
+    """
+    async def _get(conn):
+        now = utc_now().isoformat()
+        cur = await conn.execute("""
+            SELECT 
+                c.id, 
+                c.title, 
+                c.description, 
+                c.prize, 
+                c.end_date,
+                COALESCE((SELECT COUNT(*) FROM contest_participants cp WHERE cp.contest_id = c.id), 0) as participants,
+                c.contest_type
+            FROM contests c
+            WHERE c.status = 'active' AND c.end_date > ?
+            ORDER BY c.end_date ASC
+            LIMIT ?
+        """, (now, limit))
+        return await cur.fetchall()
+    return await execute_db(_get)
+
+
+async def db_get_user_participation(user_id: int, contest_id: int) -> Optional[dict]:
+    """
+    التحقق من مشاركة المستخدم في مسابقة معينة.
+    """
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute(
+            "SELECT id, answer, joined_at FROM contest_participants WHERE user_id = ? AND contest_id = ?",
+            (user_id, contest_id)
+        )
+        row = await cur.fetchone()
+        if row:
+            return {'id': row['id'], 'answer': row['answer'], 'joined_at': row['joined_at']}
+        return None
+    return await execute_db(_get)
+
+
+async def db_get_contest(contest_id: int) -> Optional[dict]:
+    """
+    جلب معلومات مسابقة معينة.
+    """
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("""
+            SELECT 
+                id, title, description, prize, end_date, 
+                status, winner_id, creator_id, created_at, contest_type
+            FROM contests 
+            WHERE id = ?
+        """, (contest_id,))
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        return None
+    return await execute_db(_get)
+
+
+async def db_participate_in_contest(user_id: int, contest_id: int, answer: str = "") -> bool:
+    """
+    تسجيل مشاركة مستخدم في مسابقة.
+    """
+    async def _participate(conn):
+        try:
+            await conn.execute("""
+                INSERT INTO contest_participants (user_id, contest_id, answer, joined_at)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, contest_id, answer, utc_now_iso()))
+            await conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+    return await execute_db(_participate)
+
+
+async def db_get_contest_winners(limit: int = 10) -> list:
+    """
+    جلب الفائزين السابقين.
+    """
+    async def _get(conn):
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("""
+            SELECT 
+                c.id, 
+                c.title, 
+                c.prize, 
+                cw.winner_id, 
+                cw.announced_at
+            FROM contest_winners cw
+            JOIN contests c ON cw.contest_id = c.id
+            ORDER BY cw.announced_at DESC 
+            LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in await cur.fetchall()]
+    return await execute_db(_get)
+
+
+async def db_delete_contest(contest_id: int, user_id: int) -> bool:
+    """
+    حذف مسابقة.
+    """
+    async def _delete(conn):
+        # التحقق من صلاحية المستخدم
+        cur = await conn.execute(
+            "SELECT creator_id FROM contests WHERE id = ?",
+            (contest_id,)
+        )
+        row = await cur.fetchone()
+        if row and (row[0] == user_id or await is_bot_admin(user_id)):
+            # حذف المشاركين أولاً
+            await conn.execute(
+                "DELETE FROM contest_participants WHERE contest_id = ?",
+                (contest_id,)
+            )
+            # حذف المسابقة
+            await conn.execute(
+                "DELETE FROM contests WHERE id = ?",
+                (contest_id,)
+            )
+            await conn.commit()
+            return True
+        return False
+    return await execute_db(_delete)
+
+
+async def db_get_random_participant(contest_id: int) -> Optional[int]:
+    """
+    الحصول على مشارك عشوائي في مسابقة (للسحب العشوائي).
+    """
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT user_id FROM contest_participants WHERE contest_id = ? ORDER BY RANDOM() LIMIT 1",
+            (contest_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+
+async def db_set_contest_winner(contest_id: int, winner_id: int) -> bool:
+    """
+    تعيين فائز في مسابقة.
+    """
+    async def _set(conn):
+        await conn.execute("""
+            UPDATE contests 
+            SET status = 'finished', winner_id = ?, updated_at = ?
+            WHERE id = ?
+        """, (winner_id, utc_now_iso(), contest_id))
+        
+        await conn.execute("""
+            INSERT INTO contest_winners (contest_id, winner_id, announced_at)
+            VALUES (?, ?, ?)
+        """, (contest_id, winner_id, utc_now_iso()))
+        
+        await conn.commit()
+        return True
+    return await execute_db(_set)
+
+
+def _get_time_left(end_date_str: str) -> str:
+    """
+    حساب الوقت المتبقي حتى تاريخ معين (دالة مساعدة).
+    """
+    try:
+        end_date = datetime.fromisoformat(end_date_str)
+        now = utc_now()
+        diff = end_date - now
+        
+        if diff.total_seconds() <= 0:
+            return "انتهت 🕐"
+        
+        days = diff.days
+        hours = diff.seconds // 3600
+        minutes = (diff.seconds % 3600) // 60
+        
+        if days > 0:
+            return f"{days} يوم و {hours} ساعة"
+        elif hours > 0:
+            return f"{hours} ساعة و {minutes} دقيقة"
+        else:
+            return f"{minutes} دقيقة"
+    except:
+        return "غير محدد"
 
 # ===================================================================
 # 34. دالة main() النهائية
