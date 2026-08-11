@@ -11127,13 +11127,116 @@ def load_all_languages():
     return _lang_data
 
 
+# ===================================================================
+# متغيرات اللغة العالمية
+# ===================================================================
+
+# قاموس تخزين بيانات اللغة
+_lang_data = {}
+_lang_cache_time = {}
+LANG_CACHE_TTL = 300
+_lang_lock = asyncio.Lock()
+user_language = {}
+
+
+# ===================================================================
+# دوال تحميل اللغات والكلمات المحظورة
+# ===================================================================
+
+def load_banned_words_from_file(file_path: Path) -> List[str]:
+    """
+    تحميل الكلمات المحظورة من ملف نصي.
+    """
+    words = []
+    if not file_path.exists():
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write("# قائمة الكلمات المحظورة - كل كلمة في سطر منفصل\n")
+                f.write("# ابدأ السطر بـ # للتعليق\n\n")
+                f.write("# أضف الكلمات المحظورة هنا\n")
+                f.write("كلمة1\nكلمة2\n")
+            print(f"✅ تم إنشاء ملف الكلمات المحظورة الافتراضي: {file_path}")
+        except Exception as e:
+            print(f"❌ فشل إنشاء ملف الكلمات المحظورة: {e}")
+        return words
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                word = line.lower()
+                if len(word) >= 2:
+                    words.append(word)
+        print(f"✅ تم تحميل {len(words)} كلمة محظورة من الملف")
+    except Exception as e:
+        print(f"❌ فشل تحميل الكلمات المحظورة: {e}")
+
+    return words
+
+
+def load_all_languages():
+    """
+    تحميل جميع ملفات اللغة من مجلد lang/.
+    """
+    global _lang_data
+    
+    # التأكد من وجود مجلد اللغات
+    LANG_PATH.mkdir(parents=True, exist_ok=True)
+    
+    # إنشاء ملفات اللغة الافتراضية إذا لم تكن موجودة
+    create_default_lang_files()
+    
+    loaded_count = 0
+    for lang_file in LANG_PATH.glob("*.json"):
+        lang = lang_file.stem
+        try:
+            with open(lang_file, 'r', encoding='utf-8') as f:
+                _lang_data[lang] = json.load(f)
+            loaded_count += 1
+        except Exception as e:
+            print(f"⚠️ فشل تحميل {lang_file}: {e}")
+    
+    # إذا لم يتم تحميل أي لغة، استخدام العربية كافتراضية
+    if not _lang_data:
+        print("⚠️ لم يتم تحميل أي ملف لغة، استخدام العربية كافتراضية")
+        _lang_data['ar'] = {
+            "welcome": "🌿 مرحباً بك في البوت",
+            "back": "🔙 رجوع",
+            "error": "⚠️ حدث خطأ",
+            "admin_only": "🔒 هذا الأمر للمشرفين فقط!",
+            "group_only": "🔒 هذا الأمر يعمل فقط في المجموعات!",
+            "help": "❓ المساعدة",
+            "settings": "⚙️ الإعدادات",
+            "no_channels": "لا توجد قنوات",
+            "add_channel": "➕ إضافة قناة",
+            "my_channels": "📡 قنواتي",
+            "channel_added": "✅ تم إضافة القناة {0}",
+            "channel_exists": "⚠️ القناة موجودة مسبقاً",
+            "channel_deleted": "✅ تم حذف القناة",
+            "delete_failed": "❌ فشل الحذف",
+            "no_posts": "📭 لا توجد منشورات",
+            "my_posts_title": "📋 منشوراتي غير المنشورة",
+            "recycled": "♻️ تم إعادة تدوير جميع المنشورات",
+            "deleted_all": "✅ تم حذف جميع المنشورات",
+            "confirm_delete": "⚠️ هل أنت متأكد من حذف جميع المنشورات؟",
+            "locked": "🔒 تم قفل المجموعة",
+            "unlocked": "🔓 تم فتح المجموعة",
+            "cancelled": "❌ تم الإلغاء",
+            "error": "⚠️ حدث خطأ، حاول مرة أخرى"
+        }
+    
+    print(f"✅ تم تحميل {loaded_count} ملف لغة")
+    return _lang_data
+
+
 def create_default_lang_files():
     """
     إنشاء ملفات اللغة الافتراضية إذا لم تكن موجودة.
     """
     LANG_PATH.mkdir(parents=True, exist_ok=True)
 
-    # اللغة العربية الأساسية فقط (يمكن إضافة لغات أخرى حسب الحاجة)
     default_langs = {
         'ar': {
             "welcome": "🌿 **مرحباً بك في ريلاكس مانيجر**\nاختر اللغة المناسبة",
