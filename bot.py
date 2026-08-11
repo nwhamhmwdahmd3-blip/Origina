@@ -10761,6 +10761,88 @@ async def run_polling_safe(application):
         except Exception as e:
             logger.error(f"❌ توقف polling: {e}. إعادة التشغيل بعد 10 ثوانٍ...")
             await asyncio.sleep(10)
+# ===================================================================
+# دالة تهيئة جدول الأمان (إصدار متطور)
+# ===================================================================
+
+async def init_security_table():
+    """
+    تهيئة جدول إعدادات الأمان للمجموعات مع دعم الترقية التلقائية.
+    """
+    try:
+        async def _init(conn):
+            # التحقق من وجود الجدول
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS group_security_settings (
+                    chat_id INTEGER PRIMARY KEY,
+                    links INTEGER DEFAULT 0,
+                    mentions INTEGER DEFAULT 0,
+                    slow_mode INTEGER DEFAULT 0,
+                    slow_mode_seconds INTEGER DEFAULT 5,
+                    welcome_enabled INTEGER DEFAULT 0,
+                    goodbye_enabled INTEGER DEFAULT 0,
+                    delete_videos INTEGER DEFAULT 0,
+                    delete_audio INTEGER DEFAULT 0,
+                    delete_animation INTEGER DEFAULT 0,
+                    delete_service INTEGER DEFAULT 0,
+                    delete_documents INTEGER DEFAULT 0,
+                    delete_stickers INTEGER DEFAULT 0,
+                    delete_forwarded INTEGER DEFAULT 0,
+                    delete_polls INTEGER DEFAULT 0,
+                    delete_games INTEGER DEFAULT 0,
+                    delete_voice INTEGER DEFAULT 0,
+                    delete_video_note INTEGER DEFAULT 0,
+                    antiflood_enabled INTEGER DEFAULT 0,
+                    night_mode_enabled INTEGER DEFAULT 0,
+                    max_message_length INTEGER DEFAULT 0,
+                    delete_penalty TEXT DEFAULT 'none',
+                    captcha_enabled INTEGER DEFAULT 0,
+                    captcha_timeout INTEGER DEFAULT 60,
+                    max_links_per_message INTEGER DEFAULT 0,
+                    max_mentions_per_message INTEGER DEFAULT 0,
+                    allowed_domains TEXT DEFAULT '[]',
+                    ban_on_links INTEGER DEFAULT 0,
+                    warn_on_links INTEGER DEFAULT 0,
+                    auto_delete_after_minutes INTEGER DEFAULT 0
+                )
+            """)
+            
+            # التحقق من وجود الأعمدة وإضافتها إذا كانت مفقودة
+            cur = await conn.execute("PRAGMA table_info(group_security_settings)")
+            columns = [row[1] for row in await cur.fetchall()]
+            
+            # قائمة الأعمدة المطلوبة مع قيمها الافتراضية
+            required_columns = {
+                'captcha_enabled': 'INTEGER DEFAULT 0',
+                'captcha_timeout': 'INTEGER DEFAULT 60',
+                'max_links_per_message': 'INTEGER DEFAULT 0',
+                'max_mentions_per_message': 'INTEGER DEFAULT 0',
+                'allowed_domains': 'TEXT DEFAULT \'[]\'',
+                'ban_on_links': 'INTEGER DEFAULT 0',
+                'warn_on_links': 'INTEGER DEFAULT 0',
+                'auto_delete_after_minutes': 'INTEGER DEFAULT 0'
+            }
+            
+            # إضافة الأعمدة المفقودة
+            for col_name, col_type in required_columns.items():
+                if col_name not in columns:
+                    try:
+                        await conn.execute(f"ALTER TABLE group_security_settings ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"✅ تم إضافة العمود {col_name} إلى group_security_settings")
+                    except Exception as e:
+                        logger.warning(f"⚠️ فشل إضافة العمود {col_name}: {e}")
+            
+            # إنشاء فهارس
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_group_security_chat ON group_security_settings(chat_id)")
+            
+            await conn.commit()
+            logger.info("✅ جدول group_security_settings جاهز ومحدث")
+            
+        await execute_db(_init)
+        
+    except Exception as e:
+        logger.error(f"❌ فشل تهيئة جدول الأمان: {e}")
+        raise
 
 # ===================================================================
 # 34. دالة main() النهائية
