@@ -12376,6 +12376,425 @@ async def db_get_users_needing_reminder() -> list:
         
         return users
     return await execute_db(_get)
+# ===================================================================
+# دوال الترجمة (Translation Callbacks) - كاملة ومتطورة
+# ===================================================================
+
+async def translation_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض قائمة إعدادات الترجمة.
+    تعرض اللغة الحالية مع أزرار لاختيار لغة جديدة أو إيقاف الترجمة.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. الحصول على اللغة الحالية
+    current_lang = await get_user_translation_language(user_id)
+    
+    # 2. بناء النص
+    if current_lang == 'off':
+        status_text = get_text(user_id, 'translation_status_off')
+    else:
+        lang_name = SUPPORTED_LANGUAGES.get(current_lang, current_lang)
+        status_text = get_text(user_id, 'translation_status_on').format(lang_name)
+    
+    text = f"🌐 **{get_text(user_id, 'translation_settings')}**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📌 الحالة: {status_text}\n\n"
+    text += get_text(user_id, 'translation_how_it_works')
+    text += "\n\n**اختر لغة الترجمة:**"
+    
+    # 3. بناء لوحة المفاتيح
+    keyboard = []
+    
+    # إضافة أزرار اللغات (3 في كل صف)
+    lang_list = list(SUPPORTED_LANGUAGES.items())
+    for i in range(0, len(lang_list), 3):
+        row = []
+        for j in range(3):
+            if i + j < len(lang_list):
+                code, name = lang_list[i + j]
+                # إضافة علامة ✅ بجانب اللغة الحالية
+                label = f"{name} ✅" if code == current_lang else name
+                row.append(InlineKeyboardButton(
+                    label,
+                    callback_data=f"{CallbackData.TRANSLATION_SET_PREFIX}{code}"
+                ))
+        if row:
+            keyboard.append(row)
+    
+    # إضافة زر إيقاف الترجمة
+    keyboard.append([
+        InlineKeyboardButton(
+            "🚫 " + get_text(user_id, 'translation_off'),
+            callback_data=CallbackData.TRANSLATION_OFF
+        )
+    ])
+    
+    # إضافة زر الرجوع
+    keyboard.append([
+        InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)
+    ])
+    
+    # 4. إرسال أو تعديل الرسالة
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    # 5. تسجيل الحدث
+    await db_save_sentiment_history(user_id, 0, "translation_menu_viewed", "neutral", 0.1)
+
+
+async def translation_off_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    إيقاف الترجمة التلقائية.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. إيقاف الترجمة
+    await set_user_translation_language(user_id, 'off')
+    
+    # 2. تسجيل الحدث
+    await db_save_sentiment_history(user_id, 0, "translation_disabled", "neutral", 0.1)
+    
+    # 3. عرض رسالة التأكيد
+    text = get_text(user_id, 'translation_disabled')
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.TRANSLATION_MENU)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+
+
+async def translation_set_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تعيين لغة الترجمة المختارة.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    lang = query.data.split(":")[-1]
+    
+    # 1. التحقق من صحة اللغة
+    if lang not in SUPPORTED_LANGUAGES:
+        await query.answer("❌ لغة غير مدعومة!", show_alert=True)
+        return
+    
+    # 2. تعيين اللغة
+    await set_user_translation_language(user_id, lang)
+    
+    # 3. تسجيل الحدث
+    lang_name = SUPPORTED_LANGUAGES.get(lang, lang)
+    await db_save_sentiment_history(user_id, 0, f"translation_enabled_{lang}", "positive", 0.3)
+    
+    # 4. عرض رسالة التأكيد
+    text = get_text(user_id, 'translation_enabled').format(lang_name)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.TRANSLATION_MENU)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+
+
+# ===================================================================
+# دوال قاعدة بيانات الترجمة (إذا كانت مفقودة)
+# ===================================================================
+
+async def get_user_translation_language(user_id: int) -> str:
+    """
+    الحصول على لغة الترجمة للمستخدم من قاعدة البيانات.
+    """
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT lang FROM user_translation WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] if row and row[0] else 'off'
+    lang = await execute_db(_get)
+    return lang
+
+
+async def set_user_translation_language(user_id: int, lang: str):
+    """
+    تعيين لغة الترجمة للمستخدم في قاعدة البيانات.
+    """
+    async def _set(conn):
+        await conn.execute("""
+            INSERT OR REPLACE INTO user_translation (user_id, lang)
+            VALUES (?, ?)
+        """, (user_id, lang))
+        await conn.commit()
+        logger.info(f"✅ تم تعيين لغة الترجمة للمستخدم {user_id} إلى {lang}")
+    await execute_db(_set)
+
+
+async def translate_text(text: str, target_lang: str) -> str:
+    """
+    ترجمة نص إلى اللغة المستهدفة باستخدام Google Translate.
+    """
+    if not text or target_lang == 'off' or target_lang == 'ar':
+        return text
+    
+    try:
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source='auto', target=target_lang)
+        translated = translator.translate(text)
+        if translated:
+            return translated
+    except Exception as e:
+        logger.error(f"فشل الترجمة إلى {target_lang}: {e}")
+        # محاولة استخدام MyMemory كبديل
+        try:
+            from deep_translator import MyMemoryTranslator
+            translator = MyMemoryTranslator(source='auto', target=target_lang)
+            translated = translator.translate(text)
+            if translated:
+                return translated
+        except Exception as e2:
+            logger.error(f"فشل الترجمة عبر MyMemory: {e2}")
+    
+    return text
+
+
+# ===================================================================
+# دوال الاشتراك والتجربة (إذا كانت مفقودة)
+# ===================================================================
+
+async def trial_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تفعيل التجربة المجانية للمستخدم (30 يوم).
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. التحقق من استخدام التجربة سابقاً
+    if await db_has_used_trial(user_id):
+        text = get_text(user_id, 'trial_used')
+        await query.edit_message_text(text, parse_mode="MarkdownV2")
+        return
+    
+    # 2. التحقق من وجود اشتراك فعال
+    if await db_has_active_subscription(user_id):
+        text = get_text(user_id, 'already_subscribed')
+        await query.edit_message_text(text, parse_mode="MarkdownV2")
+        return
+    
+    # 3. تفعيل التجربة
+    await db_activate_trial(user_id)
+    
+    # 4. تسجيل الحدث
+    await db_save_sentiment_history(user_id, 0, "trial_activated", "positive", 0.9)
+    
+    # 5. عرض رسالة التأكيد
+    text = get_text(user_id, 'trial')
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+
+
+async def subscribe_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض قائمة الاشتراكات المتاحة.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. التحقق من وجود اشتراك فعال
+    if await db_has_active_subscription(user_id):
+        days = await db_get_subscription_days_left(user_id)
+        text = f"✅ اشتراكك مفعل، متبقي **{days}** يوم\nشكراً لدعمك ❤️"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+        return
+    
+    # 2. عرض خطط الاشتراك
+    text = get_text(user_id, 'subscribe')
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⭐ 1 يوم - 5 نجوم", callback_data=CallbackData.BUY_SUBSCRIPTION_1),
+            InlineKeyboardButton("⭐ 2 يوم - 9 نجوم", callback_data=CallbackData.BUY_SUBSCRIPTION_2)
+        ],
+        [
+            InlineKeyboardButton("⭐ شهر (30 يوم) - 50 نجمة", callback_data=CallbackData.BUY_SUBSCRIPTION_30),
+            InlineKeyboardButton("⭐ 3 أشهر (90 يوم) - 120 نجمة", callback_data=CallbackData.BUY_SUBSCRIPTION_90)
+        ],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+    await db_save_sentiment_history(user_id, 0, "subscribe_menu_viewed", "neutral", 0.1)
+
+
+async def buy_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, days: int, price: int, title: str):
+    """
+    شراء اشتراك عبر الدفع بالنجوم.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    try:
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title=title,
+            description=f"اشتراك {days} يوم",
+            payload=f"sub_{days}_{price}",
+            currency="XTR",
+            prices=[LabeledPrice(label=f"اشتراك {days} يوم", amount=price)],
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False
+        )
+        await db_save_sentiment_history(user_id, 0, f"subscription_payment_started_{days}", "positive", 0.4)
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "stars" in error_msg or "currency" in error_msg:
+            text = "❌ الدفع بالنجوم غير مفعل حالياً.\n\n💡 **بدائل:**\n• استخدم `/trial` للحصول على 30 يوم مجاناً\n• تواصل مع المطور لتفعيل الدفع"
+            await query.edit_message_text(text, parse_mode="MarkdownV2")
+        else:
+            await query.edit_message_text(f"❌ خطأ: {str(e)[:200]}", parse_mode="MarkdownV2")
+
+
+async def buy_subscription_1_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك 1 يوم"""
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 1, 5, "اشتراك 1 يوم")
+
+
+async def buy_subscription_2_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك 2 يوم"""
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 2, 9, "اشتراك 2 يوم")
+
+
+async def buy_subscription_30_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك شهر (30 يوم)"""
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 30, 50, "اشتراك شهر")
+
+
+async def buy_subscription_90_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك 3 أشهر (90 يوم)"""
+    if update.callback_query:
+        await update.callback_query.answer()
+    await buy_subscription_callback(update, context, 90, 120, "اشتراك 3 أشهر")
+
+
+# ===================================================================
+# دوال المطور والتحديثات
+# ===================================================================
+
+async def developer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض معلومات المطور.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    text = """👨‍💻 **المطور**
+━━━━━━━━━━━━━━━━━━━━━━
+
+**ريلاكس مانيجر** - الإصدار 22.0.0
+
+📌 **المطور:** @RelaxMgr
+📌 **القناة:** @RelaxMgrr
+📌 **المجموعة:** @RelaxMgrGroup
+
+🧠 **ميزات البوت:**
+• نظام تعلم ذكي (AI Learning)
+• تحليل مشاعر متقدم
+• إدارة القنوات والمجموعات
+• نظام إحالات ومكافآت
+• نظام مسابقات
+• دعم 15 لغة
+
+🔧 **تقنيات مستخدمة:**
+• Python 3.12
+• python-telegram-bot v22
+• SQLite + AIOSQLite
+• Argon2 + Fernet (تشفير)
+
+📊 **إحصائيات البوت:**
+• تم تطويره بالكامل بواسطة @RelaxMgr
+• أكثر من 35+ جدول في قاعدة البيانات
+• أكثر من 200 رد تلقائي مدمج
+• أكثر من 180 زر تفاعلي
+
+💡 **للتواصل:**
+• @RelaxMgr (خاص)
+• @RelaxMgrr (قناة التحديثات)
+
+شكراً لاستخدامك البوت! ❤️"""
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+async def updates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض آخر التحديثات وقناة التحديثات.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    channel = await db_get_updates_channel()
+    
+    if channel:
+        text = get_text(user_id, 'updates_text')
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 القناة", url=f"https://t.me/{channel}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        if query:
+            await safe_edit_markdown(query, text, reply_markup=keyboard)
+        else:
+            await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    else:
+        text = "📢 **لا توجد قناة تحديثات محددة.**\n\nيمكن للمشرف تعيين قناة التحديثات باستخدام الأمر:\n`/set_update_channel @channel`"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        if query:
+            await safe_edit_markdown(query, text, reply_markup=keyboard)
+        else:
+            await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    
+    await db_save_sentiment_history(user_id, 0, "updates_viewed", "neutral", 0.1)
 
 # ===================================================================
 # 34. دالة main() النهائية
