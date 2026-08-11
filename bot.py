@@ -7815,6 +7815,58 @@ async def group_action_unban_callback(update: Update, context: ContextTypes.DEFA
         await safe_edit_markdown(query, msg)
     else:
         await safe_send_markdown(context.bot, uid, msg)
+async def panel_lock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قفل المجموعة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('panel_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    await db_set_chat_lock(chat_id, True, uid)
+    if query:
+        await safe_edit_markdown(query, "🔒 **تم قفل المجموعة بنجاح!**\n\nالآن لا يمكن لأي عضو إرسال رسائل.")
+    else:
+        await safe_send_markdown(context.bot, uid, "🔒 **تم قفل المجموعة بنجاح!**")
+    # تحديث قائمة المجموعات
+    await my_groups_callback(update, context)
+
+async def panel_unlock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """فتح المجموعة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    uid = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('panel_chat_id')
+    if not chat_id:
+        return
+    if not await is_authorized_in_group(context.bot, chat_id, uid):
+        if query:
+            await query.answer("🔒 غير مصرح", show_alert=True)
+        else:
+            await safe_send_markdown(context.bot, uid, "🔒 غير مصرح")
+        return
+    await db_set_chat_lock(chat_id, False)
+    if query:
+        await safe_edit_markdown(query, "🔓 **تم فتح المجموعة بنجاح!**\n\nيمكن للأعضاء إرسال رسائل الآن.")
+    else:
+        await safe_send_markdown(context.bot, uid, "🔓 **تم فتح المجموعة بنجاح!**")
+    # تحديث قائمة المجموعات
+    await my_groups_callback(update, context)
+
+async def panel_close_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إغلاق لوحة التحكم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.message.delete()
 
 async def main():
     # تهيئة قاعدة البيانات
