@@ -9038,6 +9038,180 @@ async def db_check_slow_mode(chat_id: int, user_id: int) -> bool:
         await conn.commit()
         return True
     return await execute_db(_check)
+async def ensure_force_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id=None) -> bool:
+    """التحقق من الاشتراك الإجباري"""
+    if user_id is None:
+        if update.effective_user is None:
+            return True
+        user_id = update.effective_user.id
+    if user_id == PRIMARY_OWNER_ID or await is_bot_admin(user_id):
+        return True
+    if not await db_get_force_subscribe_status():
+        return True
+    channel = await db_get_force_subscribe_channel()
+    if not channel:
+        return True
+    if await is_user_subscribed(context.bot, user_id, channel):
+        return True
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 اشترك في القناة", url=f"https://t.me/{channel.lstrip('@')}"),
+         InlineKeyboardButton("🔄 تأكد من الاشتراك", callback_data=CallbackData.CHECK_SUBSCRIBE)],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=CallbackData.BACK)]
+    ])
+    msg = f"🔒 **اشتراك إجباري**\n\nيجب عليك الاشتراك في قناتنا أولاً:\n👉 @{channel.lstrip('@')}\n\nبعد الاشتراك، اضغط على زر التحقق."
+    try:
+        if update.callback_query:
+            if update.callback_query.message.text == msg:
+                return False
+            await safe_edit_markdown(update.callback_query, msg, reply_markup=keyboard)
+        elif update.message:
+            await safe_send_markdown(context.bot, user_id, msg, reply_markup=keyboard)
+    except Exception:
+        pass
+    return False
+async def is_user_subscribed(bot, user_id, channel):
+    """التحقق من اشتراك المستخدم في قناة"""
+    if not channel:
+        return True
+    channel = channel.lstrip('@')
+    try:
+        member = await bot.get_chat_member(f"@{channel}", user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except:
+        return False
+async def get_main_keyboard(user_id: int):
+    """بناء لوحة المفاتيح الرئيسية"""
+    channels = await db_get_channels(user_id)
+    active = await db_get_active_channel(user_id)
+    cnt = 0
+    ch_display = get_text(user_id, 'no_channels')
+    if active is not None:
+        try:
+            cnt = await db_unpublished_count(active)
+            ch_info = await db_get_channel_info(active)
+            if ch_info and len(ch_info) >= 2:
+                ch_tele_id = ch_info[0] if ch_info[0] is not None else "unknown"
+                ch_name = ch_info[1] if ch_info[1] is not None else ch_tele_id
+                ch_display = f"{ch_name} ({ch_tele_id})"
+        except:
+            ch_display = get_text(user_id, 'no_channels')
+    my_groups = 0
+    try:
+        my_groups = await db_get_user_groups_count(user_id)
+    except:
+        my_groups = 0
+    has_sub = False
+    try:
+        has_sub = await db_has_active_subscription(user_id)
+    except:
+        has_sub = False
+    sub_text = get_text(user_id, 'subscribed') if has_sub else get_text(user_id, 'not_subscribed')
+    auto_status = False
+    try:
+        auto_status = await db_auto_status(user_id)
+    except:
+        auto_status = False
+    auto_text = get_text(user_id, 'auto_on') if auto_status else get_text(user_id, 'auto_off')
+    title = get_text(user_id, 'main_title').format(BOT_NAME, user_id, my_groups, sub_text, ch_display, cnt, auto_status)
+
+    updates_channel = None
+    try:
+        updates_channel = await db_get_updates_channel()
+    except:
+        updates_channel = None
+    updates_url = f"https://t.me/{updates_channel}" if updates_channel else None
+
+    keyboard = []
+
+    keyboard.append([
+        InlineKeyboardButton(get_text(user_id, 'my_groups_btn'), callback_data=CallbackData.GROUPS_MY),
+        InlineKeyboardButton(get_text(user_id, 'add_channel'), callback_data=CallbackData.CHANNELS_ADD)
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(get_text(user_id, 'my_channels'), callback_data=CallbackData.CHANNELS_MY),
+        InlineKeyboardButton(get_text(user_id, 'settings_btn'), callback_data=CallbackData.SETTINGS_MENU)
+    ])
+
+    if channels:
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'add_15_posts'), callback_data=CallbackData.POSTS_ADD_15),
+            InlineKeyboardButton(get_text(user_id, 'publish_one'), callback_data=CallbackData.POSTS_PUBLISH_ONE)
+        ])
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'my_posts_btn'), callback_data=CallbackData.POSTS_MY),
+            InlineKeyboardButton(get_text(user_id, 'recycle'), callback_data=CallbackData.POSTS_RECYCLE)
+        ])
+        keyboard.append([
+            InlineKeyboardButton(f"{get_text(user_id, 'stats_btn')} ({cnt})", callback_data=CallbackData.STATS_PENDING),
+            InlineKeyboardButton(get_text(user_id, 'my_stats_btn'), callback_data=CallbackData.STATS_FULL)
+        ])
+        if active is not None:
+            keyboard.append([
+                InlineKeyboardButton(get_text(user_id, 'schedule_btn'), callback_data=f"{CallbackData.SCHEDULE_MENU_PREFIX}{active}"),
+                InlineKeyboardButton(get_text(user_id, 'channel_stats'), callback_data=f"{CallbackData.CHANNEL_STATS}:{active}")
+            ])
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'my_channels_summary'), callback_data=CallbackData.MY_CHANNEL_STATS),
+            InlineKeyboardButton(get_text(user_id, 'my_rank_btn'), callback_data="rank")
+        ])
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'top_10_btn'), callback_data="top"),
+            InlineKeyboardButton(get_text(user_id, 'schedule_post_btn'), callback_data="schedule_post")
+        ])
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'publish_all'), callback_data=CallbackData.PUBLISH_ALL_CHANNELS)
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(get_text(user_id, 'help_btn'), callback_data=CallbackData.HELP),
+        InlineKeyboardButton(get_text(user_id, 'trial_btn'), callback_data=CallbackData.TRIAL)
+    ])
+    keyboard.append([
+        InlineKeyboardButton(get_text(user_id, 'subscribe_btn'), callback_data=CallbackData.SUBSCRIBE_MENU),
+        InlineKeyboardButton(get_text(user_id, 'developer_btn'), callback_data=CallbackData.DEVELOPER)
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(get_text(user_id, 'language_btn'), callback_data="language"),
+        InlineKeyboardButton(get_text(user_id, 'support_btn'), callback_data=CallbackData.SUPPORT_MENU)
+    ])
+    keyboard.append([
+        InlineKeyboardButton(get_text(user_id, 'referral'), callback_data=CallbackData.REFERRAL_MENU),
+        InlineKeyboardButton(get_text(user_id, 'reminder_settings'), callback_data=CallbackData.REMINDER_MENU)
+    ])
+    keyboard.append([
+        InlineKeyboardButton(get_text(user_id, 'translation_settings'), callback_data=CallbackData.TRANSLATION_MENU),
+        InlineKeyboardButton(get_text(user_id, 'contests_menu'), callback_data=CallbackData.CONTESTS_MENU)
+    ])
+
+    if updates_url:
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'updates_btn'), callback_data=CallbackData.UPDATES)
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(get_text(user_id, 'add_to_group'), url=f"https://t.me/{BOT_USERNAME}?startgroup")
+    ])
+
+    is_admin = False
+    try:
+        is_admin = (user_id == PRIMARY_OWNER_ID) or (await is_bot_admin(user_id))
+    except:
+        is_admin = False
+    if is_admin:
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'admin_panel'), callback_data=CallbackData.ADMIN_PANEL)
+        ])
+
+    valid_keyboard = []
+    for row in keyboard:
+        if row and all(isinstance(btn, InlineKeyboardButton) for btn in row):
+            valid_keyboard.append(row)
+    if not valid_keyboard:
+        valid_keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+
+    return InlineKeyboardMarkup(valid_keyboard), title, active
 
 async def main():
     # تهيئة قاعدة البيانات
