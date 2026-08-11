@@ -7408,6 +7408,12 @@ async def set_warn_penalty_callback(update: Update, context: ContextTypes.DEFAUL
     await db_set_security_settings(chat_id, warn_penalty=penalty)
     await query.answer(f"✅ تم تعيين عقوبة التحذير إلى: {penalty}")
     await security_warn_settings_callback(update, context)
+async def security_close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إغلاق لوحة الأمان"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.message.delete()
 
 async def main():
     # تهيئة قاعدة البيانات
