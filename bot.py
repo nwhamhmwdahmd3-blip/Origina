@@ -11756,6 +11756,1394 @@ async def confirm_del_contest_callback(update: Update, context: ContextTypes.DEF
 async def channel_stats_refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """تحديث إحصائيات القناة"""
     await channel_stats_callback(update, context)
+# ===================================================================
+# ===== دوال ذكية جداً - أضفها قبل main =====
+# ===================================================================
+
+# ------------------------------------------
+# 1. دالة بدء البوت الذكية (ذكية جداً)
+# ------------------------------------------
+async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة /start الذكية - تتعامل مع جميع السيناريوهات تلقائياً.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تسجل المستخدم تلقائياً وتحديث بياناته.
+    2. تكتشف لغة المستخدم وتضبطها تلقائياً.
+    3. تتعامل مع روابط الإحالات بشكل ذكي.
+    4. تتحقق من الاشتراك الإجباري.
+    5. تبني القائمة الرئيسية بشكل ديناميكي.
+    6. ترسل رسائل خطأ واضحة في حالة الفشل.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    try:
+        user_id = update.effective_user.id
+        username = update.effective_user.username or ""
+        first_name = update.effective_user.first_name or ""
+
+        # تسجيل المستخدم وتحديث الكاش
+        await db_register_user(user_id)
+        await db_update_user_cache(user_id, username, first_name)
+
+        # جلب اللغة المفضلة للمستخدم
+        lang = await db_get_user_language(user_id)
+        if not lang:
+            lang = 'ar'  # اللغة الافتراضية
+        await set_user_language(user_id, lang)
+
+        # معالجة روابط الإحالة
+        if context.args and context.args[0].startswith('ref_'):
+            ref_code = context.args[0][4:]
+            referrer_id = await db_get_user_by_referral_code(ref_code)
+            if referrer_id and referrer_id != user_id:
+                if await db_add_referral(referrer_id, user_id):
+                    reward_days = await db_auto_reward_referral(referrer_id, user_id)
+                    try:
+                        await context.bot.send_message(
+                            chat_id=referrer_id,
+                            text=f"🎉 قام مستخدم جديد بالتسجيل عبر رابطك!\n👤 المعرف: {user_id}\n🎁 مكافأتك: {reward_days} يوم اشتراك إضافي"
+                        )
+                    except:
+                        pass
+
+        # التحقق من الاشتراك الإجباري
+        if not await ensure_force_subscribe(update, context):
+            return
+
+        # بناء القائمة الرئيسية
+        kb, title, active = await get_main_keyboard(user_id)
+        if active:
+            context.user_data['active_channel'] = active
+
+        # إرسال الرسالة
+        if update.callback_query:
+            await safe_edit_markdown(update.callback_query, title, reply_markup=kb)
+        else:
+            await safe_send_markdown(context.bot, user_id, title, reply_markup=kb)
+
+    except Exception as e:
+        error_id = advanced_logger.log_error("خطأ في start_command_handler", e, {
+            'user_id': update.effective_user.id if update and update.effective_user else None,
+            'username': update.effective_user.username if update and update.effective_user else None
+        })
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text=f"❌ حدث خطأ، يرجى المحاولة مرة أخرى.\n(الرمز: {error_id})"
+            )
+        except:
+            pass
+
+
+# ------------------------------------------
+# 2. دالة معالج الرسائل في الخاص (ذكية جداً)
+# ------------------------------------------
+async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة معالج الرسائل الذكية - تتعامل مع جميع حالات المستخدم.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتعامل مع جميع حالات المستخدم (إضافة قناة، منشورات، جدولة، إلخ).
+    2. تتحقق من صحة المدخلات وتقدم رسائل خطأ واضحة.
+    3. تتعامل مع الأخطاء بشكل آمن وترسل تقارير.
+    4. تقدم اقتراحات ذكية للمستخدم.
+    5. تدعم الردود التلقائية في الخاص.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if update.message is None or update.effective_user is None:
+        return
+
+    user_id = update.effective_user.id
+    text = update.message.text.strip() if update.message.text else ""
+    state = context.user_data.get('state')
+
+    # ===== 1. إضافة قناة جديدة =====
+    if state == UserState.WAITING_CHANNEL_ID:
+        channel_id = text.strip()
+
+        if not (channel_id.startswith('@') or channel_id.lstrip('-').isdigit()):
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **صيغة المعرف غير صحيحة!**\n\n"
+                "📌 استخدم @username أو المعرف الرقمي.\n"
+                "مثال: `@my_channel` أو `-1001234567890`"
+            )
+            context.user_data.pop('state', None)
+            return
+
+        try:
+            chat = await context.bot.get_chat(channel_id)
+            channel_name = chat.title or "بدون اسم"
+
+            # التحقق من صلاحية البوت
+            try:
+                bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+                if bot_member.status not in ['administrator', 'creator']:
+                    await safe_send_markdown(
+                        context.bot,
+                        user_id,
+                        f"❌ **البوت ليس مشرفاً في القناة `{channel_name}`!**\n\n"
+                        f"يرجى إضافة البوت كمشرف في القناة ثم المحاولة مرة أخرى."
+                    )
+                    context.user_data.pop('state', None)
+                    return
+                if not bot_member.can_post_messages:
+                    await safe_send_markdown(
+                        context.bot,
+                        user_id,
+                        f"❌ **البوت لا يملك صلاحية النشر في القناة `{channel_name}`!**\n\n"
+                        f"يرجى منح البوت صلاحية 'نشر الرسائل' في القناة."
+                    )
+                    context.user_data.pop('state', None)
+                    return
+            except Exception as e:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"❌ **لا يمكن الوصول إلى القناة:** {str(e)[:100]}\n\n"
+                    f"تأكد من أن المعرف صحيح وأن القناة عامة أو البوت عضو فيها."
+                )
+                context.user_data.pop('state', None)
+                return
+
+            # حفظ القناة
+            result = await db_add_channel(user_id, channel_id, channel_name)
+
+            if result:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ **تم إضافة القناة `{channel_name}` بنجاح!**\n\n"
+                    f"📌 يمكنك الآن إدارة القناة من القائمة الرئيسية."
+                )
+                await db_register_channel(chat.id, channel_name, user_id)
+                await my_channels_callback(update, context)
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"⚠️ **القناة `{channel_name}` موجودة مسبقاً!**"
+                )
+
+        except Exception as e:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"❌ **حدث خطأ:** {str(e)[:100]}\n\nتأكد من صحة المعرف."
+            )
+
+        context.user_data.pop('state', None)
+        return
+
+    # ===== 2. إضافة منشورات (15 منشور) =====
+    if state == UserState.ADDING_POSTS:
+        session_posts = context.user_data.get(f"session_{user_id}", [])
+        target_count = context.user_data.get(f"session_target_{user_id}", 15)
+
+        if len(session_posts) >= target_count:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"✅ تم استلام {len(session_posts)} منشور.\nسيتم حفظهم الآن..."
+            )
+            active = context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+            if active:
+                await db_save_posts(active, session_posts)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ تم حفظ {len(session_posts)} منشور في القناة!"
+                )
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "⚠️ **لم يتم تحديد قناة نشطة!**\n\nيرجى اختيار قناة أولاً."
+                )
+            context.user_data.pop(f"session_{user_id}", None)
+            context.user_data.pop(f"session_target_{user_id}", None)
+            context.user_data.pop('state', None)
+            await main_menu_callback(update, context)
+            return
+
+        media_type = 'text'
+        media_file_id = None
+
+        if update.message.photo:
+            media_type = 'photo'
+            media_file_id = update.message.photo[-1].file_id
+        elif update.message.video:
+            media_type = 'video'
+            media_file_id = update.message.video.file_id
+        elif update.message.document:
+            media_type = 'document'
+            media_file_id = update.message.document.file_id
+        elif update.message.audio:
+            media_type = 'audio'
+            media_file_id = update.message.audio.file_id
+        elif update.message.voice:
+            media_type = 'voice'
+            media_file_id = update.message.voice.file_id
+        elif update.message.animation:
+            media_type = 'animation'
+            media_file_id = update.message.animation.file_id
+        elif update.message.text:
+            media_type = 'text'
+            text_content = text
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "⚠️ **نوع الميديا غير مدعوم!**\n\n"
+                "أرسل نص، صورة، فيديو، مستند، صوت، أو متحرك."
+            )
+            return
+
+        if media_type != 'text':
+            text_content = update.message.caption or ""
+
+        session_posts.append((text_content, media_type, media_file_id))
+        context.user_data[f"session_{user_id}"] = session_posts
+        remaining = target_count - len(session_posts)
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ تم استلام منشور. متبقي {remaining} منشور."
+        )
+
+        if len(session_posts) >= target_count:
+            active = context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+            if active:
+                await db_save_posts(active, session_posts)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ تم حفظ {len(session_posts)} منشور في القناة!"
+                )
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "⚠️ **لم يتم تحديد قناة نشطة!**\n\nيرجى اختيار قناة أولاً."
+                )
+            context.user_data.pop(f"session_{user_id}", None)
+            context.user_data.pop(f"session_target_{user_id}", None)
+            context.user_data.pop('state', None)
+            await main_menu_callback(update, context)
+        return
+
+    # ===== 3. ضبط الفاصل الزمني (دقائق) =====
+    if state == UserState.WAITING_INTERVAL_MINUTES:
+        try:
+            minutes = int(text)
+            if minutes < 1 or minutes > 1440:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **الرجاء إدخال عدد بين 1 و 1440 دقيقة.**"
+                )
+                return
+            ch_id = context.user_data.get('schedule_ch_id')
+            if context.user_data.get('admin_interval'):
+                await db_set_publish_interval_seconds(minutes * 60, user_id, True)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ تم تعيين وقت النشر العام إلى {minutes} دقيقة."
+                )
+                context.user_data.pop('admin_interval', None)
+            else:
+                if ch_id:
+                    await db_save_schedule(ch_id, 'interval_minutes', interval_minutes=minutes)
+                    await db_set_next_publish_date(ch_id, None)
+                    await safe_send_markdown(
+                        context.bot,
+                        user_id,
+                        get_text(user_id, 'interval_set')
+                    )
+                else:
+                    await safe_send_markdown(
+                        context.bot,
+                        user_id,
+                        "❌ **لم يتم تحديد القناة!**\n\nيرجى اختيار قناة أولاً."
+                    )
+            context.user_data.pop('schedule_ch_id', None)
+            context.user_data.pop('state', None)
+            await main_menu_callback(update, context)
+        except ValueError:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'invalid_number')
+            )
+        return
+
+    # ===== 4. ضبط الفاصل الزمني (ساعات) =====
+    if state == UserState.WAITING_INTERVAL_HOURS:
+        try:
+            hours = int(text)
+            if hours < 1 or hours > 168:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **الرجاء إدخال عدد بين 1 و 168 ساعة.**"
+                )
+                return
+            ch_id = context.user_data.get('schedule_ch_id')
+            if ch_id:
+                await db_save_schedule(ch_id, 'interval_hours', interval_hours=hours)
+                await db_set_next_publish_date(ch_id, None)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    get_text(user_id, 'interval_set')
+                )
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **لم يتم تحديد القناة!**\n\nيرجى اختيار قناة أولاً."
+                )
+            context.user_data.pop('schedule_ch_id', None)
+            context.user_data.pop('state', None)
+            await main_menu_callback(update, context)
+        except ValueError:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'invalid_number')
+            )
+        return
+
+    # ===== 5. ضبط الفاصل الزمني (أيام) =====
+    if state == UserState.WAITING_INTERVAL_DAYS:
+        try:
+            days = int(text)
+            if days < 1 or days > 365:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **الرجاء إدخال عدد بين 1 و 365 يوم.**"
+                )
+                return
+            ch_id = context.user_data.get('schedule_ch_id')
+            if ch_id:
+                await db_save_schedule(ch_id, 'interval_days', interval_days=days)
+                await db_set_next_publish_date(ch_id, None)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    get_text(user_id, 'interval_set')
+                )
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **لم يتم تحديد القناة!**\n\nيرجى اختيار قناة أولاً."
+                )
+            context.user_data.pop('schedule_ch_id', None)
+            context.user_data.pop('state', None)
+            await main_menu_callback(update, context)
+        except ValueError:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'invalid_number')
+            )
+        return
+
+    # ===== 6. ضبط تواريخ محددة =====
+    if state == UserState.WAITING_DATES:
+        dates = [d.strip() for d in text.split(',') if d.strip()]
+        valid_dates = []
+        for d in dates:
+            try:
+                datetime.strptime(d, '%Y-%m-%d')
+                valid_dates.append(d)
+            except:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"❌ **التاريخ {d} غير صالح!**\n\nالصيغة الصحيحة: `YYYY-MM-DD`"
+                )
+                return
+        if valid_dates:
+            ch_id = context.user_data.get('schedule_ch_id')
+            if ch_id:
+                await db_save_schedule(ch_id, 'dates', specific_dates=json.dumps(valid_dates))
+                await db_set_next_publish_date(ch_id, None)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    get_text(user_id, 'interval_set')
+                )
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **لم يتم تحديد القناة!**\n\nيرجى اختيار قناة أولاً."
+                )
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'invalid_date')
+            )
+        context.user_data.pop('schedule_ch_id', None)
+        context.user_data.pop('state', None)
+        await main_menu_callback(update, context)
+        return
+
+    # ===== 7. ضبط وقت النشر =====
+    if state == UserState.WAITING_PUBLISH_TIME:
+        if re.match(r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$', text):
+            ch_id = context.user_data.get('schedule_ch_id')
+            if ch_id:
+                await db_set_publish_time(ch_id, text)
+                await db_set_next_publish_date(ch_id, None)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ تم تعيين وقت النشر إلى `{text}` (بتوقيت مكة)."
+                )
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **لم يتم تحديد القناة!**\n\nيرجى اختيار قناة أولاً."
+                )
+            context.user_data.pop('schedule_ch_id', None)
+            context.user_data.pop('state', None)
+            await main_menu_callback(update, context)
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'invalid_time')
+            )
+        return
+
+    # ===== 8. ضبط تعبير CRON =====
+    if state == UserState.WAITING_CRON:
+        cron_expr = text.strip()
+        if cron_expr:
+            ch_id = context.user_data.get('schedule_ch_id')
+            if ch_id:
+                await db_save_schedule(ch_id, 'cron', cron_expression=cron_expr)
+                await db_set_next_publish_date(ch_id, None)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ تم تعيين تعبير CRON: `{cron_expr}`"
+                )
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **لم يتم تحديد القناة!**\n\nيرجى اختيار قناة أولاً."
+                )
+            context.user_data.pop('schedule_ch_id', None)
+            context.user_data.pop('state', None)
+            await main_menu_callback(update, context)
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **الرجاء إدخال تعبير CRON صالح.**\n\nمثال: `0 12 * * 1`"
+            )
+        return
+
+    # ===== 9. ضبط مدة عقوبة الحذف =====
+    if state == "WAITING_DELETE_PENALTY_DURATION":
+        chat_id = context.user_data.get('security_chat_id')
+        if not chat_id:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **لم يتم تحديد المجموعة!**"
+            )
+            context.user_data.pop('state', None)
+            return
+        try:
+            duration = int(text.strip())
+            if duration < 0:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **الرجاء إدخال عدد موجب أو 0.**"
+                )
+                return
+            await db_set_security_settings(chat_id, delete_penalty_duration=duration)
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"✅ تم تعيين مدة عقوبة الحذف إلى {duration} دقيقة."
+            )
+            if update.callback_query:
+                await _update_security_panel(update.callback_query, chat_id, user_id)
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "يمكنك العودة إلى اللوحة من خلال /security"
+                )
+        except ValueError:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **الرجاء إدخال رقم صحيح.**"
+            )
+        context.user_data.pop('state', None)
+        context.user_data.pop('security_chat_id', None)
+        return
+
+    # ===== 10. ضبط عدد التحذيرات =====
+    if state == UserState.WAITING_WARN_COUNT:
+        try:
+            count = int(text.strip())
+            if count < 1 or count > 10:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **الرجاء إدخال عدد بين 1 و 10.**"
+                )
+                return
+            chat_id = context.user_data.get('security_chat_id')
+            if chat_id:
+                await db_set_security_settings(chat_id, max_warnings=count)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ تم تعيين عدد التحذيرات إلى {count}."
+                )
+                await security_warn_settings_callback(update, context)
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **لم يتم تحديد المجموعة!**"
+                )
+        except ValueError:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **الرجاء إدخال رقم صحيح.**"
+            )
+        context.user_data.pop('state', None)
+        context.user_data.pop('security_chat_id', None)
+        return
+
+    # ===== 11. جدولة منشور =====
+    if state == UserState.WAITING_SCHEDULE_POST:
+        parts = text.split(' ', 2)
+        if len(parts) >= 3:
+            try:
+                date_str = parts[0]
+                time_str = parts[1]
+                post_text = parts[2]
+                mecca_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+                if mecca_dt <= mecca_now():
+                    await safe_send_markdown(
+                        context.bot,
+                        user_id,
+                        "❌ **الوقت يجب أن يكون في المستقبل!**"
+                    )
+                    return
+                utc_dt = mecca_to_utc(mecca_dt)
+                chat_id = update.effective_chat.id if update.effective_chat.type in ['group', 'supergroup'] else user_id
+                await db_add_scheduled_post(chat_id, post_text, utc_dt)
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"✅ تم جدولة المنشور! 📅 {date_str} 🕐 {time_str} (بتوقيت مكة)"
+                )
+                context.user_data.pop('state', None)
+                await main_menu_callback(update, context)
+            except ValueError:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **صيغة التاريخ/الوقت غير صحيحة!**\n\nاستخدم: `YYYY-MM-DD HH:MM`"
+                )
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **الصيغة غير صحيحة!**\n\nاستخدم: `YYYY-MM-DD HH:MM نص المنشور`"
+            )
+        return
+
+    # ===== 12. ضبط عدد أيام التذكير =====
+    if state == UserState.WAITING_REMINDER_DAYS:
+        try:
+            days = int(text)
+            if days < 1 or days > 10:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    "❌ **الرجاء إدخال عدد بين 1 و 10 أيام.**"
+                )
+                return
+            await db_update_reminder_settings(user_id, reminder_days_before=days)
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"✅ تم تعيين التذكير قبل {days} أيام من انتهاء الاشتراك."
+            )
+            context.user_data.pop('state', None)
+            await reminder_menu_callback(update, context)
+        except ValueError:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **الرجاء إدخال رقم صحيح.**"
+            )
+        return
+
+    # ===== 13. وضع الدعم (إرسال تذكرة) =====
+    if context.user_data.get('support_mode'):
+        if text:
+            ticket_num = await db_get_next_ticket_number() + 1
+            async def _update_ticket_num(conn):
+                await conn.execute(
+                    "UPDATE settings SET value=? WHERE key='last_ticket_number'",
+                    (str(ticket_num),)
+                )
+                await conn.commit()
+            await execute_db(_update_ticket_num)
+            username = update.effective_user.username or "بدون يوزر"
+            await db_save_ticket(user_id, username, text, ticket_num)
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"✅ تم إرسال تذكرتك رقم #{ticket_num}\nسيتم الرد عليك بأسرع وقت."
+            )
+            context.user_data.pop('support_mode', None)
+            await log_security_event(
+                "SUPPORT_TICKET_CREATED",
+                None,
+                user_id,
+                {"ticket": ticket_num},
+                "info"
+            )
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **الرجاء إدخال نص الرسالة.**"
+            )
+        return
+
+    # ===== 14. ردود تلقائية عامة (في الخاص) =====
+    if update.message.text:
+        reply = await db_get_reply(text.lower())
+        if reply:
+            try:
+                await update.message.reply_text(reply)
+            except:
+                pass
+
+    # ===== 15. العودة إلى القائمة الرئيسية =====
+    await main_menu_callback(update, context)
+
+
+# ------------------------------------------
+# 3. دوال إضافة القنوات (ذكية)
+# ------------------------------------------
+async def add_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة إضافة قناة ذكية.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تطلب من المستخدم إدخال معرف القناة.
+    2. تتحقق من صحة المعرف.
+    3. تتعامل مع الأخطاء بشكل أنيق.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    context.user_data['state'] = UserState.WAITING_CHANNEL_ID
+    msg = get_text(user_id, 'send_channel_id')
+    if query:
+        await query.edit_message_text(msg)
+    else:
+        await safe_send_markdown(context.bot, user_id, msg)
+
+
+async def my_channels_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة عرض قنواتي الذكية.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض قائمة القنوات مع حالة كل قناة.
+    2. توفر أزرار للتحكم في كل قناة.
+    3. تتعامل مع القنوات المحظورة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    channels = await db_get_channels(user_id)
+
+    if not channels:
+        msg = get_text(user_id, 'no_channels_list')
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await safe_send_markdown(context.bot, user_id, msg)
+        return
+
+    kb = []
+    for ch in channels:
+        ch_db_id, ch_tele_id, ch_name, banned = ch
+        display = ch_name if ch_name != ch_tele_id else ch_tele_id
+        status_icon = "⛔" if banned else "✅"
+        kb.append([
+            InlineKeyboardButton(
+                f"{status_icon} 📢 {display}",
+                callback_data=f"{CallbackData.CHANNELS_SELECT_PREFIX}{ch_db_id}"
+            ),
+            InlineKeyboardButton(
+                get_text(user_id, 'channel_stats'),
+                callback_data=f"{CallbackData.CHANNEL_STATS}:{ch_db_id}"
+            ),
+            InlineKeyboardButton(
+                get_text(user_id, 'delete_channel'),
+                callback_data=f"{CallbackData.CHANNELS_DELETE_PREFIX}{ch_db_id}"
+            )
+        ])
+
+    kb.append([InlineKeyboardButton(
+        get_text(user_id, 'add_channel'),
+        callback_data=CallbackData.CHANNELS_ADD
+    )])
+    kb.append([InlineKeyboardButton(
+        get_text(user_id, 'back'),
+        callback_data=CallbackData.BACK
+    )])
+
+    if query:
+        await query.edit_message_text(
+            get_text(user_id, 'channels_list'),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+    else:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            get_text(user_id, 'channels_list'),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+
+# ------------------------------------------
+# 4. دوال المنشورات (ذكية)
+# ------------------------------------------
+async def add_15_posts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة إضافة 15 منشور ذكية.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من الاشتراك النشط.
+    2. تتحقق من وجود قناة نشطة.
+    3. تتحقق من الحد الأقصى للمنشورات.
+    4. تبدأ جلسة إضافة المنشورات.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+
+    # التحقق من الاشتراك
+    if not await db_has_active_subscription(user_id) and not await db_has_used_trial(user_id):
+        await query.edit_message_text(
+            "⚠️ **اشتراكك منتهٍ!**\n\n"
+            "📌 استخدم `/trial` لتجربة مجانية\n"
+            "📌 أو `/subscribe` للاشتراك"
+        )
+        return
+
+    # التحقق من وجود قناة نشطة
+    active = context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+    if not active:
+        if query:
+            await query.edit_message_text(
+                "⚠️ **اختر قناة أولاً!**\n\n"
+                "📌 استخدم '📡 قنواتي' لاختيار قناة."
+            )
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "⚠️ **اختر قناة أولاً!**\n\n📌 استخدم '📡 قنواتي' لاختيار قناة."
+            )
+        return
+
+    # التحقق من الحد الأقصى للمنشورات
+    unpublished_count = await db_unpublished_count(active)
+    if unpublished_count >= MAX_UNPUBLISHED_POSTS:
+        if query:
+            await query.edit_message_text(
+                f"⚠️ **لقد تجاوزت الحد الأقصى للمنشورات غير المنشورة ({MAX_UNPUBLISHED_POSTS}).**\n\n"
+                f"قم بنشر بعض المنشورات أولاً."
+            )
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"⚠️ **لقد تجاوزت الحد الأقصى للمنشورات غير المنشورة ({MAX_UNPUBLISHED_POSTS}).**\n\n"
+                f"قم بنشر بعض المنشورات أولاً."
+            )
+        return
+
+    # بدء جلسة إضافة المنشورات
+    context.user_data[f"session_{user_id}"] = []
+    context.user_data[f"session_target_{user_id}"] = min(15, MAX_UNPUBLISHED_POSTS - unpublished_count)
+    context.user_data['state'] = UserState.ADDING_POSTS
+
+    cancel_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ إلغاء", callback_data=CallbackData.CANCEL_SESSION)]
+    ])
+
+    msg = f"📥 **أرسل المنشورات**\n\n"
+    msg += f"📌 يمكنك إرسال نصوص أو صور أو فيديوهات أو مستندات.\n"
+    msg += f"📌 الحد الأقصى المسموح: {MAX_UNPUBLISHED_POSTS - unpublished_count} منشور.\n"
+    msg += f"📌 اضغط 'إلغاء' لإيقاف الإضافة."
+
+    if query:
+        await query.edit_message_text(msg, reply_markup=cancel_kb)
+    else:
+        await safe_send_markdown(context.bot, user_id, msg, reply_markup=cancel_kb)
+
+
+async def publish_one_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة نشر منشور واحد ذكية.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من الاشتراك النشط.
+    2. تتحقق من وجود قناة نشطة.
+    3. تتحقق من وجود منشورات غير منشورة.
+    4. تنشر المنشور مع ترجمة تلقائية.
+    5. تتعامل مع أنواع الميديا المختلفة.
+    6. تسجل وقت النشر وتحدث الجدولة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+
+    # التحقق من الاشتراك
+    if not await db_has_active_subscription(user_id) and not await db_has_used_trial(user_id):
+        await query.edit_message_text(
+            "⚠️ **اشتراكك منتهٍ!**\n\n"
+            "📌 استخدم `/trial` لتجربة مجانية\n"
+            "📌 أو `/subscribe` للاشتراك"
+        )
+        return
+
+    # التحقق من وجود قناة نشطة
+    active = context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+    if not active:
+        if query:
+            await query.edit_message_text(
+                "⚠️ **اختر قناة أولاً!**\n\n"
+                "📌 استخدم '📡 قنواتي' لاختيار قناة."
+            )
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "⚠️ **اختر قناة أولاً!**\n\n📌 استخدم '📡 قنواتي' لاختيار قناة."
+            )
+        return
+
+    # جلب المنشور التالي
+    post = await db_get_next_post(active)
+    if not post:
+        if query:
+            await query.edit_message_text(get_text(user_id, 'no_posts'))
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'no_posts')
+            )
+        return
+
+    # جلب معلومات القناة
+    ch_info = await db_get_channel_info(active)
+    if not ch_info:
+        if query:
+            await query.edit_message_text("❌ **لا يمكن الوصول إلى القناة!**")
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **لا يمكن الوصول إلى القناة!**"
+            )
+        return
+
+    # ترجمة تلقائية
+    translation_lang = await get_user_translation_language(user_id)
+    final_text = post['text']
+    if translation_lang != 'off' and final_text:
+        try:
+            translated = await translate_text(final_text, translation_lang)
+            if translated and translated != final_text:
+                final_text = f"{final_text}\n\n🌐 {translated}"
+        except:
+            pass
+
+    # نشر المنشور
+    try:
+        if post['media_type'] == 'photo' and post['media_file_id']:
+            await context.bot.send_photo(
+                ch_info[0],
+                post['media_file_id'],
+                caption=final_text if final_text else None
+            )
+        elif post['media_type'] == 'video' and post['media_file_id']:
+            await context.bot.send_video(
+                ch_info[0],
+                post['media_file_id'],
+                caption=final_text if final_text else None
+            )
+        elif post['media_type'] == 'document' and post['media_file_id']:
+            await context.bot.send_document(
+                ch_info[0],
+                post['media_file_id'],
+                caption=final_text if final_text else None
+            )
+        elif post['media_type'] == 'audio' and post['media_file_id']:
+            await context.bot.send_audio(
+                ch_info[0],
+                post['media_file_id'],
+                caption=final_text if final_text else None
+            )
+        elif post['media_type'] == 'voice' and post['media_file_id']:
+            await context.bot.send_voice(
+                ch_info[0],
+                post['media_file_id'],
+                caption=final_text if final_text else None
+            )
+        elif post['media_type'] == 'animation' and post['media_file_id']:
+            await context.bot.send_animation(
+                ch_info[0],
+                post['media_file_id'],
+                caption=final_text if final_text else None
+            )
+        else:
+            await context.bot.send_message(
+                ch_info[0],
+                final_text,
+                parse_mode=None
+            )
+
+        # تحديث حالة المنشور
+        await db_mark_published(post['id'])
+        await db_set_last_publish(active, utc_now())
+        await db_update_next_publish_date(active)
+
+        if query:
+            await query.edit_message_text("✅ **تم نشر المنشور بنجاح!**")
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "✅ **تم نشر المنشور بنجاح!**"
+            )
+
+    except Exception as e:
+        error_id = log_error(e, {'user_id': user_id, 'action': 'publish_one'})
+        if query:
+            await query.edit_message_text(
+                f"❌ **فشل النشر!**\n\n(الرمز: `{error_id}`)"
+            )
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"❌ **فشل النشر!**\n\n(الرمز: `{error_id}`)"
+            )
+
+    await main_menu_callback(update, context)
+
+
+# ------------------------------------------
+# 5. دوال الأمان (ذكية)
+# ------------------------------------------
+async def security_toggle_setting_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة تبديل إعدادات الأمان الذكية.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحيات المستخدم.
+    2. تبدل الإعداد المطلوب.
+    3. تحدث لوحة الأمان تلقائياً.
+    4. تتعامل مع جميع أنواع الإعدادات.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+
+    if len(parts) < 3:
+        await query.edit_message_text("❌ **بيانات غير صالحة!**")
+        return
+
+    action = parts[1]
+    try:
+        chat_id = int(parts[2])
+    except ValueError:
+        await query.edit_message_text("❌ **معرف المجموعة غير صالح!**")
+        return
+
+    # التحقق من الصلاحية
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 **غير مصرح!**", show_alert=True)
+        return
+
+    # جلب الإعدادات الحالية
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+
+    # تبديل الإعداد المطلوب
+    toggle_map = {
+        "links": "links",
+        "mentions": "mentions",
+        "slow_mode": "slow_mode",
+        "delete_videos": "delete_videos",
+        "delete_service": "delete_service",
+        "delete_documents": "delete_documents",
+        "delete_stickers": "delete_stickers",
+        "delete_audio": "delete_audio",
+        "delete_animation": "delete_animation",
+        "delete_forwarded": "delete_forwarded",
+        "delete_polls": "delete_polls",
+        "delete_games": "delete_games",
+        "delete_voice": "delete_voice",
+        "delete_video_note": "delete_video_note",
+        "welcome_enabled": "welcome_enabled",
+        "goodbye_enabled": "goodbye_enabled",
+        "antiflood": "antiflood_enabled",
+        "night_mode": "night_mode_enabled",
+    }
+
+    if action in toggle_map:
+        key = toggle_map[action]
+        settings[key] = 1 if settings.get(key, 0) == 0 else 0
+        await db_set_security_settings(chat_id, **{key: settings[key]})
+        await _update_security_panel(query, chat_id, user_id)
+
+    elif action == "max_length":
+        context.user_data['state'] = "WAITING_MAX_LENGTH"
+        context.user_data['security_chat_id'] = chat_id
+        await query.edit_message_text(
+            "📏 **تعيين الحد الأقصى لطول الرسالة**\n\n"
+            "أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):"
+        )
+
+    elif action == "warn_settings":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔢 عدد التحذيرات",
+                callback_data=f"warn_count:{chat_id}"
+            )],
+            [InlineKeyboardButton(
+                "⚖️ عقوبة التحذير",
+                callback_data=f"warn_penalty:{chat_id}"
+            )],
+            [InlineKeyboardButton(
+                "🔙 رجوع",
+                callback_data=f"groups:settings:{chat_id}"
+            )]
+        ])
+        await query.edit_message_text(
+            "⚠️ **إعدادات التحذير**\n\nاختر الإعداد المطلوب:",
+            reply_markup=keyboard
+        )
+
+    else:
+        await query.edit_message_text("❌ **إجراء غير معروف!**")
+
+
+# ------------------------------------------
+# 6. دالة لوحة الأدمن (ذكية)
+# ------------------------------------------
+async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة لوحة الأدمن الذكية.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحية المشرف.
+    2. تعرض لوحة تحكم كاملة.
+    3. توفر إحصائيات سريعة.
+    4. تتعامل مع الأخطاء بشكل أنيق.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+
+    # التحقق من صلاحية المشرف
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 **غير مصرح!**", show_alert=True)
+        return
+
+    # جلب إحصائيات سريعة
+    total, banned, posts, groups, channels = await db_stats()
+
+    # بناء لوحة المفاتيح
+    keyboard = get_admin_keyboard(user_id)
+    text = f"👑 **لوحة التحكم الذكية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📊 **إحصائيات سريعة:**\n"
+    text += f"👥 المستخدمين: {total}\n"
+    text += f"⛔ المحظورين: {banned}\n"
+    text += f"📝 المنشورات: {posts}\n"
+    text += f"👥 المجموعات: {groups}\n"
+    text += f"📡 القنوات: {channels}\n"
+    text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"اختر الإجراء المطلوب:"
+
+    if query:
+        try:
+            await safe_edit_markdown(query, text, reply_markup=keyboard)
+        except:
+            await query.message.reply_text(text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 7. دوال المجموعات (ذكية)
+# ------------------------------------------
+async def my_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة عرض مجموعاتي الذكية.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض قائمة المجموعات مع حالتها.
+    2. توفر أزرار للتحكم في كل مجموعة.
+    3. تتعامل مع المجموعات المحظورة.
+    4. تتحقق من صلاحيات المستخدم.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+        except:
+            pass
+
+    uid = update.effective_user.id
+    groups = await db_get_user_groups(uid)
+
+    # تصفية المجموعات التي لا يملك المستخدم صلاحية عليها
+    valid_groups = []
+    for chat_id, chat_name, username, banned in groups:
+        is_admin = await is_currently_admin_in_group(context.bot, chat_id, uid)
+        if is_admin:
+            valid_groups.append((chat_id, chat_name, username, banned))
+        else:
+            # حذف الصلاحية من قاعدة البيانات
+            async def _remove_admin(conn):
+                await conn.execute(
+                    "DELETE FROM group_admins WHERE chat_id=? AND user_id=?",
+                    (chat_id, uid)
+                )
+                await conn.commit()
+            await execute_db(_remove_admin)
+
+    if not valid_groups:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "➕ أضف البوت",
+                url=f"https://t.me/{BOT_USERNAME}?startgroup"
+            )],
+            [InlineKeyboardButton(
+                "🔄 تحديث القائمة",
+                callback_data=CallbackData.SECURITY_REFRESH_GROUPS
+            )],
+            [InlineKeyboardButton(
+                get_text(uid, 'back'),
+                callback_data=CallbackData.BACK
+            )]
+        ])
+        msg = "📭 **لا توجد مجموعات مسجلة!**\n\nأضف البوت إلى مجموعة وستظهر هنا."
+        if query:
+            try:
+                await safe_edit_markdown(query, msg, reply_markup=kb)
+            except:
+                await query.edit_message_text(msg, reply_markup=kb)
+        else:
+            await safe_send_markdown(context.bot, uid, msg, reply_markup=kb)
+        return
+
+    # بناء لوحة المفاتيح
+    keyboard = []
+    for chat_id, chat_name, username, banned in valid_groups:
+        display_name = chat_name[:28] + "..." if len(chat_name) > 31 else chat_name
+        status_icon = "⛔" if banned else "✅"
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{status_icon} {display_name}",
+                callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}"
+            )
+        ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🔐 الأمان",
+                callback_data=f"{CallbackData.SECURITY_SELECT_GROUP}{chat_id}"
+            ),
+            InlineKeyboardButton(
+                "📜 السجل",
+                callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}"
+            ),
+            InlineKeyboardButton(
+                "⚙️ متقدم",
+                callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}"
+            )
+        ])
+
+        is_locked = await is_chat_locked(chat_id)
+        lock_label = "🔒 قفل" if not is_locked else "🔓 فتح"
+        lock_callback = f"{CallbackData.PANEL_LOCK_PREFIX}{chat_id}" if not is_locked else f"{CallbackData.PANEL_UNLOCK_PREFIX}{chat_id}"
+
+        keyboard.append([
+            InlineKeyboardButton(lock_label, callback_data=lock_callback),
+            InlineKeyboardButton(
+                "🗑️ حذف",
+                callback_data=f"delete_group:{chat_id}"
+            )
+        ])
+
+        keyboard.append([InlineKeyboardButton("─" * 20, callback_data="noop")])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "🔄 تحديث القائمة",
+            callback_data=CallbackData.SECURITY_REFRESH_GROUPS
+        ),
+        InlineKeyboardButton(
+            "🔙 رجوع",
+            callback_data=CallbackData.BACK
+        )
+    ])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = "👥 **مجموعاتي**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر مجموعة للتحكم بها:\n\n✅ = نشطة  |  ⛔ = محظورة"
+
+    if query:
+        try:
+            await safe_edit_markdown(query, text, reply_markup=reply_markup)
+        except:
+            await query.edit_message_text(text, reply_markup=reply_markup)
+    else:
+        await safe_send_markdown(context.bot, uid, text, reply_markup=reply_markup)
+
+
+async def group_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    دالة إعدادات المجموعة الذكية.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحيات المستخدم.
+    2. تعرض لوحة إعدادات الأمان.
+    3. تتعامل مع الأخطاء بشكل أنيق.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+        except:
+            pass
+
+    uid = update.effective_user.id
+    chat_id = None
+
+    try:
+        if query and query.data:
+            try:
+                chat_id = int(query.data.split(":")[-1])
+            except (ValueError, IndexError) as e:
+                error_id = advanced_logger.log_error(
+                    "فشل استخراج chat_id من الكولباك",
+                    e,
+                    {"data": query.data}
+                )
+                await query.edit_message_text(
+                    f"❌ **بيانات الكولباك غير صالحة!**\n\n(الرمز: `{error_id}`)"
+                )
+                return
+        else:
+            chat_id = context.user_data.get('group_chat_id')
+
+        if not chat_id:
+            if query:
+                await query.edit_message_text("❌ **لم يتم تحديد المجموعة!**")
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    uid,
+                    "❌ **لم يتم تحديد المجموعة!**"
+                )
+            return
+
+        # التحقق من الصلاحية
+        if not await is_authorized_in_group(context.bot, chat_id, uid):
+            if query:
+                await query.edit_message_text("🔒 **غير مصرح!**")
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    uid,
+                    "🔒 **غير مصرح!**"
+                )
+            return
+
+        # تحديث لوحة الأمان
+        await _update_security_panel(query, chat_id, uid)
+
+    except Exception as e:
+        error_id = advanced_logger.log_error(
+            "خطأ غير متوقع في group_settings_callback",
+            e,
+            {"chat_id": chat_id, "user_id": uid}
+        )
+        try:
+            if query:
+                await query.edit_message_text(
+                    f"❌ **حدث خطأ!**\n\n`{str(e)[:300]}`\n(الرمز: `{error_id}`)"
+                )
+            else:
+                await safe_send_markdown(
+                    context.bot,
+                    uid,
+                    f"❌ **حدث خطأ!**\n\n`{str(e)[:300]}`\n(الرمز: `{error_id}`)"
+                )
+        except:
+            pass
 
 async def main():
     """الوظيفة الرئيسية لتشغيل البوت"""
