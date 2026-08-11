@@ -8986,6 +8986,46 @@ async def is_chat_locked(chat_id: int) -> bool:
             logger.error(f"خطأ في التحقق من قفل المجموعة {chat_id}: {e}")
             return False
     return await execute_db(_check)
+async def db_set_chat_lock(chat_id: int, locked: bool, locked_by: int = None) -> bool:
+    """تعيين قفل المجموعة"""
+    if not isinstance(chat_id, int) or chat_id <= 0:
+        return False
+    async def _set(conn):
+        try:
+            if locked:
+                await conn.execute(
+                    "INSERT OR REPLACE INTO chat_locks (chat_id, locked, locked_at, locked_by) VALUES (?, 1, ?, ?)",
+                    (chat_id, utc_now_iso(), locked_by)
+                )
+            else:
+                await conn.execute("DELETE FROM chat_locks WHERE chat_id=?", (chat_id,))
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"خطأ في قفل المجموعة {chat_id}: {e}")
+            return False
+    return await execute_db(_set)
+async def db_check_slow_mode(chat_id: int, user_id: int) -> bool:
+    """التحقق من الوضع البطيء"""
+    settings = await db_get_security_settings(chat_id)
+    if not settings.get('slow_mode', False):
+        return True
+    seconds = settings.get('slow_mode_seconds', 5)
+    async def _check(conn):
+        cur = await conn.execute("SELECT message_time FROM user_messages WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        row = await cur.fetchone()
+        now = utc_now()
+        if row:
+            last_time = datetime.fromisoformat(row[0])
+            if (now - last_time).total_seconds() < seconds:
+                return False
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_messages (user_id, chat_id, message_time) VALUES (?, ?, ?)",
+            (user_id, chat_id, now.isoformat())
+        )
+        await conn.commit()
+        return True
+    return await execute_db(_check)
 
 async def main():
     # تهيئة قاعدة البيانات
