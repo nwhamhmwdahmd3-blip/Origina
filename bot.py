@@ -6228,7 +6228,7 @@ async def init_security_table():
 
 async def init_db_improved():
     async with aiosqlite.connect(str(DB_PATH), timeout=DB_TIMEOUT) as conn:
-        await conn.execute("PRAGMA journal_mode=WAL")
+        await ensure_security_columns(conn)         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA synchronous=NORMAL")
         await conn.execute("PRAGMA foreign_keys=ON")
         await conn.execute("PRAGMA cache_size=-64000")
@@ -9212,6 +9212,75 @@ async def get_main_keyboard(user_id: int):
         valid_keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
 
     return InlineKeyboardMarkup(valid_keyboard), title, active
+async def ensure_security_columns(conn):
+    """إضافة الأعمدة المفقودة في جدول group_security تلقائياً"""
+    try:
+        # جلب الأعمدة الموجودة
+        cur = await conn.execute("PRAGMA table_info(group_security)")
+        existing_columns = [row[1] for row in await cur.fetchall()]
+        logger.info(f"📋 الأعمدة الموجودة: {existing_columns}")
+
+        # قائمة جميع الأعمدة المطلوبة
+        required_columns = {
+            'links': 'INTEGER DEFAULT 0',
+            'mentions': 'INTEGER DEFAULT 0',
+            'slow_mode': 'INTEGER DEFAULT 0',
+            'slow_mode_seconds': 'INTEGER DEFAULT 5',
+            'welcome_enabled': 'INTEGER DEFAULT 0',
+            'goodbye_enabled': 'INTEGER DEFAULT 0',
+            'welcome_text': "TEXT DEFAULT 'مرحباً {user} في {chat} 🤍'",
+            'goodbye_text': "TEXT DEFAULT 'وداعاً {user} 👋'",
+            'delete_banned_words': 'INTEGER DEFAULT 0',
+            'auto_penalty': "TEXT DEFAULT 'none'",
+            'auto_mute_duration': 'INTEGER DEFAULT 60',
+            'delete_videos': 'INTEGER DEFAULT 0',
+            'delete_audio': 'INTEGER DEFAULT 0',
+            'delete_animation': 'INTEGER DEFAULT 0',
+            'delete_service': 'INTEGER DEFAULT 0',
+            'delete_documents': 'INTEGER DEFAULT 0',
+            'delete_stickers': 'INTEGER DEFAULT 0',
+            'delete_forwarded': 'INTEGER DEFAULT 0',
+            'delete_polls': 'INTEGER DEFAULT 0',
+            'delete_games': 'INTEGER DEFAULT 0',
+            'delete_voice': 'INTEGER DEFAULT 0',
+            'delete_video_note': 'INTEGER DEFAULT 0',
+            'delete_penalty': "TEXT DEFAULT 'none'",
+            'delete_penalty_duration': 'INTEGER DEFAULT 0',
+            'antiflood_enabled': 'INTEGER DEFAULT 0',
+            'antiflood_messages': 'INTEGER DEFAULT 5',
+            'antiflood_seconds': 'INTEGER DEFAULT 10',
+            'antiflood_penalty': "TEXT DEFAULT 'mute'",
+            'max_warnings': 'INTEGER DEFAULT 3',
+            'warn_penalty': "TEXT DEFAULT 'ban'",
+            'max_message_length': 'INTEGER DEFAULT 0',
+            'night_mode_enabled': 'INTEGER DEFAULT 0',
+            'night_mode_start': "TEXT DEFAULT '23:00'",
+            'night_mode_end': "TEXT DEFAULT '06:00'",
+            'night_mode_action': "TEXT DEFAULT 'mute'"
+        }
+
+        # إضافة الأعمدة المفقودة
+        added = 0
+        for col_name, col_type in required_columns.items():
+            if col_name not in existing_columns:
+                try:
+                    await conn.execute(f"ALTER TABLE group_security ADD COLUMN {col_name} {col_type}")
+                    logger.info(f"✅ تم إضافة العمود: {col_name}")
+                    added += 1
+                except Exception as e:
+                    logger.error(f"❌ فشل إضافة العمود {col_name}: {e}")
+
+        if added > 0:
+            logger.info(f"✅ تم إضافة {added} أعمدة جديدة إلى جدول group_security")
+        else:
+            logger.info("✅ جميع الأعمدة موجودة مسبقاً")
+
+        await conn.commit()
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ فشل تحديث أعمدة الأمان: {e}")
+        return False
 
 async def main():
     # تهيئة قاعدة البيانات
