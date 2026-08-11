@@ -8351,6 +8351,504 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
             )
         except:
             pass
+# ===================================================================
+# ===== دوال المشرفين المخفيين - النسخة الذكية جداً =====
+# ===================================================================
+
+async def register_hidden_owner_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لتسجيل المالك المخفي.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تكتشف تلقائياً ما إذا كان المستخدم هو المالك الحقيقي.
+    2. تتعامل مع معرف المشرف المجهول (1087968824) وتستخرج المعرف الحقيقي.
+    3. تتحقق من صلاحية البوت وتطلب الصلاحيات المفقودة.
+    4. ترسل تقارير مفصلة للمستخدم والمطور.
+    5. تكتشف إذا كان المستخدم مالكاً بالفعل وتمنع التسجيل المكرر.
+    6. تضمن إضافة المستخدم إلى جدول المشرفين لضمان الصلاحيات.
+    7. تقوم بتحديث الكاش تلقائياً.
+    8. تسجل الأحداث الأمنية لتتبع التغييرات.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    # ---------- التحقق من أن الأمر صدر من مجموعة ----------
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 **هذا الأمر يعمل فقط في المجموعات!**"
+        )
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+
+    # ---------- التحقق من صلاحيات البوت ----------
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    if not bot_perms.get('can_act', False):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"⚠️ **البوت ليس مشرفاً في المجموعة `{chat_name}`!**\n\n"
+            f"🔹 **لتفعيل الميزات المتقدمة:**\n"
+            f"• اذهب إلى إعدادات المجموعة > المشرفون\n"
+            f"• أضف البوت (`@{context.bot.username}`) كمشرف\n"
+            f"• امنحه صلاحية 'حظر الأعضاء' على الأقل\n"
+            f"• ثم استخدم هذا الأمر مرة أخرى"
+        )
+        return
+
+    # ---------- التحقق من أن المستخدم ليس محظوراً عالمياً ----------
+    if await db_is_banned(user_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ **أنت محظور عالمياً!** لا يمكنك تسجيل نفسك كمالك مخفي."
+        )
+        return
+
+    # ---------- الذكاء: التعامل مع المشرف المجهول ----------
+    real_user_id = user_id
+    if user_id == ANONYMOUS_ADMIN_ID:
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            for admin in admins:
+                if admin.status == 'creator':
+                    real_user_id = admin.user.id
+                    break
+            if real_user_id == ANONYMOUS_ADMIN_ID and admins:
+                real_user_id = admins[0].user.id
+        except Exception as e:
+            logger.error(f"فشل في استخراج المالك الحقيقي: {e}")
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ **لا يمكن تحديد المالك الحقيقي للمجموعة!**\n"
+                "يرجى المحاولة مرة أخرى أو الاتصال بالمطور."
+            )
+            return
+
+    # ---------- التحقق من صلاحيات المستخدم الحقيقي ----------
+    try:
+        member = await context.bot.get_chat_member(chat_id, real_user_id)
+        is_creator = member.status == 'creator'
+        is_admin = member.status == 'administrator'
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot,
+            real_user_id,
+            f"❌ لا يمكن التحقق من صلاحياتك: {str(e)[:100]}"
+        )
+        return
+
+    # ---------- الذكاء: التحليل والتنبيهات ----------
+    if not is_creator and not is_admin:
+        await safe_send_markdown(
+            context.bot,
+            real_user_id,
+            "❌ **غير مصرح!**\n\n"
+            "لتسجيل نفسك كمالك مخفي، يجب أن تكون:\n"
+            "• مالك المجموعة (creator)\n"
+            "• أو مشرفاً في المجموعة (administrator)\n\n"
+            "📌 **إذا كنت المالك:**\n"
+            "• تأكد من أن البوت مشرف\n"
+            "• تأكد من أنك المالك في تيليجرام\n"
+            f"• المعرف الحقيقي الذي تم اكتشافه: `{real_user_id}`\n\n"
+            "📌 **إذا كنت مشرفاً فقط:**\n"
+            "• يمكن استخدام `/add_hidden_admin` لإضافة مشرفين مخفيين آخرين.\n"
+            "• لا يمكنك تسجيل نفسك كمالك مخفي، هذا يخص المالك فقط."
+        )
+        return
+
+    if is_creator:
+        role = "المالك"
+    else:
+        role = "مشرف"
+
+    # ---------- التحقق من التسجيل المسبق ----------
+    if await db_is_hidden_owner(chat_id, real_user_id):
+        await safe_send_markdown(
+            context.bot,
+            real_user_id,
+            f"⚠️ **أنت مسجل بالفعل كمالك مخفي!**\n"
+            f"📌 دورك في المجموعة: {role}\n"
+            f"🆔 المعرف المسجل: `{real_user_id}`"
+        )
+        return
+
+    # ---------- التسجيل الفعلي ----------
+    await db_register_hidden_owner_group(chat_id, real_user_id)
+
+    async def _add_real_admin(conn):
+        await conn.execute(
+            "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?, ?)",
+            (chat_id, real_user_id)
+        )
+        await conn.commit()
+    await execute_db(_add_real_admin)
+
+    invalidate_auth_cache(chat_id, real_user_id)
+
+    # ---------- إرسال رسالة نجاح ذكية ----------
+    await safe_send_markdown(
+        context.bot,
+        real_user_id,
+        f"✅ **تم تسجيلك كمالك مخفي بنجاح!**\n\n"
+        f"📌 المجموعة: {chat_name}\n"
+        f"🆔 المعرف: `{real_user_id}`\n"
+        f"👤 دورك: {role}\n\n"
+        f"🔐 **الأوامر المتاحة لك الآن:**\n"
+        f"• `/security` - إعدادات الأمان المتقدمة\n"
+        f"• `/panel` - لوحة تحكم المجموعة\n"
+        f"• `/lock` / `/unlock` - قفل وفتح المجموعة\n"
+        f"• `/ban`, `/mute`, `/warn`, `/kick` - إدارة الأعضاء\n\n"
+        f"📌 **ملاحظة:** إذا لم تظهر لك بعض الميزات، تأكد من أن البوت لديه الصلاحيات الكافية."
+    )
+
+    # ---------- إشعار المطور الأساسي ----------
+    try:
+        await context.bot.send_message(
+            chat_id=PRIMARY_OWNER_ID,
+            text=f"✅ **تم تسجيل مالك مخفي جديد!**\n\n"
+                 f"📌 المجموعة: {chat_name}\n"
+                 f"🆔 المعرف: `{chat_id}`\n"
+                 f"👤 المالك المخفي: `{real_user_id}` (دوره: {role})\n"
+                 f"🔍 تم التعرف عليه عبر: {'مباشر' if user_id == real_user_id else 'مجهول'}"
+        )
+    except:
+        pass
+
+    # ---------- تسجيل الحدث الأمني ----------
+    await log_security_event(
+        "HIDDEN_OWNER_REGISTERED",
+        chat_id,
+        real_user_id,
+        {"role": role, "detected_via": "direct" if user_id == real_user_id else "anonymous"},
+        "high"
+    )
+
+
+async def add_hidden_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لإضافة مشرف مخفي.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من أن المنفذ للأمر لديه صلاحيات كافية.
+    2. تتحقق من وجود المستخدم في المجموعة وأنه ليس بوتاً.
+    3. تتحقق من عدم تكرار الإضافة.
+    4. تُصدر تحذيرات وتوصيات ذكية.
+    5. تسجل الحدث في سجلات الأمان.
+    6. تُحدث الكاش تلقائياً.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 هذا الأمر يعمل فقط في المجموعات!"
+        )
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    # التحقق من صلاحيات المنفذ
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "🔒 **غير مصرح!**\nأنت لست مشرفاً في هذه المجموعة."
+            )
+            return
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ لا يمكن التحقق من صلاحياتك: {str(e)[:100]}"
+        )
+        return
+
+    args = context.args
+    if len(args) < 1:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "📝 **الاستخدام:**\n"
+            "/add_hidden_admin معرف_المستخدم\n\n"
+            "مثال: `/add_hidden_admin 123456789`"
+        )
+        return
+
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ معرف مستخدم غير صالح!"
+        )
+        return
+
+    if target_id == PRIMARY_OWNER_ID:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ لا يمكن إضافة المطور الأساسي كمشرف مخفي!"
+        )
+        return
+
+    if target_id == user_id:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ لا يمكن إضافة نفسك كمشرف مخفي!\n"
+            "إذا كنت تريد تسجيل نفسك كمالك مخفي، استخدم `/register_hidden_owner`."
+        )
+        return
+
+    # التحقق من وجود المستخدم
+    try:
+        member = await context.bot.get_chat_member(chat_id, target_id)
+        if member.status in ['left', 'kicked']:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ المستخدم ليس في المجموعة!"
+            )
+            return
+        if member.status not in ['administrator', 'creator', 'member']:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ المستخدم ليس عضواً في المجموعة!"
+            )
+            return
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ لا يمكن العثور على المستخدم: {e}"
+        )
+        return
+
+    # التأكد من أنه ليس بوتاً
+    try:
+        user = await context.bot.get_chat(target_id)
+        if user.is_bot:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ لا يمكن إضافة بوت كمشرف مخفي!"
+            )
+            return
+    except:
+        pass
+
+    if await db_is_banned(target_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ المستخدم محظور عالمياً!"
+        )
+        return
+
+    if await db_is_hidden_admin(chat_id, target_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"⚠️ المستخدم `{target_id}` مشرف مخفي بالفعل!"
+        )
+        return
+
+    success = await db_add_hidden_admin(chat_id, target_id, user_id)
+    if success:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم إضافة المشرف المخفي `{target_id}` بنجاح!**\n"
+            f"📌 يمكنه الآن استخدام أوامر الإدارة في هذه المجموعة."
+        )
+        await log_security_event(
+            "HIDDEN_ADMIN_ADDED",
+            chat_id,
+            user_id,
+            {"target": target_id},
+            "high"
+        )
+        invalidate_auth_cache(chat_id, target_id)
+    else:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ فشل إضافة المشرف المخفي. يرجى المحاولة مرة أخرى."
+        )
+
+
+async def remove_hidden_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لإزالة مشرف مخفي.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من الصلاحيات.
+    2. تتحقق من وجود المستخدم كشريف مخفي.
+    3. تقدم توصيات في حالة الفشل.
+    4. تسجل الحدث.
+    5. تُحدث الكاش.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 هذا الأمر يعمل فقط في المجموعات!"
+        )
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "🔒 غير مصرح!"
+            )
+            return
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ لا يمكن التحقق من صلاحياتك: {str(e)[:100]}"
+        )
+        return
+
+    args = context.args
+    if len(args) < 1:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "📝 **الاستخدام:**\n"
+            "/remove_hidden_admin معرف_المستخدم\n\n"
+            "مثال: `/remove_hidden_admin 123456789`"
+        )
+        return
+
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ معرف مستخدم غير صالح!"
+        )
+        return
+
+    if target_id == PRIMARY_OWNER_ID:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ لا يمكن إزالة المطور الأساسي!"
+        )
+        return
+
+    if not await db_is_hidden_admin(chat_id, target_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"⚠️ **المستخدم `{target_id}` ليس مشرفاً مخفياً!**\n"
+            f"📌 لعرض قائمة المشرفين المخفيين، استخدم `/list_hidden_admins`."
+        )
+        return
+
+    success = await db_remove_hidden_admin(chat_id, target_id)
+    if success:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم إزالة المشرف المخفي `{target_id}` بنجاح!**"
+        )
+        await log_security_event(
+            "HIDDEN_ADMIN_REMOVED",
+            chat_id,
+            user_id,
+            {"target": target_id},
+            "high"
+        )
+        invalidate_auth_cache(chat_id, target_id)
+    else:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ فشل إزالة المشرف المخفي. يرجى المحاولة مرة أخرى."
+        )
+
+
+async def list_hidden_admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض قائمة المشرفين المخفيين.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من الصلاحيات.
+    2. تعرض القائمة بشكل منظم مع تفاصيل الإضافة.
+    3. تقدم خيارات لنسخ المعرفات.
+    4. تظهر عدد المشرفين المخفيين.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 هذا الأمر يعمل فقط في المجموعات!"
+        )
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "🔒 غير مصرح!"
+            )
+            return
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ لا يمكن التحقق من صلاحياتك: {str(e)[:100]}"
+        )
+        return
+
+    admins = await db_get_hidden_admins(chat_id)
+    if not admins:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "📭 **لا يوجد مشرفين مخفيين في هذه المجموعة.**\n"
+            "📌 يمكنك إضافة مشرف مخفي باستخدام:\n"
+            "`/add_hidden_admin معرف_المستخدم`"
+        )
+        return
+
+    text = f"🔒 **قائمة المشرفين المخفيين**\n━━━━━━━━━━━━━━━━━━━━━━\n👥 عدد المشرفين: {len(admins)}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for admin in admins:
+        text += f"👤 المستخدم: `{admin['admin_id']}`\n"
+        text += f"➕ أضيف بواسطة: `{admin['added_by']}`\n"
+        text += f"🕐 التاريخ: {admin['added_at'][:16]}\n"
+        text += "━━━━━━━━━━━━━━━━━━━━━━\n"
+
+    await safe_send_markdown(context.bot, user_id, text)
 
 async def main():
     """الوظيفة الرئيسية لتشغيل البوت"""
