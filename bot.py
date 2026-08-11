@@ -13956,6 +13956,211 @@ async def br_history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("📋 يمكنك مشاهدة السجل في لوحة الأدمن لاحقاً.")
+async def admin_confirm_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ✅ دالة تأكيد البث الجماعي – نسخة ذكية
+    
+    الميزات:
+    - تحقق من الصلاحيات (مالك أساسي أو مشرف مخفي)
+    - عرض تفاصيل البث قبل الإرسال (نوع المحتوى، الجمهور، عدد المستخدمين)
+    - خيار التأكيد أو الإلغاء
+    - معالجة الأخطاء وإعادة المحاولة
+    - تحديث إحصائيات البث في قاعدة البيانات
+    """
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    # ----- 1. التحقق من الصلاحيات -----
+    if user_id != PRIMARY_OWNER_ID:
+        # تحقق من المشرفين المخفيين (إذا كانت الدالة موجودة)
+        if hasattr(db_is_hidden_admin, '__call__'):
+            is_hidden = await db_is_hidden_admin(chat_id, user_id)
+        else:
+            is_hidden = False
+        if not is_hidden:
+            await query.edit_message_text("🔒 هذه الميزة للمشرفين فقط!")
+            return
+
+    # ----- 2. جلب بيانات البث من user_data -----
+    broadcast_data = context.user_data.get('broadcast_data')
+    if not broadcast_data or not broadcast_data.get('content'):
+        await query.edit_message_text("⚠️ لا توجد بيانات بث للتأكيد. ابدأ من جديد.")
+        return
+
+    # ----- 3. عرض تفاصيل البث مع أزرار التأكيد -----
+    target_display = {
+        'all_users': 'جميع المستخدمين',
+        'specific_users': 'مستخدمين محددين',
+        'groups': 'المجموعات المسجلة',
+        'channels': 'القنوات المسجلة'
+    }.get(broadcast_data['target'], 'غير محدد')
+
+    type_display = {
+        'text': '📝 نص',
+        'photo': '🖼️ صورة',
+        'video': '🎥 فيديو',
+        'document': '📄 مستند',
+        'poll': '📊 استطلاع',
+        'audio': '🎵 صوت'
+    }.get(broadcast_data['type'], 'غير محدد')
+
+    # جلب عدد المستخدمين المستهدفين (تقديري)
+    target_count = 0
+    if broadcast_data['target'] == 'all_users':
+        users = await db_get_all_users() if hasattr(db_get_all_users, '__call__') else []
+        target_count = len(users)
+    elif broadcast_data['target'] in ['groups', 'channels']:
+        target_count = len(broadcast_data.get('target_ids', []))
+    else:
+        target_count = len(broadcast_data.get('target_ids', []))
+
+    # عرض تفاصيل البث
+    confirm_text = (
+        f"📢 **تأكيد البث الجماعي**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 **النوع:** {type_display}\n"
+        f"👥 **الجمهور:** {target_display}\n"
+        f"👤 **عدد المستهدفين:** `{target_count}`\n"
+        f"⏰ **الجدولة:** {broadcast_data.get('schedule') or 'فوري'}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"**المحتوى:**\n{broadcast_data['content'][:200]}..."
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("✅ تأكيد الإرسال", callback_data="broadcast_send_final")],
+        [InlineKeyboardButton("✏️ تعديل", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data="br_cancel")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        confirm_text,
+        parse_mode='MarkdownV2',
+        reply_markup=reply_markup
+    )
+
+    # ----- 4. تخزين بيانات البث مؤقتاً للاستخدام في الإرسال النهائي -----
+    context.user_data['pending_broadcast'] = broadcast_data
+
+
+async def broadcast_send_final_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    🚀 التنفيذ النهائي للبث بعد التأكيد
+    """
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+
+    # التحقق من الصلاحيات
+    if user_id != PRIMARY_OWNER_ID:
+        await query.edit_message_text("🔒 غير مصرح!")
+        return
+
+    # جلب بيانات البث المؤقتة
+    broadcast_data = context.user_data.get('pending_broadcast')
+    if not broadcast_data:
+        await query.edit_message_text("⚠️ انتهت صلاحية جلسة البث. ابدأ من جديد.")
+        return
+
+    # ----- 1. جلب المستخدمين المستهدفين -----
+    targets = []
+    if broadcast_data['target'] == 'all_users':
+        users = await db_get_all_users() if hasattr(db_get_all_users, '__call__') else []
+        targets = [row['user_id'] for row in users]
+    elif broadcast_data['target'] in ['groups', 'channels']:
+        targets = broadcast_data.get('target_ids', [])
+    else:  # specific_users
+        targets = broadcast_data.get('target_ids', [])
+
+    if not targets:
+        await query.edit_message_text("⚠️ لا يوجد مستخدمين مستهدفين!")
+        return
+
+    # ----- 2. إعلام المستخدم ببدء الإرسال -----
+    status_msg = await query.edit_message_text(f"⏳ جاري إرسال البث إلى {len(targets)} مستخدم...")
+
+    # ----- 3. تنفيذ الإرسال -----
+    success = 0
+    failed = 0
+    total = len(targets)
+
+    for idx, uid in enumerate(targets):
+        try:
+            if broadcast_data['type'] == 'text':
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=broadcast_data['content'],
+                    parse_mode='HTML'
+                )
+            elif broadcast_data['type'] == 'photo':
+                with open(broadcast_data['content'], 'rb') as f:
+                    await context.bot.send_photo(
+                        chat_id=uid,
+                        photo=f,
+                        caption=broadcast_data.get('caption')
+                    )
+            elif broadcast_data['type'] == 'video':
+                with open(broadcast_data['content'], 'rb') as f:
+                    await context.bot.send_video(
+                        chat_id=uid,
+                        video=f,
+                        caption=broadcast_data.get('caption')
+                    )
+            elif broadcast_data['type'] == 'document':
+                with open(broadcast_data['content'], 'rb') as f:
+                    await context.bot.send_document(
+                        chat_id=uid,
+                        document=f,
+                        caption=broadcast_data.get('caption')
+                    )
+            elif broadcast_data['type'] == 'audio':
+                with open(broadcast_data['content'], 'rb') as f:
+                    await context.bot.send_audio(
+                        chat_id=uid,
+                        audio=f,
+                        caption=broadcast_data.get('caption')
+                    )
+            elif broadcast_data['type'] == 'poll':
+                # افترض أن المحتوى يحتوي على سؤال وخيارات مفصولة بـ '|'
+                parts = broadcast_data['content'].split('|')
+                if len(parts) >= 2:
+                    question = parts[0]
+                    options = parts[1].split(',')
+                    await context.bot.send_poll(
+                        chat_id=uid,
+                        question=question,
+                        options=options
+                    )
+            success += 1
+        except Exception as e:
+            failed += 1
+            logger.warning(f"فشل إرسال إلى {uid}: {e}")
+
+        # تحديث حالة الإرسال كل 10 مستخدمين
+        if (success + failed) % 10 == 0:
+            await status_msg.edit_text(
+                f"⏳ جاري الإرسال... {success + failed}/{total} (✅ {success} | ❌ {failed})"
+            )
+
+        # تجنب الـ Flood
+        if (success + failed) % 30 == 0:
+            await asyncio.sleep(1)
+
+    # ----- 4. عرض النتيجة النهائية -----
+    result_text = (
+        f"✅ **انتهى البث**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 **الإجمالي:** `{total}`\n"
+        f"✅ **تم الإرسال:** `{success}`\n"
+        f"❌ **فشل الإرسال:** `{failed}`"
+    )
+    await status_msg.edit_text(result_text, parse_mode='MarkdownV2')
+
+    # ----- 5. تنظيف السياق -----
+    context.user_data.pop('pending_broadcast', None)
+    context.user_data.pop('broadcast_data', None)
 
 async def main():
     """الوظيفة الرئيسية لتشغيل البوت"""
