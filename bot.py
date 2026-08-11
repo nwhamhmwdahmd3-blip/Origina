@@ -7199,7 +7199,7 @@ async def security_banned_words_menu_callback(update: Update, context: ContextTy
     ])
     await query.edit_message_text("🚫 **الكلمات المحظورة**\nاختر الإجراء المطلوب:", reply_markup=keyboard)
 # ===================================================================
-# دوال الكلمات المحظورة - أضفها قبل main()
+# دوال الكلمات المحظورة - أضفها قبل)
 # ===================================================================
 
 async def banned_words_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7352,6 +7352,62 @@ async def set_delete_penalty_duration_callback(update: Update, context: ContextT
     context.user_data['state'] = "WAITING_DELETE_PENALTY_DURATION"
     context.user_data['security_chat_id'] = chat_id
     await query.edit_message_text("⏱️ **أرسل مدة عقوبة الحذف بالدقائق** (مثال: 60)\nأو أرسل 0 للكتم الدائم.")
+async def security_warn_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض إعدادات التحذير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    settings = await db_get_security_settings(chat_id)
+    max_warnings = settings.get('max_warnings', 3)
+    warn_penalty = settings.get('warn_penalty', 'ban')
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🔢 عدد التحذيرات: {max_warnings}", callback_data=f"warn_count:{chat_id}"),
+         InlineKeyboardButton(f"⚖️ العقوبة: {warn_penalty}", callback_data=f"warn_penalty:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"groups:settings:{chat_id}")]
+    ])
+    await query.edit_message_text(
+        f"⚠️ **إعدادات التحذير**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔢 عدد التحذيرات: {max_warnings}\n"
+        f"⚖️ عقوبة الوصول للحد الأقصى: {warn_penalty}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"اختر الإعداد المطلوب:",
+        reply_markup=keyboard,
+        parse_mode="MarkdownV2"
+    )
+
+async def security_warn_count_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب إدخال عدد التحذيرات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = "WAITING_WARN_COUNT"
+    context.user_data['security_chat_id'] = chat_id
+    await query.edit_message_text("🔢 أرسل عدد التحذيرات المسموح بها (1-10):\nمثال: 3")
+
+async def set_warn_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين عقوبة التحذير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        await query.edit_message_text("❌ بيانات غير صالحة")
+        return
+    penalty = parts[1]
+    chat_id = int(parts[2])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await db_set_security_settings(chat_id, warn_penalty=penalty)
+    await query.answer(f"✅ تم تعيين عقوبة التحذير إلى: {penalty}")
+    await security_warn_settings_callback(update, context)
 
 async def main():
     # تهيئة قاعدة البيانات
