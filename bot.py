@@ -7302,6 +7302,27 @@ async def admin_remove_banned_word_callback(update: Update, context: ContextType
         return
     context.user_data['state'] = "WAITING_REMOVE_GLOBAL_BANNED_WORD"
     await query.edit_message_text("✏️ أرسل الكلمة التي تريد حذفها من قائمة المحظورات العامة:")
+async def security_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض خيارات عقوبة الحذف التلقائي"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔴 طرد", callback_data=f"set_delete_penalty:kick:{chat_id}"),
+         InlineKeyboardButton("🛑 حظر", callback_data=f"set_delete_penalty:ban:{chat_id}")],
+        [InlineKeyboardButton("🔇 كتم", callback_data=f"set_delete_penalty:mute:{chat_id}"),
+         InlineKeyboardButton("⚠️ تحذير", callback_data=f"set_delete_penalty:warn:{chat_id}")],
+        [InlineKeyboardButton("⏱️ مدة العقوبة", callback_data=f"set_delete_penalty_duration:{chat_id}"),
+         InlineKeyboardButton("❌ لا شيء", callback_data=f"set_delete_penalty:none:{chat_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=f"groups:settings:{chat_id}")]
+    ])
+    msg = "⚖️ **اختر عقوبة الحذف التلقائي**\n\nسيتم تطبيق هذه العقوبة عند حذف رسالة مخالفة:"
+    await query.edit_message_text(msg, reply_markup=keyboard)
 
 async def main():
     # تهيئة قاعدة البيانات
