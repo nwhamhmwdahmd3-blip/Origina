@@ -8960,6 +8960,22 @@ async def admin_declare_winner_callback(update: Update, context: ContextTypes.DE
         await query.answer("🔒 غير مصرح", show_alert=True)
         return
     await query.edit_message_text("📝 **إعلان فائز**\n\nأرسل معرف المسابقة ومعرف الفائز بهذه الصيغة:\n`/declare_winner معرف_المسابقة معرف_المستخدم`")
+async def admin_del_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف مسابقة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    contest_id = int(query.data.split(":")[-1])
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    success = await db_delete_contest(contest_id, user_id)
+    if success:
+        await query.edit_message_text("✅ تم حذف المسابقة.")
+    else:
+        await query.edit_message_text("❌ فشل حذف المسابقة.")
+    await admin_panel_callback(update, context)
 
 async def main():
     # تهيئة قاعدة البيانات
