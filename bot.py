@@ -14281,6 +14281,109 @@ async def admin_set_log_channel_callback(update: Update, context: ContextTypes.D
     
     context.user_data['state'] = UserState.WAITING_LOG_CHANNEL
     await query.edit_message_text("📝 **تعيين قناة التقارير**\n\nأرسل معرف القناة:\nمثال: `-100123456789` أو `@my_channel`\n\n📌 **ملاحظة:** يجب أن يكون البوت مشرفاً في القناة.")
+# ===================================================================
+# دوال الردود التلقائية للمستخدم (User Auto Reply)
+# ===================================================================
+
+async def user_auto_reply_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تبديل حالة الردود التلقائية للمستخدم (في الخاص).
+    يتم استدعاؤها عند الضغط على زر تبديل الردود التلقائية في الإعدادات الشخصية.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    # 1. استخراج user_id من البيانات
+    try:
+        user_id = int(query.data.split(":")[-1])
+    except (ValueError, IndexError):
+        await query.answer("❌ بيانات غير صالحة!", show_alert=True)
+        return
+    
+    # 2. التحقق من أن المستخدم يضغط على زر خاص به
+    if user_id != update.effective_user.id:
+        await query.answer("🔒 هذا الإعداد خاص بك فقط!", show_alert=True)
+        return
+    
+    # 3. الحصول على الحالة الحالية
+    current_status = await db_get_user_auto_reply_status(user_id)
+    new_status = not current_status
+    
+    # 4. تحديث الحالة في قاعدة البيانات
+    await db_set_user_auto_reply_status(user_id, new_status)
+    
+    # 5. تسجيل الحدث
+    await db_save_sentiment_history(
+        user_id, 
+        0, 
+        f"user_auto_reply_toggle_{new_status}", 
+        "positive" if new_status else "neutral", 
+        0.2 if new_status else 0
+    )
+    
+    # 6. بناء رسالة التأكيد
+    status_text = "🟢 مفعلة" if new_status else "🔴 معطلة"
+    text = f"✅ **تم {'تفعيل' if new_status else 'تعطيل'} الردود التلقائية**\n\n"
+    text += f"📌 الحالة: {status_text}\n"
+    text += f"💡 سيتم الرد على رسائلك تلقائياً في المجموعات."
+    
+    # 7. عرض لوحة المفاتيح المحدثة
+    keyboard = get_user_auto_reply_keyboard(user_id, new_status)
+    
+    await safe_edit_markdown(query, text, reply_markup=keyboard)
+
+
+# ===================================================================
+# دوال قاعدة البيانات المساعدة (إذا كانت مفقودة)
+# ===================================================================
+
+async def db_get_user_auto_reply_status(user_id: int) -> bool:
+    """
+    الحصول على حالة الردود التلقائية للمستخدم من قاعدة البيانات.
+    """
+    async def _get(conn):
+        cur = await conn.execute(
+            "SELECT auto_reply_enabled FROM users WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] == 1 if row and row[0] is not None else True  # افتراضي True
+    return await execute_db(_get)
+
+
+async def db_set_user_auto_reply_status(user_id: int, enabled: bool):
+    """
+    تحديث حالة الردود التلقائية للمستخدم في قاعدة البيانات.
+    """
+    async def _set(conn):
+        await conn.execute(
+            "UPDATE users SET auto_reply_enabled=? WHERE user_id=?",
+            (1 if enabled else 0, user_id)
+        )
+        await conn.commit()
+        logger.info(f"✅ تم {'تفعيل' if enabled else 'تعطيل'} الردود التلقائية للمستخدم {user_id}")
+    return await execute_db(_set)
+
+
+# ===================================================================
+# دوال الكيبوردات المساعدة
+# ===================================================================
+
+def get_user_auto_reply_keyboard(user_id: int, enabled: bool) -> InlineKeyboardMarkup:
+    """
+    بناء لوحة مفاتيح الردود التلقائية للمستخدم.
+    """
+    status_text = "🟢 مفعل" if enabled else "🔴 معطل"
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                f"📝 الردود التلقائية: {status_text}",
+                callback_data=f"{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}{user_id}"
+            )
+        ],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
 
 # ===================================================================
 # 34. دالة main() النهائية
