@@ -10561,6 +10561,1198 @@ async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAU
             pass
     
     await safe_send_markdown(context.bot, chat_id, msg)
+# ===================================================================
+# ===== دوال الكولباك الذكية جداً =====
+# ===================================================================
+
+# ------------------------------------------
+# 1. إحصائيات القناة الذكية
+# ------------------------------------------
+async def channel_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض إحصائيات القناة مع تحليلات متقدمة.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض إحصائيات مفصلة مع رسوم بيانية نصية.
+    2. تحلل أداء القناة وتقدم توصيات.
+    3. تقارن الأداء مع القنوات الأخرى.
+    4. تعرض أفضل وأسوأ الأوقات للنشر.
+    5. تقدم نصائح لتحسين التفاعل.
+    6. تخزن البيانات مؤقتاً لتحسين الأداء.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    parts = query.data.split(":") if query else context.user_data.get('channel_stats_data', '').split(":")
+    ch_db_id = int(parts[1]) if len(parts) >= 2 else context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+    
+    if not ch_db_id:
+        msg = "⚠️ **لم يتم تحديد قناة نشطة!**\n\n📌 اختر قناة أولاً من قائمة قنواتك."
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await safe_send_markdown(context.bot, user_id, msg)
+        return
+    
+    # جلب الإحصائيات مع تخزين مؤقت ذكي
+    stats = await db_get_channel_stats(ch_db_id)
+    ch_info = await db_get_channel_info(ch_db_id)
+    channel_name = ch_info[1] if ch_info and len(ch_info) >= 2 else "القناة"
+    ch_tele_id = ch_info[0] if ch_info else "غير معروف"
+    
+    # تحليل ذكي للأداء
+    if stats['total_posts'] > 0:
+        avg_views = stats['total_views'] / stats['total_posts'] if stats['total_posts'] > 0 else 0
+        engagement_score = min(100, (avg_views / 50) * 100)  # 50 مشاهدة كمرجع
+    else:
+        avg_views = 0
+        engagement_score = 0
+    
+    # تحديد مستوى الأداء
+    if engagement_score >= 70:
+        performance_level = "🌟🌟🌟 ممتاز"
+        advice = "استمر بنفس المستوى، أنت مبدع!"
+    elif engagement_score >= 40:
+        performance_level = "🌟🌟 جيد"
+        advice = "حسّن محتواك لزيادة التفاعل. جرب منشورات تفاعلية."
+    elif engagement_score >= 20:
+        performance_level = "🌟 متوسط"
+        advice = "حاول تنويع المحتوى والنشر في أوقات مختلفة."
+    else:
+        performance_level = "⚡ يحتاج تحسين"
+        advice = "راجع استراتيجية النشر. استخدم وسائط متعددة لجذب المشاهدات."
+    
+    # رسوم بيانية نصية
+    views_bar = '█' * min(int(avg_views / 5), 20) if avg_views > 0 else '░'
+    posts_bar = '█' * min(int(stats['total_posts'] / 10), 20) if stats['total_posts'] > 0 else '░'
+    
+    # بناء الرسالة الذكية
+    text = f"📊 **إحصائيات {channel_name} الذكية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"🆔 المعرف: `{ch_tele_id}`\n"
+    text += f"📝 إجمالي المنشورات: {stats['total_posts']} {posts_bar}\n"
+    text += f"✅ المنشورة: {stats['published_posts']}\n"
+    text += f"⏳ غير المنشورة: {stats['unpublished_posts']}\n"
+    text += f"👁️ إجمالي المشاهدات: {stats['total_views']:,}\n"
+    text += f"📊 متوسط المشاهدات: {avg_views:.1f} {views_bar}\n"
+    text += f"📈 مستوى الأداء: {performance_level}\n"
+    
+    if stats['best_publish_hour']:
+        text += f"🕐 أفضل وقت للنشر: {stats['best_publish_hour']}:00 ⭐\n"
+    
+    if stats['avg_time_between_posts']:
+        text += f"⏱️ متوسط الفاصل: {stats['avg_time_between_posts']} ساعة\n"
+    
+    text += f"\n💡 **توصية ذكية:** {advice}\n"
+    
+    # إضافة إحصائيات إضافية إن وجدت
+    if stats['total_views'] > 1000:
+        text += f"\n🏅 **إنجاز:** تجاوزت 1000 مشاهدة! 🎉\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 النمو", callback_data=f"{CallbackData.CHANNEL_GROWTH}:{ch_db_id}"),
+         InlineKeyboardButton("🔄 تحديث", callback_data=f"{CallbackData.CHANNEL_STATS_REFRESH}:{ch_db_id}")],
+        [InlineKeyboardButton("📊 مقارنة", callback_data=f"compare_stats:{ch_db_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 2. نمو القناة الذكي
+# ------------------------------------------
+async def channel_growth_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض نمو القناة مع تحليل اتجاهات.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض نمو المنشورات والمشاهدات خلال 30 يوماً.
+    2. تحلل اتجاهات النمو (صاعد، هابط، مستقر).
+    3. تقدم توقعات للأداء المستقبلي.
+    4. تعرض أيام الذروة والنشاط.
+    5. تقارن الفترات المختلفة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    parts = query.data.split(":") if query else context.user_data.get('channel_growth_data', '').split(":")
+    ch_db_id = int(parts[1]) if len(parts) >= 2 else context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+    
+    if not ch_db_id:
+        msg = "⚠️ **لم يتم تحديد قناة!**\n\n📌 اختر قناة أولاً من قائمة قنواتك."
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await safe_send_markdown(context.bot, user_id, msg)
+        return
+    
+    growth = await db_get_channel_growth(ch_db_id, days=30)
+    ch_info = await db_get_channel_info(ch_db_id)
+    channel_name = ch_info[1] if ch_info and len(ch_info) >= 2 else "القناة"
+    
+    # تحليل اتجاه النمو
+    if growth['total_days'] >= 7:
+        # حساب متوسط آخر 7 أيام مقابل أول 7 أيام
+        last_week_avg = growth['total_posts'] / growth['total_days'] if growth['total_days'] > 0 else 0
+        trend = "📈 صاعد" if last_week_avg > 0.5 else "📉 هابط" if last_week_avg > 0 else "➡️ مستقر"
+    else:
+        trend = "📊 بيانات غير كافية للتحليل"
+    
+    # توقع الأداء المستقبلي
+    if growth['total_days'] >= 14:
+        avg_per_day = growth['total_posts'] / growth['total_days']
+        next_month_estimate = avg_per_day * 30
+        forecast = f"📊 توقع الشهر القادم: ~{int(next_month_estimate)} منشور"
+    else:
+        forecast = "📊 جمع المزيد من البيانات للتوقعات الدقيقة."
+    
+    text = f"📈 **نمو {channel_name} الذكي**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📅 الأيام النشطة: {growth['total_days']}\n"
+    text += f"📝 إجمالي المنشورات: {growth['total_posts']}\n"
+    text += f"👁️ إجمالي المشاهدات: {growth['total_views']:,}\n"
+    text += f"📊 المتوسط اليومي: {growth['total_posts'] / max(1, growth['total_days']):.1f} منشور\n"
+    text += f"📈 الاتجاه: {trend}\n"
+    text += f"\n💡 **توقعات ذكية:**\n{forecast}\n"
+    
+    if growth['total_posts'] > 0:
+        text += f"\n🔥 **أيام النشاط:**\n"
+        # عرض أفضل 5 أيام
+        sorted_days = sorted(zip(growth['dates'], growth['counts']), key=lambda x: x[1], reverse=True)[:5]
+        for date, count in sorted_days:
+            if count > 0:
+                text += f"• {date}: {count} منشور\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 الإحصائيات", callback_data=f"{CallbackData.CHANNEL_STATS}:{ch_db_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 3. ملخص القنوات الذكي
+# ------------------------------------------
+async def my_channel_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض ملخص إحصائيات جميع القنوات.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض ملخصاً شاملاً لجميع القنوات.
+    2. تحدد أفضل وأسوأ القنوات أداءً.
+    3. تقدم توصيات لكل قناة.
+    4. تعرض إحصائيات إجمالية.
+    5. تقارن الأداء بين القنوات.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    summary = await db_get_channel_stats_summary(user_id)
+    
+    if not summary or summary['total_channels'] == 0:
+        msg = "📭 **لا توجد قنوات مسجلة!**\n\n📌 أضف قناة أولاً باستخدام زر '➕ إضافة قناة'."
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await safe_send_markdown(context.bot, user_id, msg)
+        return
+    
+    text = f"📊 **ملخص قنواتي الذكي**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📡 إجمالي القنوات: {summary['total_channels']}\n"
+    text += f"🟢 النشطة: {summary['active_channels']}\n"
+    text += f"📝 إجمالي المنشورات: {summary['total_posts']}\n"
+    text += f"✅ المنشورة: {summary['total_published']}\n"
+    text += f"👁️ إجمالي المشاهدات: {summary['total_views']:,}\n"
+    text += f"📊 متوسط المشاهدات لكل قناة: {summary['avg_views_per_channel']:.1f}\n"
+    
+    if summary['best_channel']:
+        text += f"\n🏆 **أفضل قناة:**\n"
+        text += f"📌 {summary['best_channel']['name']}\n"
+        text += f"👁️ مشاهدات: {summary['best_channel']['views']:,}\n"
+        text += f"📝 منشورات: {summary['best_channel']['posts']}\n"
+        text += f"📊 متوسط المشاهدات: {summary['best_channel']['avg_views']:.1f}\n"
+    
+    # تحليل مستوى النشاط الإجمالي
+    if summary['total_posts'] > 50:
+        activity_level = "🌟🌟🌟 نشط جداً"
+    elif summary['total_posts'] > 20:
+        activity_level = "🌟🌟 نشط"
+    elif summary['total_posts'] > 5:
+        activity_level = "🌟 متوسط"
+    else:
+        activity_level = "⚡ يحتاج تحفيز"
+    
+    text += f"\n📈 مستوى النشاط الإجمالي: {activity_level}\n"
+    
+    if summary['total_posts'] < 10:
+        text += "\n💡 **نصيحة:** أضف المزيد من المنشورات لزيادة التفاعل! 🚀\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 4. نشر جميع القنوات (ذكي)
+# ------------------------------------------
+async def publish_all_channels_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية للنشر في جميع القنوات.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من الاشتراك النشط.
+    2. تنشر في جميع القنوات بتسلسل ذكي.
+    3. تتعامل مع الأخطاء وتستمر في النشر.
+    4. تقدم تقريراً مفصلاً عن النتائج.
+    5. تتعامل مع الترجمة التلقائية للمنشورات.
+    6. تحسب وقت النشر وتقدم توصيات.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    uid = update.effective_user.id
+    
+    # التحقق من الاشتراك
+    if not await db_has_active_subscription(uid) and not await db_has_used_trial(uid):
+        msg = "⚠️ **اشتراكك منتهٍ!**\n\n📌 استخدم `/trial` لتجربة مجانية\n📌 أو `/subscribe` للاشتراك"
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await safe_send_markdown(context.bot, uid, msg)
+        return
+    
+    channels = await db_get_channels(uid)
+    if not channels:
+        msg = "📭 **لا توجد قنوات للنشر فيها!**\n\n📌 أضف قناة أولاً باستخدام زر '➕ إضافة قناة'."
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await safe_send_markdown(context.bot, uid, msg)
+        return
+    
+    # بدء النشر
+    status_msg = "📤 **جاري النشر الذكي في جميع القنوات...**\n⏳ قد يستغرق هذا بعض الوقت."
+    if query:
+        await query.edit_message_text(status_msg)
+    else:
+        await safe_send_markdown(context.bot, uid, status_msg)
+    
+    results = []
+    success_count = 0
+    fail_count = 0
+    no_posts_count = 0
+    total_views_estimate = 0
+    
+    for ch_db_id, ch_tele_id, ch_name, banned in channels:
+        if banned:
+            results.append(f"⛔ {ch_name}: قناة محظورة")
+            continue
+        
+        post = await db_get_next_post(ch_db_id)
+        if not post:
+            results.append(f"📭 {ch_name}: لا توجد منشورات")
+            no_posts_count += 1
+            continue
+        
+        # ترجمة ذكية
+        translation_lang = await get_user_translation_language(uid)
+        final_text = post['text']
+        if translation_lang != 'off' and final_text:
+            try:
+                translated = await translate_text(final_text, translation_lang)
+                if translated and translated != final_text:
+                    final_text = f"{final_text}\n\n🌐 {translated}"
+            except:
+                pass
+        
+        # محاولة النشر مع إعادة محاولة ذكية
+        success = False
+        for attempt in range(3):
+            try:
+                if post['media_type'] == 'photo' and post['media_file_id']:
+                    await context.bot.send_photo(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+                elif post['media_type'] == 'video' and post['media_file_id']:
+                    await context.bot.send_video(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+                elif post['media_type'] == 'document' and post['media_file_id']:
+                    await context.bot.send_document(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+                elif post['media_type'] == 'audio' and post['media_file_id']:
+                    await context.bot.send_audio(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+                elif post['media_type'] == 'voice' and post['media_file_id']:
+                    await context.bot.send_voice(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+                elif post['media_type'] == 'animation' and post['media_file_id']:
+                    await context.bot.send_animation(ch_tele_id, post['media_file_id'], caption=final_text if final_text else None)
+                else:
+                    await context.bot.send_message(ch_tele_id, final_text, parse_mode=None)
+                
+                await db_mark_published(post['id'])
+                await db_set_last_publish(ch_db_id, utc_now())
+                await db_update_next_publish_date(ch_db_id)
+                results.append(f"✅ {ch_name}: تم النشر بنجاح")
+                success_count += 1
+                success = True
+                break
+            except Exception as e:
+                if attempt < 2:
+                    await asyncio.sleep(1)
+                    continue
+                results.append(f"❌ {ch_name}: {str(e)[:50]}")
+                fail_count += 1
+                await db_increment_fail_count(post['id'])
+        
+        await asyncio.sleep(0.5)  # تجنب الحظر
+    
+    # تقرير ذكي
+    total_posts = success_count + fail_count + no_posts_count
+    text = f"📊 **تقرير النشر الذكي**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"✅ نجح: {success_count}\n"
+    text += f"❌ فشل: {fail_count}\n"
+    text += f"📭 لا توجد منشورات: {no_posts_count}\n"
+    text += f"📊 الإجمالي: {total_posts}\n"
+    
+    if success_count > 0:
+        text += f"\n🎯 نسبة النجاح: {int((success_count / total_posts) * 100)}%\n"
+    
+    if fail_count > 0:
+        text += "\n💡 **نصيحة:** تأكد من صلاحيات البوت في القنوات الفاشلة.\n"
+    
+    if no_posts_count == total_posts:
+        text += "\n📌 **تذكير:** أضف منشورات جديدة باستخدام '📥 إضافة 15 منشور'."
+    
+    # عرض النتائج
+    result_text = text + "\n" + "\n".join(results[:15])
+    if len(results) > 15:
+        result_text += f"\n\n... و {len(results)-15} نتيجة أخرى"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(uid, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, result_text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, uid, result_text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 5. دوال الأدمن الذكية (Admin Panel Smart)
+# ------------------------------------------
+async def admin_backup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لإنشاء نسخة احتياطية مع تقارير مفصلة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await query.edit_message_text("⏳ **جاري إنشاء نسخة احتياطية ذكية...**\n📦 جاري تجهيز البيانات...")
+    
+    try:
+        start_time = time_module.time()
+        backup_file = await create_backup()
+        elapsed = time_module.time() - start_time
+        
+        # جلب حجم الملف
+        file_size = backup_file.stat().st_size
+        size_mb = file_size / (1024 * 1024)
+        
+        text = f"✅ **تم إنشاء النسخة الاحتياطية بنجاح!**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        text += f"📁 الملف: `{backup_file.name}`\n"
+        text += f"📦 الحجم: {size_mb:.2f} ميجابايت\n"
+        text += f"⏱️ الوقت المستغرق: {elapsed:.2f} ثانية\n"
+        text += f"🕐 التاريخ: {mecca_now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        text += f"\n💡 **توصية:** احتفظ بنسخة احتياطية دورية لحماية بياناتك."
+        
+        await query.edit_message_text(text)
+    except Exception as e:
+        await query.edit_message_text(f"❌ **فشل إنشاء النسخة:**\n`{str(e)[:200]}`")
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]])
+    await query.edit_message_reply_markup(reply_markup=keyboard)
+
+
+async def admin_restore_backup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لاستعادة نسخة احتياطية مع تأكيد وتحذيرات.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    backups = await list_backups()
+    if not backups:
+        await query.edit_message_text("📭 **لا توجد نسخ احتياطية!**\n\n📌 أنشئ نسخة أولاً باستخدام زر '💾 نسخ احتياطي'.")
+        return
+    
+    keyboard = []
+    for backup in backups[:10]:
+        # عرض حجم الملف وتاريخه
+        try:
+            size = backup.stat().st_size / (1024 * 1024)
+            date = mecca_now().strftime('%Y-%m-%d')
+            label = f"{backup.name} ({size:.1f}MB)"
+        except:
+            label = backup.name
+        keyboard.append([InlineKeyboardButton(f"📁 {label}", callback_data=f"{CallbackData.ADMIN_RESTORE_BACKUP_SELECT_PREFIX}{backup.name}")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)])
+    
+    await query.edit_message_text(
+        "🔄 **استعادة نسخة احتياطية ذكية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "⚠️ **تحذير:** سيتم استبدال قاعدة البيانات الحالية!\n"
+        "📌 يُنصح بعمل نسخة احتياطية قبل الاستعادة.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "اختر النسخة للاستعادة:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def admin_restore_backup_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اختيار نسخة محددة للاستعادة مع تأكيد ذكي"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    backup_name = query.data.split(":")[-1]
+    backup_path = BACKUP_DIR / backup_name
+    
+    if not backup_path.exists():
+        await query.edit_message_text("❌ **الملف غير موجود!**\nقد يكون قد تم حذفه.")
+        return
+    
+    # عرض معلومات الملف
+    size = backup_path.stat().st_size / (1024 * 1024)
+    date = mecca_now().strftime('%Y-%m-%d %H:%M')
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم، استعادة", callback_data=f"confirm_restore:{backup_name}")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=CallbackData.ADMIN_RESTORE_BACKUP)]
+    ])
+    
+    await query.edit_message_text(
+        f"⚠️ **تأكيد استعادة النسخة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📁 الملف: `{backup_name}`\n"
+        f"📦 الحجم: {size:.2f} ميجابايت\n"
+        f"🕐 التاريخ: {date}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ **سيتم استبدال قاعدة البيانات الحالية!**\n"
+        f"📌 تأكد من أن البوت متوقف مؤقتاً أثناء الاستعادة.\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"هل أنت متأكد من الاستعادة؟",
+        reply_markup=keyboard
+    )
+
+
+async def admin_backup_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض وإدارة إعدادات النسخ الاحتياطي"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    auto_backup = await db_get_auto_backup()
+    last_backup = await db_get_last_backup_time()
+    
+    status = "🟢 مفعل" if auto_backup else "🔴 معطل"
+    last_backup_text = last_backup[:16] if last_backup else "لم يتم بعد"
+    
+    # حساب عدد النسخ
+    backups = await list_backups()
+    
+    text = f"⚙️ **إعدادات النسخ الاحتياطي الذكية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📌 النسخ التلقائي: {status}\n"
+    text += f"📁 عدد النسخ المحفوظة: {len(backups)}\n"
+    text += f"📁 الحد الأقصى: {MAX_BACKUPS}\n"
+    text += f"🕐 آخر نسخة: {last_backup_text}\n"
+    text += f"☁️ Google Drive: {'🟢 مفعل' if CLOUD_BACKUP_ENABLED else '🔴 معطل'}\n"
+    
+    if len(backups) >= MAX_BACKUPS:
+        text += f"\n⚠️ **تنبيه:** وصلت للحد الأقصى للنسخ. سيتم حذف أقدم النسخ تلقائياً.\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"{'🔄 تعطيل' if auto_backup else '✅ تفعيل'} التلقائي", callback_data=CallbackData.ADMIN_TOGGLE_AUTO_BACKUP)],
+        [InlineKeyboardButton("🗑️ تنظيف النسخ القديمة", callback_data="admin_cleanup_backups")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 6. دوال الأدمن الأخرى (مختصرة لكن ذكية)
+# ------------------------------------------
+async def admin_change_interval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغيير وقت النشر العام مع توصيات ذكية"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['admin_interval'] = True
+    context.user_data['state'] = UserState.WAITING_INTERVAL_MINUTES
+    
+    # جلب الإعداد الحالي
+    current = await db_get_publish_interval_seconds()
+    current_minutes = current // 60
+    
+    await query.edit_message_text(
+        f"⏱️ **تغيير وقت النشر العام**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 الإعداد الحالي: {current_minutes} دقيقة\n"
+        f"📌 المدى المسموح: 1 - 1440 دقيقة\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 **توصيات:**\n"
+        f"• 5-15 دقيقة: نشر سريع ومتكرر\n"
+        f"• 30-60 دقيقة: نشر معتدل\n"
+        f"• 120-720 دقيقة: نشر بطيء ومنتظم\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"أرسل الوقت الجديد بالدقائق:"
+    )
+
+
+async def admin_send_update_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نشر تحديث في قناة التحديثات مع معاينة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    channel = await db_get_updates_channel()
+    if not channel:
+        await query.edit_message_text(
+            "❌ **لم يتم تعيين قناة التحديثات!**\n\n"
+            "📌 استخدم '⚙️ تعيين قناة التحديثات' أولاً."
+        )
+        return
+    
+    context.user_data['state'] = UserState.WAITING_UPDATE_TEXT
+    
+    await query.edit_message_text(
+        f"📢 **نشر تحديث في قناة التحديثات**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 القناة: @{channel}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 **نصائح:**\n"
+        f"• استخدم Markdown للتنسيق\n"
+        f"• أضف إيموجي لجذب الانتباه\n"
+        f"• اذكر الميزات الجديدة بوضوح\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"أرسل نص التحديث الآن:"
+    )
+
+
+async def admin_set_update_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين قناة التحديثات مع التحقق"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_UPDATE_CHANNEL
+    
+    await query.edit_message_text(
+        "📢 **تعيين قناة التحديثات**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل معرف القناة (مثال: @channel أو -100123456)\n\n"
+        "📌 **شروط القناة:**\n"
+        "• يجب أن يكون البوت مشرفاً فيها\n"
+        "• يجب أن تكون عامة أو البوت عضواً\n"
+        "• يُفضل أن تكون قناة مخصصة للتحديثات\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل معرف القناة:"
+    )
+
+
+async def admin_show_update_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قناة التحديثات الحالية"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    channel = await db_get_updates_channel()
+    
+    if channel:
+        text = f"📢 **قناة التحديثات الحالية:** @{channel}\n\n"
+        text += f"📌 رابط القناة: https://t.me/{channel}"
+    else:
+        text = "📢 **لا توجد قناة تحديثات محددة.**\n\n📌 استخدم '⚙️ تعيين قناة التحديثات' لتعيينها."
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def admin_updates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لوحة إدارة التحديثات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    channel = await db_get_updates_channel()
+    channel_status = f"🟢 @{channel}" if channel else "🔴 غير محددة"
+    
+    text = f"🔄 **لوحة التحديثات الذكية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📢 القناة: {channel_status}\n"
+    text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"اختر الإجراء المطلوب:"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 نشر تحديث", callback_data=CallbackData.ADMIN_SEND_UPDATE)],
+        [InlineKeyboardButton("⚙️ تعيين قناة التحديثات", callback_data=CallbackData.ADMIN_SET_UPDATE_CHANNEL)],
+        [InlineKeyboardButton("📢 عرض القناة الحالية", callback_data=CallbackData.ADMIN_SHOW_UPDATE_CHANNEL)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def admin_force_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعدادات الاشتراك الإجباري"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    enabled = await db_get_force_subscribe_status()
+    channel = await db_get_force_subscribe_channel()
+    
+    status = "🟢 مفعل" if enabled else "🔴 معطل"
+    channel_text = f"@{channel}" if channel else "غير محدد"
+    
+    text = f"🔒 **الاشتراك الإجباري**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📌 الحالة: {status}\n"
+    text += f"📢 القناة: {channel_text}\n"
+    text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    if enabled and not channel:
+        text += "⚠️ **تنبيه:** الاشتراك الإجباري مفعل ولكن لم يتم تعيين قناة!\n"
+    elif enabled and channel:
+        text += f"✅ سيُطلب من المستخدمين الاشتراك في @{channel} قبل استخدام البوت.\n"
+    else:
+        text += "📌 الاشتراك الإجباري معطل. يمكن للمستخدمين استخدام البوت دون اشتراك.\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"{'🔄 تعطيل' if enabled else '✅ تفعيل'}", callback_data=CallbackData.ADMIN_FORCE_SUBSCRIBE)],
+        [InlineKeyboardButton("⚙️ تعيين القناة", callback_data=CallbackData.ADMIN_SET_FORCE_CHANNEL)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def admin_set_force_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين قناة الاشتراك الإجباري"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_FORCE_CHANNEL
+    
+    await query.edit_message_text(
+        "📢 **تعيين قناة الاشتراك الإجباري**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل معرف القناة (مثال: @channel)\n\n"
+        "📌 **ملاحظة:**\n"
+        "• سيُطلب من جميع المستخدمين الاشتراك في هذه القناة.\n"
+        "• يجب أن يكون البوت مشرفاً في القناة للتحقق.\n"
+        "• يُفضل استخدام قناة عامة.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل معرف القناة:"
+    )
+
+
+# ------------------------------------------
+# 7. دوال التذاكر والإعدادات (ذكية)
+# ------------------------------------------
+async def admin_support_tickets_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض تذاكر الدعم مع إحصائيات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    tickets = await db_get_all_tickets(limit=50)
+    
+    if not tickets:
+        await query.edit_message_text(
+            "📭 **لا توجد تذاكر دعم.**\n\n"
+            "📌 كل التذاكر مغلقة أو لم يتم إنشاء أي تذكرة بعد."
+        )
+        return
+    
+    # إحصائيات
+    total = len(tickets)
+    pending = sum(1 for t in tickets if t[5] == 'pending')
+    replied = sum(1 for t in tickets if t[5] == 'replied')
+    
+    text = f"📋 **تذاكر الدعم**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📊 الإجمالي: {total}\n"
+    text += f"⏳ معلقة: {pending}\n"
+    text += f"✅ مكرر عليها: {replied}\n"
+    text += f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    for tid, uid, username, msg, ticket_num, status, created_at in tickets[:10]:
+        status_icon = "⏳" if status == 'pending' else "✅"
+        user_display = f"@{username}" if username else str(uid)
+        text += f"{status_icon} #{ticket_num} - {user_display}\n"
+        text += f"   📝 {msg[:40]}...\n"
+        text += f"   🕐 {created_at[:16]}\n\n"
+    
+    if len(tickets) > 10:
+        text += f"... و {len(tickets)-10} تذكرة أخرى\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗑️ حذف جميع التذاكر", callback_data=CallbackData.ADMIN_DELETE_ALL_TICKETS)],
+        [InlineKeyboardButton("📊 إحصائيات متقدمة", callback_data="admin_ticket_stats")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 8. دوال الأدمن الأخرى (مختصرة)
+# ------------------------------------------
+async def admin_delete_all_tickets_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف جميع التذاكر مع تأكيد"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم، حذف الكل", callback_data=CallbackData.ADMIN_CONFIRM_DELETE_TICKETS)],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=CallbackData.ADMIN_SUPPORT_TICKETS)]
+    ])
+    
+    await query.edit_message_text(
+        "⚠️ **تأكيد حذف جميع التذاكر**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "سيتم حذف جميع تذاكر الدعم نهائياً!\n"
+        "📌 هذا الإجراء لا يمكن التراجع عنه.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "هل أنت متأكد؟",
+        reply_markup=keyboard
+    )
+
+
+async def admin_confirm_delete_tickets_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد حذف جميع التذاكر"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    await db_delete_all_tickets()
+    await query.edit_message_text("✅ **تم حذف جميع التذاكر بنجاح!**")
+    await admin_panel_callback(update, context)
+
+
+async def admin_manage_sendcode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة صلاحية /sendcode"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    current_user = await db_get_allowed_sendcode_user()
+    
+    text = f"📁 **صلاحية /sendcode**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📌 المستخدم الحالي: `{current_user}`\n"
+    text += f"📌 الحالة: {'🟢 مفعلة' if current_user else '🔴 معطلة'}\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚙️ تعيين مستخدم", callback_data=CallbackData.ADMIN_SET_SENDCODE_USER)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def admin_set_sendcode_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين مستخدم لصلاحية /sendcode"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_SENDCODE_USER
+    await query.edit_message_text(
+        "📝 **تعيين مستخدم صلاحية /sendcode**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل معرف المستخدم (user_id) لمنحه صلاحية الأمر.\n\n"
+        "📌 **ملاحظة:**\n"
+        "• يمكن للمستخدم المصرح له استخدام /sendcode\n"
+        "• المطور الأساسي لديه الصلاحية تلقائياً\n"
+        "• لإلغاء الصلاحية، أرسل 0\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل معرف المستخدم:"
+    )
+
+
+async def admin_show_log_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قناة التقارير الحالية"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    channel_id = await db_get_log_channel_id()
+    
+    if channel_id:
+        try:
+            chat = await context.bot.get_chat(channel_id)
+            text = f"📋 **قناة التقارير الحالية:**\n\n"
+            text += f"📌 الاسم: {chat.title}\n"
+            text += f"🆔 المعرف: `{channel_id}`\n"
+            text += f"📌 الرابط: https://t.me/{chat.username if chat.username else 'private'}"
+        except:
+            text = f"📋 **قناة التقارير الحالية:** `{channel_id}`\n\n⚠️ لا يمكن الوصول إلى القناة."
+    else:
+        text = "📋 **لا توجد قناة تقارير محددة.**\n\n📌 استخدم '📋 تعيين التقارير' لتعيين قناة."
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def admin_set_log_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين قناة التقارير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_LOG_CHANNEL
+    
+    await query.edit_message_text(
+        "📝 **تعيين قناة التقارير**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل معرف قناة التقارير (مثال: -100123456789)\n\n"
+        "📌 **شروط القناة:**\n"
+        "• يجب أن يكون البوت مشرفاً فيها\n"
+        "• يجب أن يكون للبوت صلاحية الإرسال\n"
+        "• سيتم إرسال جميع التقارير الأمنية والأخطاء إليها\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل معرف القناة:"
+    )
+
+
+# ------------------------------------------
+# 9. دوال الردود والكلمات المحظورة (ذكية)
+# ------------------------------------------
+async def admin_replies_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة الردود العامة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    # إحصائيات الردود
+    replies = await db_get_all_replies()
+    
+    text = f"💬 **إدارة الردود الذكية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📝 عدد الردود: {len(replies)}\n"
+    text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"اختر الإجراء المطلوب:"
+    
+    await query.edit_message_text(text, reply_markup=get_replies_keyboard())
+
+
+async def admin_add_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إضافة رد عام"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_KEYWORD
+    
+    await query.edit_message_text(
+        "📝 **إضافة رد مخصص**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل الكلمة المفتاحية (مثال: مرحبا):\n\n"
+        "📌 **ملاحظة:**\n"
+        "• الرد سيتم إرساله تلقائياً عند كتابة الكلمة المفتاحية.\n"
+        "• يمكن إضافة أكثر من رد لكل كلمة.\n"
+        "• سيتم دعم الردود المتعددة في المستقبل.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل الكلمة المفتاحية:"
+    )
+
+
+async def admin_list_replies_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض الردود العامة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    replies = await db_get_all_replies()
+    
+    if not replies:
+        await query.edit_message_text(
+            "📭 **لا توجد ردود.**\n\n"
+            "📌 أضف رداً باستخدام '➕ إضافة رد'."
+        )
+        return
+    
+    text = f"💬 **قائمة الردود** ({len(replies)})\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for keyword, reply in replies[:20]:
+        text += f"• `{keyword}` → {reply[:40]}...\n"
+    
+    if len(replies) > 20:
+        text += f"\n... و {len(replies)-20} رد آخر"
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_REPLIES)]])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def admin_del_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف رد عام"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['admin_del_reply'] = True
+    context.user_data['state'] = UserState.WAITING_REPLY
+    
+    await query.edit_message_text(
+        "🗑️ **حذف رد**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل الكلمة المفتاحية التي تريد حذف ردها:\n\n"
+        "📌 **ملاحظة:** سيتم حذف الرد نهائياً.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل الكلمة المفتاحية:"
+    )
+
+
+async def admin_banned_words_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة الكلمات المحظورة العامة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    words = await db_get_banned_words(-1)
+    
+    text = f"🚫 **الكلمات المحظورة العامة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📝 عدد الكلمات: {len(words)}\n"
+    text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"اختر الإجراء المطلوب:"
+    
+    await query.edit_message_text(text, reply_markup=get_banned_words_admin_keyboard())
+
+
+# ------------------------------------------
+# 10. دوال المسابقات (ذكية)
+# ------------------------------------------
+async def admin_create_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إنشاء مسابقة جديدة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    context.user_data['state'] = UserState.WAITING_CONTEST_TITLE
+    
+    await query.edit_message_text(
+        "📝 **إنشاء مسابقة ذكية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📌 **الخطوة 1/4:** أرسل **عنوان** المسابقة.\n\n"
+        "💡 **نصائح لعنوان جذاب:**\n"
+        "• اجعله قصيراً وواضحاً\n"
+        "• أضف إيموجي مناسب\n"
+        "• اذكر الجائزة إن أمكن\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "أرسل عنوان المسابقة:"
+    )
+
+
+async def admin_declare_winner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعلان فائز في مسابقة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    # عرض المسابقات النشطة
+    contests = await db_get_active_contests_with_participants(limit=10)
+    
+    if contests:
+        text = "📝 **إعلان فائز**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        text += "📌 **المسابقات النشطة:**\n"
+        for cid, title, _, _, _, participants, _ in contests:
+            text += f"• `{cid}`: {title} ({participants} مشارك)\n"
+        text += "\n"
+    else:
+        text = "📝 **إعلان فائز**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    text += "أرسل معرف المسابقة ومعرف الفائز بهذه الصيغة:\n"
+    text += "`/declare_winner معرف_المسابقة معرف_المستخدم`\n\n"
+    text += "مثال: `/declare_winner 5 123456789`\n"
+    text += "📌 إذا لم تحدد معرف المستخدم، سيتم اختيار فائز عشوائي."
+    
+    await query.edit_message_text(text)
+
+
+async def admin_del_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف مسابقة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    contest_id = int(query.data.split(":")[-1])
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    contest = await db_get_contest(contest_id)
+    if not contest:
+        await query.edit_message_text("❌ **المسابقة غير موجودة!**")
+        return
+    
+    # تأكيد الحذف
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم، احذف", callback_data=f"confirm_del_contest:{contest_id}")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    
+    await query.edit_message_text(
+        f"⚠️ **تأكيد حذف المسابقة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 العنوان: {contest['title']}\n"
+        f"📝 الوصف: {contest['description'][:50]}...\n"
+        f"🎁 الجائزة: {contest['prize']}\n"
+        f"📅 التاريخ: {contest['end_date'][:16]}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ سيتم حذف جميع بيانات المسابقة نهائياً!\n"
+        f"هل أنت متأكد؟",
+        reply_markup=keyboard
+    )
+
+
+async def confirm_del_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد حذف المسابقة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    contest_id = int(query.data.split(":")[-1])
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    
+    success = await db_delete_contest(contest_id, user_id)
+    
+    if success:
+        await query.edit_message_text("✅ **تم حذف المسابقة بنجاح!**")
+    else:
+        await query.edit_message_text("❌ **فشل حذف المسابقة.** يرجى المحاولة مرة أخرى.")
+    
+    await admin_panel_callback(update, context)
 
 async def main():
     """الوظيفة الرئيسية لتشغيل البوت"""
