@@ -8861,7 +8861,7 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error(f"فشل معالج الأخطاء نفسه: {e}")
 # ===================================================================
-# 36. المفقودات - إضافات كاملة (توضع فوق دالة main())
+# 36. المفقودات - إضافات كاملة (توضع فوق دالة)
 # ===================================================================
 
 # ===================================================================
@@ -10842,6 +10842,198 @@ async def init_security_table():
         
     except Exception as e:
         logger.error(f"❌ فشل تهيئة جدول الأمان: {e}")
+        raise
+# ===================================================================
+# دالة إصلاح الأعمدة المفقودة في قاعدة البيانات
+# ===================================================================
+
+async def fix_missing_columns():
+    """
+    إصلاح الأعمدة المفقودة في الجداول الرئيسية وإضافة الجداول الناقصة.
+    """
+    try:
+        async def _fix(conn):
+            # ===================================================================
+            # 1. إصلاح جدول users
+            # ===================================================================
+            cur = await conn.execute("PRAGMA table_info(users)")
+            existing_columns = [row[1] for row in await cur.fetchall()]
+            
+            required_columns = {
+                'level': 'INTEGER DEFAULT 1',
+                'achievements': 'TEXT DEFAULT \'[]\'',
+                'last_daily_reward': 'TEXT',
+                'last_weekly_reward': 'TEXT',
+                'referred_by': 'INTEGER',
+                'points': 'INTEGER DEFAULT 0',
+                'warning_count': 'INTEGER DEFAULT 0',
+                'last_activity': 'TEXT',
+                'is_verified': 'INTEGER DEFAULT 0',
+                'twofa_secret': 'TEXT',
+                'twofa_enabled': 'INTEGER DEFAULT 0'
+            }
+            
+            for col_name, col_type in required_columns.items():
+                if col_name not in existing_columns:
+                    try:
+                        await conn.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"✅ تم إضافة العمود {col_name} إلى users")
+                    except Exception as e:
+                        logger.warning(f"⚠️ فشل إضافة {col_name}: {e}")
+            
+            # ===================================================================
+            # 2. إصلاح جدول posts
+            # ===================================================================
+            cur = await conn.execute("PRAGMA table_info(posts)")
+            existing_posts = [row[1] for row in await cur.fetchall()]
+            
+            posts_columns = {
+                'sentiment_score': 'REAL DEFAULT 0',
+                'sentiment_label': 'TEXT DEFAULT \'neutral\'',
+                'is_scheduled': 'INTEGER DEFAULT 0',
+                'scheduled_for': 'TEXT',
+                'is_edited': 'INTEGER DEFAULT 0',
+                'edited_at': 'TEXT'
+            }
+            
+            for col_name, col_type in posts_columns.items():
+                if col_name not in existing_posts:
+                    try:
+                        await conn.execute(f"ALTER TABLE posts ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"✅ تم إضافة العمود {col_name} إلى posts")
+                    except Exception as e:
+                        logger.warning(f"⚠️ فشل إضافة {col_name}: {e}")
+            
+            # ===================================================================
+            # 3. إصلاح جدول bot_groups
+            # ===================================================================
+            cur = await conn.execute("PRAGMA table_info(bot_groups)")
+            existing_groups = [row[1] for row in await cur.fetchall()]
+            
+            groups_columns = {
+                'members_count': 'INTEGER DEFAULT 0',
+                'admins_count': 'INTEGER DEFAULT 0',
+                'last_activity': 'TEXT',
+                'is_active': 'INTEGER DEFAULT 1'
+            }
+            
+            for col_name, col_type in groups_columns.items():
+                if col_name not in existing_groups:
+                    try:
+                        await conn.execute(f"ALTER TABLE bot_groups ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"✅ تم إضافة العمود {col_name} إلى bot_groups")
+                    except Exception as e:
+                        logger.warning(f"⚠️ فشل إضافة {col_name}: {e}")
+            
+            # ===================================================================
+            # 4. إصلاح جدول schedule
+            # ===================================================================
+            cur = await conn.execute("PRAGMA table_info(schedule)")
+            existing_schedule = [row[1] for row in await cur.fetchall()]
+            
+            schedule_columns = {
+                'last_executed': 'TEXT',
+                'is_paused': 'INTEGER DEFAULT 0'
+            }
+            
+            for col_name, col_type in schedule_columns.items():
+                if col_name not in existing_schedule:
+                    try:
+                        await conn.execute(f"ALTER TABLE schedule ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"✅ تم إضافة العمود {col_name} إلى schedule")
+                    except Exception as e:
+                        logger.warning(f"⚠️ فشل إضافة {col_name}: {e}")
+            
+            # ===================================================================
+            # 5. إصلاح جدول group_security
+            # ===================================================================
+            cur = await conn.execute("PRAGMA table_info(group_security)")
+            existing_security = [row[1] for row in await cur.fetchall()]
+            
+            security_columns = {
+                'captcha_enabled': 'INTEGER DEFAULT 0',
+                'captcha_timeout': 'INTEGER DEFAULT 60',
+                'max_links_per_message': 'INTEGER DEFAULT 0',
+                'max_mentions_per_message': 'INTEGER DEFAULT 0',
+                'allowed_domains': 'TEXT DEFAULT \'[]\''
+            }
+            
+            for col_name, col_type in security_columns.items():
+                if col_name not in existing_security:
+                    try:
+                        await conn.execute(f"ALTER TABLE group_security ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"✅ تم إضافة العمود {col_name} إلى group_security")
+                    except Exception as e:
+                        logger.warning(f"⚠️ فشل إضافة {col_name}: {e}")
+            
+            # ===================================================================
+            # 6. إنشاء الجداول المفقودة
+            # ===================================================================
+            
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_levels (
+                    user_id INTEGER PRIMARY KEY,
+                    points INTEGER DEFAULT 0,
+                    level INTEGER DEFAULT 1,
+                    total_points INTEGER DEFAULT 0,
+                    rank INTEGER DEFAULT 0,
+                    last_updated TEXT
+                )
+            """)
+            
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS group_rules (
+                    chat_id INTEGER PRIMARY KEY,
+                    rules_text TEXT,
+                    updated_by INTEGER,
+                    updated_at TEXT,
+                    version INTEGER DEFAULT 1,
+                    is_active INTEGER DEFAULT 1
+                )
+            """)
+            
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS announcements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT,
+                    text TEXT,
+                    created_by INTEGER,
+                    created_at TEXT,
+                    scheduled_for TEXT,
+                    status TEXT DEFAULT 'pending',
+                    sent_count INTEGER DEFAULT 0,
+                    is_global INTEGER DEFAULT 0,
+                    target_users TEXT DEFAULT '[]'
+                )
+            """)
+            
+            # ===================================================================
+            # 7. إنشاء الفهارس الإضافية
+            # ===================================================================
+            
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users(banned)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_bot_groups_chat_name ON bot_groups(chat_name)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_bot_groups_banned ON bot_groups(banned)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_replies_chat ON auto_replies(chat_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_replies_keyword ON auto_replies(keyword)")
+            
+            # ===================================================================
+            # 8. تحديث إصدار قاعدة البيانات
+            # ===================================================================
+            
+            await conn.execute("""
+                INSERT OR REPLACE INTO settings (key, value) VALUES ('db_version', '2.1.1')
+            """)
+            
+            await conn.commit()
+            logger.info("✅ تم إصلاح جميع الأعمدة المفقودة بنجاح (الإصدار 2.1.1)")
+            
+        await execute_db(_fix)
+        
+    except Exception as e:
+        logger.error(f"❌ فشل إصلاح الأعمدة المفقودة: {e}")
         raise
 
 # ===================================================================
