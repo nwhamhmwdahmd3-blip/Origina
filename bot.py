@@ -7323,6 +7323,35 @@ async def security_delete_penalty_callback(update: Update, context: ContextTypes
     ])
     msg = "⚖️ **اختر عقوبة الحذف التلقائي**\n\nسيتم تطبيق هذه العقوبة عند حذف رسالة مخالفة:"
     await query.edit_message_text(msg, reply_markup=keyboard)
+async def set_delete_penalty_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين عقوبة الحذف التلقائي"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    parts = query.data.split(":") if query else context.user_data.get('delete_penalty_data', '').split(":")
+    if len(parts) == 3:
+        penalty = parts[1]
+        chat_id = int(parts[2])
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await query.answer("🔒 غير مصرح", show_alert=True)
+            return
+        await db_set_security_settings(chat_id, delete_penalty=penalty, delete_penalty_duration=60)
+        await query.answer(f"✅ تم تعيين عقوبة الحذف إلى: {penalty}")
+        await _update_security_panel(query, chat_id, user_id)
+
+async def set_delete_penalty_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب إدخال مدة عقوبة الحذف"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = "WAITING_DELETE_PENALTY_DURATION"
+    context.user_data['security_chat_id'] = chat_id
+    await query.edit_message_text("⏱️ **أرسل مدة عقوبة الحذف بالدقائق** (مثال: 60)\nأو أرسل 0 للكتم الدائم.")
 
 async def main():
     # تهيئة قاعدة البيانات
