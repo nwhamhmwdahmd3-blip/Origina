@@ -7565,6 +7565,50 @@ async def penalty_none_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await db_set_security_settings(chat_id, auto_penalty='none')
     await query.answer("✅ تم إلغاء العقوبة")
     await _update_security_panel(query, chat_id, user_id)
+async def mute_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج موحد لاختيار مدة الكتم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        await query.answer("❌ بيانات غير صالحة", show_alert=True)
+        return
+    try:
+        minutes = int(parts[1])
+        chat_id = int(parts[2])
+    except ValueError:
+        await query.answer("❌ مدة أو معرف غير صالح", show_alert=True)
+        return
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+
+    # التحقق من صلاحية البوت
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    if not bot_perms.get('can_restrict', False):
+        await query.answer("❌ البوت لا يملك صلاحية تقييد الأعضاء!", show_alert=True)
+        return
+
+    # حفظ المدة
+    if minutes == -1:
+        duration = -1
+        duration_text = "دائم"
+    else:
+        duration = minutes
+        if minutes < 60:
+            duration_text = f"{minutes} دقيقة"
+        elif minutes < 1440:
+            duration_text = f"{minutes // 60} ساعة"
+        else:
+            duration_text = f"{minutes // 1440} يوم"
+
+    await db_set_security_settings(chat_id, auto_penalty='mute', auto_mute_duration=duration if duration > 0 else 60)
+    await query.answer(f"✅ تم تعيين مدة الكتم إلى: {duration_text}")
+
+    # تحديث لوحة الأمان
+    await _update_security_panel(query, chat_id, user_id)
 
 async def main():
     # تهيئة قاعدة البيانات
