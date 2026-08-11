@@ -12014,6 +12014,368 @@ async def db_get_referral_settings() -> dict:
         rows = await cur.fetchall()
         return {row[0]: row[1] for row in rows}
     return await execute_db(_get)
+# ===================================================================
+# دوال التذكيرات (Reminder Callbacks) - كاملة ومتطورة
+# ===================================================================
+
+async def reminder_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض قائمة إعدادات التذكيرات الرئيسية.
+    تعرض حالة التذكيرات (الاشتراك، اليومي، الأسبوعي) مع أزرار التحكم.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. الحصول على إعدادات التذكيرات
+    settings = await db_get_user_reminder_settings(user_id)
+    
+    # 2. بناء النص
+    sub_status = "✅ مفعل" if settings.get('subscription_reminder', True) else "❌ معطل"
+    daily_status = "✅ مفعل" if settings.get('daily_stats_reminder', False) else "❌ معطل"
+    weekly_status = "✅ مفعل" if settings.get('weekly_report', True) else "❌ معطل"
+    days_before = settings.get('reminder_days_before', 3)
+    lang = settings.get('notification_lang', 'ar')
+    
+    text = get_text(user_id, 'reminder_title').format(sub_status, daily_status, weekly_status, days_before)
+    
+    # 3. بناء لوحة المفاتيح
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'reminder_sub'), callback_data=CallbackData.REMINDER_TOGGLE_SUB)],
+        [InlineKeyboardButton(get_text(user_id, 'reminder_daily'), callback_data=CallbackData.REMINDER_TOGGLE_DAILY)],
+        [InlineKeyboardButton(get_text(user_id, 'reminder_weekly'), callback_data=CallbackData.REMINDER_TOGGLE_WEEKLY)],
+        [InlineKeyboardButton(get_text(user_id, 'reminder_days_btn'), callback_data=CallbackData.REMINDER_SET_DAYS)],
+        [InlineKeyboardButton(get_text(user_id, 'reminder_lang_btn'), callback_data=CallbackData.REMINDER_SET_LANG)],
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    # 4. إرسال أو تعديل الرسالة
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    
+    # 5. تسجيل الحدث
+    await db_save_sentiment_history(user_id, 0, "reminder_menu_viewed", "neutral", 0.1)
+
+
+async def reminder_toggle_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تبديل حالة تذكير انتهاء الاشتراك (تفعيل/تعطيل).
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. الحصول على الإعدادات الحالية
+    settings = await db_get_user_reminder_settings(user_id)
+    new_status = not settings.get('subscription_reminder', True)
+    
+    # 2. تحديث الإعدادات
+    await db_update_reminder_settings(user_id, subscription_reminder=new_status)
+    
+    # 3. تسجيل الحدث
+    await db_save_sentiment_history(user_id, 0, f"reminder_sub_toggle_{new_status}", "neutral", 0.1)
+    
+    # 4. العودة إلى القائمة
+    await reminder_menu_callback(update, context)
+
+
+async def reminder_toggle_daily_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تبديل حالة التقرير اليومي (تفعيل/تعطيل).
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. الحصول على الإعدادات الحالية
+    settings = await db_get_user_reminder_settings(user_id)
+    new_status = not settings.get('daily_stats_reminder', False)
+    
+    # 2. تحديث الإعدادات
+    await db_update_reminder_settings(user_id, daily_stats_reminder=new_status)
+    
+    # 3. تسجيل الحدث
+    await db_save_sentiment_history(user_id, 0, f"reminder_daily_toggle_{new_status}", "neutral", 0.1)
+    
+    # 4. العودة إلى القائمة
+    await reminder_menu_callback(update, context)
+
+
+async def reminder_toggle_weekly_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تبديل حالة التقرير الأسبوعي (تفعيل/تعطيل).
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. الحصول على الإعدادات الحالية
+    settings = await db_get_user_reminder_settings(user_id)
+    new_status = not settings.get('weekly_report', True)
+    
+    # 2. تحديث الإعدادات
+    await db_update_reminder_settings(user_id, weekly_report=new_status)
+    
+    # 3. تسجيل الحدث
+    await db_save_sentiment_history(user_id, 0, f"reminder_weekly_toggle_{new_status}", "neutral", 0.1)
+    
+    # 4. العودة إلى القائمة
+    await reminder_menu_callback(update, context)
+
+
+async def reminder_set_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تعيين عدد الأيام قبل انتهاء الاشتراك لإرسال التذكير.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. تعيين حالة الانتظار
+    context.user_data['state'] = UserState.WAITING_REMINDER_DAYS
+    
+    # 2. إرسال رسالة طلب الإدخال
+    text = "⏰ أرسل عدد الأيام قبل انتهاء الاشتراك (1-10):\n\nمثال: `3`"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 إلغاء", callback_data=CallbackData.REMINDER_MENU)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+
+
+async def reminder_set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض قائمة اللغات المتاحة لإشعارات التذكيرات.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. الحصول على اللغة الحالية
+    settings = await db_get_user_reminder_settings(user_id)
+    current_lang = settings.get('notification_lang', 'ar')
+    
+    # 2. بناء لوحة المفاتيح
+    keyboard = [
+        [
+            InlineKeyboardButton("🇸🇦 العربية" + (" ✅" if current_lang == 'ar' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}ar"),
+            InlineKeyboardButton("🇬🇧 English" + (" ✅" if current_lang == 'en' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}en")
+        ],
+        [
+            InlineKeyboardButton("🇫🇷 Français" + (" ✅" if current_lang == 'fr' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}fr"),
+            InlineKeyboardButton("🇹🇷 Türkçe" + (" ✅" if current_lang == 'tr' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}tr")
+        ],
+        [
+            InlineKeyboardButton("🇪🇸 Español" + (" ✅" if current_lang == 'es' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}es"),
+            InlineKeyboardButton("🇩🇪 Deutsch" + (" ✅" if current_lang == 'de' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}de")
+        ],
+        [
+            InlineKeyboardButton("🇷🇺 Русский" + (" ✅" if current_lang == 'ru' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}ru"),
+            InlineKeyboardButton("🇨🇳 中文" + (" ✅" if current_lang == 'zh' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}zh")
+        ],
+        [
+            InlineKeyboardButton("🇯🇵 日本語" + (" ✅" if current_lang == 'ja' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}ja"),
+            InlineKeyboardButton("🇰🇷 한국어" + (" ✅" if current_lang == 'ko' else ""), callback_data=f"{CallbackData.REMINDER_LANG_PREFIX}ko")
+        ],
+        [
+            InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.REMINDER_MENU)
+        ]
+    ]
+    
+    text = "🌐 **اختر لغة إشعارات التذكيرات:**\n\nاللغة الحالية: " + SUPPORTED_LANGUAGES.get(current_lang, 'العربية')
+    
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="MarkdownV2")
+
+
+async def reminder_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تعيين لغة إشعارات التذكيرات.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    lang = query.data.split(":")[-1]
+    
+    # 1. تحديث اللغة
+    await db_update_reminder_settings(user_id, notification_lang=lang)
+    
+    # 2. تسجيل الحدث
+    await db_save_sentiment_history(user_id, 0, f"reminder_lang_changed_{lang}", "neutral", 0.1)
+    
+    # 3. العودة إلى القائمة
+    await reminder_menu_callback(update, context)
+
+
+# ===================================================================
+# دوال قاعدة بيانات التذكيرات (إذا كانت مفقودة)
+# ===================================================================
+
+async def db_get_user_reminder_settings(user_id: int) -> dict:
+    """
+    الحصول على إعدادات التذكيرات للمستخدم من قاعدة البيانات.
+    """
+    async def _get(conn):
+        cur = await conn.execute("""
+            SELECT subscription_reminder, daily_stats_reminder, weekly_report,
+                   reminder_days_before, last_reminder_sent, notification_lang
+            FROM user_reminder_settings WHERE user_id=?
+        """, (user_id,))
+        row = await cur.fetchone()
+        
+        if row:
+            return {
+                'subscription_reminder': row[0] == 1 if row[0] is not None else True,
+                'daily_stats_reminder': row[1] == 1 if row[1] is not None else False,
+                'weekly_report': row[2] == 1 if row[2] is not None else True,
+                'reminder_days_before': row[3] if row[3] is not None else 3,
+                'last_reminder_sent': row[4] if row[4] is not None else 0,
+                'notification_lang': row[5] if row[5] is not None else 'ar'
+            }
+        else:
+            # إنشاء إعدادات افتراضية
+            await conn.execute("""
+                INSERT INTO user_reminder_settings 
+                (user_id, subscription_reminder, daily_stats_reminder, weekly_report, 
+                 reminder_days_before, last_reminder_sent, notification_lang)
+                VALUES (?, 1, 0, 1, 3, 0, 'ar')
+            """, (user_id,))
+            await conn.commit()
+            return {
+                'subscription_reminder': True,
+                'daily_stats_reminder': False,
+                'weekly_report': True,
+                'reminder_days_before': 3,
+                'last_reminder_sent': 0,
+                'notification_lang': 'ar'
+            }
+    return await execute_db(_get)
+
+
+async def db_update_reminder_settings(user_id: int, **kwargs):
+    """
+    تحديث إعدادات التذكيرات للمستخدم.
+    """
+    async def _update(conn):
+        fields, values = [], []
+        
+        for key, value in kwargs.items():
+            if key == 'subscription_reminder':
+                fields.append("subscription_reminder=?")
+                values.append(1 if value else 0)
+            elif key == 'daily_stats_reminder':
+                fields.append("daily_stats_reminder=?")
+                values.append(1 if value else 0)
+            elif key == 'weekly_report':
+                fields.append("weekly_report=?")
+                values.append(1 if value else 0)
+            elif key == 'reminder_days_before':
+                fields.append("reminder_days_before=?")
+                values.append(value)
+            elif key == 'notification_lang':
+                fields.append("notification_lang=?")
+                values.append(value)
+        
+        if fields:
+            query = f"UPDATE user_reminder_settings SET {', '.join(fields)} WHERE user_id=?"
+            values.append(user_id)
+            await conn.execute(query, values)
+            await conn.commit()
+            logger.info(f"✅ تم تحديث إعدادات التذكيرات للمستخدم {user_id}: {kwargs}")
+    return await execute_db(_update)
+
+
+async def db_update_last_reminder_sent(user_id: int, reminder_type: str):
+    """
+    تحديث وقت آخر تذكير تم إرساله للمستخدم.
+    """
+    async def _update(conn):
+        now_timestamp = int(time_module.time())
+        await conn.execute("""
+            UPDATE user_reminder_settings 
+            SET last_reminder_sent = ? 
+            WHERE user_id = ?
+        """, (now_timestamp, user_id))
+        await conn.commit()
+        logger.debug(f"✅ تم تحديث آخر تذكير للمستخدم {user_id} ({reminder_type})")
+    return await execute_db(_update)
+
+
+async def db_get_users_needing_reminder() -> list:
+    """
+    الحصول على قائمة المستخدمين الذين يحتاجون تذكير.
+    تعيد قائمة تحتوي على user_id, days_left, notification_lang.
+    """
+    async def _get(conn):
+        now = utc_now()
+        users = []
+        
+        # جلب المستخدمين الذين تنتهي اشتراكاتهم خلال 10 أيام
+        cutoff_date = (now + timedelta(days=10)).isoformat()
+        cur = await conn.execute("""
+            SELECT user_id, subscription_end 
+            FROM users 
+            WHERE subscription_end IS NOT NULL 
+              AND subscription_end <= ? 
+              AND banned = 0
+        """, (cutoff_date,))
+        
+        rows = await cur.fetchall()
+        
+        for user_id, subscription_end_str in rows:
+            try:
+                end_date = datetime.fromisoformat(subscription_end_str)
+                days_left = (end_date - now).days
+                
+                if days_left < 0:
+                    continue
+                
+                # الحصول على إعدادات التذكيرات للمستخدم
+                settings = await db_get_user_reminder_settings(user_id)
+                
+                # التحقق من تفعيل تذكير الاشتراك
+                if not settings.get('subscription_reminder', True):
+                    continue
+                
+                reminder_days = settings.get('reminder_days_before', 3)
+                last_sent = settings.get('last_reminder_sent', 0)
+                now_timestamp = int(time_module.time())
+                
+                # تحديد ما إذا كان يحتاج تذكير
+                need_reminder = False
+                if 0 < days_left <= reminder_days:
+                    if last_sent == 0:
+                        need_reminder = True
+                    elif (now_timestamp - last_sent) > (3 * 24 * 60 * 60):  # 3 أيام
+                        need_reminder = True
+                
+                if need_reminder:
+                    users.append({
+                        'user_id': user_id,
+                        'days_left': days_left,
+                        'notification_lang': settings.get('notification_lang', 'ar')
+                    })
+            except Exception as e:
+                logger.debug(f"خطأ في معالجة المستخدم {user_id}: {e}")
+                continue
+        
+        return users
+    return await execute_db(_get)
 
 # ===================================================================
 # 34. دالة main() النهائية
