@@ -9379,6 +9379,127 @@ LEVEL_REQUIREMENTS = {
     9: 20000,
     10: 50000
 }
+# ===================================================================
+# دوال الإحالات - أضفها قبل main()
+# ===================================================================
+
+async def db_get_referral_code(user_id: int) -> str:
+    """الحصول على كود الإحالة للمستخدم"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT referral_code FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row and row[0] else None
+    return await execute_db(_get)
+
+async def db_generate_referral_code(user_id: int) -> str:
+    """إنشاء كود إحالة للمستخدم"""
+    async def _generate(conn):
+        code_hash = hashlib.md5(f"{user_id}{time_module.time()}".encode()).hexdigest()[:8]
+        referral_code = f"REF{code_hash.upper()}"
+        await conn.execute("UPDATE users SET referral_code=? WHERE user_id=?", (referral_code, user_id))
+        await conn.commit()
+        return referral_code
+    return await execute_db(_generate)
+
+async def db_get_user_by_referral_code(referral_code: str) -> int | None:
+    """الحصول على المستخدم بواسطة كود الإحالة"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT user_id FROM users WHERE referral_code=?", (referral_code,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+    return await execute_db(_get)
+
+async def db_add_referral(referrer_id: int, referred_id: int) -> bool:
+    """إضافة إحالة جديدة"""
+    async def _add(conn):
+        if referrer_id == referred_id:
+            return False
+        cur = await conn.execute("SELECT 1 FROM referrals WHERE referred_id=?", (referred_id,))
+        if await cur.fetchone():
+            return False
+        today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        cur = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND referred_at >= ?",
+                                (referrer_id, today_start))
+        count_today = (await cur.fetchone())[0]
+        settings = await db_get_referral_settings()
+        max_per_day = int(settings.get('max_referrals_per_day', '5'))
+        if count_today >= max_per_day:
+            return False
+        await conn.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, referred_id))
+        await conn.execute(
+            "INSERT INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days) VALUES (?, 1, 0, 0) ON CONFLICT(user_id) DO UPDATE SET referral_count = referral_count + 1",
+            (referrer_id,)
+        )
+        await conn.commit()
+        return True
+    return await execute_db(_add)
+
+async def db_auto_reward_referral(referrer_id: int, referred_id: int) -> int:
+    """مكافأة تلقائية للإحالة"""
+    async def _reward(conn):
+        settings = await db_get_referral_settings()
+        reward_days = int(settings.get('reward_days_per_referral', '3'))
+        await conn.execute("""
+            INSERT INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days)
+            VALUES (?, 0, ?, 0)
+            ON CONFLICT(user_id) DO UPDATE SET
+                referral_count = referral_count + 1,
+                total_reward_days = total_reward_days + ?
+        """, (referrer_id, reward_days, reward_days))
+        await conn.execute("UPDATE referrals SET is_rewarded=1 WHERE referrer_id=? AND referred_id=?",
+                          (referrer_id, referred_id))
+        await conn.commit()
+        return reward_days
+    return await execute_db(_reward)
+
+async def db_get_referral_stats(user_id: int) -> dict:
+    """الحصول على إحصائيات الإحالات للمستخدم"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
+        total_referrals = (await cur.fetchone())[0]
+        cur = await conn.execute(
+            "SELECT referral_count, total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        return {
+            'total_referrals': total_referrals,
+            'referral_count': row[0] if row else 0,
+            'total_reward_days': row[1] if row else 0,
+            'claimed_reward_days': row[2] if row else 0,
+            'available_days': (row[1] if row else 0) - (row[2] if row else 0)
+        }
+    return await execute_db(_get)
+
+async def db_claim_referral_reward(user_id: int) -> int:
+    """صرف مكافآت الإحالات"""
+    async def _claim(conn):
+        cur = await conn.execute("SELECT total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        total = row[0]
+        claimed = row[1]
+        available = total - claimed
+        if available <= 0:
+            return 0
+        current_sub = await db_get_subscription_days_left(user_id)
+        new_sub_days = current_sub + available
+        end_date = (utc_now() + timedelta(days=new_sub_days)).isoformat()
+        await conn.execute("UPDATE users SET subscription_end=? WHERE user_id=?", (end_date, user_id))
+        await conn.execute("UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?",
+                          (available, user_id))
+        await conn.commit()
+        return available
+    return await execute_db(_claim)
+
+async def db_get_referral_settings() -> dict:
+    """جلب إعدادات الإحالات من قاعدة البيانات"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT key, value FROM referral_settings")
+        rows = await cur.fetchall()
+        return {row[0]: row[1] for row in rows}
+    return await execute_db(_get)
 
 async def main():
     # تهيئة قاعدة البيانات
