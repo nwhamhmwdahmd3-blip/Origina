@@ -11519,6 +11519,29 @@ def create_default_lang_files():
                 print(f"✅ تم إنشاء ملف اللغة: {lang}.json")
             except Exception as e:
                 print(f"⚠️ فشل إنشاء {lang_file}: {e}")
+# ===================================================================
+# معالج زر المساعدة
+# ===================================================================
+
+async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة المساعدة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    text = get_text(user_id, 'help')
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    
+    await db_save_sentiment_history(user_id, 0, "help_viewed", "neutral", 0.1)
 
 # ===================================================================
 # 34. دالة main() النهائية
