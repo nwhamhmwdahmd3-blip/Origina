@@ -14540,6 +14540,305 @@ async def db_get_publish_interval_seconds() -> int:
         row = await cur.fetchone()
         return int(row[0]) if row else DEFAULT_PUBLISH_INTERVAL_SECONDS
     return await execute_db(_get)
+# ===================================================================
+# إصلاح start_command_handler وجميع دوالها المساعدة
+# ===================================================================
+
+# ===================================================================
+# دوال اللغة (إذا كانت مفقودة)
+# ===================================================================
+
+_lang_data = {}
+user_language = {}
+
+def get_text(user_id: int, key: str) -> str:
+    lang = user_language.get(user_id, 'ar')
+    texts = _lang_data.get(lang, {})
+    if key not in texts:
+        en_texts = _lang_data.get('en', {})
+        if key in en_texts:
+            return en_texts[key]
+        ar_texts = _lang_data.get('ar', {})
+        if key in ar_texts:
+            return ar_texts[key]
+        return key
+    return texts.get(key, key)
+
+async def set_user_language(user_id: int, lang: str):
+    user_language[user_id] = lang
+    try:
+        await db_set_user_language(user_id, lang)
+    except:
+        pass
+
+
+# ===================================================================
+# دوال قاعدة البيانات المفقودة
+# ===================================================================
+
+async def db_has_active_subscription(user_id: int) -> bool:
+    try:
+        async def _check(conn):
+            cur = await conn.execute("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
+            row = await cur.fetchone()
+            if row and row[0]:
+                try:
+                    end_date = datetime.fromisoformat(row[0])
+                    return end_date > utc_now()
+                except:
+                    return False
+            return False
+        return await execute_db(_check)
+    except:
+        return False
+
+async def db_auto_status(user_id: int) -> bool:
+    try:
+        async def _get(conn):
+            cur = await conn.execute("SELECT auto_publish FROM users WHERE user_id=?", (user_id,))
+            row = await cur.fetchone()
+            return row and row[0] == 1
+        return await execute_db(_get)
+    except:
+        return True
+
+async def db_get_updates_channel():
+    try:
+        async def _get(conn):
+            cur = await conn.execute("SELECT value FROM settings WHERE key='updates_channel'")
+            row = await cur.fetchone()
+            if row and row[0]:
+                channel = row[0].strip()
+                if channel.startswith('@'):
+                    channel = channel[1:]
+                return channel if channel else None
+            return None
+        return await execute_db(_get)
+    except:
+        return None
+
+async def is_bot_admin(user_id: int) -> bool:
+    if user_id == PRIMARY_OWNER_ID:
+        return True
+    try:
+        async def _check(conn):
+            cur = await conn.execute("SELECT 1 FROM bot_admins WHERE user_id=?", (user_id,))
+            return await cur.fetchone() is not None
+        return await execute_db(_check)
+    except:
+        return False
+
+async def db_get_user_groups_count(user_id: int) -> int:
+    try:
+        async def _get(conn):
+            cur = await conn.execute("""
+                SELECT COUNT(DISTINCT chat_id) FROM (
+                    SELECT chat_id FROM hidden_owner_groups WHERE owner_id=?
+                    UNION
+                    SELECT chat_id FROM hidden_admins WHERE admin_id=?
+                    UNION
+                    SELECT chat_id FROM group_admins WHERE user_id=?
+                )
+            """, (user_id, user_id, user_id))
+            row = await cur.fetchone()
+            return row[0] if row else 0
+        return await execute_db(_get)
+    except:
+        return 0
+
+async def db_get_user_channels_count(user_id: int) -> int:
+    try:
+        async def _get(conn):
+            cur = await conn.execute("SELECT COUNT(*) FROM user_channels WHERE user_id=?", (user_id,))
+            row = await cur.fetchone()
+            return row[0] if row else 0
+        return await execute_db(_get)
+    except:
+        return 0
+
+async def db_get_user_total_posts(user_id: int) -> int:
+    try:
+        async def _get(conn):
+            cur = await conn.execute(
+                """SELECT COUNT(*) FROM posts p 
+                   JOIN user_channels uc ON p.channel_db_id=uc.id 
+                   WHERE uc.user_id=? AND uc.banned=0""",
+                (user_id,)
+            )
+            row = await cur.fetchone()
+            return row[0] if row else 0
+        return await execute_db(_get)
+    except:
+        return 0
+
+async def db_get_user_unpublished_posts(user_id: int) -> int:
+    try:
+        async def _get(conn):
+            cur = await conn.execute(
+                """SELECT COUNT(*) FROM posts p 
+                   JOIN user_channels uc ON p.channel_db_id=uc.id 
+                   WHERE uc.user_id=? AND p.published=0 AND uc.banned=0""",
+                (user_id,)
+            )
+            row = await cur.fetchone()
+            return row[0] if row else 0
+        return await execute_db(_get)
+    except:
+        return 0
+
+async def db_unpublished_count(channel_db_id: int) -> int:
+    try:
+        async def _count(conn):
+            cur = await conn.execute("SELECT COUNT(*) FROM posts WHERE channel_db_id=? AND published=0", (channel_db_id,))
+            row = await cur.fetchone()
+            return row[0] if row else 0
+        return await execute_db(_count)
+    except:
+        return 0
+
+
+# ===================================================================
+# دالة get_main_keyboard (نسخة كاملة وآمنة)
+# ===================================================================
+
+async def get_main_keyboard(user_id: int):
+    """بناء القائمة الرئيسية - نسخة آمنة"""
+    try:
+        # جلب القنوات
+        channels = await db_get_channels(user_id) or []
+        active = await db_get_active_channel(user_id)
+        
+        cnt = 0
+        ch_display = get_text(user_id, 'no_channels')
+        if active is not None:
+            try:
+                cnt = await db_unpublished_count(active)
+                ch_info = await db_get_channel_info(active)
+                if ch_info and len(ch_info) >= 2:
+                    ch_tele_id = ch_info[0] if ch_info[0] is not None else "unknown"
+                    ch_name = ch_info[1] if ch_info[1] is not None else ch_tele_id
+                    ch_display = f"{ch_name} ({ch_tele_id})"
+            except:
+                ch_display = get_text(user_id, 'no_channels')
+        
+        # جلب المجموعات
+        my_groups = await db_get_user_groups_count(user_id) or 0
+        
+        # جلب الاشتراك
+        has_sub = await db_has_active_subscription(user_id) or False
+        sub_text = get_text(user_id, 'subscribed') if has_sub else get_text(user_id, 'not_subscribed')
+        
+        # جلب النشر التلقائي
+        auto_status = await db_auto_status(user_id) or False
+        auto_text = get_text(user_id, 'auto_on') if auto_status else get_text(user_id, 'auto_off')
+        
+        # بناء العنوان
+        title = get_text(user_id, 'main_title').format(
+            BOT_NAME, user_id, my_groups, sub_text, ch_display, cnt, auto_status
+        )
+        
+        # جلب قناة التحديثات
+        updates_channel = await db_get_updates_channel()
+        updates_url = f"https://t.me/{updates_channel}" if updates_channel else None
+        
+        # بناء الأزرار
+        keyboard = []
+        
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'my_groups_btn'), callback_data=CallbackData.GROUPS_MY),
+            InlineKeyboardButton(get_text(user_id, 'add_channel'), callback_data=CallbackData.CHANNELS_ADD)
+        ])
+        
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'my_channels'), callback_data=CallbackData.CHANNELS_MY),
+            InlineKeyboardButton(get_text(user_id, 'settings_btn'), callback_data=CallbackData.SETTINGS_MENU)
+        ])
+        
+        if channels:
+            keyboard.append([
+                InlineKeyboardButton(get_text(user_id, 'add_15_posts'), callback_data=CallbackData.POSTS_ADD_15),
+                InlineKeyboardButton(get_text(user_id, 'publish_one'), callback_data=CallbackData.POSTS_PUBLISH_ONE)
+            ])
+            keyboard.append([
+                InlineKeyboardButton(get_text(user_id, 'my_posts_btn'), callback_data=CallbackData.POSTS_MY),
+                InlineKeyboardButton(get_text(user_id, 'recycle'), callback_data=CallbackData.POSTS_RECYCLE)
+            ])
+            keyboard.append([
+                InlineKeyboardButton(f"{get_text(user_id, 'stats_btn')} ({cnt})", callback_data=CallbackData.STATS_PENDING),
+                InlineKeyboardButton(get_text(user_id, 'my_stats_btn'), callback_data=CallbackData.STATS_FULL)
+            ])
+            if active is not None:
+                keyboard.append([
+                    InlineKeyboardButton(get_text(user_id, 'schedule_btn'), callback_data=f"{CallbackData.SCHEDULE_MENU_PREFIX}{active}"),
+                    InlineKeyboardButton(get_text(user_id, 'channel_stats'), callback_data=f"{CallbackData.CHANNEL_STATS}:{active}")
+                ])
+            keyboard.append([
+                InlineKeyboardButton(get_text(user_id, 'my_channels_summary'), callback_data=CallbackData.MY_CHANNEL_STATS),
+                InlineKeyboardButton(get_text(user_id, 'my_rank_btn'), callback_data="rank")
+            ])
+            keyboard.append([
+                InlineKeyboardButton(get_text(user_id, 'top_10_btn'), callback_data="top"),
+                InlineKeyboardButton(get_text(user_id, 'schedule_post_btn'), callback_data="schedule_post")
+            ])
+            keyboard.append([
+                InlineKeyboardButton(get_text(user_id, 'publish_all'), callback_data=CallbackData.PUBLISH_ALL_CHANNELS)
+            ])
+        
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'help_btn'), callback_data=CallbackData.HELP),
+            InlineKeyboardButton(get_text(user_id, 'trial_btn'), callback_data=CallbackData.TRIAL)
+        ])
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'subscribe_btn'), callback_data=CallbackData.SUBSCRIBE_MENU),
+            InlineKeyboardButton(get_text(user_id, 'developer_btn'), callback_data=CallbackData.DEVELOPER)
+        ])
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'language_btn'), callback_data="language"),
+            InlineKeyboardButton(get_text(user_id, 'support_btn'), callback_data=CallbackData.SUPPORT_MENU)
+        ])
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'referral'), callback_data=CallbackData.REFERRAL_MENU),
+            InlineKeyboardButton(get_text(user_id, 'reminder_settings'), callback_data=CallbackData.REMINDER_MENU)
+        ])
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'translation_settings'), callback_data=CallbackData.TRANSLATION_MENU),
+            InlineKeyboardButton(get_text(user_id, 'contests_menu'), callback_data=CallbackData.CONTESTS_MENU)
+        ])
+        
+        if updates_url:
+            keyboard.append([
+                InlineKeyboardButton(get_text(user_id, 'updates_btn'), callback_data=CallbackData.UPDATES)
+            ])
+        
+        keyboard.append([
+            InlineKeyboardButton(get_text(user_id, 'add_to_group'), url=f"https://t.me/{BOT_USERNAME}?startgroup")
+        ])
+        
+        try:
+            is_admin = (user_id == PRIMARY_OWNER_ID) or (await is_bot_admin(user_id))
+            if is_admin:
+                keyboard.append([
+                    InlineKeyboardButton(get_text(user_id, 'admin_panel'), callback_data=CallbackData.ADMIN_PANEL)
+                ])
+        except:
+            pass
+        
+        # تنظيف الأزرار
+        valid_keyboard = []
+        for row in keyboard:
+            if row and all(isinstance(btn, InlineKeyboardButton) for btn in row):
+                valid_keyboard.append(row)
+        if not valid_keyboard:
+            valid_keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+        
+        return InlineKeyboardMarkup(valid_keyboard), title, active
+        
+    except Exception as e:
+        error_id = log_error(e, {'user_id': user_id, 'function': 'get_main_keyboard'})
+        # رسالة خطأ بسيطة
+        error_text = f"⚠️ حدث خطأ في تحميل القائمة (الرمز: `{error_id}`)"
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]])
+        return keyboard, error_text, None
 
 # ===================================================================
 # 34. دالة main() النهائية
