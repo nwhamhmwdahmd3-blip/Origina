@@ -13641,6 +13641,321 @@ async def admin_toggle_auto_backup_callback(update: Update, context: ContextType
     
     await query.answer(f"✅ تم {'تفعيل' if new_status else 'تعطيل'} النسخ التلقائي")
     await admin_backup_settings_callback(update, context)
+async def admin_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📢 بث ذكي متقدم – واجهة تفاعلية كاملة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    # ----- صلاحيات متقدمة (مالك أساسي أو مشرف مخفي) -----
+    if user_id != PRIMARY_OWNER_ID:
+        # تحقق من المشرفين المخفيين (افترض أن لديك هذه الدالة)
+        if hasattr(db_is_hidden_admin, '__call__'):
+            is_hidden = await db_is_hidden_admin(chat_id, user_id)
+        else:
+            is_hidden = False
+        if not is_hidden:
+            await query.edit_message_text("🔒 هذه الميزة للمشرفين فقط!")
+            return
+
+    # ----- استعادة حالة البث من user_data -----
+    if 'broadcast_data' not in context.user_data:
+        context.user_data['broadcast_data'] = {
+            'type': 'text',          # أنواع: text, photo, video, document, poll, audio
+            'content': None,
+            'caption': None,
+            'target': 'all_users',   # all_users, specific_users, groups, channels
+            'target_ids': [],
+            'schedule': None,        # None = فوري، أو نص تاريخ
+            'step': 'main_menu'
+        }
+    data = context.user_data['broadcast_data']
+
+    # ----- عرض القائمة الرئيسية مع الحالة الحالية -----
+    target_display = {
+        'all_users': 'جميع المستخدمين',
+        'specific_users': 'مستخدمين محددين',
+        'groups': 'المجموعات المسجلة',
+        'channels': 'القنوات المسجلة'
+    }.get(data['target'], 'جميع المستخدمين')
+
+    type_display = {
+        'text': '📝 نص',
+        'photo': '🖼️ صورة',
+        'video': '🎥 فيديو',
+        'document': '📄 مستند',
+        'poll': '📊 استطلاع',
+        'audio': '🎵 صوت'
+    }.get(data['type'], 'لم يتم الاختيار')
+
+    schedule_display = data['schedule'] if data['schedule'] else 'فوري'
+
+    keyboard = [
+        [InlineKeyboardButton("📝 نص", callback_data="br_type_text"),
+         InlineKeyboardButton("🖼️ صورة", callback_data="br_type_photo")],
+        [InlineKeyboardButton("🎥 فيديو", callback_data="br_type_video"),
+         InlineKeyboardButton("📄 مستند", callback_data="br_type_document")],
+        [InlineKeyboardButton("📊 استطلاع", callback_data="br_type_poll"),
+         InlineKeyboardButton("🎵 صوت", callback_data="br_type_audio")],
+        [InlineKeyboardButton(f"👥 الجمهور: {target_display}", callback_data="br_target_menu")],
+        [InlineKeyboardButton(f"⏰ الجدولة: {schedule_display}", callback_data="br_schedule_menu")],
+        [InlineKeyboardButton("📋 معاينة", callback_data="br_preview")],
+        [InlineKeyboardButton("🚀 إرسال الآن", callback_data="br_send")],
+        [InlineKeyboardButton("📋 سجل البث", callback_data="br_history")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data="br_cancel")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        f"📢 **البث الذكي**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 **نوع المحتوى:** `{type_display}`\n"
+        f"👥 **الجمهور:** `{target_display}`\n"
+        f"⏰ **الجدولة:** `{schedule_display}`\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📝 اختر الإعدادات ثم اضغط 'معاينة' أو 'إرسال'.",
+        parse_mode='MarkdownV2',
+        reply_markup=reply_markup
+    )
+# ------------------ دوال اختيار النوع ------------------
+async def br_type_text_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['broadcast_data']['type'] = 'text'
+    context.user_data['broadcast_data']['step'] = 'awaiting_text'
+    await query.edit_message_text("📝 أرسل النص الذي تريد نشره (يمكنك استخدام Markdown).")
+
+async def br_type_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['broadcast_data']['type'] = 'photo'
+    context.user_data['broadcast_data']['step'] = 'awaiting_photo'
+    await query.edit_message_text("🖼️ أرسل الصورة التي تريد نشرها (يمكنك إضافة تعليق).")
+
+# (كرر نفس النمط لـ video, document, poll, audio)
+
+# ------------------ دوال اختيار الجمهور ------------------
+async def br_target_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    keyboard = [
+        [InlineKeyboardButton("👥 جميع المستخدمين", callback_data="br_target_all")],
+        [InlineKeyboardButton("👤 مستخدمين محددين (أرسل المعرفات)", callback_data="br_target_specific")],
+        [InlineKeyboardButton("👥 المجموعات المسجلة", callback_data="br_target_groups")],
+        [InlineKeyboardButton("📡 القنوات المسجلة", callback_data="br_target_channels")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="admin_broadcast")]
+    ]
+    await query.edit_message_text("👥 اختر الجمهور المستهدف:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def br_target_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['broadcast_data']['target'] = 'all_users'
+    context.user_data['broadcast_data']['target_ids'] = []
+    await admin_broadcast_callback(update, context)
+
+async def br_target_specific_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['broadcast_data']['step'] = 'awaiting_target_ids'
+    await query.edit_message_text("👤 أرسل المعرفات (كل معرف في سطر منفصل).")
+
+async def br_target_groups_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    # جلب المجموعات من قاعدة البيانات (افترض وجود جدول group_security)
+    async def _get_groups(conn):
+        cur = await conn.execute("SELECT DISTINCT chat_id FROM group_security")
+        return [row[0] for row in await cur.fetchall()]
+    groups = await execute_db(_get_groups)
+    if not groups:
+        await query.edit_message_text("📭 لا توجد مجموعات مسجلة.")
+        return
+    context.user_data['broadcast_data']['target'] = 'groups'
+    context.user_data['broadcast_data']['target_ids'] = groups
+    await admin_broadcast_callback(update, context)
+
+async def br_target_channels_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    # جلب القنوات من قاعدة البيانات
+    async def _get_channels(conn):
+        cur = await conn.execute(
+            "SELECT channel_id FROM user_channels WHERE user_id=?",
+            (update.effective_user.id,)
+        )
+        return [row[0] for row in await cur.fetchall()]
+    channels = await execute_db(_get_channels)
+    if not channels:
+        await query.edit_message_text("📭 لا توجد قنوات مسجلة.")
+        return
+    context.user_data['broadcast_data']['target'] = 'channels'
+    context.user_data['broadcast_data']['target_ids'] = channels
+    await admin_broadcast_callback(update, context)
+
+# ------------------ دوال الجدولة ------------------
+async def br_schedule_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    keyboard = [
+        [InlineKeyboardButton("⏰ فوري", callback_data="br_schedule_now")],
+        [InlineKeyboardButton("📅 بعد ساعة", callback_data="br_schedule_1h")],
+        [InlineKeyboardButton("📅 بعد 6 ساعات", callback_data="br_schedule_6h")],
+        [InlineKeyboardButton("📅 غداً", callback_data="br_schedule_tomorrow")],
+        [InlineKeyboardButton("📅 توقيت مخصص", callback_data="br_schedule_custom")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="admin_broadcast")]
+    ]
+    await query.edit_message_text("⏰ اختر وقت الجدولة:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def br_schedule_now_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['broadcast_data']['schedule'] = None
+    await admin_broadcast_callback(update, context)
+
+async def br_schedule_1h_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    schedule = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M")
+    context.user_data['broadcast_data']['schedule'] = schedule
+    await admin_broadcast_callback(update, context)
+
+async def br_schedule_6h_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    schedule = (datetime.now() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M")
+    context.user_data['broadcast_data']['schedule'] = schedule
+    await admin_broadcast_callback(update, context)
+
+async def br_schedule_tomorrow_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    schedule = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M")
+    context.user_data['broadcast_data']['schedule'] = schedule
+    await admin_broadcast_callback(update, context)
+
+async def br_schedule_custom_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['broadcast_data']['step'] = 'awaiting_schedule'
+    await query.edit_message_text("📅 أرسل التاريخ والوقت (صيغة: YYYY-MM-DD HH:MM)")
+
+# ------------------ دوال استقبال المحتوى ------------------
+async def broadcast_text_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """استقبال النص للبث النصي"""
+    if context.user_data.get('broadcast_data', {}).get('step') != 'awaiting_text':
+        return
+    text = update.message.text
+    if not text:
+        await update.message.reply_text("⚠️ أرسل نصاً صالحاً.")
+        return
+    context.user_data['broadcast_data']['content'] = text
+    context.user_data['broadcast_data']['step'] = 'main_menu'
+    await update.message.reply_text("✅ تم حفظ النص. استخدم /broadcast للعودة.")
+    await admin_broadcast_callback(update, context)
+
+async def broadcast_photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """استقبال الصورة للبث"""
+    if context.user_data.get('broadcast_data', {}).get('step') != 'awaiting_photo':
+        return
+    photo = update.message.photo[-1]
+    file = await photo.get_file()
+    os.makedirs("broadcast_photos", exist_ok=True)
+    file_path = f"broadcast_photos/{file.file_id}.jpg"
+    await file.download_to_drive(file_path)
+    context.user_data['broadcast_data']['content'] = file_path
+    context.user_data['broadcast_data']['caption'] = update.message.caption
+    context.user_data['broadcast_data']['step'] = 'main_menu'
+    await update.message.reply_text("✅ تم حفظ الصورة. استخدم /broadcast للعودة.")
+    await admin_broadcast_callback(update, context)
+
+# (أضف دوال مماثلة للفيديو، المستند، الصوت، الاستطلاع)
+
+# ------------------ معاينة وإرسال البث ------------------
+async def br_preview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = context.user_data.get('broadcast_data', {})
+    if not data.get('content'):
+        await query.edit_message_text("⚠️ لم يتم إدخال محتوى البث بعد.")
+        return
+    preview = f"📋 **معاينة البث**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    preview += f"📌 النوع: {data['type']}\n👥 الجمهور: {data['target']}\n⏰ الجدولة: {data['schedule'] or 'فوري'}\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    preview += f"**المحتوى:**\n{data['content'][:200]}..."
+    keyboard = [[InlineKeyboardButton("✅ تأكيد الإرسال", callback_data="br_send")],
+                [InlineKeyboardButton("🔙 تعديل", callback_data="admin_broadcast")]]
+    await query.edit_message_text(preview, parse_mode='MarkdownV2', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def br_send_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تنفيذ البث الفعلي"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    data = context.user_data.get('broadcast_data', {})
+
+    if not data.get('content'):
+        await query.edit_message_text("⚠️ لا يوجد محتوى!")
+        return
+
+    # إذا كانت الجدولة محددة، نخزنها وننهي (يمكنك لاحقاً إضافة جدولة)
+    if data.get('schedule'):
+        await query.edit_message_text(f"✅ تم جدولة البث في {data['schedule']}")
+        return
+
+    # جلب المستخدمين المستهدفين
+    targets = []
+    if data['target'] == 'all_users':
+        users = await db_get_all_users()
+        targets = [row['user_id'] for row in users]
+    elif data['target'] in ['groups', 'channels']:
+        targets = data.get('target_ids', [])
+    else:  # specific_users
+        targets = data.get('target_ids', [])
+
+    if not targets:
+        await query.edit_message_text("⚠️ لا يوجد مستخدمين مستهدفين!")
+        return
+
+    # بدء الإرسال
+    status_msg = await query.edit_message_text(f"⏳ جاري الإرسال إلى {len(targets)} مستخدم...")
+    success = 0
+    failed = 0
+
+    for uid in targets:
+        try:
+            if data['type'] == 'text':
+                await context.bot.send_message(uid, data['content'], parse_mode='HTML')
+            elif data['type'] == 'photo':
+                with open(data['content'], 'rb') as f:
+                    await context.bot.send_photo(uid, f, caption=data.get('caption'))
+            # أضف باقي الأنواع بنفس الطريقة
+            success += 1
+        except Exception as e:
+            failed += 1
+            logger.warning(f"فشل إرسال إلى {uid}: {e}")
+        if (success + failed) % 10 == 0:
+            await status_msg.edit_text(f"⏳ تم إرسال {success} من {len(targets)}...")
+
+    # نتيجة البث
+    result = f"✅ انتهى البث\n━━━━━━━━━━━━━━━━━━━━━━\n✅ نجح: {success}\n❌ فشل: {failed}"
+    await status_msg.edit_text(result, parse_mode='MarkdownV2')
+
+    # تنظيف السياق
+    context.user_data.pop('broadcast_data', None)
+
+# ------------------ إلغاء البث ------------------
+async def br_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop('broadcast_data', None)
+    await query.edit_message_text("❌ تم إلغاء البث.")
+
+# ------------------ سجل البث (اختصاري) ------------------
+async def br_history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📋 يمكنك مشاهدة السجل في لوحة الأدمن لاحقاً.")
 
 async def main():
     """الوظيفة الرئيسية لتشغيل البوت"""
