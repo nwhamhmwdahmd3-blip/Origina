@@ -14387,6 +14387,159 @@ def get_user_auto_reply_keyboard(user_id: int, enabled: bool) -> InlineKeyboardM
 # ===================================================================
 # 11. دوال مساعدة
 # ===================================================================
+# ===================================================================
+# دوال مساعدة - الوقت
+# ===================================================================
+
+def utc_now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+def mecca_now():
+    return utc_now() + timedelta(hours=3)
+
+def utc_now_iso():
+    return utc_now().isoformat()
+
+def mecca_now_iso():
+    return mecca_now().isoformat()
+
+
+# ===================================================================
+# دوال الإرسال الآمن
+# ===================================================================
+
+def sanitize_text(text: str, max_length: int = 4096, allow_tags: list = None) -> str:
+    if not text:
+        return ""
+    try:
+        import bleach
+        if allow_tags is None:
+            allow_tags = ['b', 'i', 'u', 's', 'a', 'code', 'pre', 'strong', 'em']
+        cleaned = bleach.clean(text, tags=allow_tags, attributes={'a': ['href', 'title']}, styles=[], strip=True)
+    except:
+        cleaned = text
+    if len(cleaned) > max_length:
+        cleaned = cleaned[:max_length]
+    return cleaned
+
+def escape_markdown_v2(text: str) -> str:
+    if not text:
+        return ""
+    special_chars = r'_*[]()~`>#+\-=|{}.!\\'
+    def escape_char(match):
+        char = match.group(0)
+        start = match.start()
+        if start > 0 and text[start-1] == '\\':
+            return char
+        return '\\' + char
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\])', escape_char, text)
+
+async def safe_send_markdown(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
+    if not text:
+        return None
+    clean_text = sanitize_text(text)
+    MAX_LEN = 4096
+    try:
+        escaped = escape_markdown_v2(clean_text)
+        if len(escaped) > MAX_LEN:
+            cut_point = MAX_LEN - 3
+            while cut_point > 0 and escaped[cut_point - 1] in ('\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'):
+                cut_point -= 1
+            escaped = escaped[:cut_point] + "..."
+        return await bot.send_message(chat_id=chat_id, text=escaped, parse_mode='MarkdownV2', reply_markup=reply_markup, **kwargs)
+    except BadRequest as e:
+        if "can't parse entities" in str(e) or "parse" in str(e):
+            try:
+                html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                html_text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', html_text)
+                html_text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', html_text)
+                html_text = re.sub(r'__(.+?)__', r'<u>\1</u>', html_text)
+                html_text = re.sub(r'`(.+?)`', r'<code>\1</code>', html_text)
+                if len(html_text) > MAX_LEN:
+                    html_text = html_text[:MAX_LEN-3] + "..."
+                return await bot.send_message(chat_id=chat_id, text=html_text, parse_mode='HTML', reply_markup=reply_markup, **kwargs)
+            except:
+                pass
+        if "bot can't initiate conversation" in str(e).lower() or "user_bot_to_bot_disabled" in str(e).lower():
+            logger.warning(f"⚠️ لا يمكن بدء محادثة مع المستخدم {chat_id}")
+            return None
+        try:
+            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
+            if len(plain) > MAX_LEN:
+                plain = plain[:MAX_LEN-3] + "..."
+            return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
+        except:
+            raise
+    except Forbidden as e:
+        if "bot can't initiate conversation" in str(e).lower():
+            logger.warning(f"⚠️ لا يمكن بدء محادثة مع المستخدم {chat_id}")
+            return None
+        raise
+    except Exception as e:
+        try:
+            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
+            if len(plain) > MAX_LEN:
+                plain = plain[:MAX_LEN-3] + "..."
+            return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
+        except:
+            raise
+
+async def safe_edit_markdown(query, text: str, reply_markup=None, **kwargs):
+    if not query or not query.message:
+        return None
+    if not text:
+        return None
+    clean_text = sanitize_text(text)
+    MAX_LEN = 4096
+    try:
+        escaped = escape_markdown_v2(clean_text)
+        if len(escaped) > MAX_LEN:
+            cut_point = MAX_LEN - 3
+            while cut_point > 0 and escaped[cut_point - 1] in ('\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'):
+                cut_point -= 1
+            escaped = escaped[:cut_point] + "..."
+        return await query.edit_message_text(text=escaped, parse_mode='MarkdownV2', reply_markup=reply_markup, **kwargs)
+    except BadRequest as e:
+        if "can't parse entities" in str(e) or "parse" in str(e):
+            try:
+                html_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                html_text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', html_text)
+                html_text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', html_text)
+                html_text = re.sub(r'__(.+?)__', r'<u>\1</u>', html_text)
+                html_text = re.sub(r'`(.+?)`', r'<code>\1</code>', html_text)
+                if len(html_text) > MAX_LEN:
+                    html_text = html_text[:MAX_LEN-3] + "..."
+                return await query.edit_message_text(text=html_text, parse_mode='HTML', reply_markup=reply_markup, **kwargs)
+            except:
+                pass
+        try:
+            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
+            if len(plain) > MAX_LEN:
+                plain = plain[:MAX_LEN-3] + "..."
+            return await query.edit_message_text(text=plain, reply_markup=reply_markup, **kwargs)
+        except:
+            raise
+    except Exception as e:
+        try:
+            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', clean_text)
+            if len(plain) > MAX_LEN:
+                plain = plain[:MAX_LEN-3] + "..."
+            return await query.edit_message_text(text=plain, reply_markup=reply_markup, **kwargs)
+        except:
+            raise
+
+
+# ===================================================================
+# دوال قاعدة البيانات - الإعدادات
+# ===================================================================
+
+async def db_get_publish_interval_seconds() -> int:
+    async def _get(conn):
+        cur = await conn.execute("SELECT value FROM settings WHERE key='publish_interval'")
+        row = await cur.fetchone()
+        return int(row[0]) if row else DEFAULT_PUBLISH_INTERVAL_SECONDS
+    return await execute_db(_get)
 
 # ===================================================================
 # 34. دالة main() النهائية
