@@ -11523,17 +11523,158 @@ def create_default_lang_files():
 # معالج زر المساعدة
 # ===================================================================
 
+# ===================================================================
+# 36.22 معالج زر المساعدة (help_callback)
+# ===================================================================
+
 async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض قائمة المساعدة"""
+    """
+    عرض قائمة المساعدة الكاملة مع الأوامر المتاحة.
+    يتم استدعاؤها عند الضغط على زر المساعدة أو عبر الأمر /help.
+    """
+    # 1. التعامل مع الاستعلام (CallbackQuery)
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    if query:
+        try:
+            await query.answer()
+        except Exception as e:
+            logger.debug(f"فشل الرد على الاستعلام: {e}")
+    
+    # 2. الحصول على النص المترجم
+    text = get_text(user_id, 'help')
+    
+    # 3. التأكد من وجود النص (إذا كان مفقوداً، استخدام النص الافتراضي)
+    if not text or text == 'help':
+        text = """
+❓ **المساعدة**
+━━━━━━━━━━━━━━━━━━━━━━
+📌 **الأوامر المتاحة:**
+
+🔹 **الأساسية:**
+/start - القائمة الرئيسية
+/help - هذه المساعدة
+/language - تغيير اللغة
+
+🔹 **الاشتراك والتجربة:**
+/trial - تجربة مجانية (30 يوم)
+/subscribe - الاشتراك
+
+🔹 **إدارة القنوات:**
+/add_channel - إضافة قناة
+/my_channels - عرض قنواتي
+/add_posts - إضافة منشورات
+/publish - نشر منشور
+
+🔹 **إدارة المجموعات:**
+/syncgroup - تفعيل المجموعة
+/security - إعدادات الأمان
+/panel - لوحة التحكم
+/lock - قفل المجموعة
+/unlock - فتح المجموعة
+
+🔹 **الإشراف:**
+/ban - حظر مستخدم
+/mute - كتم مستخدم
+/warn - تحذير مستخدم
+/kick - طرد مستخدم
+/unban - إلغاء حظر
+
+🔹 **المشرفين المخفيين:**
+/register_hidden_owner - تسجيل مالك مخفي
+/add_hidden_admin - إضافة مشرف مخفي
+/remove_hidden_admin - إزالة مشرف مخفي
+/list_hidden_admins - عرض المشرفين المخفيين
+
+🔹 **أخرى:**
+/rank - رتبتك
+/top - أفضل 10
+/stats - إحصائيات القناة
+/schedule - جدولة منشور
+/contests - المسابقات
+/support - مركز الدعم
+/developer - المطور
+/updates - التحديثات
+/sendcode - كود الدعوة (للمشرفين)
+/set_log_channel - تعيين قناة التقارير (للمشرفين)
+/set_rules - تعيين قوانين المجموعة
+/rules - عرض قوانين المجموعة
+        """
+    
+    # 4. بناء لوحة المفاتيح
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    # 5. إرسال أو تعديل الرسالة
+    try:
+        if query:
+            await safe_edit_markdown(query, text, reply_markup=keyboard)
+        else:
+            await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    except Exception as e:
+        # 6. محاولة إرسال نص عادي في حالة فشل Markdown
+        try:
+            plain_text = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', text)
+            if query:
+                await query.edit_message_text(plain_text, reply_markup=keyboard)
+            else:
+                await context.bot.send_message(chat_id=user_id, text=plain_text, reply_markup=keyboard)
+        except Exception as e2:
+            logger.error(f"فشل عرض المساعدة: {e2}")
+    
+    # 7. تسجيل الحدث في سجل المشاعر
+    try:
+        await db_save_sentiment_history(user_id, 0, "help_viewed", "neutral", 0.1)
+    except Exception as e:
+        logger.debug(f"فشل تسجيل سجل المشاعر: {e}")
+    
+    # 8. تسجيل التعلم
+    try:
+        await learning_engine.learn_from_message(user_id, 0, "help_command", "help_displayed", True)
+    except Exception as e:
+        logger.debug(f"فشل تسجيل التعلم: {e}")
+# ===================================================================
+# دوال الدعم (Support Callbacks)
+# ===================================================================
+
+async def support_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة الدعم الرئيسية"""
     query = update.callback_query
     if query:
         await query.answer()
     
     user_id = update.effective_user.id
-    text = get_text(user_id, 'help')
+    context.user_data['support_mode'] = True
     
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+        [InlineKeyboardButton("📝 كتابة تذكرة", callback_data=CallbackData.SUPPORT_TICKET)],
+        [InlineKeyboardButton("❓ المساعدة", callback_data=CallbackData.SUPPORT_HELP)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    text = get_text(user_id, 'support_welcome')
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    
+    await db_save_sentiment_history(user_id, 0, "support_menu_viewed", "neutral", 0.1)
+
+
+async def support_help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مساعدة الدعم"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    text = get_text(user_id, 'support_help')
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.SUPPORT_MENU)]
     ])
     
     if query:
@@ -11541,7 +11682,42 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
     
-    await db_save_sentiment_history(user_id, 0, "help_viewed", "neutral", 0.1)
+    await db_save_sentiment_history(user_id, 0, "support_help_viewed", "neutral", 0.1)
+
+
+async def support_ticket_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إنشاء تذكرة دعم جديدة"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    context.user_data['support_mode'] = True
+    
+    text = "📝 **كتابة تذكرة دعم**\n\nأرسل رسالتك بالتفصيل وسنرد عليك بأسرع وقت.\n\n📌 **ملاحظة:** سيتم إرسال تذكرة برقم خاص بك."
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 إلغاء", callback_data=CallbackData.SUPPORT_MENU)]
+    ])
+    
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    
+    await db_save_sentiment_history(user_id, 0, "support_ticket_started", "neutral", 0.1)
+
+
+async def support_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """العودة من الدعم إلى القائمة الرئيسية"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    context.user_data.pop('support_mode', None)
+    
+    await main_menu_callback(update, context)
 
 # ===================================================================
 # 34. دالة main() النهائية
