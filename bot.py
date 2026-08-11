@@ -8020,6 +8020,63 @@ async def updates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit_markdown(query, text, reply_markup=keyboard)
         else:
             await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+async def buy_subscription_1_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك يوم واحد"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    await buy_subscription_callback(update, context, 1, 5, "اشتراك 1 يوم")
+
+async def buy_subscription_2_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك يومين"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    await buy_subscription_callback(update, context, 2, 9, "اشتراك 2 يوم")
+
+async def buy_subscription_30_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك 30 يوم (شهر)"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    await buy_subscription_callback(update, context, 30, 50, "اشتراك شهر")
+
+async def buy_subscription_90_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شراء اشتراك 90 يوم (3 أشهر)"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    await buy_subscription_callback(update, context, 90, 120, "اشتراك 3 أشهر")
+
+async def buy_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, days: int, price: int, title: str):
+    """تنفيذ عملية شراء الاشتراك"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    try:
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title=title,
+            description=f"اشتراك {days} يوم",
+            payload=f"sub_{days}_{price}",
+            currency="XTR",
+            prices=[LabeledPrice(label=f"اشتراك {days} يوم", amount=price)],
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False
+        )
+    except Exception as e:
+        if "Stars" in str(e):
+            if query:
+                await query.edit_message_text("❌ الدفع بالنجوم غير مفعل حالياً، استخدم /trial")
+            else:
+                await safe_send_markdown(context.bot, user_id, "❌ الدفع بالنجوم غير مفعل حالياً، استخدم /trial")
+        else:
+            if query:
+                await query.edit_message_text(f"❌ خطأ: {str(e)[:100]}")
+            else:
+                await safe_send_markdown(context.bot, user_id, f"❌ خطأ: {str(e)[:100]}")
 
 async def main():
     # تهيئة قاعدة البيانات
