@@ -11718,6 +11718,302 @@ async def support_back_callback(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data.pop('support_mode', None)
     
     await main_menu_callback(update, context)
+# ===================================================================
+# دوال الإحالات (Referral Callbacks)
+# ===================================================================
+
+async def referral_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض قائمة الإحالات الرئيسية.
+    تعرض رابط الإحالة الخاص بالمستخدم، عدد المحالين، والمكافآت المتاحة.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. الحصول على كود الإحالة
+    ref_code = await db_get_referral_code(user_id)
+    if not ref_code:
+        ref_code = await db_generate_referral_code(user_id)
+    
+    # 2. الحصول على إحصائيات الإحالات
+    stats = await db_get_referral_stats(user_id)
+    
+    # 3. الحصول على إعدادات الإحالات
+    settings = await db_get_referral_settings()
+    reward_per_ref = int(settings.get('reward_days_per_referral', '3'))
+    welcome_bonus = int(settings.get('welcome_bonus_points', '10'))
+    
+    # 4. بناء النص
+    text = get_text(user_id, 'referral_title').format(
+        ref_code,
+        BOT_USERNAME,
+        user_id,
+        stats['total_referrals'],
+        stats['available_days'],
+        reward_per_ref,
+        welcome_bonus
+    )
+    
+    # 5. بناء لوحة المفاتيح
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(user_id, 'copy_link'), callback_data=f"{CallbackData.REFERRAL_COPY_LINK_PREFIX}{ref_code}")],
+        [InlineKeyboardButton(get_text(user_id, 'claim_reward'), callback_data=CallbackData.REFERRAL_CLAIM_REWARD)],
+        [InlineKeyboardButton(get_text(user_id, 'referral_list'), callback_data=CallbackData.REFERRAL_LIST)],
+        [InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)]
+    ])
+    
+    # 6. إرسال أو تعديل الرسالة
+    if query:
+        await safe_edit_markdown(query, text, reply_markup=keyboard)
+    else:
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    
+    # 7. تسجيل الحدث في سجل المشاعر
+    await db_save_sentiment_history(user_id, 0, "referral_menu_viewed", "neutral", 0.1)
+
+
+async def referral_copy_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    نسخ رابط الإحالة.
+    يعرض الرابط بشكل منسق مع شرح بسيط.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    ref_code = query.data.split(":")[-1]
+    link = f"https://t.me/{BOT_USERNAME}?start=ref_{ref_code}"
+    
+    text = f"🔗 **رابط الإحالة الخاص بك:**\n\n`{link}`\n\n📌 **كيفية الاستخدام:**\n"
+    text += "1️⃣ انسخ الرابط\n"
+    text += "2️⃣ أرسله لأصدقائك\n"
+    text += "3️⃣ عند تسجيلهم عبر الرابط، ستحصل على مكافآت 🎁\n\n"
+    text += "📊 **مكافأة كل إحالة:** 3 أيام اشتراك إضافي"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.REFERRAL_MENU)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+    
+    await db_save_sentiment_history(user_id, 0, "referral_link_copied", "positive", 0.3)
+
+
+async def referral_claim_reward_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    صرف مكافآت الإحالات المتاحة.
+    يتم إضافة الأيام إلى اشتراك المستخدم.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. محاولة صرف المكافآت
+    days = await db_claim_referral_reward(user_id)
+    
+    if days > 0:
+        text = get_text(user_id, 'reward_claimed').format(days)
+        await db_save_sentiment_history(user_id, 0, f"referral_reward_claimed_{days}", "positive", 0.7)
+    else:
+        text = get_text(user_id, 'no_reward_available')
+        await db_save_sentiment_history(user_id, 0, "referral_reward_claim_failed", "neutral", 0)
+    
+    # 2. عرض النتيجة
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.REFERRAL_MENU)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+
+
+async def referral_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عرض قائمة المستخدمين الذين سجلوا عبر رابط الإحالة.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # 1. جلب قائمة المحالين
+    async def _get_referrals(conn):
+        cur = await conn.execute(
+            "SELECT referred_id, created_at FROM referrals WHERE referrer_id=? ORDER BY created_at DESC LIMIT 20",
+            (user_id,)
+        )
+        return await cur.fetchall()
+    
+    referrals = await execute_db(_get_referrals)
+    
+    if not referrals:
+        text = get_text(user_id, 'no_referrals')
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.REFERRAL_MENU)]
+        ])
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+        return
+    
+    # 2. بناء النص
+    text = "📋 **قائمة المحالين**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for ref_id, ref_at in referrals:
+        try:
+            user = await context.bot.get_chat(ref_id)
+            name = user.first_name or str(ref_id)
+        except:
+            name = str(ref_id)
+        # تنسيق التاريخ
+        try:
+            dt = datetime.fromisoformat(ref_at)
+            date_str = dt.strftime("%Y-%m-%d")
+        except:
+            date_str = ref_at[:10] if ref_at else "?"
+        text += f"• {name} (`{ref_id}`) - {date_str}\n"
+    
+    text += f"\n📊 إجمالي المحالين: {len(referrals)}"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.REFERRAL_MENU)]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+    
+    await db_save_sentiment_history(user_id, 0, "referral_list_viewed", "neutral", 0.1)
+
+
+# ===================================================================
+# دوال قاعدة بيانات الإحالات (إذا كانت مفقودة)
+# ===================================================================
+
+async def db_get_referral_code(user_id: int) -> str:
+    """
+    الحصول على كود الإحالة للمستخدم من قاعدة البيانات.
+    """
+    async def _get(conn):
+        cur = await conn.execute("SELECT referral_code FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return row[0] if row and row[0] else None
+    return await execute_db(_get)
+
+
+async def db_generate_referral_code(user_id: int) -> str:
+    """
+    إنشاء كود إحالة فريد للمستخدم وحفظه في قاعدة البيانات.
+    """
+    async def _generate(conn):
+        # إنشاء كود فريد باستخدام hash من معرف المستخدم والوقت
+        code_hash = hashlib.md5(f"{user_id}{time_module.time()}".encode()).hexdigest()[:8]
+        referral_code = f"REF{code_hash.upper()}"
+        
+        # تحديث كود الإحالة في قاعدة البيانات
+        await conn.execute(
+            "UPDATE users SET referral_code=? WHERE user_id=?",
+            (referral_code, user_id)
+        )
+        await conn.commit()
+        return referral_code
+    return await execute_db(_generate)
+
+
+async def db_get_referral_stats(user_id: int) -> dict:
+    """
+    الحصول على إحصائيات الإحالات للمستخدم.
+    تشمل: عدد الإحالات، إجمالي المكافآت، المكافآت المصروفة، المتاحة.
+    """
+    async def _get(conn):
+        # عدد الإحالات
+        cur = await conn.execute(
+            "SELECT COUNT(*) FROM referrals WHERE referrer_id=?",
+            (user_id,)
+        )
+        total_referrals = (await cur.fetchone())[0] or 0
+        
+        # مكافآت الإحالات
+        cur = await conn.execute(
+            "SELECT referral_count, total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        
+        if row:
+            referral_count = row[0] or 0
+            total_reward_days = row[1] or 0
+            claimed_reward_days = row[2] or 0
+        else:
+            referral_count = 0
+            total_reward_days = 0
+            claimed_reward_days = 0
+        
+        available_days = max(0, total_reward_days - claimed_reward_days)
+        
+        return {
+            'total_referrals': total_referrals,
+            'referral_count': referral_count,
+            'total_reward_days': total_reward_days,
+            'claimed_reward_days': claimed_reward_days,
+            'available_days': available_days
+        }
+    return await execute_db(_get)
+
+
+async def db_claim_referral_reward(user_id: int) -> int:
+    """
+    صرف مكافآت الإحالات المتاحة.
+    تعيد عدد الأيام التي تمت إضافتها إلى الاشتراك.
+    """
+    async def _claim(conn):
+        # الحصول على المكافآت المتاحة
+        cur = await conn.execute(
+            "SELECT total_reward_days, claimed_reward_days FROM referral_rewards WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        
+        total = row[0] or 0
+        claimed = row[1] or 0
+        available = max(0, total - claimed)
+        
+        if available <= 0:
+            return 0
+        
+        # إضافة الأيام إلى اشتراك المستخدم
+        current_sub = await db_get_subscription_days_left(user_id)
+        new_sub_days = current_sub + available
+        end_date = (utc_now() + timedelta(days=new_sub_days)).isoformat()
+        
+        await conn.execute(
+            "UPDATE users SET subscription_end=? WHERE user_id=?",
+            (end_date, user_id)
+        )
+        
+        # تحديث المكافآت المصروفة
+        await conn.execute(
+            "UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?",
+            (available, user_id)
+        )
+        await conn.commit()
+        
+        return available
+    return await execute_db(_claim)
+
+
+async def db_get_referral_settings() -> dict:
+    """
+    الحصول على إعدادات نظام الإحالات من قاعدة البيانات.
+    """
+    async def _get(conn):
+        cur = await conn.execute("SELECT key, value FROM referral_settings")
+        rows = await cur.fetchall()
+        return {row[0]: row[1] for row in rows}
+    return await execute_db(_get)
 
 # ===================================================================
 # 34. دالة main() النهائية
