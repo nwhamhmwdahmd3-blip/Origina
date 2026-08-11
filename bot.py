@@ -6227,8 +6227,8 @@ async def init_security_table():
     await execute_db(_create)
 
 async def init_db_improved():
-    async with aiosqlite.connect(str(DB_PATH), timeout=DB_TIMEOUT) as conn:
-        await ensure_security_columns(conn)         await conn.execute("PRAGMA journal_mode=WAL")
+    async with aiosqlite.connect(str(DB_PATH), timeout=DB_TIMEOUT) as conn:         
+        await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA synchronous=NORMAL")
         await conn.execute("PRAGMA foreign_keys=ON")
         await conn.execute("PRAGMA cache_size=-64000")
@@ -6632,6 +6632,7 @@ async def init_db_improved():
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_security_events_severity ON security_events(severity)")
         await conn.commit()
+        await ensure_security_columns(conn)
         logger.info("✅ تم تهيئة قاعدة البيانات بنجاح")
 
 async def fix_missing_columns():
