@@ -11035,6 +11035,387 @@ async def fix_missing_columns():
     except Exception as e:
         logger.error(f"❌ فشل إصلاح الأعمدة المفقودة: {e}")
         raise
+# ===================================================================
+# دوال تحميل اللغات والكلمات المحظورة (بدون محتوى حساس)
+# ===================================================================
+
+def load_banned_words_from_file(file_path: Path) -> List[str]:
+    """
+    تحميل الكلمات المحظورة من ملف نصي.
+    إذا كان الملف غير موجود، يتم إنشاؤه بقائمة افتراضية (بدون محتوى حساس).
+    """
+    words = []
+    if not file_path.exists():
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write("# قائمة الكلمات المحظورة - كل كلمة في سطر منفصل\n")
+                f.write("# ابدأ السطر بـ # للتعليق\n\n")
+                # تم إزالة الكلمات الحساسة
+                f.write("# أضف الكلمات المحظورة هنا\n")
+                f.write("كلمة1\nكلمة2\n")
+            print(f"✅ تم إنشاء ملف الكلمات المحظورة الافتراضي: {file_path}")
+        except Exception as e:
+            print(f"❌ فشل إنشاء ملف الكلمات المحظورة: {e}")
+        return words
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                word = line.lower()
+                if len(word) >= 2:
+                    words.append(word)
+        print(f"✅ تم تحميل {len(words)} كلمة محظورة من الملف")
+    except Exception as e:
+        print(f"❌ فشل تحميل الكلمات المحظورة: {e}")
+
+    return words
+
+
+def load_all_languages():
+    """
+    تحميل جميع ملفات اللغة من مجلد lang/.
+    إذا لم تكن موجودة، يتم إنشاء الملفات الافتراضية.
+    """
+    global _lang_data
+
+    LANG_PATH.mkdir(parents=True, exist_ok=True)
+
+    create_default_lang_files()
+
+    loaded_count = 0
+    for lang_file in LANG_PATH.glob("*.json"):
+        lang = lang_file.stem
+        try:
+            with open(lang_file, 'r', encoding='utf-8') as f:
+                _lang_data[lang] = json.load(f)
+            loaded_count += 1
+        except Exception as e:
+            print(f"⚠️ فشل تحميل {lang_file}: {e}")
+
+    if not _lang_data:
+        print("⚠️ لم يتم تحميل أي ملف لغة، استخدام العربية كافتراضية")
+        _lang_data['ar'] = {
+            "welcome": "🌿 مرحباً بك في البوت",
+            "back": "🔙 رجوع",
+            "error": "⚠️ حدث خطأ",
+            "admin_only": "🔒 هذا الأمر للمشرفين فقط!",
+            "group_only": "🔒 هذا الأمر يعمل فقط في المجموعات!",
+            "help": "❓ المساعدة",
+            "settings": "⚙️ الإعدادات",
+            "no_channels": "لا توجد قنوات",
+            "add_channel": "➕ إضافة قناة",
+            "my_channels": "📡 قنواتي",
+            "channel_added": "✅ تم إضافة القناة {0}",
+            "channel_exists": "⚠️ القناة موجودة مسبقاً",
+            "channel_deleted": "✅ تم حذف القناة",
+            "delete_failed": "❌ فشل الحذف",
+            "no_posts": "📭 لا توجد منشورات",
+            "my_posts_title": "📋 منشوراتي غير المنشورة",
+            "recycled": "♻️ تم إعادة تدوير جميع المنشورات",
+            "deleted_all": "✅ تم حذف جميع المنشورات",
+            "confirm_delete": "⚠️ هل أنت متأكد من حذف جميع المنشورات؟",
+            "locked": "🔒 تم قفل المجموعة",
+            "unlocked": "🔓 تم فتح المجموعة",
+            "cancelled": "❌ تم الإلغاء",
+            "error": "⚠️ حدث خطأ، حاول مرة أخرى"
+        }
+
+    print(f"✅ تم تحميل {loaded_count} ملف لغة")
+    return _lang_data
+
+
+def create_default_lang_files():
+    """
+    إنشاء ملفات اللغة الافتراضية إذا لم تكن موجودة.
+    """
+    LANG_PATH.mkdir(parents=True, exist_ok=True)
+
+    # اللغة العربية الأساسية فقط (يمكن إضافة لغات أخرى حسب الحاجة)
+    default_langs = {
+        'ar': {
+            "welcome": "🌿 **مرحباً بك في ريلاكس مانيجر**\nاختر اللغة المناسبة",
+            "main_title": "🌿 **{0}**\n━━━━━━━━━━━━━━━━━━━━━━\n👤 المعرف: `{1}`\n👥 مجموعاتي: {2}\n💎 الاشتراك: {3}\n📡 القناة النشطة: {4}\n📝 المنشورات غير المنشورة: {5}\n⚙️ النشر التلقائي: {6}",
+            "no_channels": "لا توجد قنوات",
+            "add_channel": "➕ إضافة قناة",
+            "my_channels": "📡 قنواتي",
+            "add_15_posts": "📥 إضافة 15 منشور",
+            "publish_one": "📤 نشر واحد",
+            "my_posts_btn": "📋 منشوراتي",
+            "recycle": "♻️ إعادة تدوير",
+            "stats_btn": "📊 إحصائياتي",
+            "my_stats_btn": "📈 إحصائيات كاملة",
+            "my_groups_btn": "👥 مجموعاتي",
+            "settings_btn": "⚙️ الإعدادات",
+            "schedule_btn": "⏰ الجدولة",
+            "help_btn": "❓ المساعدة",
+            "trial_btn": "🎁 تجربة مجانية",
+            "subscribe_btn": "💎 اشتراك",
+            "developer_btn": "👨‍💻 المطور",
+            "language_btn": "🌐 اللغة",
+            "support_btn": "📞 الدعم",
+            "referral": "🔗 الإحالات",
+            "reminder_settings": "⏰ التذكيرات",
+            "translation_settings": "🌐 الترجمة",
+            "publish_all": "📤 نشر الكل",
+            "updates_btn": "📢 التحديثات",
+            "add_to_group": "➕ إضافة إلى مجموعة",
+            "admin_panel": "👑 لوحة الأدمن",
+            "my_rank_btn": "📊 رتبتي",
+            "top_10_btn": "🏆 أفضل 10",
+            "schedule_post_btn": "📝 جدولة منشور",
+            "channel_stats": "📊 إحصائيات القناة",
+            "my_channels_summary": "📊 ملخص قنواتي",
+            "auto_on": "مفعل",
+            "auto_off": "معطل",
+            "subscribed": "✅ مفعل",
+            "not_subscribed": "❌ غير مفعل",
+            "send_channel_id": "📡 أرسل معرف القناة (مثال: @RelaxMgrr أو -100123456)",
+            "channel_added": "✅ تم إضافة القناة {0}",
+            "channel_exists": "⚠️ القناة موجودة مسبقاً",
+            "no_channels_list": "📭 لا توجد قنوات مسجلة",
+            "channels_list": "📡 **قنواتي**\nاختر قناة للتحكم بها:",
+            "delete_channel": "🗑️ حذف",
+            "channel_deleted": "✅ تم حذف القناة",
+            "delete_failed": "❌ فشل الحذف",
+            "no_posts": "📭 لا توجد منشورات",
+            "my_posts_title": "📋 **منشوراتي غير المنشورة**",
+            "confirm_delete": "⚠️ هل أنت متأكد من حذف جميع المنشورات؟",
+            "deleted_all": "✅ تم حذف جميع المنشورات",
+            "recycled": "♻️ تم إعادة تدوير جميع المنشورات",
+            "pending_stats": "📊 **إحصائيات المنشورات**\n━━━━━━━━━━━━━━━━━━━━━━\n📝 غير المنشورة: {0}\n📋 الإجمالي: {1}",
+            "stats": "📈 **إحصائياتي الكاملة**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 القنوات: {0}\n📝 إجمالي المنشورات: {1}\n⏳ غير المنشورة: {2}\n👥 المجموعات: {3}\n⚙️ النشر التلقائي: {4}",
+            "settings": "⚙️ **الإعدادات**\nاختر الإعداد المطلوب:",
+            "disabled": "❌ تعطيل",
+            "enabled": "✅ تفعيل",
+            "auto_toggled": "✅ تم تغيير حالة النشر التلقائي إلى: {0}",
+            "schedule_settings": "⏰ **إعدادات الجدولة**\n━━━━━━━━━━━━━━━━━━━━━━\n{0}\n━━━━━━━━━━━━━━━━━━━━━━\nاختر نوع الجدولة:",
+            "interval_minutes": "دقائق: {0}",
+            "interval_hours": "ساعات: {0}",
+            "interval_days": "أيام: {0}",
+            "days_week": "أيام الأسبوع: {0}",
+            "specific_dates": "تواريخ محددة: {0}",
+            "nothing": "لا شيء",
+            "send_minutes": "⏱️ أرسل عدد الدقائق (مثال: 30)",
+            "send_hours": "⏱️ أرسل عدد الساعات (مثال: 2)",
+            "send_days": "⏱️ أرسل عدد الأيام (مثال: 1)",
+            "send_dates": "📅 أرسل التواريخ مفصولة بفواصل (مثال: 2024-12-25,2025-01-01)",
+            "send_time": "🕐 أرسل وقت النشر (مثال: 14:30)",
+            "interval_set": "✅ تم حفظ الإعدادات",
+            "invalid_number": "❌ رقم غير صالح",
+            "invalid_date": "❌ تاريخ غير صالح",
+            "invalid_time": "❌ وقت غير صالح",
+            "days_saved": "✅ تم حفظ أيام النشر",
+            "monday": "الإثنين",
+            "tuesday": "الثلاثاء",
+            "wednesday": "الأربعاء",
+            "thursday": "الخميس",
+            "friday": "الجمعة",
+            "saturday": "السبت",
+            "sunday": "الأحد",
+            "admin_only": "🔒 هذا الأمر للمشرفين فقط!",
+            "group_only": "🔒 هذا الأمر يعمل فقط في المجموعات!",
+            "locked": "🔒 تم قفل المجموعة",
+            "unlocked": "🔓 تم فتح المجموعة",
+            "cancelled": "❌ تم الإلغاء",
+            "error": "⚠️ حدث خطأ، حاول مرة أخرى",
+            "help": "❓ **المساعدة**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 **الأوامر المتاحة:**\n/start - القائمة الرئيسية\n/trial - تجربة مجانية\n/subscribe - الاشتراك\n/syncgroup - تفعيل المجموعة\n/security - إعدادات الأمان\n/register_hidden_owner - تسجيل مالك مخفي\n/add_hidden_admin - إضافة مشرف مخفي\n/remove_hidden_admin - إزالة مشرف مخفي\n/list_hidden_admins - عرض المشرفين المخفيين\n/rank - رتبتك\n/top - أفضل 10\n/stats - إحصائيات القناة\n/lock - قفل المجموعة\n/unlock - فتح المجموعة\n/schedule - جدولة منشور\n/panel - لوحة التحكم\n/language - تغيير اللغة\n/support - مركز الدعم\n/help - هذه المساعدة\n/developer - المطور\n/updates - التحديثات\n/contests - المسابقات\n/create_contest - إنشاء مسابقة\n/declare_winner - إعلان فائز\n/set_rules - تعيين قوانين المجموعة\n/rules - عرض قوانين المجموعة",
+            "support_welcome": "📞 **مركز الدعم**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر الخدمة المطلوبة:",
+            "support_help": "❓ **المساعدة**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 للتواصل مع الدعم:\n• استخدم /support\n• اكتب رسالتك\n• ستصلك تذكرة برقم\n• سنرد عليك بأسرع وقت",
+            "trial_used": "❌ لقد استخدمت التجربة المجانية مسبقاً",
+            "already_subscribed": "✅ لديك اشتراك فعال بالفعل",
+            "trial": "🎁 **تم تفعيل التجربة المجانية!**\n━━━━━━━━━━━━━━━━━━━━━━\n✅ لديك 30 يوماً مجاناً\n📌 استمتع بجميع الميزات",
+            "subscribe": "💎 **الاشتراك**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر الباقة المناسبة لك:\n\n⭐ 1 يوم - 5 نجوم\n⭐ 2 يوم - 9 نجوم\n⭐ شهر (30 يوم) - 50 نجمة\n⭐ 3 أشهر (90 يوم) - 120 نجمة",
+            "updates_text": "📢 **آخر التحديثات**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 تابع قناة التحديثات لمعرفة كل جديد:",
+            "referral_title": "🔗 **الإحالات**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 رابط الإحالة الخاص بك:\n`https://t.me/{1}?start=ref_{0}`\n\n👥 عدد المحالين: {3}\n🎁 المكافآت المتاحة: {4} يوم\n⭐ المكافأة لكل إحالة: {5} يوم\n🎁 نقاط الترحيب: {6}",
+            "copy_link": "📋 نسخ الرابط",
+            "claim_reward": "🎁 صرف المكافآت",
+            "referral_list": "📋 قائمة المحالين",
+            "no_referrals": "📭 لا توجد إحالات بعد",
+            "no_reward_available": "❌ لا توجد مكافآت متاحة للصرف",
+            "reward_claimed": "✅ تم صرف {0} يوم اشتراك!",
+            "reminder_title": "⏰ **إعدادات التذكيرات**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 تذكير انتهاء الاشتراك: {0}\n📊 تقرير يومي: {1}\n📈 تقرير أسبوعي: {2}\n⏰ التذكير قبل: {3} أيام",
+            "reminder_sub": "🔔 تذكير الاشتراك",
+            "reminder_daily": "📊 تقرير يومي",
+            "reminder_weekly": "📈 تقرير أسبوعي",
+            "reminder_days_btn": "⏰ عدد الأيام",
+            "reminder_lang_btn": "🌐 لغة الإشعارات",
+            "subscription_warning": "⚠️ **تنبيه!**\nاشتراكك ينتهي خلال {0} أيام\nقم بتجديده الآن لتستمر الميزات 💎",
+            "daily_stats": "📊 **تقريرك اليومي**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 القنوات: {0}\n📝 إجمالي المنشورات: {1}\n⏳ غير المنشورة: {2}\n👥 المجموعات: {3}",
+            "weekly_report": "📈 **تقريرك الأسبوعي**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 القنوات: {0}\n📝 إجمالي المنشورات: {1}\n⏳ غير المنشورة: {2}\n👥 المجموعات: {3}\n🔗 الإحالات: {4}",
+            "translation_status_off": "معطلة ❌",
+            "translation_status_on": "مفعلة ✅ إلى {0}",
+            "translation_settings": "إعدادات الترجمة",
+            "translation_how_it_works": "📌 كيفية العمل:\nسيتم ترجمة المنشورات تلقائياً عند النشر إلى اللغة التي تختارها",
+            "translation_choose": "اختر لغة الترجمة:",
+            "translation_off": "🚫 إيقاف الترجمة",
+            "translation_disabled": "✅ تم إيقاف الترجمة",
+            "translation_enabled": "✅ تم تفعيل الترجمة إلى {0}",
+            "contests_menu": "🏆 المسابقات",
+            "contest_participants_count": "👥 عدد المشاركين: {0}",
+            "contest_time_left": "⏳ متبقي {0} يوم",
+            "contest_expired_label": "🔴 انتهت",
+            "hidden_admin_added": "✅ تم إضافة المشرف المخفي `{0}` بنجاح",
+            "hidden_admin_removed": "✅ تم إزالة المشرف المخفي `{0}` بنجاح",
+            "hidden_admin_list": "🔒 **قائمة المشرفين المخفيين**\n━━━━━━━━━━━━━━━━━━━━━━\n{0}",
+            "no_hidden_admins": "📭 لا يوجد مشرفين مخفيين في هذه المجموعة",
+            "hidden_owner_registered": "✅ تم تسجيل المالك المخفي بنجاح",
+            "hidden_owner_already": "⚠️ أنت مسجل بالفعل كمالك مخفي",
+            "promo_message": "👋 **مرحباً بك في مجموعتنا!**\n\nللاستفادة من جميع خدمات البوت، يرجى التوجه إلى الخاص:\n👉 @{0}\n\nهناك يمكنك إدارة القنوات، ضبط الإعدادات، والمزيد! 🚀",
+            "back": "🔙 رجوع",
+            "group_registered": "✅ **تم تسجيل المجموعة!**\n\n🔹 **لتفعيل الميزات المتقدمة:**\n• تأكد من أن البوت مشرف\n• استخدم `/syncgroup` مرة أخرى\n\n📌 **إذا كنت مشرفاً:**\n• استخدم `/register_hidden_owner` لتسجيل نفسك كمالك مخفي\n• استخدم `/security` لإعدادات الأمان",
+            "activation_requested": "✅ **تم تسجيل المجموعة وإشعار المشرفين!**\n\n📌 سيتم إشعار المشرفين لتفعيل البوت.\n⏳ انتظر حتى يقوم أحد المشرفين بتفعيل البوت.",
+            "activation_notification": "📢 **طلب تفعيل البوت!**\n\n👤 المستخدم: {0}\n📌 المجموعة: {1}\n🆔 المعرف: `{2}`\n\nلتفعيل البوت، استخدم:\n`/syncgroup`\nفي المجموعة.",
+            "no_admins_found": "⚠️ لا يمكن العثور على مشرفين في المجموعة.\nتأكد من أن البوت مشرف."
+        },
+        'en': {
+            "welcome": "🌿 **Welcome to Relax Manager**\nChoose your language",
+            "main_title": "🌿 **{0}**\n━━━━━━━━━━━━━━━━━━━━━━\n👤 ID: `{1}`\n👥 My Groups: {2}\n💎 Subscription: {3}\n📡 Active Channel: {4}\n📝 Unpublished Posts: {5}\n⚙️ Auto Publish: {6}",
+            "no_channels": "No channels",
+            "add_channel": "➕ Add Channel",
+            "my_channels": "📡 My Channels",
+            "add_15_posts": "📥 Add 15 Posts",
+            "publish_one": "📤 Publish One",
+            "my_posts_btn": "📋 My Posts",
+            "recycle": "♻️ Recycle",
+            "stats_btn": "📊 My Stats",
+            "my_stats_btn": "📈 Full Stats",
+            "my_groups_btn": "👥 My Groups",
+            "settings_btn": "⚙️ Settings",
+            "schedule_btn": "⏰ Schedule",
+            "help_btn": "❓ Help",
+            "trial_btn": "🎁 Free Trial",
+            "subscribe_btn": "💎 Subscribe",
+            "developer_btn": "👨‍💻 Developer",
+            "language_btn": "🌐 Language",
+            "support_btn": "📞 Support",
+            "referral": "🔗 Referrals",
+            "reminder_settings": "⏰ Reminders",
+            "translation_settings": "🌐 Translation",
+            "publish_all": "📤 Publish All",
+            "updates_btn": "📢 Updates",
+            "add_to_group": "➕ Add to Group",
+            "admin_panel": "👑 Admin Panel",
+            "my_rank_btn": "📊 My Rank",
+            "top_10_btn": "🏆 Top 10",
+            "schedule_post_btn": "📝 Schedule Post",
+            "channel_stats": "📊 Channel Stats",
+            "my_channels_summary": "📊 My Channels Summary",
+            "auto_on": "Enabled",
+            "auto_off": "Disabled",
+            "subscribed": "✅ Active",
+            "not_subscribed": "❌ Inactive",
+            "send_channel_id": "📡 Send channel ID (e.g., @channel or -100123456)",
+            "channel_added": "✅ Channel {0} added",
+            "channel_exists": "⚠️ Channel already exists",
+            "no_channels_list": "📭 No channels registered",
+            "channels_list": "📡 **My Channels**\nSelect a channel to control:",
+            "delete_channel": "🗑️ Delete",
+            "channel_deleted": "✅ Channel deleted",
+            "delete_failed": "❌ Delete failed",
+            "no_posts": "📭 No posts",
+            "my_posts_title": "📋 **My Unpublished Posts**",
+            "confirm_delete": "⚠️ Are you sure you want to delete all posts?",
+            "deleted_all": "✅ All posts deleted",
+            "recycled": "♻️ All posts recycled",
+            "pending_stats": "📊 **Post Statistics**\n━━━━━━━━━━━━━━━━━━━━━━\n📝 Unpublished: {0}\n📋 Total: {1}",
+            "stats": "📈 **My Full Stats**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 Channels: {0}\n📝 Total Posts: {1}\n⏳ Unpublished: {2}\n👥 Groups: {3}\n⚙️ Auto Publish: {4}",
+            "settings": "⚙️ **Settings**\nSelect the setting:",
+            "disabled": "❌ Disable",
+            "enabled": "✅ Enable",
+            "auto_toggled": "✅ Auto publish status changed to: {0}",
+            "schedule_settings": "⏰ **Schedule Settings**\n━━━━━━━━━━━━━━━━━━━━━━\n{0}\n━━━━━━━━━━━━━━━━━━━━━━\nSelect schedule type:",
+            "interval_minutes": "Minutes: {0}",
+            "interval_hours": "Hours: {0}",
+            "interval_days": "Days: {0}",
+            "days_week": "Days of week: {0}",
+            "specific_dates": "Specific dates: {0}",
+            "nothing": "Nothing",
+            "send_minutes": "⏱️ Send number of minutes (e.g., 30)",
+            "send_hours": "⏱️ Send number of hours (e.g., 2)",
+            "send_days": "⏱️ Send number of days (e.g., 1)",
+            "send_dates": "📅 Send dates separated by commas (e.g., 2024-12-25,2025-01-01)",
+            "send_time": "🕐 Send publish time (e.g., 14:30)",
+            "interval_set": "✅ Settings saved",
+            "invalid_number": "❌ Invalid number",
+            "invalid_date": "❌ Invalid date",
+            "invalid_time": "❌ Invalid time",
+            "days_saved": "✅ Days saved",
+            "monday": "Monday",
+            "tuesday": "Tuesday",
+            "wednesday": "Wednesday",
+            "thursday": "Thursday",
+            "friday": "Friday",
+            "saturday": "Saturday",
+            "sunday": "Sunday",
+            "admin_only": "🔒 This command is for admins only!",
+            "group_only": "🔒 This command works only in groups!",
+            "locked": "🔒 Group locked",
+            "unlocked": "🔓 Group unlocked",
+            "cancelled": "❌ Cancelled",
+            "error": "⚠️ An error occurred, try again",
+            "help": "❓ **Help**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 **Available Commands:**\n/start - Main Menu\n/trial - Free Trial\n/subscribe - Subscribe\n/syncgroup - Activate Group\n/security - Security Settings\n/register_hidden_owner - Register Hidden Owner\n/add_hidden_admin - Add Hidden Admin\n/remove_hidden_admin - Remove Hidden Admin\n/list_hidden_admins - List Hidden Admins\n/rank - Your Rank\n/top - Top 10\n/stats - Channel Stats\n/lock - Lock Group\n/unlock - Unlock Group\n/schedule - Schedule Post\n/panel - Control Panel\n/language - Change Language\n/support - Support Center\n/help - This Help\n/developer - Developer\n/updates - Updates\n/contests - Contests\n/create_contest - Create Contest\n/declare_winner - Declare Winner\n/set_rules - Set Group Rules\n/rules - View Group Rules",
+            "support_welcome": "📞 **Support Center**\n━━━━━━━━━━━━━━━━━━━━━━\nSelect the required service:",
+            "support_help": "❓ **Help**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 To contact support:\n• Use /support\n• Write your message\n• You'll get a ticket number\n• We'll reply ASAP",
+            "trial_used": "❌ You have already used the free trial",
+            "already_subscribed": "✅ You already have an active subscription",
+            "trial": "🎁 **Free Trial Activated!**\n━━━━━━━━━━━━━━━━━━━━━━\n✅ You have 30 days free\n📌 Enjoy all features",
+            "subscribe": "💎 **Subscription**\n━━━━━━━━━━━━━━━━━━━━━━\nChoose your plan:\n\n⭐ 1 Day - 5 Stars\n⭐ 2 Days - 9 Stars\n⭐ 30 Days (Month) - 50 Stars\n⭐ 90 Days (3 Months) - 120 Stars",
+            "updates_text": "📢 **Latest Updates**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 Follow updates channel for news:",
+            "referral_title": "🔗 **Referrals**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 Your referral link:\n`https://t.me/{1}?start=ref_{0}`\n\n👥 Total Referrals: {3}\n🎁 Available Rewards: {4} days\n⭐ Reward per Referral: {5} days\n🎁 Welcome Bonus: {6}",
+            "copy_link": "📋 Copy Link",
+            "claim_reward": "🎁 Claim Rewards",
+            "referral_list": "📋 Referral List",
+            "no_referrals": "📭 No referrals yet",
+            "no_reward_available": "❌ No rewards available to claim",
+            "reward_claimed": "✅ Claimed {0} days subscription!",
+            "reminder_title": "⏰ **Reminder Settings**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 Subscription Reminder: {0}\n📊 Daily Report: {1}\n📈 Weekly Report: {2}\n⏰ Remind Before: {3} days",
+            "reminder_sub": "🔔 Subscription Reminder",
+            "reminder_daily": "📊 Daily Report",
+            "reminder_weekly": "📈 Weekly Report",
+            "reminder_days_btn": "⏰ Days Before",
+            "reminder_lang_btn": "🌐 Notification Language",
+            "subscription_warning": "⚠️ **Warning!**\nYour subscription expires in {0} days\nRenew now to keep features 💎",
+            "daily_stats": "📊 **Your Daily Report**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 Channels: {0}\n📝 Total Posts: {1}\n⏳ Unpublished: {2}\n👥 Groups: {3}",
+            "weekly_report": "📈 **Your Weekly Report**\n━━━━━━━━━━━━━━━━━━━━━━\n📡 Channels: {0}\n📝 Total Posts: {1}\n⏳ Unpublished: {2}\n👥 Groups: {3}\n🔗 Referrals: {4}",
+            "translation_status_off": "Disabled ❌",
+            "translation_status_on": "Enabled ✅ to {0}",
+            "translation_settings": "Translation Settings",
+            "translation_how_it_works": "📌 How it works:\nPosts will be automatically translated to your chosen language when published",
+            "translation_choose": "Choose translation language:",
+            "translation_off": "🚫 Disable Translation",
+            "translation_disabled": "✅ Translation disabled",
+            "translation_enabled": "✅ Translation enabled to {0}",
+            "contests_menu": "🏆 Contests",
+            "contest_participants_count": "👥 Participants: {0}",
+            "contest_time_left": "⏳ {0} days left",
+            "contest_expired_label": "🔴 Expired",
+            "hidden_admin_added": "✅ Hidden admin `{0}` added successfully",
+            "hidden_admin_removed": "✅ Hidden admin `{0}` removed successfully",
+            "hidden_admin_list": "🔒 **Hidden Admins List**\n━━━━━━━━━━━━━━━━━━━━━━\n{0}",
+            "no_hidden_admins": "📭 No hidden admins in this group",
+            "hidden_owner_registered": "✅ Hidden owner registered successfully",
+            "hidden_owner_already": "⚠️ You are already registered as hidden owner",
+            "promo_message": "👋 **Welcome to our group!**\n\nTo use all bot features, please go to private chat:\n👉 @{0}\n\nThere you can manage channels, adjust settings, and more! 🚀",
+            "back": "🔙 Back",
+            "group_registered": "✅ **Group registered!**\n\n🔹 **To activate advanced features:**\n• Make sure the bot is admin\n• Use `/syncgroup` again\n\n📌 **If you are an admin:**\n• Use `/register_hidden_owner` to register as hidden owner\n• Use `/security` for security settings",
+            "activation_requested": "✅ **Group registered and admins notified!**\n\n📌 Admins will be notified to activate the bot.\n⏳ Wait for an admin to activate the bot.",
+            "activation_notification": "📢 **Bot activation request!**\n\n👤 User: {0}\n📌 Group: {1}\n🆔 ID: `{2}`\n\nTo activate the bot, use:\n`/syncgroup`\nin the group.",
+            "no_admins_found": "⚠️ No admins found in the group.\nMake sure the bot is admin."
+        }
+    }
+
+    for lang, texts in default_langs.items():
+        lang_file = LANG_PATH / f"{lang}.json"
+        if not lang_file.exists():
+            try:
+                with open(lang_file, 'w', encoding='utf-8') as f:
+                    json.dump(texts, f, ensure_ascii=False, indent=2)
+                print(f"✅ تم إنشاء ملف اللغة: {lang}.json")
+            except Exception as e:
+                print(f"⚠️ فشل إنشاء {lang_file}: {e}")
 
 # ===================================================================
 # 34. دالة main() النهائية
