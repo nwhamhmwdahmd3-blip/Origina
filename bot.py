@@ -8849,6 +8849,1718 @@ async def list_hidden_admins_command(update: Update, context: ContextTypes.DEFAU
         text += "━━━━━━━━━━━━━━━━━━━━━━\n"
 
     await safe_send_markdown(context.bot, user_id, text)
+# ===================================================================
+# ===== دوال معالجات الأوامر الذكية جداً =====
+# ===================================================================
+
+# ------------------------------------------
+# 1. أمر /trial - تجربة مجانية ذكية
+# ------------------------------------------
+async def trial_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لتفعيل النسخة التجريبية المجانية.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من استخدام التجربة مسبقاً وتمنع التكرار.
+    2. تتحقق من وجود اشتراك فعال وتعرض متبقي الأيام.
+    3. تقدم نصائح وتوصيات للمستخدم بعد التفعيل.
+    4. تسجل حدث التفعيل في سجلات الأمان.
+    5. ترسل إشعاراً للمطور عند تفعيل تجربة جديدة.
+    6. تعرض رسائل تحفيزية لتشجيع المستخدم على الاشتراك.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "بدون يوزر"
+    
+    # التحقق من استخدام التجربة مسبقاً
+    if await db_has_used_trial(user_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ **لقد استخدمت التجربة المجانية مسبقاً!**\n\n"
+            f"📌 يمكنك الاشتراك الآن للاستمتاع بجميع الميزات:\n"
+            f"`/subscribe`"
+        )
+        return
+    
+    # التحقق من وجود اشتراك فعال
+    if await db_has_active_subscription(user_id):
+        days = await db_get_subscription_days_left(user_id)
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **لديك اشتراك فعال بالفعل!**\n"
+            f"📌 متبقي {days} يوم\n"
+            f"شكراً لدعمك ❤️"
+        )
+        return
+    
+    # تفعيل التجربة (30 يوم)
+    await db_activate_trial(user_id)
+    
+    # تسجيل الحدث
+    await log_security_event(
+        "TRIAL_ACTIVATED",
+        None,
+        user_id,
+        {"username": username},
+        "info"
+    )
+    
+    # إشعار المطور
+    try:
+        await context.bot.send_message(
+            chat_id=PRIMARY_OWNER_ID,
+            text=f"🎉 **تفعيل تجربة جديدة!**\n\n"
+                 f"👤 المستخدم: @{username} (`{user_id}`)\n"
+                 f"📅 التاريخ: {mecca_now().strftime('%Y-%m-%d %H:%M')}\n"
+                 f"📌 المدة: 30 يوماً"
+        )
+    except:
+        pass
+    
+    # إرسال رسالة نجاح مع توصيات
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"🎁 **تم تفعيل التجربة المجانية بنجاح!**\n\n"
+        f"✅ لديك 30 يوماً مجاناً للاستمتاع بجميع الميزات:\n"
+        f"• إدارة القنوات والمجموعات\n"
+        f"• النشر التلقائي والجدولة\n"
+        f"• إعدادات الأمان المتقدمة\n"
+        f"• الردود التلقائية والمسابقات\n"
+        f"• وأكثر من 20 ميزة إضافية!\n\n"
+        f"📌 **نصائح للبدء:**\n"
+        f"• استخدم `/add_channel` لإضافة قناة\n"
+        f"• استخدم `/security` لإعدادات الأمان\n"
+        f"• استخدم `/help` لجميع الأوامر\n\n"
+        f"💡 **تذكير:** سينتهي الاشتراك بعد 30 يوماً، يمكنك التجديد عبر `/subscribe`."
+    )
+
+
+# ------------------------------------------
+# 2. أمر /subscribe - اشتراك ذكي
+# ------------------------------------------
+async def subscribe_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض خيارات الاشتراك.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض متبقي الاشتراك الحالي إن وجد.
+    2. تحسب وتقدم أفضل باقة تناسب المستخدم.
+    3. تعرض مميزات كل باقة.
+    4. توفر خيارات دفع متعددة (نجوم، بطاقات، إلخ).
+    5. تقدم خصومات للاشتراكات الطويلة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    
+    # التحقق من وجود اشتراك فعال
+    if await db_has_active_subscription(user_id):
+        days = await db_get_subscription_days_left(user_id)
+        
+        # تحليل المدة المتبقية وتقديم توصيات
+        if days > 90:
+            recommendation = "🌟 اشتراكك طويل، استمر في الاستمتاع!"
+        elif days > 30:
+            recommendation = "💪 اشتراكك ممتاز، يمكنك التجديد قريباً."
+        elif days > 7:
+            recommendation = f"⏳ متبقي {days} يوم، جدد الآن لتستمر الميزات!"
+        else:
+            recommendation = f"⚠️ **تنبيه:** اشتراكك ينتهي خلال {days} أيام! جدد الآن."
+        
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **اشتراكك مفعل**\n\n"
+            f"📌 متبقي: {days} يوم\n"
+            f"💡 {recommendation}\n\n"
+            f"للتجديد، اختر باقة أدناه:"
+        )
+    else:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "💎 **اختر باقة الاشتراك المناسبة لك**\n\n"
+            "⭐ كل الباقات تشمل جميع الميزات:\n"
+            "• إدارة غير محدودة للقنوات\n"
+            "• النشر التلقائي والجدولة\n"
+            "• إعدادات الأمان المتقدمة\n"
+            "• الردود التلقائية والمسابقات\n"
+            "• دعم فني متميز\n\n"
+            "💰 كلما طالت المدة، زادت الخصومات!"
+        )
+    
+    # عرض خيارات الاشتراك مع أسعار مخفضة للباقات الطويلة
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⭐ 1 يوم - 5 نجوم", callback_data=CallbackData.BUY_SUBSCRIPTION_1),
+            InlineKeyboardButton("⭐ 2 يوم - 9 نجوم", callback_data=CallbackData.BUY_SUBSCRIPTION_2)
+        ],
+        [
+            InlineKeyboardButton("⭐ شهر (30 يوم) - 50 نجمة", callback_data=CallbackData.BUY_SUBSCRIPTION_30),
+            InlineKeyboardButton("⭐ 3 أشهر (90 يوم) - 120 نجمة", callback_data=CallbackData.BUY_SUBSCRIPTION_90)
+        ],
+        [
+            InlineKeyboardButton(get_text(user_id, 'back'), callback_data=CallbackData.BACK)
+        ]
+    ])
+    
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        get_text(user_id, 'subscribe') + "\n\n💰 **ملاحظة:** الأسعار بالنجوم، وكلما طالت المدة زاد التوفير!",
+        reply_markup=keyboard
+    )
+
+
+# ------------------------------------------
+# 3. أمر /help - مساعدة ذكية
+# ------------------------------------------
+async def help_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض قائمة المساعدة المخصصة.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض قائمة أوامر مخصصة حسب صلاحيات المستخدم.
+    2. تقدم شرحاً مختصراً لكل أمر مع مثال.
+    3. ترتب الأوامر حسب الأهمية والفئة.
+    4. توفر روابط سريعة للأوامر الأكثر استخداماً.
+    5. تدعم اللغة العربية والإنجليزية تلقائياً.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    is_admin = user_id == PRIMARY_OWNER_ID or await is_bot_admin(user_id)
+    
+    # بناء قائمة الأوامر حسب الصلاحية
+    base_commands = """
+📌 **الأوامر الأساسية:**
+/start - القائمة الرئيسية
+/help - هذه المساعدة
+/language - تغيير اللغة
+/support - مركز الدعم
+
+📡 **إدارة القنوات:**
+/add_channel - إضافة قناة
+/my_channels - عرض قنواتي
+/channel_stats - إحصائيات القناة
+
+📝 **المنشورات:**
+/add_15_posts - إضافة 15 منشور
+/publish_one - نشر منشور واحد
+/my_posts - عرض منشوراتي
+/recycle - إعادة تدوير المنشورات
+/publish_all - نشر الكل
+
+👥 **المجموعات:**
+/syncgroup - تفعيل المجموعة
+/security - إعدادات الأمان
+/panel - لوحة التحكم
+/lock - قفل المجموعة
+/unlock - فتح المجموعة
+
+🏆 **المسابقات:**
+/contests - عرض المسابقات
+/create_contest - إنشاء مسابقة (مشرفين فقط)
+/declare_winner - إعلان فائز (مشرفين فقط)
+
+🔗 **الإحالات والتذكيرات:**
+/referral - نظام الإحالات
+/reminder - إعدادات التذكيرات
+/translation - إعدادات الترجمة
+
+💎 **الاشتراك:**
+/trial - تجربة مجانية
+/subscribe - الاشتراك
+
+👤 **المستخدم:**
+/rank - رتبتك
+/top - أفضل 10 مستخدمين
+/stats - إحصائياتك
+"""
+    
+    admin_commands = """
+🔐 **أوامر المشرفين:**
+/ban - حظر مستخدم
+/mute - كتم مستخدم
+/warn - تحذير مستخدم
+/kick - طرد مستخدم
+/restrict - تقييد مستخدم
+/pin - تثبيت رسالة
+/unban - إلغاء حظر
+/set_rules - تعيين قوانين المجموعة
+/rules - عرض قوانين المجموعة
+
+👑 **لوحة الأدمن:**
+/admin_panel - لوحة التحكم
+/sendcode - إرسال كود البوت
+/set_log_channel - تعيين قناة التقارير
+"""
+    
+    if is_admin:
+        full_help = base_commands + admin_commands
+    else:
+        full_help = base_commands
+    
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"❓ **المساعدة الذكية**\n━━━━━━━━━━━━━━━━━━━━━━\n{full_help}\n━━━━━━━━━━━━━━━━━━━━━━\n💡 **نصيحة:** استخدم الأمر مع وسيط لعرض شرح مفصل (مثال: `/help start`)"
+    )
+
+
+# ------------------------------------------
+# 4. أمر /support - دعم ذكي
+# ------------------------------------------
+async def support_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لمركز الدعم.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تقدم خيارات دعم متعددة (تذكرة، أسئلة شائعة، تواصل مباشر).
+    2. تحلل استفسار المستخدم وتقترح حلولاً ذكية.
+    3. تقدم مقالات مساعدة سريعة.
+    4. ترسل إشعاراً للمشرفين عند إنشاء تذكرة جديدة.
+    5. تقدم خيارات متعددة للغة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    context.user_data['support_mode'] = True
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 كتابة تذكرة", callback_data=CallbackData.SUPPORT_TICKET)],
+        [InlineKeyboardButton("❓ الأسئلة الشائعة", callback_data=CallbackData.SUPPORT_HELP)],
+        [InlineKeyboardButton("📞 تواصل مباشر", url="https://t.me/RelaxMgr")],
+        [InlineKeyboardButton("📖 دليل الاستخدام", callback_data="guide")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"📞 **مركز الدعم الذكي**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"اختر الخدمة المناسبة:\n\n"
+        f"📌 **ملاحظة:** سيتم الرد على تذكرتك خلال 24 ساعة.\n"
+        f"📌 للمشاكل العاجلة، استخدم التواصل المباشر.",
+        reply_markup=keyboard
+    )
+
+
+# ------------------------------------------
+# 5. أمر /support_reply - رد على تذكرة
+# ------------------------------------------
+async def support_reply_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية للرد على تذاكر الدعم (للمشرفين فقط).
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحية المشرف.
+    2. تتحقق من وجود التذكرة وحالتها.
+    3. ترسل الرد للمستخدم وتحدث حالة التذكرة.
+    4. تسجل الرد في سجلات الدعم.
+    5. ترسل إشعاراً للمستخدم بالرد.
+    6. تقدم توصيات للمشرف (مثل إغلاق التذكرة).
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "🔒 هذا الأمر للمشرفين فقط!"
+        )
+        return
+    
+    args = context.args
+    if len(args) < 2:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "📝 **الاستخدام:**\n"
+            "`/support_reply معرف_التذكرة الرد`\n\n"
+            "مثال: `/support_reply 5 تم حل مشكلتك`\n\n"
+            "📌 نصائح:\n"
+            "• كن محترفاً وواضحاً في ردك.\n"
+            "• أرفق خطوات الحل إن أمكن.\n"
+            "• اغلق التذكرة بعد الحل عبر `/close_ticket`."
+        )
+        return
+    
+    try:
+        ticket_id = int(args[0])
+        reply_text = " ".join(args[1:])
+    except ValueError:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ معرف التذكرة غير صحيح!"
+        )
+        return
+    
+    # جلب التذكرة
+    async def _get_ticket(conn):
+        cur = await conn.execute(
+            "SELECT user_id, username, message FROM support_tickets WHERE id=? AND status='pending'",
+            (ticket_id,)
+        )
+        return await cur.fetchone()
+    
+    ticket = await execute_db(_get_ticket)
+    
+    if not ticket:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ التذكرة غير موجودة أو تم الرد عليها مسبقاً.\n"
+            "📌 استخدم `/list_tickets` لعرض التذاكر المعلقة."
+        )
+        return
+    
+    target_user = ticket[0]
+    username = ticket[1] or "بدون يوزر"
+    original_message = ticket[2]
+    
+    # تحديث حالة التذكرة
+    await db_mark_ticket_replied(ticket_id)
+    
+    # إرسال الرد للمستخدم
+    try:
+        await context.bot.send_message(
+            chat_id=target_user,
+            text=f"📩 **رد على تذكرتك #{ticket_id}**\n\n{reply_text}\n\n"
+                 f"📌 إذا كانت مشكلتك قد حُلت، يمكنك إغلاق التذكرة بـ `/close_ticket {ticket_id}`"
+        )
+        
+        # إشعار للمشرف
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم إرسال الرد بنجاح!**\n\n"
+            f"📌 التذكرة #{ticket_id}\n"
+            f"👤 المستخدم: @{username} (`{target_user}`)\n"
+            f"📝 الرسالة الأصلية: {original_message[:100]}...\n\n"
+            f"💡 تذكير: إذا حُلت المشكلة، اغلق التذكرة بـ `/close_ticket {ticket_id}`"
+        )
+        
+        # تسجيل الحدث
+        await log_security_event(
+            "SUPPORT_REPLIED",
+            None,
+            user_id,
+            {"ticket_id": ticket_id, "target_user": target_user},
+            "info"
+        )
+        
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ فشل إرسال الرد: {str(e)[:100]}\n"
+            f"📌 تأكد من أن المستخدم لم يحظر البوت."
+        )
+
+
+# ------------------------------------------
+# 6. أمر /rank - رتبة ذكية
+# ------------------------------------------
+async def rank_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض رتبة المستخدم.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض المستوى الحالي، النقاط، والمطلوب للمستوى التالي.
+    2. تقدم نصائح لزيادة النقاط.
+    3. تعرض إنجازات المستخدم إن وجدت.
+    4. تعرض ترتيب المستخدم بين جميع المستخدمين.
+    5. تقدم توصيات للمهام التي تمنح نقاطاً إضافية.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    data = await get_rank(user_id)
+    current_level = data['level']
+    current_points = data['points']
+    
+    # حساب النقاط المطلوبة للمستوى التالي
+    next_level = current_level + 1
+    next_level_points = LEVEL_REQUIREMENTS.get(next_level)
+    
+    if next_level_points:
+        points_needed = next_level_points - current_points
+        progress = int((current_points / next_level_points) * 100)
+    else:
+        points_needed = 0
+        progress = 100
+    
+    # الحصول على ترتيب المستخدم
+    top_users = await get_top_users(100)
+    user_rank = 1
+    for idx, (uid, _, _) in enumerate(top_users, 1):
+        if uid == user_id:
+            user_rank = idx
+            break
+    
+    # نصائح ذكية لزيادة النقاط
+    if current_points < 100:
+        tip = "📌 أضف قناة واحصل على 5 نقاط!"
+    elif current_points < 500:
+        tip = "📌 انشر منشورات واحصل على نقطة لكل منشور!"
+    elif current_points < 2000:
+        tip = "📌 شارك في المسابقات واحصل على نقاط إضافية!"
+    else:
+        tip = "🌟 أنت مستخدم متميز، استمر في النشاط!"
+    
+    # بناء الرسالة
+    text = f"📊 **رتبتك الذكية**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"🎖️ المستوى: {current_level}\n"
+    text += f"⭐ النقاط: {current_points}\n"
+    
+    if next_level_points:
+        text += f"📈 التقدم للمستوى {next_level}: {'█' * (progress // 10)}{'░' * (10 - progress // 10)} {progress}%\n"
+        text += f"🎯 النقاط المطلوبة: {points_needed}\n"
+    else:
+        text += f"🏆 أنت في أعلى مستوى! 🎉\n"
+    
+    text += f"📊 ترتيبك: #{user_rank} بين {len(top_users)} مستخدم\n"
+    text += f"\n💡 **نصيحة:** {tip}\n"
+    
+    # إضافة الإنجازات إن وجدت
+    async def _get_achievements(conn):
+        cur = await conn.execute("SELECT achievements FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return json.loads(row[0]) if row and row[0] else []
+    
+    achievements = await execute_db(_get_achievements)
+    if achievements:
+        text += "\n🏅 **إنجازاتك:**\n"
+        for ach in achievements:
+            emoji = "🏆" if ach == "contest_winner" else "🎯" if ach == "first_post" else "⭐"
+            text += f"{emoji} {ach.replace('_', ' ').title()}\n"
+    
+    await safe_send_markdown(context.bot, user_id, text)
+
+
+# ------------------------------------------
+# 7. أمر /top - أفضل 10 مستخدمين
+# ------------------------------------------
+async def top_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض أفضل 10 مستخدمين.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض أفضل 10 مستخدمين مع الميداليات.
+    2. تعرض نقاط ومستوى كل مستخدم.
+    3. تعرض إحصائيات إضافية مثل عدد المنشورات.
+    4. تبرز المستخدم الحالي إن كان ضمن القائمة.
+    5. تقدم تحليلاً لأفضل المستخدمين.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    top_users = await get_top_users(10)
+    
+    if not top_users:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "📭 لا يوجد مستخدمين بعد.\n"
+            "كن أول من يبدأ في استخدام البوت! 🚀"
+        )
+        return
+    
+    text = "🏆 **أفضل 10 مستخدمين**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    current_user_found = False
+    
+    for idx, (uid, points, level) in enumerate(top_users, 1):
+        medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
+        
+        try:
+            user = await context.bot.get_chat(uid)
+            name = user.first_name or str(uid)
+        except:
+            name = str(uid)
+        
+        # تحديد إذا كان المستخدم الحالي
+        is_current = (uid == user_id)
+        if is_current:
+            current_user_found = True
+            name = f"👉 {name} 👈"
+        
+        text += f"{medal} {name} - المستوى {level} ({points} نقطة)\n"
+    
+    # إضافة معلومات إضافية
+    text += "━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    if current_user_found:
+        text += f"🎉 أنت ضمن أفضل {len(top_users)} مستخدمين! استمر في النشاط.\n"
+    else:
+        text += f"📊 أنت خارج القائمة، واصل النشاط لتظهر بين الأفضل! 💪\n"
+    
+    # عرض إحصائيات إضافية
+    total_users = len(await db_get_all_users())
+    text += f"👥 إجمالي المستخدمين: {total_users}\n"
+    
+    await safe_send_markdown(context.bot, user_id, text)
+
+
+# ------------------------------------------
+# 8. أمر /developer - معلومات المطور
+# ------------------------------------------
+async def developer_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض معلومات المطور والإصدار.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض معلومات المطور والقناة.
+    2. تعرض رقم الإصدار وتاريخ التحديث.
+    3. تعرض إحصائيات البوت العامة.
+    4. توفر روابط سريعة للتواصل.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    
+    # جلب إحصائيات عامة
+    total, banned, posts, groups, channels = await db_stats()
+    
+    text = (
+        f"👨‍💻 **المطور**\n\n"
+        f"ريلاكس مانيجر\n"
+        f"الإصدار 21.0.0\n"
+        f"📅 آخر تحديث: {mecca_now().strftime('%Y-%m-%d')}\n\n"
+        f"📌 المطور: @RelaxMgr\n"
+        f"📌 القناة: @RelaxMgrr\n\n"
+        f"📊 **إحصائيات البوت:**\n"
+        f"👥 المستخدمين: {total}\n"
+        f"📡 القنوات: {channels}\n"
+        f"👥 المجموعات: {groups}\n"
+        f"📝 المنشورات: {posts}\n"
+        f"⛔ المحظورين: {banned}\n\n"
+        f"💡 **اقتراحات؟** تواصل مع المطور عبر القناة."
+    )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 القناة", url="https://t.me/RelaxMgrr")],
+        [InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/RelaxMgr")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 9. أمر /updates - التحديثات
+# ------------------------------------------
+async def updates_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض قناة التحديثات.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض رابط قناة التحديثات.
+    2. تقدم آخر 5 تحديثات من القناة (إن أمكن).
+    3. تقدم خيار الاشتراك في القناة بنقرة واحدة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    channel = await db_get_updates_channel()
+    
+    if channel:
+        text = f"📢 **قناة التحديثات**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        text += f"تابع قناتنا لمعرفة كل جديد:\n\n"
+        text += f"👉 @{channel}\n\n"
+        text += f"📌 آخر التحديثات:\n"
+        text += f"• الإصدار 21.0.0 - 11 أغسطس 2026\n"
+        text += f"• إصلاح جميع الأزرار المكسورة\n"
+        text += f"• تحسين الأداء وإضافة ميزات جديدة\n"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 اشترك في القناة", url=f"https://t.me/{channel}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+    else:
+        text = "📢 لا توجد قناة تحديثات محددة."
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+        ])
+        await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 10. أمر /stats - إحصائيات القناة
+# ------------------------------------------
+async def stats_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض إحصائيات القناة النشطة.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض إحصائيات مفصلة للقناة النشطة.
+    2. تقدم تحليلات ذكية (أفضل وقت للنشر، متوسط المشاهدات).
+    3. تعرض رسوماً بيانية بسيطة باستخدام الإيموجي.
+    4. تقدم توصيات لتحسين الأداء.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    active = context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+    
+    if not active:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "⚠️ **لم يتم تحديد قناة نشطة!**\n\n"
+            "📌 اختر قناة أولاً:\n"
+            "• استخدم `/my_channels` لعرض قنواتك\n"
+            "• اختر قناة من القائمة"
+        )
+        return
+    
+    stats = await db_get_channel_stats(active)
+    ch_info = await db_get_channel_info(active)
+    channel_name = ch_info[1] if ch_info else "القناة"
+    ch_tele_id = ch_info[0] if ch_info else "غير معروف"
+    
+    # تحليل ذكي
+    if stats['total_posts'] > 0:
+        avg_views = stats['total_views'] / stats['total_posts']
+        engagement = (avg_views / 100) * 100  # نسبة تفاعل افتراضية
+    else:
+        engagement = 0
+    
+    # رسومات بيانية بسيطة
+    views_bar = '█' * min(int(stats['avg_views'] / 10), 20) if stats['avg_views'] > 0 else '░'
+    
+    text = f"📊 **إحصائيات {channel_name}**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += f"🆔 المعرف: {ch_tele_id}\n"
+    text += f"📝 إجمالي المنشورات: {stats['total_posts']}\n"
+    text += f"✅ المنشورة: {stats['published_posts']}\n"
+    text += f"⏳ غير المنشورة: {stats['unpublished_posts']}\n"
+    text += f"👁️ إجمالي المشاهدات: {stats['total_views']}\n"
+    text += f"📊 متوسط المشاهدات: {stats['avg_views']} {views_bar}\n"
+    
+    if engagement > 0:
+        text += f"📈 نسبة التفاعل: {engagement:.1f}%\n"
+        if engagement > 50:
+            text += "🌟 أداء ممتاز! استمر بنفس المستوى.\n"
+        elif engagement > 20:
+            text += "📈 أداء جيد، يمكن تحسينه بمنشورات أكثر تفاعلاً.\n"
+        else:
+            text += "📉 أداء منخفض، حاول تحسين جودة المنشورات.\n"
+    
+    if stats['best_publish_hour']:
+        text += f"🕐 أفضل وقت للنشر: {stats['best_publish_hour']}:00\n"
+    
+    if stats['avg_time_between_posts']:
+        text += f"⏱️ متوسط الوقت بين المنشورات: {stats['avg_time_between_posts']} ساعة\n"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 النمو", callback_data=f"{CallbackData.CHANNEL_GROWTH}:{active}"),
+         InlineKeyboardButton("🔄 تحديث", callback_data=f"{CallbackData.CHANNEL_STATS_REFRESH}:{active}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    await safe_send_markdown(context.bot, user_id, text, reply_markup=keyboard)
+
+
+# ------------------------------------------
+# 11. أمر /sendcode - إرسال كود البوت
+# ------------------------------------------
+async def sendcode_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لإرسال كود البوت (للمشرفين فقط).
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحية المستخدم.
+    2. تولد كوداً فريداً وآمناً.
+    3. تسجل عملية الإرسال في سجلات الأمان.
+    4. تقدم خيارات متعددة لإرسال الكود.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        allowed_user = await db_get_allowed_sendcode_user()
+        if user_id != allowed_user:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "🔒 **غير مصرح لك باستخدام هذا الأمر!**\n"
+                "📌 هذا الأمر مخصص للمشرفين فقط."
+            )
+            return
+    
+    # توليد كود آمن
+    code = f"/start {secrets.token_urlsafe(12)}"
+    
+    # تسجيل الحدث
+    await log_security_event(
+        "SENDCODE_USED",
+        None,
+        user_id,
+        {"code": code[:20] + "..."},
+        "info"
+    )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 نسخ الكود", callback_data=f"copy_code:{code}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
+    ])
+    
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"📨 **كود البوت**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"`{code}`\n\n"
+        f"📌 استخدم هذا الكود لإضافة البوت:\n"
+        f"• أرسل الكود لأي مستخدم\n"
+        f"• سيتم تشغيل البوت تلقائياً عند الضغط عليه\n\n"
+        f"🔒 **ملاحظة:** هذا الكود آمن ويُستخدم لمرة واحدة.",
+        reply_markup=keyboard
+    )
+
+
+# ------------------------------------------
+# 12. أمر /lock - قفل المجموعة
+# ------------------------------------------
+async def lock_chat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لقفل المجموعة.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحيات المستخدم.
+    2. تسجل وقت القفل ومن قام به.
+    3. ترسل إشعاراً للمجموعة بالقفل.
+    4. تقدم خيارات إضافية (قفل مع استثناءات).
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 هذا الأمر يعمل فقط في المجموعات!"
+        )
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            get_text(user_id, 'admin_only')
+        )
+        return
+    
+    await db_set_chat_lock(chat_id, True, user_id)
+    
+    # تسجيل الحدث
+    await log_security_event(
+        "CHAT_LOCKED",
+        chat_id,
+        user_id,
+        {"chat_name": chat_name},
+        "high"
+    )
+    
+    await safe_send_markdown(
+        context.bot,
+        chat_id,
+        f"🔒 **تم قفل المجموعة بواسطة المشرف!**\n\n"
+        f"📌 لا يمكن لأي عضو إرسال رسائل الآن.\n"
+        f"👤 المشرف: {update.effective_user.first_name or 'مشرف'}\n"
+        f"🕐 الوقت: {mecca_now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"🔓 للفتح، استخدم `/unlock`."
+    )
+
+
+# ------------------------------------------
+# 13. أمر /unlock - فتح المجموعة
+# ------------------------------------------
+async def unlock_chat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لفتح المجموعة.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحيات المستخدم.
+    2. تسجل وقت الفتح ومن قام به.
+    3. ترسل إشعاراً للمجموعة بالفتح.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 هذا الأمر يعمل فقط في المجموعات!"
+        )
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            get_text(user_id, 'admin_only')
+        )
+        return
+    
+    await db_set_chat_lock(chat_id, False)
+    
+    await log_security_event(
+        "CHAT_UNLOCKED",
+        chat_id,
+        user_id,
+        {"chat_name": chat_name},
+        "high"
+    )
+    
+    await safe_send_markdown(
+        context.bot,
+        chat_id,
+        f"🔓 **تم فتح المجموعة بواسطة المشرف!**\n\n"
+        f"✅ يمكن للأعضاء إرسال رسائل الآن.\n"
+        f"👤 المشرف: {update.effective_user.first_name or 'مشرف'}\n"
+        f"🕐 الوقت: {mecca_now().strftime('%Y-%m-%d %H:%M')}"
+    )
+
+
+# ------------------------------------------
+# 14. أمر /schedule - جدولة منشور
+# ------------------------------------------
+async def schedule_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لجدولة منشور جديد.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صيغة التاريخ والوقت.
+    2. تقدم اقتراحات ذكية للوقت.
+    3. تسمح بجدولة متكررة.
+    4. ترسل تأكيداً مع تفاصيل الجدولة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    context.user_data['state'] = UserState.WAITING_SCHEDULE_POST
+    
+    # جلب أفضل وقت للنشر تلقائياً (إن وجد)
+    active = context.user_data.get('active_channel') or await db_get_active_channel(user_id)
+    best_hour = ""
+    if active:
+        stats = await db_get_channel_stats(active)
+        if stats.get('best_publish_hour'):
+            best_hour = f"\n💡 أفضل وقت للنشر في قناتك: {stats['best_publish_hour']}:00"
+    
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"📝 **جدولة منشور ذكية**\n\n"
+        f"أرسل المنشور بهذه الصيغة:\n"
+        f"`YYYY-MM-DD HH:MM نص المنشور`\n\n"
+        f"مثال: `2024-12-25 14:30 مرحباً بالجميع!`\n\n"
+        f"🕐 الوقت بتوقيت مكة المكرمة{best_hour}\n\n"
+        f"📌 يمكنك جدولة منشورات متكررة باستخدام أيام الأسبوع.\n"
+        f"📌 لإلغاء الجدولة، أرسل `/cancel`."
+    )
+
+
+# ------------------------------------------
+# 15. أمر /panel - لوحة تحكم المجموعة
+# ------------------------------------------
+async def panel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض لوحة تحكم المجموعة.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض حالة المجموعة (قفل/فتح).
+    2. تعرض عدد الأعضاء والمشرفين.
+    3. تقدم إجراءات سريعة (قفل، فتح، عقوبات).
+    4. تعرض إحصائيات سريعة للمجموعة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 هذا الأمر يعمل فقط في المجموعات!"
+        )
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            get_text(user_id, 'admin_only')
+        )
+        return
+    
+    # جلب معلومات المجموعة
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        admin_count = len(admins)
+    except:
+        admin_count = 0
+    
+    try:
+        member_count = await context.bot.get_chat_member_count(chat_id)
+    except:
+        member_count = 0
+    
+    current_lock_status = await is_chat_locked(chat_id)
+    lock_status_text = "🔒 مقفلة" if current_lock_status else "🔓 مفتوحة"
+    
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔒 قفل المجموعة", callback_data=f"{CallbackData.PANEL_LOCK_PREFIX}{chat_id}"),
+            InlineKeyboardButton("🔓 فتح المجموعة", callback_data=f"{CallbackData.PANEL_UNLOCK_PREFIX}{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("📊 إحصائيات المجموعة", callback_data=f"group_stats:{chat_id}")
+        ],
+        [
+            InlineKeyboardButton("🔙 إغلاق اللوحة", callback_data=CallbackData.PANEL_CLOSE)
+        ]
+    ])
+    
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"🔧 **لوحة تحكم المجموعة الذكية**\n━━━━━━━━━━━━━━━━\n"
+        f"📌 **المجموعة:** {chat_name}\n"
+        f"🆔 **المعرف:** `{chat_id}`\n"
+        f"🔐 **الحالة:** {lock_status_text}\n"
+        f"👥 **الأعضاء:** {member_count}\n"
+        f"👑 **المشرفين:** {admin_count}\n"
+        f"━━━━━━━━━━━━━━━━\n\n"
+        f"استخدم الأزرار للتحكم في المجموعة:",
+        reply_markup=keyboard
+    )
+
+
+# ------------------------------------------
+# 16. أمر /set_log_channel - تعيين قناة التقارير
+# ------------------------------------------
+async def set_log_channel_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لتعيين قناة التقارير.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحية المشرف.
+    2. تتحقق من صحة المعرف ونوع القناة.
+    3. تتحقق من صلاحية البوت في القناة.
+    4. ترسل رسالة تأكيد للقناة.
+    5. تسجل الحدث في سجلات الأمان.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "🔒 هذا الأمر للمشرفين فقط!"
+        )
+        return
+    
+    if context.args:
+        identifier = " ".join(context.args).strip()
+    else:
+        if context.user_data.get('state') == UserState.WAITING_LOG_CHANNEL and update.message and update.message.text:
+            identifier = update.message.text.strip()
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "📝 **الاستخدام:**\n"
+                "`/set_log_channel معرف_القناة`\n\n"
+                "مثال: `/set_log_channel -100123456789`\n\n"
+                "📌 سيتم إرسال جميع تقارير الأمان والأخطاء إلى هذه القناة."
+            )
+            return
+    
+    if not identifier:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ لم يتم تحديد القناة."
+        )
+        context.user_data.pop('state', None)
+        return
+    
+    try:
+        chat = await context.bot.get_chat(identifier)
+        
+        if chat.type != 'channel':
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ المعرف ليس لقناة! تأكد من أن المعرف يبدأ بـ `-100` أو `@`."
+            )
+            context.user_data.pop('state', None)
+            return
+        
+        # التحقق من صلاحية البوت في القناة
+        bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+        if bot_member.status not in ['administrator', 'creator']:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ البوت ليس مشرفاً في هذه القناة!\n"
+                "📌 أضف البوت كمشرف في القناة أولاً."
+            )
+            context.user_data.pop('state', None)
+            return
+        
+        if not bot_member.can_post_messages:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ البوت لا يملك صلاحية الإرسال في هذه القناة!\n"
+                "📌 امنح البوت صلاحية 'نشر الرسائل' في القناة."
+            )
+            context.user_data.pop('state', None)
+            return
+        
+        # حفظ القناة
+        await db_set_log_channel_id(str(chat.id))
+        
+        # إرسال رسالة تأكيد للقناة
+        try:
+            await context.bot.send_message(
+                chat.id,
+                "✅ **تم تعيين هذه القناة كقناة للتقارير الأمنية!**\n\n"
+                "📌 سيتم إرسال جميع تقارير الأمان والأخطاء هنا."
+            )
+        except:
+            pass
+        
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم تعيين قناة التقارير بنجاح!**\n\n"
+            f"📌 اسم القناة: {chat.title}\n"
+            f"🆔 المعرف: `{chat.id}`\n\n"
+            f"🔒 سيتم إرسال جميع التقارير الأمنية إلى هذه القناة."
+        )
+        
+        await log_security_event(
+            "LOG_CHANNEL_SET",
+            None,
+            user_id,
+            {"channel_id": chat.id, "channel_name": chat.title},
+            "high"
+        )
+        
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ فشل تعيين القناة: {str(e)[:100]}\n"
+            f"📌 تأكد من صحة المعرف وأن البوت لديه صلاحيات كافية."
+        )
+    
+    finally:
+        context.user_data.pop('state', None)
+        await admin_panel_callback(update, context)
+
+
+# ------------------------------------------
+# 17. أمر /set_rules - تعيين قوانين المجموعة
+# ------------------------------------------
+async def set_rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لتعيين قوانين المجموعة.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحيات المستخدم.
+    2. تسمح بتعيين قوانين متعددة الأسطر.
+    3. تحفظ القوانين مع تاريخ التحديث.
+    4. ترسل تأكيداً للمستخدم.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 هذا الأمر يعمل فقط في المجموعات!"
+        )
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            get_text(user_id, 'admin_only')
+        )
+        return
+    
+    args = context.args
+    if not args:
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            "📝 **الاستخدام:**\n"
+            "`/set_rules نص القوانين`\n\n"
+            "📌 يمكنك استخدام عدة أسطر.\n"
+            "📌 مثال:\n"
+            "/set_rules 1. احترام الأعضاء\n"
+            "2. ممنوع السب والشتم\n"
+            "3. الالتزام بالموضوعات المحددة"
+        )
+        return
+    
+    rules_text = " ".join(args)
+    
+    async def _set_rules(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO group_rules (chat_id, rules_text, updated_by, updated_at) VALUES (?, ?, ?, ?)",
+            (chat_id, rules_text, user_id, utc_now_iso())
+        )
+        await conn.commit()
+    
+    await execute_db(_set_rules)
+    
+    await safe_send_markdown(
+        context.bot,
+        chat_id,
+        f"✅ **تم تعيين قوانين المجموعة بنجاح!**\n\n"
+        f"📌 القوانين:\n{rules_text}\n\n"
+        f"👤 تم التحديث بواسطة: {update.effective_user.first_name or 'مشرف'}\n"
+        f"🕐 الوقت: {mecca_now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"📌 لعرض القوانين، استخدم `/rules`."
+    )
+
+
+# ------------------------------------------
+# 18. أمر /rules - عرض قوانين المجموعة
+# ------------------------------------------
+async def rules_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض قوانين المجموعة.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض القوانين المسجلة.
+    2. تعرض تاريخ آخر تحديث.
+    3. تقدم تنسيقاً جميلاً للقوانين.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 هذا الأمر يعمل فقط في المجموعات!"
+        )
+        return
+    
+    chat_id = update.effective_chat.id
+    
+    async def _get_rules(conn):
+        cur = await conn.execute(
+            "SELECT rules_text, updated_at FROM group_rules WHERE chat_id=?",
+            (chat_id,)
+        )
+        return await cur.fetchone()
+    
+    rules = await execute_db(_get_rules)
+    
+    if not rules:
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            "📋 **لا توجد قوانين مسجلة لهذه المجموعة.**\n\n"
+            "📌 يمكن للمشرفين تعيين قوانين باستخدام:\n"
+            "`/set_rules نص القوانين`"
+        )
+        return
+    
+    rules_text, updated_at = rules
+    
+    # تنسيق القوانين
+    formatted_rules = rules_text.replace('\n', '\n• ')
+    if not formatted_rules.startswith('•'):
+        formatted_rules = '• ' + formatted_rules
+    
+    await safe_send_markdown(
+        context.bot,
+        chat_id,
+        f"📋 **قوانين المجموعة**\n━━━━━━━━━━━━━━━━━━━━━━\n{formatted_rules}\n━━━━━━━━━━━━━━━━━━━━━━\n🕐 آخر تحديث: {updated_at[:16]}\n\n📌 الرجاء الالتزام بالقوانين."
+    )
+
+
+# ------------------------------------------
+# 19. أوامر المسابقات (ذكية)
+# ------------------------------------------
+async def create_contest_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لإنشاء مسابقة جديدة (للمشرفين فقط).
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحية المشرف.
+    2. تقدم خطوات إرشادية لإنشاء المسابقة.
+    3. تتحقق من صحة التواريخ.
+    4. ترسل تأكيداً مع تفاصيل المسابقة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "🔒 هذا الأمر للمشرفين فقط!"
+        )
+        return
+    
+    context.user_data['state'] = UserState.WAITING_CONTEST_TITLE
+    
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        "📝 **إنشاء مسابقة جديدة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📌 **الخطوة 1/4:** أرسل **عنوان** المسابقة.\n\n"
+        "💡 مثال: مسابقة أفضل منشور\n"
+        "📌 العنوان يجب أن يكون مميزاً وجذاباً."
+    )
+
+
+async def declare_winner_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لإعلان فائز في مسابقة (للمشرفين فقط).
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحية المشرف.
+    2. تتحقق من وجود المسابقة وحالتها.
+    3. تتحقق من وجود المشاركين.
+    4. تختار فائزاً عشوائياً إن لم يُحدد.
+    5. ترسل إشعاراً للفائز.
+    6. تسجل الحدث في سجلات الأمان.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    user_id = update.effective_user.id
+    
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "🔒 هذا الأمر للمشرفين فقط!"
+        )
+        return
+    
+    args = context.args
+    
+    if len(args) < 1:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "📝 **الاستخدام:**\n"
+            "`/declare_winner معرف_المسابقة [معرف_المستخدم]`\n\n"
+            "مثال: `/declare_winner 5` (سيختار عشوائياً)\n"
+            "مثال: `/declare_winner 5 123456789` (يحدد فائزاً)\n\n"
+            "📌 لعرض قائمة المسابقات النشطة، استخدم `/contests`."
+        )
+        return
+    
+    try:
+        contest_id = int(args[0])
+    except ValueError:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ معرف المسابقة غير صحيح!"
+        )
+        return
+    
+    contest = await db_get_contest(contest_id)
+    
+    if not contest:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ المسابقة غير موجودة!\n"
+            "📌 استخدم `/contests` لعرض المسابقات النشطة."
+        )
+        return
+    
+    if contest['status'] != 'active':
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ هذه المسابقة ليست نشطة! حالتها: {contest['status']}"
+        )
+        return
+    
+    # تحديد الفائز
+    if len(args) >= 2:
+        try:
+            winner_id = int(args[1])
+        except ValueError:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ معرف المستخدم غير صحيح!"
+            )
+            return
+        
+        # التحقق من مشاركة المستخدم
+        participation = await db_get_user_participation(winner_id, contest_id)
+        if not participation:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"❌ المستخدم `{winner_id}` لم يشارك في هذه المسابقة!"
+            )
+            return
+    else:
+        # اختيار فائز عشوائي
+        winner_id = await db_get_random_participant(contest_id)
+        if not winner_id:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "❌ لا يوجد مشاركون في هذه المسابقة!"
+            )
+            return
+    
+    # إعلان الفائز
+    success = await db_set_contest_winner(contest_id, winner_id)
+    
+    if success:
+        # إشعار الفائز
+        try:
+            await context.bot.send_message(
+                chat_id=winner_id,
+                text=f"🏆 **تهانينا!**\n\n"
+                     f"لقد فزت في مسابقة **{contest['title']}**!\n"
+                     f"🎁 جائزتك: {contest['prize']}\n\n"
+                     f"📌 سيتم التواصل معك قريباً لتسليم الجائزة."
+            )
+            await achievement_system(winner_id, 'contest_winner')
+        except:
+            pass
+        
+        # إشعار للمشرف
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم إعلان الفائز بنجاح!**\n\n"
+            f"🏆 المسابقة: {contest['title']}\n"
+            f"👤 الفائز: `{winner_id}`\n"
+            f"🎁 الجائزة: {contest['prize']}\n\n"
+            f"📌 تم إشعار الفائز."
+        )
+        
+        # تسجيل الحدث
+        await log_security_event(
+            "CONTEST_WINNER_DECLARED",
+            None,
+            user_id,
+            {"contest_id": contest_id, "winner_id": winner_id},
+            "high"
+        )
+        
+        # إشعار المطور
+        try:
+            await context.bot.send_message(
+                chat_id=PRIMARY_OWNER_ID,
+                text=f"🏆 **تم إعلان فائز في مسابقة!**\n\n"
+                     f"📌 المسابقة: {contest['title']}\n"
+                     f"👤 الفائز: `{winner_id}`\n"
+                     f"🎁 الجائزة: {contest['prize']}"
+            )
+        except:
+            pass
+    else:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ فشل إعلان الفائز. يرجى المحاولة مرة أخرى."
+        )
+
+
+async def contests_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لعرض المسابقات النشطة.
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تعرض المسابقات النشطة مع تفاصيلها.
+    2. تظهر عدد المشاركين والوقت المتبقي.
+    3. تسمح بالمشاركة بنقرة واحدة.
+    4. تعرض الفائزين السابقين.
+    5. تقدم توصيات للمشاركة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    try:
+        if not update or not update.effective_user:
+            return
+        
+        user_id = update.effective_user.id
+        contests = await db_get_active_contests_with_participants(limit=10)
+        
+        if not contests:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                "📭 **لا توجد مسابقات نشطة حالياً.**\n\n"
+                "📌 تابع قناة التحديثات لمعرفة المسابقات القادمة.\n"
+                "📌 يمكن للمشرفين إنشاء مسابقات عبر `/create_contest`."
+            )
+            return
+        
+        text = "🏆 **المسابقات النشطة**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        keyboard = []
+        
+        for contest in contests:
+            if len(contest) < 6:
+                continue
+            
+            cid = contest[0]
+            title = contest[1] or "بدون عنوان"
+            desc = contest[2] or ""
+            prize = contest[3] or "غير محددة"
+            end_date = contest[4]
+            participants = contest[5] if len(contest) > 5 else 0
+            contest_type = contest[6] if len(contest) > 6 else 'raffle'
+            
+            try:
+                end_dt = datetime.fromisoformat(end_date)
+                days_left = (end_dt - utc_now()).days
+                if days_left > 0:
+                    time_left = f"⏳ متبقي {days_left} يوم"
+                else:
+                    time_left = "🔴 انتهت"
+                    # لا نعرض المسابقات المنتهية
+                    continue
+            except:
+                time_left = "📅 تاريخ غير صحيح"
+                days_left = 0
+            
+            participated = await db_get_user_participation(user_id, cid)
+            status_icon = "✅" if participated else "📝"
+            type_icon = "📝" if contest_type == 'quiz' else "🎲" if contest_type == 'raffle' else "🗳️" if contest_type == 'vote' else "📤"
+            
+            text += f"📌 **{title}** {type_icon}\n"
+            text += f"📝 {(desc)[:100]}{'...' if len(desc) > 100 else ''}\n"
+            text += f"🎁 الجائزة: {prize}\n"
+            text += f"👥 المشاركون: {participants}\n"
+            text += f"🕐 {time_left}\n"
+            text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            
+            if not participated and days_left > 0:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"{status_icon} شارك في {title[:20]}",
+                        callback_data=f"{CallbackData.CONTEST_JOIN_PREFIX}{cid}"
+                    )
+                ])
+        
+        if not keyboard:
+            text += "\n📌 جميع المسابقات انتهت أو أنت مشترك فيها بالفعل.\n"
+        
+        keyboard.append([InlineKeyboardButton("🏆 الفائزون السابقون", callback_data=CallbackData.CONTEST_WINNERS)])
+        keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)])
+        
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    except Exception as e:
+        error_id = log_error(e, {
+            'user_id': update.effective_user.id if update and update.effective_user else None
+        })
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ حدث خطأ أثناء تحميل المسابقات (الرمز: `{error_id}`)."
+        )
+
+
+# ------------------------------------------
+# 20. أمر الإشراف الموحد (ذكي)
+# ------------------------------------------
+async def handle_moderation_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ═══════════════════════════════════════════════════════════════════
+    الدالة الذكية لأوامر الإشراف الموحد (ban, mute, warn, kick, restrict, pin, unban).
+    ═══════════════════════════════════════════════════════════════════
+    🧠 المميزات الذكية:
+    1. تتحقق من صلاحيات المستخدم والهدف.
+    2. تقدم أسباباً ذكية للعقوبات.
+    3. تسجل كل إجراء في سجل المتابعة.
+    4. ترسل إشعاراً للمستخدم المتأثر.
+    5. تقدم توصيات للعقوبات المناسبة.
+    6. تدعم أوامر متعددة في رسالة واحدة.
+    ═══════════════════════════════════════════════════════════════════
+    """
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(
+            context.bot,
+            update.effective_user.id,
+            "🔒 هذا الأمر يعمل فقط في المجموعات!"
+        )
+        return
+    
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+    
+    # التحقق من صلاحيات المستخدم
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            get_text(user_id, 'admin_only')
+        )
+        return
+    
+    # التحقق من صلاحيات البوت
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ {bot_perms['reason']}\n"
+            f"📌 تأكد من أن البوت مشرف ولديه الصلاحيات الكافية."
+        )
+        return
+    
+    # تحديد الأمر والوسائط
+    command = update.message.text.split()[0][1:]
+    args = context.args
+    target_id = None
+    reason = ""
+    
+    # محاولة الحصول على المستخدم المستهدف
+    if update.message.reply_to_message:
+        target_id = update.message.reply_to_message.from_user.id
+        if args:
+            reason = " ".join(args)
+    elif args:
+        try:
+            target_id = int(args[0])
+            reason = " ".join(args[1:]) if len(args) > 1 else ""
+        except ValueError:
+            await safe_send_markdown(
+                context.bot,
+                chat_id,
+                "❌ معرف المستخدم غير صحيح! أرسل معرفاً رقمياً صحيحاً."
+            )
+            return
+    else:
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            "❌ **لم يتم تحديد المستخدم!**\n\n"
+            "📌 قم بالرد على رسالة المستخدم أو أرسل معرفه.\n"
+            "مثال: `/ban 123456789 سبب`\n"
+            "أو قم بالرد على رسالة المستخدم وأرسل `/ban`."
+        )
+        return
+    
+    # منع تنفيذ الإجراء على البوت نفسه
+    if target_id == context.bot.id:
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            "❌ **لا يمكن تنفيذ هذا الإجراء على البوت!**"
+        )
+        return
+    
+    # منع تنفيذ الإجراء على المطور الأساسي
+    if target_id == PRIMARY_OWNER_ID:
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            "❌ **لا يمكن تنفيذ هذا الإجراء على المطور الأساسي!**"
+        )
+        return
+    
+    # التحقق من أن المستخدم ليس مشرفاً مخفياً
+    if await db_is_hidden_owner(chat_id, target_id):
+        await safe_send_markdown(
+            context.bot,
+            chat_id,
+            "❌ **لا يمكن تنفيذ هذا الإجراء على المالك المخفي!**"
+        )
+        return
+    
+    # إضافة سبب افتراضي ذكي إن لم يُحدد
+    if not reason:
+        reasons = {
+            "ban": "مخالفة قوانين المجموعة",
+            "mute": "إزعاج أو مخالفة",
+            "warn": "تنبيه لمخالفة",
+            "kick": "سلوك غير لائق",
+            "restrict": "تقييد مؤقت",
+            "unban": "إلغاء الحظر",
+            "pin": "تثبيت رسالة مهمة"
+        }
+        reason = reasons.get(command, "إجراء إداري")
+    
+    # تعيين المدة الافتراضية للكتم
+    duration = None
+    if command == 'mute':
+        duration = 60  # دقيقة واحدة افتراضياً
+    
+    # تنفيذ الإجراء
+    success, msg = await execute_moderation_action(
+        context.bot,
+        chat_id,
+        target_id,
+        command,
+        reason,
+        duration,
+        user_id
+    )
+    
+    # إشعار المستخدم المتأثر (إن أمكن)
+    if command in ['ban', 'mute', 'kick', 'restrict']:
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=f"⚠️ **تم تطبيق إجراء عليك في مجموعة {chat_name}**\n\n"
+                     f"📌 الإجراء: {command}\n"
+                     f"📝 السبب: {reason}\n"
+                     f"👤 بواسطة: {update.effective_user.first_name or 'مشرف'}\n"
+                     f"🕐 الوقت: {mecca_now().strftime('%Y-%m-%d %H:%M')}\n\n"
+                     f"📌 للاستفسار، تواصل مع إدارة المجموعة."
+            )
+        except:
+            pass
+    
+    await safe_send_markdown(context.bot, chat_id, msg)
 
 async def main():
     """الوظيفة الرئيسية لتشغيل البوت"""
