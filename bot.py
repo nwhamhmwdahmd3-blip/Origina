@@ -7414,6 +7414,60 @@ async def security_close_callback(update: Update, context: ContextTypes.DEFAULT_
     if query:
         await query.answer()
         await query.message.delete()
+async def security_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب تأكيد تفعيل جميع خيارات الحذف"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم، تفعيل الكل", callback_data=f"confirm_enable_all:{chat_id}")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=f"groups:settings:{chat_id}")]
+    ])
+    await query.edit_message_text(
+        "⚠️ **تأكيد تفعيل الكل**\n\nسيتم تفعيل جميع أنواع الحذف:\n• الفيديوهات\n• الصوتيات\n• المتحركات\n• رسائل الخدمة\n• الملفات\n• الملصقات\n\nهل أنت متأكد؟",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+async def confirm_enable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد تفعيل جميع خيارات الحذف"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1])
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    for key in keys:
+        settings[key] = 1
+    await db_set_security_settings(chat_id, **{k: settings[k] for k in keys})
+    await query.answer("✅ تم تفعيل جميع خيارات الحذف")
+    await _update_security_panel(query, chat_id, user_id)
+
+async def security_disable_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعطيل جميع خيارات الحذف"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    user_id = update.effective_user.id
+    chat_id = int(query.data.split(":")[-1]) if query else context.user_data.get('security_chat_id')
+    if not chat_id or not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keys = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service', 'delete_documents', 'delete_stickers']
+    settings = await db_get_security_settings(chat_id, force_refresh=True)
+    for key in keys:
+        settings[key] = 0
+    await db_set_security_settings(chat_id, **{k: settings[k] for k in keys})
+    await query.answer("✅ تم تعطيل جميع خيارات الحذف")
+    await _update_security_panel(query, chat_id, user_id)
 
 async def main():
     # تهيئة قاعدة البيانات
