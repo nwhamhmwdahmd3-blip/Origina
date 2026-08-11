@@ -8637,6 +8637,329 @@ async def admin_toggle_auto_backup_callback(update: Update, context: ContextType
     await db_set_auto_backup(new_status)
     await query.answer(f"✅ تم {'تفعيل' if new_status else 'تعطيل'} النسخ التلقائي")
     await admin_backup_settings_callback(update, context)
+async def admin_change_interval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغيير وقت النشر العام"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['admin_interval'] = True
+    context.user_data['state'] = UserState.WAITING_INTERVAL_MINUTES
+    await query.edit_message_text("⏱️ أرسل وقت النشر العام بالدقائق (مثال: 12)")
+
+async def admin_send_update_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نشر تحديث في قناة التحديثات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_UPDATE_TEXT
+    await query.edit_message_text("📢 أرسل نص التحديث الذي تريد نشره في قناة التحديثات:")
+
+async def admin_set_update_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين قناة التحديثات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_UPDATE_CHANNEL
+    await query.edit_message_text("📢 أرسل معرف قناة التحديثات (مثال: @channel)")
+
+async def admin_show_update_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قناة التحديثات الحالية"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    channel = await db_get_updates_channel()
+    if channel:
+        text = f"📢 **قناة التحديثات الحالية:** @{channel}"
+    else:
+        text = "📢 **لا توجد قناة تحديثات محددة.**"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_updates_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لوحة إدارة التحديثات"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    text = "🔄 **لوحة التحديثات**\n━━━━━━━━━━━━━━━━━━━━━━\nاختر الإجراء المطلوب:"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 نشر تحديث", callback_data=CallbackData.ADMIN_SEND_UPDATE)],
+        [InlineKeyboardButton("⚙️ تعيين قناة التحديثات", callback_data=CallbackData.ADMIN_SET_UPDATE_CHANNEL)],
+        [InlineKeyboardButton("📢 عرض القناة الحالية", callback_data=CallbackData.ADMIN_SHOW_UPDATE_CHANNEL)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_force_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعدادات الاشتراك الإجباري"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    enabled = await db_get_force_subscribe_status()
+    channel = await db_get_force_subscribe_channel()
+    status = "🟢 مفعل" if enabled else "🔴 معطل"
+    channel_text = f"@{channel}" if channel else "غير محدد"
+    text = f"🔒 **الاشتراك الإجباري**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 الحالة: {status}\n📢 القناة: {channel_text}"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"{'🔄 تعطيل' if enabled else '✅ تفعيل'}", callback_data=CallbackData.ADMIN_FORCE_SUBSCRIBE)],
+        [InlineKeyboardButton("⚙️ تعيين القناة", callback_data=CallbackData.ADMIN_SET_FORCE_CHANNEL)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_set_force_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين قناة الاشتراك الإجباري"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_FORCE_CHANNEL
+    await query.edit_message_text("📢 أرسل معرف قناة الاشتراك الإجباري (مثال: @channel)")
+
+async def admin_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إرسال رسالة جماعية"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_BROADCAST
+    await query.edit_message_text("📨 أرسل الرسالة التي تريد إرسالها لجميع المستخدمين:")
+
+async def admin_confirm_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد إرسال الرسالة الجماعية"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    broadcast_text = context.user_data.get('broadcast_text')
+    if not broadcast_text:
+        await query.edit_message_text("❌ لا توجد رسالة للإرسال.")
+        return
+    users = await db_get_all_users()
+    active_users = [u[0] for u in users if u[1] == 0]
+    if not active_users:
+        await query.edit_message_text("📭 لا يوجد مستخدمين نشطين.")
+        return
+    await query.edit_message_text(f"⏳ جاري إرسال الرسالة إلى {len(active_users)} مستخدم...")
+    success = 0
+    failed = 0
+    for uid in active_users:
+        try:
+            await context.bot.send_message(chat_id=uid, text=broadcast_text)
+            success += 1
+        except:
+            failed += 1
+        await asyncio.sleep(0.1)
+    await query.edit_message_text(f"📨 **نتائج الإرسال**\n━━━━━━━━━━━━━━━━━━━━━━\n✅ نجح: {success}\n❌ فشل: {failed}")
+    context.user_data.pop('broadcast_text', None)
+    await admin_panel_callback(update, context)
+
+async def admin_support_tickets_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض تذاكر الدعم"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    tickets = await db_get_all_tickets(limit=20)
+    if not tickets:
+        await query.edit_message_text("📭 لا توجد تذاكر.")
+        return
+    text = "📋 **تذاكر الدعم**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for tid, uid, username, msg, ticket_num, status, created_at in tickets:
+        text += f"• #{ticket_num} - المستخدم: {uid} - الحالة: {status}\n   الرسالة: {msg[:50]}...\n   🕐 {created_at[:16]}\n\n"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗑️ حذف جميع التذاكر", callback_data=CallbackData.ADMIN_DELETE_ALL_TICKETS)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_delete_all_tickets_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف جميع التذاكر"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ نعم، حذف الكل", callback_data=CallbackData.ADMIN_CONFIRM_DELETE_TICKETS)],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=CallbackData.ADMIN_SUPPORT_TICKETS)]
+    ])
+    await query.edit_message_text("⚠️ **تأكيد حذف جميع التذاكر**\n\nسيتم حذف جميع تذاكر الدعم نهائياً!\nهل أنت متأكد؟", reply_markup=keyboard)
+
+async def admin_confirm_delete_tickets_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد حذف جميع التذاكر"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await db_delete_all_tickets()
+    await query.edit_message_text("✅ تم حذف جميع التذاكر.")
+    await admin_panel_callback(update, context)
+
+async def admin_manage_sendcode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة صلاحية /sendcode"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    current_user = await db_get_allowed_sendcode_user()
+    text = f"📁 **صلاحية /sendcode**\n━━━━━━━━━━━━━━━━━━━━━━\n📌 المستخدم الحالي: `{current_user}`"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚙️ تعيين مستخدم", callback_data=CallbackData.ADMIN_SET_SENDCODE_USER)],
+        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_set_sendcode_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين مستخدم لصلاحية /sendcode"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_SENDCODE_USER
+    await query.edit_message_text("📝 أرسل معرف المستخدم (user_id) لمنحه صلاحية /sendcode:")
+
+async def admin_show_log_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قناة التقارير الحالية"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    channel_id = await db_get_log_channel_id()
+    if channel_id:
+        text = f"📋 **قناة التقارير الحالية:** `{channel_id}`"
+    else:
+        text = "📋 **لا توجد قناة تقارير محددة.**"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_set_log_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعيين قناة التقارير"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_LOG_CHANNEL
+    context.user_data['temp_log_channel_identifier'] = None
+    await query.edit_message_text("📝 أرسل معرف قناة التقارير (مثال: -100123456789)")
+
+async def admin_replies_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة الردود العامة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await query.edit_message_text("💬 **إدارة الردود**\nاختر الإجراء المطلوب:", reply_markup=get_replies_keyboard())
+
+async def admin_add_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إضافة رد عام"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_KEYWORD
+    await query.edit_message_text("📝 أرسل الكلمة المفتاحية (مثال: مرحبا):")
+
+async def admin_list_replies_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض الردود العامة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    replies = await db_get_all_replies()
+    if not replies:
+        await query.edit_message_text("📭 لا توجد ردود.")
+        return
+    text = "💬 **قائمة الردود**\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    for keyword, reply in replies:
+        text += f"• `{keyword}` → {reply[:50]}...\n"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_REPLIES)]])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def admin_del_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف رد عام"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['admin_del_reply'] = True
+    context.user_data['state'] = UserState.WAITING_REPLY
+    await query.edit_message_text("🗑️ أرسل الكلمة المفتاحية التي تريد حذف ردها:")
+
+async def admin_banned_words_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة الكلمات المحظورة العامة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await query.edit_message_text("🚫 **الكلمات المحظورة العامة**\nاختر الإجراء المطلوب:", reply_markup=get_banned_words_admin_keyboard())
+
+async def admin_create_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إنشاء مسابقة جديدة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    context.user_data['state'] = UserState.WAITING_CONTEST_TITLE
+    await query.edit_message_text("📝 **إنشاء مسابقة جديدة**\n\nأرسل **عنوان** المسابقة:")
+
+async def admin_declare_winner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إعلان فائز في مسابقة"""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    if user_id != PRIMARY_OWNER_ID and not await is_bot_admin(user_id):
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+    await query.edit_message_text("📝 **إعلان فائز**\n\nأرسل معرف المسابقة ومعرف الفائز بهذه الصيغة:\n`/declare_winner معرف_المسابقة معرف_المستخدم`")
 
 async def main():
     # تهيئة قاعدة البيانات
