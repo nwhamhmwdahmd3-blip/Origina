@@ -11753,6 +11753,9 @@ async def confirm_del_contest_callback(update: Update, context: ContextTypes.DEF
         await query.edit_message_text("❌ **فشل حذف المسابقة.** يرجى المحاولة مرة أخرى.")
     
     await admin_panel_callback(update, context)
+async def channel_stats_refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحديث إحصائيات القناة"""
+    await channel_stats_callback(update, context)
 
 async def main():
     """الوظيفة الرئيسية لتشغيل البوت"""
