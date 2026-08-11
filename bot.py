@@ -3560,23 +3560,19 @@ print("✅ الجزء الخامس تم تحميله بنجاح")
 
 # 30.1 start_command_handler
 async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج أمر /start - القائمة الرئيسية"""
     try:
         user_id = update.effective_user.id
         username = update.effective_user.username or ""
         first_name = update.effective_user.first_name or ""
 
-        # تسجيل المستخدم في قاعدة البيانات
         await db_register_user(user_id)
         await db_update_user_cache(user_id, username, first_name)
 
-        # جلب اللغة المفضلة للمستخدم
         lang = await db_get_user_language(user_id)
         if not lang:
             lang = 'ar'
         await set_user_language(user_id, lang)
 
-        # معالجة روابط الإحالة (إن وجدت)
         if context.args and context.args[0].startswith('ref_'):
             ref_code = context.args[0][4:]
             referrer_id = await db_get_user_by_referral_code(ref_code)
@@ -3591,16 +3587,10 @@ async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     except:
                         pass
 
-        # التحقق من الاشتراك الإجباري (إن وجد)
-        if not await ensure_force_subscribe(update, context):
-            return
-
-        # بناء القائمة الرئيسية
         kb, title, active = await get_main_keyboard(user_id)
         if active:
             context.user_data['active_channel'] = active
 
-        # إرسال الرسالة
         if update.callback_query:
             await safe_edit_markdown(update.callback_query, title, reply_markup=kb)
         else:
@@ -3611,7 +3601,6 @@ async def start_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
             'user_id': update.effective_user.id if update and update.effective_user else None,
             'username': update.effective_user.username if update and update.effective_user else None
         })
-        # محاولة إرسال رسالة خطأ بسيطة للمستخدم
         try:
             await context.bot.send_message(
                 chat_id=update.effective_user.id,
