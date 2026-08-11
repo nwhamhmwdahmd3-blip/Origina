@@ -8976,6 +8976,16 @@ async def admin_del_contest_callback(update: Update, context: ContextTypes.DEFAU
     else:
         await query.edit_message_text("❌ فشل حذف المسابقة.")
     await admin_panel_callback(update, context)
+async def is_chat_locked(chat_id: int) -> bool:
+    """التحقق من قفل المجموعة"""
+    async def _check(conn):
+        try:
+            cur = await conn.execute("SELECT 1 FROM chat_locks WHERE chat_id=? AND locked=1", (chat_id,))
+            return await cur.fetchone() is not None
+        except Exception as e:
+            logger.error(f"خطأ في التحقق من قفل المجموعة {chat_id}: {e}")
+            return False
+    return await execute_db(_check)
 
 async def main():
     # تهيئة قاعدة البيانات
