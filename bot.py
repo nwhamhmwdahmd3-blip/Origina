@@ -15009,6 +15009,28 @@ async def test_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # هذا سيخلق خطأ NameError متعمداً
     undefined_variable = some_undefined_variable  # خطأ متعمد
     await update.message.reply_text("هذا النص لن يظهر")
+# ===================================================================
+# دوال قناة التقارير (إصلاح معالج الأخطاء)
+# ===================================================================
+
+async def db_get_log_channel_id():
+    """جلب معرف قناة التقارير من قاعدة البيانات"""
+    async def _get(conn):
+        cur = await conn.execute("SELECT value FROM settings WHERE key='log_channel_id'")
+        row = await cur.fetchone()
+        return row[0] if row and row[0] else None
+    return await execute_db(_get)
+
+
+async def db_set_log_channel_id(channel_id: str):
+    """تعيين معرف قناة التقارير في قاعدة البيانات"""
+    async def _set(conn):
+        await conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('log_channel_id', ?)",
+            (channel_id,)
+        )
+        await conn.commit()
+    return await execute_db(_set)
 
 # ===================================================================
 # 34. دالة main() النهائية
