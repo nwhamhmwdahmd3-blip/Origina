@@ -4247,6 +4247,7 @@ async def cancel_session_callback(update: Update, context: ContextTypes.DEFAULT_
 
 # 31.2 معالجات القنوات
 async def add_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب إدخال معرف القناة"""
     query = update.callback_query
     if query:
         await query.answer()
@@ -5425,31 +5426,78 @@ async def filter_messages_handler(update: Update, context: ContextTypes.DEFAULT_
                             pass
 
 # 33.2 معالج رسائل الخاص
-async def message_handler_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # هذه الدالة موجودة بالفعل في الجزء السادس، ولكن نضيف معالجة الحالات الإضافية هنا
-    if update.message is None or update.effective_user is None:
+elif state == UserState.WAITING_CHANNEL_ID:
+    channel_id = text.strip()
+    
+    if not (channel_id.startswith('@') or channel_id.lstrip('-').isdigit()):
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            "❌ صيغة المعرف غير صحيحة! استخدم @username أو المعرف الرقمي.\nمثال: @my_channel أو -1001234567890"
+        )
+        context.user_data.pop('state', None)
         return
-    user_id = update.effective_user.id
-    text = update.message.text.strip() if update.message.text else ""
-    state = context.user_data.get('state')
-    if state == "WAITING_DELETE_PENALTY_DURATION":
-        chat_id = context.user_data.get('security_chat_id')
-        if not chat_id:
-            await safe_send_markdown(context.bot, user_id, "❌ لم يتم تحديد المجموعة.")
+    
+    try:
+        # محاولة جلب معلومات القناة
+        chat = await context.bot.get_chat(channel_id)
+        channel_name = chat.title or "بدون اسم"
+        
+        # التحقق من صلاحية البوت في القناة
+        try:
+            bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+            if bot_member.status not in ['administrator', 'creator']:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"❌ **البوت ليس مشرفاً في القناة `{channel_name}`!**\n\nيرجى إضافة البوت كمشرف في القناة ثم المحاولة مرة أخرى."
+                )
+                context.user_data.pop('state', None)
+                return
+            if not bot_member.can_post_messages:
+                await safe_send_markdown(
+                    context.bot,
+                    user_id,
+                    f"❌ **البوت لا يملك صلاحية النشر في القناة `{channel_name}`!**\n\nيرجى منح البوت صلاحية 'نشر الرسائل' في القناة."
+                )
+                context.user_data.pop('state', None)
+                return
+        except Exception as e:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"❌ **لا يمكن الوصول إلى القناة:** {str(e)[:100]}\n\nتأكد من أن المعرف صحيح وأن القناة عامة أو البوت عضو فيها."
+            )
             context.user_data.pop('state', None)
             return
-        try:
-            duration = int(text.strip())
-            if duration < 0:
-                await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال عدد موجب أو 0.")
-                return
-            await db_set_security_settings(chat_id, delete_penalty_duration=duration)
-            await safe_send_markdown(context.bot, user_id, f"✅ تم تعيين مدة عقوبة الحذف إلى {duration} دقيقة.")
-        except ValueError:
-            await safe_send_markdown(context.bot, user_id, "❌ الرجاء إدخال رقم صحيح.")
-        context.user_data.pop('state', None)
-        context.user_data.pop('security_chat_id', None)
-        return
+        
+        # حفظ القناة في قاعدة البيانات
+        result = await db_add_channel(user_id, channel_id, channel_name)
+        
+        if result:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'channel_added').format(channel_name)
+            )
+            await db_register_channel(chat.id, channel_name, user_id)
+            await my_channels_callback(update, context)
+        else:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                get_text(user_id, 'channel_exists')
+            )
+            
+    except Exception as e:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"❌ خطأ: {str(e)[:100]}\nتأكد من صحة المعرف."
+        )
+    
+    context.user_data.pop('state', None)
+    return
 
 # 33.3 معالجات الأعضاء الجدد والمغادرين
 async def new_chat_members_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
