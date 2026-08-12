@@ -2460,159 +2460,314 @@ async def group_action_unban_callback(update: Update, context: ContextTypes.DEFA
 # 27. معالج الأزرار العام
 # ===================================================================
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """الموزع الرئيسي لجميع ضغطات الأزرار"""
     query = update.callback_query
     data = query.data
-    if not data: return
-    if data == "noop": await _answer_query(query); return
-    
+    if not data:
+        return
+
+    if data == "noop":
+        await _answer_query(query)
+        return
+
     try:
-        if data == CallbackData.MAIN_MENU: return await main_menu_callback(update, context)
-        if data == CallbackData.BACK: return await back_callback(update, context)
-        if data == CallbackData.CANCEL_SESSION: return await cancel_session_callback(update, context)
-        
-        if data == CallbackData.CHANNELS_ADD: return await add_channel_callback(update, context)
-        if data == CallbackData.CHANNELS_MY: return await my_channels_callback(update, context)
-        if data.startswith("channels:delete:"): return await delete_channel_callback(update, context)
-        if data.startswith("channels:select:"): return await select_channel_callback(update, context)
-        
-        if data == CallbackData.POSTS_ADD_15: return await add_15_posts_callback(update, context)
-        if data == CallbackData.POSTS_PUBLISH_ONE: return await publish_one_callback(update, context)
-        if data == CallbackData.POSTS_MY: return await my_posts_callback(update, context)
-        if data == CallbackData.POSTS_RECYCLE: return await recycle_posts_callback(update, context)
-        if data.startswith("posts:delete_single:"): return await delete_single_post_callback(update, context)
-        if data.startswith("posts:confirm_clear_all:"): return await confirm_clear_all_posts_callback(update, context)
-        if data.startswith("posts:clear_all:"): return await clear_all_posts_callback(update, context)
-        if data == CallbackData.PUBLISH_ALL_CHANNELS: return await publish_all_channels_callback(update, context)
-        
-        if data == CallbackData.STATS_PENDING: return await pending_stats_callback(update, context)
-        if data == CallbackData.STATS_FULL: return await full_stats_callback(update, context)
-        if data.startswith("channel_stats:"): return await channel_stats_callback(update, context)
-        if data == CallbackData.MY_CHANNEL_STATS: return await my_channel_stats_callback(update, context)
-        
-        if data == CallbackData.GROUPS_MY: return await my_groups_callback(update, context)
-        if data.startswith("groups:settings:"): return await group_settings_callback(update, context)
-        
-        if data == CallbackData.SETTINGS_MENU: return await settings_menu_callback(update, context)
-        if data == CallbackData.SETTINGS_TOGGLE_AUTO_PUBLISH: return await toggle_auto_publish_callback(update, context)
-        if data == CallbackData.SETTINGS_TOGGLE_AUTO_RECYCLE: return await toggle_auto_recycle_callback(update, context)
-        
-        # الجدولة
+        # ===== التنقل الأساسي =====
+        if data == CallbackData.MAIN_MENU:
+            return await main_menu_callback(update, context)
+        if data == CallbackData.BACK:
+            return await back_callback(update, context)
+        if data == CallbackData.CANCEL_SESSION:
+            return await cancel_session_callback(update, context)
+
+        # ===== القنوات =====
+        if data == CallbackData.CHANNELS_ADD:
+            return await add_channel_callback(update, context)
+        if data == CallbackData.CHANNELS_MY:
+            return await my_channels_callback(update, context)
+        if data.startswith("channels:delete:"):
+            return await delete_channel_callback(update, context)
+        if data.startswith("channels:select:"):
+            return await select_channel_callback(update, context)
+
+        # ===== المنشورات =====
+        if data == CallbackData.POSTS_ADD_15:
+            return await add_15_posts_callback(update, context)
+        if data == CallbackData.POSTS_PUBLISH_ONE:
+            return await publish_one_callback(update, context)
+        if data == CallbackData.POSTS_MY:
+            return await my_posts_callback(update, context)
+        if data == CallbackData.POSTS_RECYCLE:
+            return await recycle_posts_callback(update, context)
+        if data.startswith("posts:delete_single:"):
+            return await delete_single_post_callback(update, context)
+        if data.startswith("posts:confirm_clear_all:"):
+            return await confirm_clear_all_posts_callback(update, context)
+        if data.startswith("posts:clear_all:"):
+            return await clear_all_posts_callback(update, context)
+        if data == CallbackData.PUBLISH_ALL_CHANNELS:
+            return await publish_all_channels_callback(update, context)
+
+        # ===== الإحصائيات =====
+        if data == CallbackData.STATS_PENDING:
+            return await pending_stats_callback(update, context)
+        if data == CallbackData.STATS_FULL:
+            return await full_stats_callback(update, context)
+        if data.startswith("channel_stats:"):
+            return await channel_stats_callback(update, context)
+        if data == CallbackData.MY_CHANNEL_STATS:
+            return await my_channel_stats_callback(update, context)
+
+        # ===== المجموعات =====
+        if data == CallbackData.GROUPS_MY:
+            return await my_groups_callback(update, context)
+        if data.startswith("groups:settings:"):
+            return await group_settings_callback(update, context)
+        if data.startswith("delete_group:"):
+            return await delete_group_callback(update, context)
+
+        # ===== الإعدادات =====
+        if data == CallbackData.SETTINGS_MENU:
+            return await settings_menu_callback(update, context)
+        if data == CallbackData.SETTINGS_TOGGLE_AUTO_PUBLISH:
+            return await toggle_auto_publish_callback(update, context)
+        if data == CallbackData.SETTINGS_TOGGLE_AUTO_RECYCLE:
+            return await toggle_auto_recycle_callback(update, context)
+
+        # ===== الجدولة =====
         if data.startswith("schedule:menu:"):
-            query = update.callback_query; await _answer_query(query)
-            ch_db_id = int(data.split(":")[-1])
-            context.user_data['schedule_ch_id'] = ch_db_id
-            s = await db_get_schedule(ch_db_id)
-            kb = [
-                [InlineKeyboardButton("⏱️ دقائق", callback_data=f"schedule:set_interval_minutes:{ch_db_id}")],
-                [InlineKeyboardButton("⏱️ ساعات", callback_data=f"schedule:set_interval_hours:{ch_db_id}")],
-                [InlineKeyboardButton("⏱️ أيام", callback_data=f"schedule:set_interval_days:{ch_db_id}")],
-                [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
-            ]
-            await _safe_edit(query, f"⏰ الجدولة (الحالي: {s['type']})", reply_markup=InlineKeyboardMarkup(kb))
-        
+            return await schedule_menu_callback(update, context)
         if data.startswith("schedule:set_interval_minutes:"):
-            query = update.callback_query; await _answer_query(query)
-            ch_db_id = int(data.split(":")[-1])
-            context.user_data['state'] = UserState.WAITING_INTERVAL_MINUTES
-            context.user_data['schedule_ch_id'] = ch_db_id
-            await _safe_edit(query, "⏱️ أرسل عدد الدقائق (1-1440):")
-        
+            return await set_interval_minutes_callback(update, context)
         if data.startswith("schedule:set_interval_hours:"):
-            query = update.callback_query; await _answer_query(query)
-            ch_db_id = int(data.split(":")[-1])
-            context.user_data['state'] = UserState.WAITING_INTERVAL_HOURS
-            context.user_data['schedule_ch_id'] = ch_db_id
-            await _safe_edit(query, "⏱️ أرسل عدد الساعات (1-168):")
-        
+            return await set_interval_hours_callback(update, context)
         if data.startswith("schedule:set_interval_days:"):
-            query = update.callback_query; await _answer_query(query)
-            ch_db_id = int(data.split(":")[-1])
-            context.user_data['state'] = UserState.WAITING_INTERVAL_DAYS
-            context.user_data['schedule_ch_id'] = ch_db_id
-            await _safe_edit(query, "⏱️ أرسل عدد الأيام (1-365):")
-        
-        # الأمان
+            return await set_interval_days_callback(update, context)
+        if data.startswith("schedule:set_days:"):
+            return await set_days_callback(update, context)
+        if data.startswith("schedule:set_dates:"):
+            return await set_dates_callback(update, context)
+        if data.startswith("schedule:set_publish_time:"):
+            return await set_publish_time_callback(update, context)
+        if data.startswith("schedule:set_cron:"):
+            return await set_cron_callback(update, context)
+        if data.startswith("schedule:day_select:"):
+            return await day_select_callback(update, context)
+        if data == CallbackData.SCHEDULE_SAVE_DAYS:
+            return await save_days_callback(update, context)
+
+        # ===== الأمان (التبديل) =====
         if data.startswith("security:") and len(data.split(":")) >= 3:
-            return await security_toggle_setting_callback(update, context)
-        if data == CallbackData.SECURITY_CLOSE: return await security_close_callback(update, context)
-        if data.startswith("security_select_group:"): return await security_select_group_callback(update, context)
-        if data == CallbackData.SECURITY_REFRESH_GROUPS: return await security_refresh_groups_callback(update, context)
-        if data.startswith("security:banned_words_menu:"): return await security_banned_words_menu_callback(update, context)
-        
-        # الكلمات المحظورة
-        if data.startswith("banned_words:add:"): return await banned_words_add_callback(update, context)
-        if data.startswith("banned_words:list:"): return await banned_words_list_callback(update, context)
-        if data.startswith("banned_words:remove:"): return await banned_words_remove_callback(update, context)
-        
-        # العقوبات
-        if data.startswith("penalty_menu:"): return await penalty_menu_callback(update, context)
-        if data.startswith("penalty:kick:"): return await penalty_kick_callback(update, context)
-        if data.startswith("penalty:ban:"): return await penalty_ban_callback(update, context)
-        if data.startswith("penalty:mute:"): return await penalty_mute_callback(update, context)
-        if data.startswith("penalty:warn:"): return await penalty_warn_callback(update, context)
-        if data.startswith("penalty:restrict:"): return await penalty_restrict_callback(update, context)
-        if data.startswith("penalty:none:"): return await penalty_none_callback(update, context)
-        
-        # الإجراءات المتقدمة
-        if data.startswith("advanced_actions:"): return await advanced_actions_callback(update, context)
-        if data.startswith("group_action:ban:"): return await group_action_ban_callback(update, context)
-        if data.startswith("group_action:mute:"): return await group_action_mute_callback(update, context)
-        if data.startswith("adv_mute_duration:"): return await advanced_mute_duration_callback(update, context)
-        if data.startswith("group_action:warn:"): return await group_action_warn_callback(update, context)
-        if data.startswith("group_action:kick:"): return await group_action_kick_callback(update, context)
-        if data.startswith("group_action:restrict:"): return await group_action_restrict_callback(update, context)
-        if data.startswith("group_action:pin:"): return await group_action_pin_callback(update, context)
-        if data.startswith("group_action:log:"): return await group_action_log_callback(update, context)
-        if data.startswith("group_action:unban:"): return await group_action_unban_callback(update, context)
-        
-        # لوحة التحكم
+            # التأكد من أن المقطع الثاني هو إجراء معروف للتبديل
+            action = data.split(":")[1]
+            if action in [
+                "links", "mentions", "slow_mode", "delete_videos", "delete_audio",
+                "delete_animation", "delete_service", "delete_documents", "delete_stickers",
+                "delete_forwarded", "delete_polls", "delete_games", "delete_voice",
+                "delete_video_note", "welcome_enabled", "goodbye_enabled", "antiflood",
+                "night_mode", "max_length", "warn_settings", "delete_penalty", "enable_all", "disable_all"
+            ]:
+                return await security_toggle_setting_callback(update, context)
+        if data == CallbackData.SECURITY_CLOSE:
+            return await security_close_callback(update, context)
+        if data.startswith("security_select_group:"):
+            return await security_select_group_callback(update, context)
+        if data == CallbackData.SECURITY_REFRESH_GROUPS:
+            return await security_refresh_groups_callback(update, context)
+        if data.startswith("security:banned_words_menu:"):
+            return await security_banned_words_menu_callback(update, context)
+
+        # ===== الكلمات المحظورة =====
+        if data.startswith("banned_words:add:"):
+            return await banned_words_add_callback(update, context)
+        if data.startswith("banned_words:list:"):
+            return await banned_words_list_callback(update, context)
+        if data.startswith("banned_words:remove:"):
+            return await banned_words_remove_callback(update, context)
+
+        # ===== العقوبات =====
+        if data.startswith("penalty_menu:"):
+            return await penalty_menu_callback(update, context)
+        if data.startswith("penalty:kick:"):
+            return await penalty_kick_callback(update, context)
+        if data.startswith("penalty:ban:"):
+            return await penalty_ban_callback(update, context)
+        if data.startswith("penalty:mute:"):
+            return await penalty_mute_callback(update, context)
+        if data.startswith("penalty:warn:"):
+            return await penalty_warn_callback(update, context)
+        if data.startswith("penalty:restrict:"):
+            return await penalty_restrict_callback(update, context)
+        if data.startswith("penalty:none:"):
+            return await penalty_none_callback(update, context)
+
+        # ===== الإجراءات المتقدمة =====
+        if data.startswith("advanced_actions:"):
+            return await advanced_actions_callback(update, context)
+        if data.startswith("group_action:ban:"):
+            return await group_action_ban_callback(update, context)
+        if data.startswith("group_action:mute:"):
+            return await group_action_mute_callback(update, context)
+        if data.startswith("adv_mute_duration:"):
+            return await advanced_mute_duration_callback(update, context)
+        if data.startswith("group_action:warn:"):
+            return await group_action_warn_callback(update, context)
+        if data.startswith("group_action:kick:"):
+            return await group_action_kick_callback(update, context)
+        if data.startswith("group_action:restrict:"):
+            return await group_action_restrict_callback(update, context)
+        if data.startswith("group_action:pin:"):
+            return await group_action_pin_callback(update, context)
+        if data.startswith("group_action:log:"):
+            return await group_action_log_callback(update, context)
+        if data.startswith("group_action:unban:"):
+            return await group_action_unban_callback(update, context)
+
+        # ===== لوحة التحكم (قفل/فتح) =====
         if data.startswith("panel:lock:"):
             chat_id = int(data.split(":")[-1])
             await db_set_chat_lock(chat_id, True, update.effective_user.id)
             await _answer_query(query)
-            await group_settings_callback(update, context); return
+            await group_settings_callback(update, context)
+            return
         if data.startswith("panel:unlock:"):
             chat_id = int(data.split(":")[-1])
             await db_set_chat_lock(chat_id, False)
             await _answer_query(query)
-            await group_settings_callback(update, context); return
+            await group_settings_callback(update, context)
+            return
         if data == CallbackData.PANEL_CLOSE:
             await _answer_query(query)
-            try: await query.message.delete()
-            except: pass; return
-        
-        # أخرى
-        if data == CallbackData.HELP: return await help_command_handler(update, context)
-        if data == CallbackData.SUPPORT_MENU: return await support_command_handler(update, context)
-        if data == CallbackData.TRIAL: return await trial_command_handler(update, context)
-        if data == CallbackData.SUBSCRIBE_MENU: return await subscribe_command_handler(update, context)
-        if data == CallbackData.DEVELOPER: return await developer_command_handler(update, context)
-        if data == CallbackData.UPDATES: return await updates_command_handler(update, context)
-        if data == CallbackData.REFERRAL_MENU: return await referral_menu_callback(update, context)
-        if data == CallbackData.REMINDER_MENU: return await reminder_menu_callback(update, context)
-        if data == CallbackData.TRANSLATION_MENU: return await translation_menu_callback(update, context)
-        if data == CallbackData.CONTESTS_MENU: return await contests_command_handler(update, context)
+            try:
+                await query.message.delete()
+            except:
+                pass
+            return
+
+        # ===== المساعدة والدعم =====
+        if data == CallbackData.HELP:
+            return await help_command_handler(update, context)
+        if data == CallbackData.SUPPORT_MENU:
+            return await support_command_handler(update, context)
+        if data == CallbackData.SUPPORT_HELP:
+            await _answer_query(query)
+            await safe_send_markdown(context.bot, update.effective_user.id, "❓ الدعم")
+            return
+        if data == CallbackData.SUPPORT_TICKET:
+            await _answer_query(query)
+            context.user_data['support_mode'] = True
+            await safe_send_markdown(context.bot, update.effective_user.id, "📝 أرسل رسالتك")
+            return
+
+        # ===== التجربة والاشتراك =====
+        if data == CallbackData.TRIAL:
+            return await trial_callback(update, context)
+        if data == CallbackData.SUBSCRIBE_MENU:
+            return await subscribe_menu_callback(update, context)
+        if data == CallbackData.BUY_SUBSCRIPTION_1:
+            return await buy_subscription_1_callback(update, context)
+        if data == CallbackData.BUY_SUBSCRIPTION_2:
+            return await buy_subscription_2_callback(update, context)
+        if data == CallbackData.BUY_SUBSCRIPTION_30:
+            return await buy_subscription_30_callback(update, context)
+        if data == CallbackData.BUY_SUBSCRIPTION_90:
+            return await buy_subscription_90_callback(update, context)
+
+        # ===== المطور والتحديثات =====
+        if data == CallbackData.DEVELOPER:
+            return await developer_command_handler(update, context)
+        if data == CallbackData.UPDATES:
+            return await updates_command_handler(update, context)
+
+        # ===== الإحالات =====
+        if data == CallbackData.REFERRAL_MENU:
+            return await referral_menu_callback(update, context)
+        if data.startswith("referral:copy_link:"):
+            return await referral_copy_link_callback(update, context)
+        if data == CallbackData.REFERRAL_CLAIM_REWARD:
+            return await referral_claim_reward_callback(update, context)
+        if data == CallbackData.REFERRAL_LIST:
+            return await referral_list_callback(update, context)
+
+        # ===== التذكيرات =====
+        if data == CallbackData.REMINDER_MENU:
+            return await reminder_menu_callback(update, context)
+        if data == CallbackData.REMINDER_TOGGLE_SUB:
+            return await reminder_toggle_sub_callback(update, context)
+        if data == CallbackData.REMINDER_TOGGLE_DAILY:
+            return await reminder_toggle_daily_callback(update, context)
+        if data == CallbackData.REMINDER_TOGGLE_WEEKLY:
+            return await reminder_toggle_weekly_callback(update, context)
+        if data == CallbackData.REMINDER_SET_DAYS:
+            return await reminder_set_days_callback(update, context)
+        if data == CallbackData.REMINDER_SET_LANG:
+            return await reminder_set_lang_callback(update, context)
+        if data.startswith("reminder:lang:"):
+            return await reminder_lang_callback(update, context)
+
+        # ===== الترجمة =====
+        if data == CallbackData.TRANSLATION_MENU:
+            return await translation_menu_callback(update, context)
+        if data == CallbackData.TRANSLATION_OFF:
+            return await translation_off_callback(update, context)
+        if data.startswith("translation:set:"):
+            return await translation_set_callback(update, context)
+
+        # ===== المسابقات =====
+        if data == CallbackData.CONTESTS_MENU:
+            return await contests_command_handler(update, context)
         if data.startswith("contest_join:"):
-            cid = int(data.split(":")[-1])
-            context.user_data['contest_join_id'] = cid
-            context.user_data['state'] = UserState.WAITING_CONTEST_ANSWER
-            await safe_send_markdown(context.bot, update.effective_user.id, "📝 أرسل إجابتك:")
+            return await contest_join_callback(update, context)
         if data == CallbackData.CONTEST_WINNERS:
-            await safe_send_markdown(context.bot, update.effective_user.id, "🏆 الفائزون\nقيد التطوير")
+            return await contest_winners_callback(update, context)
+
+        # ===== NSFW =====
+        if data == CallbackData.NSFW_SETTINGS:
+            return await nsfw_settings_callback(update, context)
+        if data == CallbackData.NSFW_TOGGLE:
+            return await nsfw_toggle_callback(update, context)
+        if data == CallbackData.NSFW_THRESHOLD_SET:
+            return await nsfw_threshold_set_callback(update, context)
+
+        # ===== الردود التلقائية (المجموعة) =====
+        if data.startswith("auto_reply_menu:"):
+            return await auto_reply_menu_callback(update, context)
+        if data.startswith("auto_reply_toggle:"):
+            return await auto_reply_toggle_callback(update, context)
+        if data.startswith("auto_reply_admins:"):
+            return await auto_reply_admins_callback(update, context)
+        if data.startswith("auto_reply_reset:"):
+            return await auto_reply_reset_callback(update, context)
+        if data.startswith("auto_reply_confirm_reset:"):
+            return await auto_reply_confirm_reset_callback(update, context)
+        if data.startswith("auto_reply_cancel:"):
+            return await auto_reply_cancel_callback(update, context)
+        if data.startswith("auto_reply_stats:"):
+            return await auto_reply_stats_callback(update, context)
+        if data.startswith("user_auto_reply_toggle:"):
+            return await user_auto_reply_toggle_callback(update, context)
+
+        # ===== التحقق من الاشتراك الإجباري =====
         if data == CallbackData.CHECK_SUBSCRIBE:
-            await main_menu_callback(update, context)
+            return await check_subscribe_callback_handler(update, context)
+
+        # ===== تغيير اللغة =====
         if data.startswith("lang_"):
-            await safe_send_markdown(context.bot, update.effective_user.id, f"✅ تم تغيير اللغة")
-            await main_menu_callback(update, context)
+            return await language_callback(update, context)
+
+        # ===== أزرار نصية عامة =====
         if data in ["rank", "top", "schedule_post", "language"]:
-            if data == "rank": return await rank_command_handler(update, context)
-            if data == "top": return await top_command_handler(update, context)
+            if data == "rank":
+                return await rank_command_handler(update, context)
+            if data == "top":
+                return await top_command_handler(update, context)
             if data == "schedule_post":
                 context.user_data['state'] = UserState.WAITING_SCHEDULE_POST
                 await safe_send_markdown(context.bot, update.effective_user.id, "📝 أرسل: YYYY-MM-DD HH:MM النص")
-            if data == "language": return await language_command_handler(update, context)
-        
-        # الأدمن
+                return
+            if data == "language":
+                return await language_command_handler(update, context)
+
+        # ===== لوحة الأدمن =====
         if data == CallbackData.ADMIN_PANEL:
             user_id = update.effective_user.id
             if user_id == PRIMARY_OWNER_ID or await is_bot_admin(user_id):
@@ -2620,10 +2775,18 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             return
         if data.startswith("admin:") or data.startswith("confirm_restore:"):
             return await admin_router_callback(update, context)
-        
+
+        # ===== غير معروف =====
         await _answer_query(query)
+        logger.warning(f"بيانات كولباك غير معروفة: {data}")
+
     except Exception as e:
-        logger.error(f"خطأ في الكولباك: {e}")
+        error_id = log_error(e)
+        try:
+            await _answer_query(query)
+            await safe_send_markdown(context.bot, update.effective_user.id, f"❌ خطأ: `{error_id}`")
+        except:
+            pass
 
 # ===================================================================
 # 28. دوال الأدمن المساعدة
