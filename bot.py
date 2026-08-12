@@ -972,7 +972,11 @@ async def db_contains_banned_word(text: str, chat_id: int) -> Optional[str]:
 
 async def rebuild_banned_patterns():
     global BANNED_PATTERNS
-    BANNED_PATTERNS = await execute_db(lambda c: [row[0] for row in (await c.execute("SELECT word FROM banned_words WHERE chat_id=-1")).fetchall()])
+    async def _get(conn):
+        cur = await conn.execute("SELECT word FROM banned_words WHERE chat_id=-1")
+        rows = await cur.fetchall()
+        return [row[0] for row in rows]
+    BANNED_PATTERNS = await execute_db(_get)
 
 async def apply_penalty_with_duration(bot, chat_id: int, user_id: int, penalty: str, duration_minutes: int = 0, reason: str = "", moderator_id: int = None) -> Tuple[bool, str]:
     if user_id == PRIMARY_OWNER_ID: return False, "لا يمكن"
