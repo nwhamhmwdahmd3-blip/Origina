@@ -4174,18 +4174,24 @@ async def auto_publish_loop_improved(bot):
     await asyncio.sleep(5)
     while True:
         try:
-            rows = await execute_db(lambda c: c.execute("""
-                SELECT uc.id as ch_db_id, uc.channel_id, p.id as post_id, p.text, p.media_type, p.media_file_id, u.user_id
-                FROM user_channels uc
-                JOIN users u ON uc.user_id = u.user_id
-                LEFT JOIN schedule s ON uc.id = s.channel_db_id
-                JOIN posts p ON uc.id = p.channel_db_id
-                WHERE u.auto_publish = 1 AND u.banned = 0 AND uc.banned = 0
-                AND p.published = 0 AND (p.fail_count IS NULL OR p.fail_count < 3)
-                AND (s.next_publish_date IS NULL OR s.next_publish_date <= ?)
-                ORDER BY COALESCE(s.next_publish_date, '1970-01-01') ASC
-                LIMIT ?
-            """, (utc_now_iso(), MAX_CHANNELS_PER_CYCLE * 2)) or c.fetchall())
+            # ✅ الطريقة الصحيحة لجلب البيانات
+            async def _get_posts(conn):
+                await conn.execute("""
+                    SELECT uc.id as ch_db_id, uc.channel_id, p.id as post_id, p.text, p.media_type, p.media_file_id, u.user_id
+                    FROM user_channels uc
+                    JOIN users u ON uc.user_id = u.user_id
+                    LEFT JOIN schedule s ON uc.id = s.channel_db_id
+                    JOIN posts p ON uc.id = p.channel_db_id
+                    WHERE u.auto_publish = 1 AND u.banned = 0 AND uc.banned = 0
+                    AND p.published = 0 AND (p.fail_count IS NULL OR p.fail_count < 3)
+                    AND (s.next_publish_date IS NULL OR s.next_publish_date <= ?)
+                    ORDER BY COALESCE(s.next_publish_date, '1970-01-01') ASC
+                    LIMIT ?
+                """, (utc_now_iso(), MAX_CHANNELS_PER_CYCLE * 2))
+                return await conn.fetchall()
+
+            rows = await execute_db(_get_posts)
+
             published_channels = set()
             tasks = []
             for row in rows:
@@ -4199,8 +4205,10 @@ async def auto_publish_loop_improved(bot):
                 media_type = row[4]
                 media_file_id = row[5]
                 tasks.append(_publish_post_task(bot, ch_db_id, ch_tele_id, post_id, text, media_type, media_file_id))
+            
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            
             await asyncio.sleep(await db_get_publish_interval_seconds())
         except Exception as e:
             logger.error(f"نشر: {e}")
