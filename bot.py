@@ -7,7 +7,7 @@
 المطور: @RelaxMgr
 تم التحديث: إصلاح جميع الأخطاء المذكورة، دعم لغتين، فصل الردود التلقائية في ملف منفصل، ربط جميع الأزرار
 """
-
+import functools
 import sys
 import os
 import secrets
@@ -4145,13 +4145,23 @@ class TaskManager:
         return len(self.tasks)
 
 task_manager = TaskManager()
-
 async def safe_loop(coro_func, name="loop"):
+    """تشغيل دالة غير متزامنة في حلقة مع إعادة المحاولة عند الخطأ"""
     while True:
         try:
+            # إذا كانت coro_func دالة غير متزامنة، استدعها مباشرة
             if asyncio.iscoroutinefunction(coro_func):
                 await coro_func()
+            # إذا كانت دالة تعيد كوروتين (مثل partial)، استخدم await عليها
+            elif callable(coro_func):
+                result = coro_func()
+                if asyncio.iscoroutine(result):
+                    await result
+                else:
+                    # إذا كانت دالة عادية، فقط نفذها
+                    pass
             else:
+                # إذا كان كائنًا قابلاً للانتظار مباشرة
                 await coro_func
             await asyncio.sleep(1)
         except asyncio.CancelledError:
@@ -5759,6 +5769,8 @@ async def main():
         logger.warning(f"فشل تعيين الأوامر: {e}")  # [FIX] تسجيل الخطأ بدلاً من تجاهله
 
     # المهام الخلفية
+    from functools import partial
+    task_manager.create_task(safe_loop(partial(auto_close_contests_loop, application.bot), "مسابقات"))
     task_manager.create_task(safe_loop(lambda: auto_publish_loop_improved(application.bot), "نشر"))
     task_manager.create_task(safe_loop(auto_backup, "نسخ"))
     task_manager.create_task(safe_loop(lambda: run_scheduled_posts_loop_improved(application.bot), "مجدولة"))
@@ -5768,7 +5780,7 @@ async def main():
     task_manager.create_task(safe_loop(broadcast_stats_periodically, "إحصائيات"))
     task_manager.create_task(safe_loop(cleanup_points_cache, "كاش"))
     task_manager.create_task(safe_loop(memory_monitor, "ذاكرة"))
-    task_manager.create_task(safe_loop(lambda: auto_close_contests_loop(application.bot), "مسابقات"))
+    #task_manager.create_task(safe_loop(lambda: auto_close_contests_loop(application.bot), "مسابقات"))
     task_manager.create_task(safe_loop(lambda: refresh_group_admins_and_hidden_owners_loop(application.bot), "صلاحيات"))
     task_manager.create_task(safe_loop(memory_optimizer_loop, "تحسين الذاكرة"))
     task_manager.create_task(safe_loop(cleanup_caches_periodically, "تنظيف الكاشات"))  # [FIX] مهمة تنظيف الكاشات
