@@ -2268,67 +2268,93 @@ async def toggle_auto_recycle_callback(update: Update, context: ContextTypes.DEF
 # 25. معالج الأمان - زر التبديل
 # ===================================================================
 async def security_toggle_setting_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; await _answer_query(query)
+    query = update.callback_query
+    await _answer_query(query)
     user_id = update.effective_user.id
     parts = query.data.split(":")
-    if len(parts) < 3: return
+    if len(parts) < 3:
+        return
     action = parts[1]
-    try: chat_id = int(parts[2])
-    except: return
-    
+    try:
+        chat_id = int(parts[2])
+    except ValueError:
+        return
+
     if not await is_authorized_in_group(context.bot, chat_id, user_id):
-        await query.answer("🔒 غير مصرح", show_alert=True); return
-    
+        await query.answer("🔒 غير مصرح", show_alert=True)
+        return
+
     field_map = {
-        "links": "delete_links", "mentions": "mentions", "slow_mode": "slow_mode",
-        "delete_videos": "delete_videos", "delete_audio": "delete_audio",
-        "delete_animation": "delete_animation", "delete_service": "delete_service",
-        "delete_documents": "delete_documents", "delete_stickers": "delete_stickers",
-        "delete_forwarded": "delete_forwarded", "delete_polls": "delete_polls",
-        "delete_games": "delete_games", "delete_voice": "delete_voice",
+        "links": "delete_links",
+        "mentions": "mentions",
+        "slow_mode": "slow_mode",
+        "delete_videos": "delete_videos",
+        "delete_service": "delete_service",
+        "delete_documents": "delete_documents",
+        "delete_stickers": "delete_stickers",
+        "delete_audio": "delete_audio",
+        "delete_animation": "delete_animation",
+        "delete_forwarded": "delete_forwarded",
+        "delete_polls": "delete_polls",
+        "delete_games": "delete_games",
+        "delete_voice": "delete_voice",
         "delete_video_note": "delete_video_note",
-        "welcome_enabled": "welcome_enabled", "goodbye_enabled": "goodbye_enabled",
-        "antiflood": "antiflood_enabled", "night_mode": "night_mode_enabled",
+        "welcome_enabled": "welcome_enabled",
+        "goodbye_enabled": "goodbye_enabled",
+        "antiflood": "antiflood_enabled",
+        "night_mode": "night_mode_enabled",
     }
-    
+
     if action in field_map:
         col = field_map[action]
         settings = await db_get_security_settings(chat_id, force_refresh=True)
         current = settings.get(col, 0)
         new_value = 1 if current == 0 else 0
-        await db_set_security_settings(chat_id, **{col: new_value})
-        
-        # تأكيد التغيير
+        success = await db_set_security_settings(chat_id, **{col: new_value})
+
         status_text = "✅ مفعل" if new_value else "❌ معطل"
         await query.answer(f"تم تغيير {action} إلى {status_text}", show_alert=True)
-        
+
         # تحديث اللوحة
         settings = await db_get_security_settings(chat_id, force_refresh=True)
-        text = "🔐 **إعدادات الأمان**\n━━━━━━━━━━━━━━\n"
-        def st(v): return "✅" if v else "❌"
-        text += f"🔗 الروابط: {st(settings.get('delete_links',0))}\n@ المعرفات: {st(settings.get('mentions',0))}\n"
-        text += f"⏱️ البطيء: {st(settings.get('slow_mode',0))}\n🎯 الترحيب: {st(settings.get('welcome_enabled',0))}\n"
-        text += f"👋 الوداع: {st(settings.get('goodbye_enabled',0))}\n🎬 فيديو: {st(settings.get('delete_videos',0))}\n"
-        text += f"🎵 صوت: {st(settings.get('delete_audio',0))}\n🎞️ متحرك: {st(settings.get('delete_animation',0))}\n"
-        text += f"📄 ملفات: {st(settings.get('delete_documents',0))}\n🖼️ ملصقات: {st(settings.get('delete_stickers',0))}\n"
-        text += f"📨 معاد: {st(settings.get('delete_forwarded',0))}\n🌊 فيضان: {st(settings.get('antiflood_enabled',0))}\n"
-        text += f"🌙 ليلي: {st(settings.get('night_mode_enabled',0))}\n⚖️ العقوبة: {settings.get('auto_penalty','none')}"
-        try: await query.edit_message_text(text=text, reply_markup=security_keyboard(chat_id))
-        except: pass
-    elif action == "max_length":
+        text = _build_security_text(settings)
+        keyboard = security_keyboard(chat_id)
+        try:
+            await query.edit_message_text(text=text, reply_markup=keyboard, parse_mode="HTML")
+        except Exception:
+            try:
+                await query.message.reply_text(text, reply_markup=keyboard, parse_mode="HTML")
+            except:
+                pass
+        return
+
+    # معالجة الحالات الخاصة
+    if action == "max_length":
         context.user_data['state'] = UserState.WAITING_MAX_LENGTH
         context.user_data['security_chat_id'] = chat_id
-        await query.edit_message_text(text="📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
+        await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
     elif action == "banned_words_menu":
-        await query.edit_message_text(text="🚫 **الكلمات المحظورة**", reply_markup=get_group_banned_words_keyboard(chat_id))
+        await query.edit_message_text("🚫 **الكلمات المحظورة**", reply_markup=get_group_banned_words_keyboard(chat_id))
     elif action == "enable_all":
-        await db_set_security_settings(chat_id, delete_videos=1, delete_audio=1, delete_animation=1, delete_service=1, delete_documents=1, delete_stickers=1, delete_forwarded=1, delete_polls=1, delete_games=1, delete_voice=1, delete_video_note=1)
-        await group_settings_callback(update, context)
+        await db_set_security_settings(chat_id,
+            delete_videos=1, delete_audio=1, delete_animation=1, delete_service=1,
+            delete_documents=1, delete_stickers=1, delete_forwarded=1, delete_polls=1,
+            delete_games=1, delete_voice=1, delete_video_note=1)
+        await query.answer("✅ تم تفعيل الكل", show_alert=True)
+        settings = await db_get_security_settings(chat_id, force_refresh=True)
+        await query.edit_message_text(_build_security_text(settings), reply_markup=security_keyboard(chat_id), parse_mode="HTML")
     elif action == "disable_all":
-        await db_set_security_settings(chat_id, delete_videos=0, delete_audio=0, delete_animation=0, delete_service=0, delete_documents=0, delete_stickers=0, delete_forwarded=0, delete_polls=0, delete_games=0, delete_voice=0, delete_video_note=0)
-        await group_settings_callback(update, context)
+        await db_set_security_settings(chat_id,
+            delete_videos=0, delete_audio=0, delete_animation=0, delete_service=0,
+            delete_documents=0, delete_stickers=0, delete_forwarded=0, delete_polls=0,
+            delete_games=0, delete_voice=0, delete_video_note=0)
+        await query.answer("❌ تم تعطيل الكل", show_alert=True)
+        settings = await db_get_security_settings(chat_id, force_refresh=True)
+        await query.edit_message_text(_build_security_text(settings), reply_markup=security_keyboard(chat_id), parse_mode="HTML")
     elif action == "delete_penalty":
-        await query.edit_message_text(text="⚖️ اختر العقوبة:", reply_markup=penalty_keyboard(chat_id))
+        await query.edit_message_text("⚖️ اختر العقوبة:", reply_markup=penalty_keyboard(chat_id))
+    else:
+        await query.answer("⚠️ غير معروف", show_alert=True)
 
 # ===================================================================
 # 26. معالجات إضافية
