@@ -5242,21 +5242,63 @@ async def help_command_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await safe_send_markdown(context.bot, update.effective_user.id, text)
 
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تفعيل البوت في المجموعة ومزامنة المشرفين (الرد داخل المجموعة)"""
     if update.effective_chat.type not in ['group', 'supergroup']:
         await safe_send_markdown(context.bot, update.effective_user.id, "❌ يستخدم في المجموعات فقط")
         return
+    
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+    
+    # التحقق من أن المستخدم مشرف في المجموعة
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status not in ['administrator', 'creator']:
-            await safe_send_markdown(context.bot, update.effective_user.id, "🔒 تحتاج صلاحيات مشرف")
+            await safe_send_markdown(context.bot, update.effective_user.id, "🔒 تحتاج صلاحيات مشرف لتفعيل البوت")
             return
-    except:
+    except Exception as e:
+        await safe_send_markdown(context.bot, update.effective_user.id, f"❌ خطأ في التحقق من صلاحياتك: {str(e)[:50]}")
         return
-    await db_register_group(chat_id, update.effective_chat.title or "", user_id, update.effective_chat.username)
-    count = await db_sync_group_admins(chat_id, context.bot)
-    await safe_send_markdown(context.bot, update.effective_user.id, f"✅ تم التفعيل مع {count} مشرف")
+
+    # تسجيل المجموعة في قاعدة البيانات
+    registered = await db_register_group(chat_id, update.effective_chat.title or "", user_id, update.effective_chat.username)
+    
+    # مزامنة المشرفين الرسميين من تيليجرام
+    admin_count = await db_sync_group_admins(chat_id, context.bot)
+    
+    # ✅ تأكد من إضافة المستخدم الحالي كمشرف (حتى لو فشل جلب المشرفين)
+    async def ensure_current_admin(conn):
+        await conn.execute("INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?,?)", (chat_id, user_id))
+        await conn.commit()
+    await execute_db(ensure_current_admin)
+    
+    # مسح الكاش الخاص بالمجموعة والمستخدم لضمان التحديث الفوري
+    invalidate_auth_cache(chat_id, user_id)
+    invalidate_auth_cache(chat_id)
+    
+    # ========================================================
+    # 📢 إرسال رسالة التفعيل داخل المجموعة
+    # ========================================================
+    await safe_send_markdown(
+        context.bot,
+        chat_id,  # ← إرسال إلى المجموعة
+        f"✅ **تم تفعيل البوت بنجاح!**\n\n"
+        f"👥 تم مزامنة {admin_count} مشرف من تيليجرام.\n"
+        f"👤 تم إضافة `{user_id}` كمدير للبوت.\n\n"
+        f"📌 يمكنك الآن استخدام الأوامر الإدارية:\n"
+        f"• `/security` - إعدادات الأمان\n"
+        f"• `/ban`, `/mute`, `/warn` - العقوبات\n"
+        f"• `/panel` - لوحة التحكم\n"
+        f"• `/add_hidden_admin` - إضافة مشرف مخفي"
+    )
+    
+    # (اختياري) إرسال رسالة خاصة للمستخدم لتأكيد الإضافة
+    await safe_send_markdown(
+        context.bot,
+        user_id,
+        f"✅ تم تفعيل البوت في مجموعة **{update.effective_chat.title}**\n"
+        f"ستظهر المجموعة الآن في قائمة 'مجموعاتي' داخل الخاص."
+    )
 
 async def register_hidden_owner_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
