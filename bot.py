@@ -5461,6 +5461,16 @@ async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAUL
         f"✅ تم تفعيل البوت في مجموعة **{update.effective_chat.title}**\n"
         f"ستظهر المجموعة الآن في قائمة 'مجموعاتي' داخل الخاص."
     )
+async def db_is_group_banned(chat_id: int) -> bool:
+    async def _check(conn):
+        cur = await conn.execute("SELECT banned FROM bot_groups WHERE chat_id=?", (chat_id,))
+        row = await cur.fetchone()
+        return row[0] == 1 if row else False
+    return await execute_db(_check)
+
+async def db_set_group_ban(chat_id: int, banned: bool):
+    await execute_db(lambda c: c.execute("UPDATE bot_groups SET banned=? WHERE chat_id=?", (1 if banned else 0, chat_id)) or c.commit())
+
 
 async def register_hidden_owner_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
