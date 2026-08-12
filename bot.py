@@ -5271,117 +5271,133 @@ async def help_command_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await safe_send_markdown(context.bot, update.effective_user.id, text)
 async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    تفعيل المجموعة - للمشرفين فقط (مع دعم المشرفين المخفيين).
-    - يتحقق من صلاحيات البوت أولاً.
-    - يتحقق من أن المستخدم مشرف حقيقي (أو مالك).
-    - يتعامل مع المشرفين المخفيين (Anonymous Admins) باكتشاف المعرف الحقيقي.
-    - يسجل المجموعة في حساب المشرف، فتظهر في قائمة 'مجموعاتي'.
-    - يرفض العضو العادي برسالة واضحة.
+    معالج أمر /syncgroup - تفعيل المجموعة وتسجيل المالك المخفي تلقائياً
     """
-    chat = update.effective_chat
-    if chat.type not in ['group', 'supergroup']:
-        await safe_send_markdown(context.bot, update.effective_user.id, "❌ هذا الأمر يعمل فقط في المجموعات.")
+    # 1. التحقق من أن الأمر يستخدم في مجموعة
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send_markdown(context.bot, update.effective_user.id, get_text(update.effective_user.id, 'group_only'))
         return
 
-    chat_id = chat.id
+    chat_id = update.effective_chat.id
+    chat_name = update.effective_chat.title or "بدون اسم"
     user_id = update.effective_user.id
-    bot_id = context.bot.id
 
-    # 1. التحقق من صلاحيات البوت (يجب أن يكون مشرفاً)
-    try:
-        bot_member = await context.bot.get_chat_member(chat_id, bot_id)
-        if bot_member.status not in ['administrator', 'creator']:
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ إضافة البوت كمشرف", url=f"https://t.me/{BOT_USERNAME}?startgroup")]
-            ])
-            await safe_send_markdown(context.bot, user_id, "⚠️ **البوت ليس مشرفاً في هذه المجموعة.**\nيرجى إضافة البوت كمشرف أولاً.", reply_markup=kb)
-            return
+    # 2. تسجيل المجموعة في قاعدة البيانات
+    await db_register_group(chat_id, chat_name, user_id, update.effective_chat.username)
 
-        can_delete = getattr(bot_member, 'can_delete_messages', False)
-        can_ban = getattr(bot_member, 'can_restrict_members', False)
-        if not can_delete or not can_ban:
-            await safe_send_markdown(context.bot, user_id, "⚠️ **البوت ينقصه صلاحيات.**\nيجب أن يمتلك صلاحيات 'حذف الرسائل' و 'تقييد الأعضاء'.")
-            return
-    except Exception as e:
-        await safe_send_markdown(context.bot, user_id, f"❌ لا يمكن التحقق من صلاحيات البوت: {str(e)[:100]}")
+    # 3. التحقق من صلاحيات البوت في المجموعة
+    bot_perms = await check_bot_admin_permissions_group(context.bot, chat_id)
+    if not bot_perms['can_act']:
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"⚠️ **البوت ليس مشرفاً في المجموعة!**\n\n"
+            f"📌 تم تسجيل المجموعة `{chat_name}`.\n\n"
+            f"🔹 **لتفعيل الميزات المتقدمة:**\n"
+            f"• اجعل البوت مشرفاً في المجموعة\n"
+            f"• ثم استخدم `/syncgroup` مرة أخرى\n\n"
+            f"🔹 إذا كنت مالكاً أو مشرفاً، يمكنك استخدام:\n"
+            f"`/register_hidden_owner`\n"
+            f"بعد جعل البوت مشرفاً."
+        )
         return
 
-    # 2. التحقق من صلاحيات المستخدم (هل هو مشرف حقيقي؟)
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        is_admin = member.status in ['administrator', 'creator']
-    except:
-        is_admin = False
-
-    # 3. التعامل مع المشرفين المخفيين (Anonymous Admins)
+    # 4. التحقق من صلاحية المستخدم (هل هو مشرف أو مالك؟)
+    is_admin = False
     real_user_id = user_id
-    if user_id == ANONYMOUS_ADMIN_ID:  # 1087968824
+
+    # التعامل مع المشرفين المجهولين
+    if user_id == ANONYMOUS_ADMIN_ID:
         try:
             admins = await context.bot.get_chat_administrators(chat_id)
-            # نبحث عن المالك الحقيقي
-            for a in admins:
-                if a.status == 'creator':
-                    real_user_id = a.user.id
-                    break
-            # إذا لم نجد المالك، نأخذ أول مشرف غير مجهول
-            if real_user_id == user_id:
-                for a in admins:
-                    if a.user.id != ANONYMOUS_ADMIN_ID:
-                        real_user_id = a.user.id
+            if admins:
+                # البحث عن المالك أولاً
+                for admin in admins:
+                    if admin.status == 'creator':
+                        real_user_id = admin.user.id
+                        is_admin = True
                         break
-            is_admin = True  # المشرف المخفي يعتبر مشرفاً
-        except:
-            pass
+                # إذا لم يتم العثور على مالك، استخدم أول مشرف
+                if not is_admin and admins:
+                    real_user_id = admins[0].user.id
+                    is_admin = True
+        except Exception as e:
+            logger.error(f"فشل في الحصول على مشرفين من المجموعة {chat_id}: {e}")
+            is_admin = False
+    else:
+        # التحقق من التيليجرام مباشرة
+        is_admin = await is_currently_admin_in_group(context.bot, chat_id, user_id)
+        real_user_id = user_id
 
-    # 4. إذا كان المستخدم ليس مشرفاً (ولا حتى مخفياً) → نرفضه
-    if not is_admin:
-        await safe_send_markdown(context.bot, user_id, "🔒 **غير مصرح لك.**\nهذا الأمر متاح فقط للمشرفين والمالكين.")
-        return
+    # 5. إذا كان المستخدم مشرفاً، قم بتسجيله كمالك مخفي
+    if is_admin:
+        # تسجيل المالك المخفي
+        await db_register_hidden_owner_group(chat_id, real_user_id)
+        invalidate_auth_cache(chat_id, real_user_id)
+        
+        # مزامنة جميع المشرفين مع قاعدة البيانات
+        admin_count = await db_sync_group_admins(chat_id, context.bot, real_user_id)
 
-    # 5. تسجيل المجموعة في قاعدة البيانات (باستخدام المعرف الحقيقي)
-    chat_name = chat.title or "بدون اسم"
-    chat_username = chat.username or None
-    await db_register_group(chat_id, chat_name, real_user_id, chat_username)
+        # إرسال رسالة نجاح التفعيل
+        await safe_send_markdown(
+            context.bot,
+            real_user_id,
+            f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+            f"📌 اسم المجموعة: {chat_name}\n"
+            f"🆔 المعرف: {chat_id}\n"
+            f"👤 تم تسجيلك كمالك مخفي (المعرف: `{real_user_id}`)\n"
+            f"👥 تم مزامنة {admin_count} مشرف\n\n"
+            f"🔐 استخدم `/security` لإعدادات الأمان\n"
+            f"🛠️ استخدم `/panel` للوحة التحكم"
+        )
 
-    # 6. إضافة المشرف الحقيقي إلى جدول user_groups_link (حتى تظهر المجموعة في 'مجموعاتي')
-    await execute_db(lambda c: c.execute(
-        "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)",
-        (real_user_id, chat_id)
-    ) or c.commit())
+        # إذا كان المستخدم مجهولاً، أرسل له معرفه الحقيقي
+        if user_id == ANONYMOUS_ADMIN_ID and user_id != real_user_id:
+            await safe_send_markdown(
+                context.bot,
+                user_id,
+                f"🔍 تم تسجيلك كمالك مخفي باستخدام معرفك الحقيقي: `{real_user_id}`"
+            )
 
-    # 7. تسجيل المالك المخفي (للمشرف) ومزامنة المشرفين
-    await db_register_hidden_owner_group(chat_id, real_user_id)
-    invalidate_auth_cache(chat_id, real_user_id)
-    count = await db_sync_group_admins(chat_id, context.bot, real_user_id)
+        # تحليل المشاعر للمجموعة
+        await db_save_sentiment_history(real_user_id, chat_id, f"group_activated_{chat_name[:20]}", "positive", 0.5)
 
-    # 8. إلغاء حظر المجموعة إذا كانت محظورة
-    if await db_is_group_banned(chat_id):
-        await db_set_group_ban(chat_id, False)
+        # إرسال إشعار للمجموعة
+        try:
+            await safe_send_markdown(
+                context.bot,
+                chat_id,
+                f"🤖 **تم تفعيل البوت في المجموعة!**\n\n"
+                f"🔹 يمكن للمشرفين استخدام:\n"
+                f"• `/security` لإعدادات الأمان\n"
+                f"• `/panel` للوحة التحكم\n"
+                f"• `/lock` لقفل المجموعة\n"
+                f"• `/unlock` لفتح المجموعة\n\n"
+                f"📌 استخدم `/help` لمعرفة جميع الأوامر المتاحة."
+            )
+        except Exception as e:
+            logger.error(f"فشل إرسال إشعار التفعيل للمجموعة: {e}")
 
-    # 9. تسجيل الإجراء في سجل الأدمن
-    await db_log_admin_action(chat_id, real_user_id, "syncgroup", target_id=0, reason="تفعيل البوت (مشرف)")
-
-    # 10. إرسال تقرير تأكيد للمشرف
-    report = f"""
-✅ **تم تفعيل المجموعة بنجاح!**
-
-📌 **المجموعة:** {chat_name}
-🆔 المعرف: `{chat_id}`
-👑 **المالك المخفي:** `{real_user_id}`
-👥 **عدد المشرفين المسجلين:** {count}
-
-🔹 **الآن ستظهر هذه المجموعة في قائمة '👥 مجموعاتي'** داخل البوت.
-🔹 استخدم `/security` لتخصيص إعدادات الأمان.
-🔹 استخدم `/panel` للتحكم السريع في المجموعة.
-    """
-    await safe_send_markdown(context.bot, user_id, report)
-
-    # 11. إرسال رسالة ترحيب في المجموعة (اختياري)
-    try:
-        await safe_send_markdown(context.bot, chat_id, f"✅ تم تفعيل البوت بواسطة المشرف `{real_user_id}`.")
-    except:
-        pass
-
+    else:
+        # المستخدم ليس مشرفاً
+        await safe_send_markdown(
+            context.bot,
+            user_id,
+            f"✅ **تم تسجيل المجموعة!**\n\n"
+            f"📌 اسم المجموعة: {chat_name}\n"
+            f"🆔 المعرف: {chat_id}\n\n"
+            f"🔹 **لتفعيل الميزات المتقدمة:**\n"
+            f"• تأكد من أن البوت مشرف في المجموعة\n"
+            f"• يجب أن يقوم أحد المشرفين بتنفيذ الأمر\n"
+            f"• سيتم إشعار مشرفي المجموعة لتفعيل البوت\n\n"
+            f"📌 **إذا كنت مشرفاً:**\n"
+            f"• استخدم `/register_hidden_owner` لتسجيل نفسك كمالك مخفي\n"
+            f"• استخدم `/security` لإعدادات الأمان"
+        )
+        
+        # إشعار مشرفي المجموعة بطلب التفعيل
+        await notify_group_admins(context.bot, chat_id, user_id, chat_name)
+ 
 async def db_is_group_banned(chat_id: int) -> bool:
     async def _check(conn):
         cur = await conn.execute("SELECT banned FROM bot_groups WHERE chat_id=?", (chat_id,))
