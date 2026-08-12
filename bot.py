@@ -4241,14 +4241,25 @@ async def run_scheduled_posts_loop_improved(bot):
     while True:
         await asyncio.sleep(10)
         try:
-            posts = await execute_db(lambda c: c.execute("SELECT id, chat_id, text, fail_count FROM scheduled_posts WHERE publish_time <= ? AND fail_count < 5 ORDER BY publish_time ASC LIMIT 50", (utc_now_iso(),)) or c.fetchall())
+            # ✅ الطريقة الصحيحة لجلب البيانات
+            async def _get_posts(conn):
+                await conn.execute(
+                    "SELECT id, chat_id, text, fail_count FROM scheduled_posts "
+                    "WHERE publish_time <= ? AND fail_count < 5 "
+                    "ORDER BY publish_time ASC LIMIT 50",
+                    (utc_now_iso(),)
+                )
+                return await conn.fetchall()
+
+            posts = await execute_db(_get_posts)
+
             for post_id, chat_id, text, fail_count in posts:
                 try:
                     await bot.send_message(chat_id, text[:4096] if text else ".")
                     await execute_db(lambda c: c.execute("DELETE FROM scheduled_posts WHERE id=?", (post_id,)) or c.commit())
-                except:
+                except Exception:
                     await execute_db(lambda c: c.execute("UPDATE scheduled_posts SET fail_count = ? WHERE id=?", (fail_count+1, post_id)) or c.commit())
-                    if fail_count+1 >= 5:
+                    if fail_count + 1 >= 5:
                         await execute_db(lambda c: c.execute("DELETE FROM scheduled_posts WHERE id=?", (post_id,)) or c.commit())
         except Exception as e:
             logger.error(f"منشورات مجدولة: {e}")
