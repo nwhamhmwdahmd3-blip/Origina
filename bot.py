@@ -2263,6 +2263,67 @@ async def toggle_auto_recycle_callback(update: Update, context: ContextTypes.DEF
     cur = await db_get_auto_recycle(user_id)
     await db_set_auto_recycle(user_id, not cur)
     await settings_menu_callback(update, context)
+# ===================================================================
+# دوال بناء وعرض إعدادات الأمان
+# ===================================================================
+
+def _build_security_text(settings: dict) -> str:
+    """بناء نص لوحة الأمان بصيغة HTML"""
+    def st(val):
+        return "✅" if val else "❌"
+
+    lines = [
+        "🔐 <b>إعدادات الأمان للمجموعة</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"🔗 الروابط: {st(settings.get('delete_links', 0))}",
+        f"@ المعرفات: {st(settings.get('mentions', 0))}",
+        f"⏱️ البطيء: {st(settings.get('slow_mode', 0))} ({settings.get('slow_mode_seconds', 5)}ث)",
+        f"🎯 الترحيب: {st(settings.get('welcome_enabled', 0))}",
+        f"👋 الوداع: {st(settings.get('goodbye_enabled', 0))}",
+        f"🎬 فيديوهات: {st(settings.get('delete_videos', 0))}",
+        f"🎵 صوتيات: {st(settings.get('delete_audio', 0))}",
+        f"🎞️ متحركات: {st(settings.get('delete_animation', 0))}",
+        f"🛠️ الخدمة: {st(settings.get('delete_service', 0))}",
+        f"📄 ملفات: {st(settings.get('delete_documents', 0))}",
+        f"🖼️ ملصقات: {st(settings.get('delete_stickers', 0))}",
+        f"📨 المُعاد: {st(settings.get('delete_forwarded', 0))}",
+        f"📊 استطلاعات: {st(settings.get('delete_polls', 0))}",
+        f"🎮 ألعاب: {st(settings.get('delete_games', 0))}",
+        f"🎤 صوتيات: {st(settings.get('delete_voice', 0))}",
+        f"🎥 فيديو نوت: {st(settings.get('delete_video_note', 0))}",
+        f"🌊 مضاد الفيضان: {st(settings.get('antiflood_enabled', 0))}",
+        f"🌙 ليلي: {st(settings.get('night_mode_enabled', 0))}",
+        f"📏 الطول: {settings.get('max_message_length', 0) or 'غير محدود'}",
+        f"⚖️ العقوبة: {settings.get('auto_penalty', settings.get('delete_penalty', 'لا شيء'))}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📌 اختر الإعداد:"
+    ]
+    return "\n".join(lines)
+async def _update_security_panel(query, chat_id: int, user_id: int):
+    """تحديث لوحة الأمان بعد أي تغيير"""
+    try:
+        settings = await db_get_security_settings(chat_id, force_refresh=True)
+        text = _build_security_text(settings)
+        keyboard = security_keyboard(chat_id)
+        try:
+            await query.edit_message_text(
+                text=text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except Exception:
+            await safe_send_markdown(
+                query._bot,
+                user_id,
+                text,
+                reply_markup=keyboard
+            )
+    except Exception as e:
+        logger.error(f"خطأ في تحديث لوحة الأمان: {e}")
+        try:
+            await query.answer("❌ حدث خطأ", show_alert=True)
+        except:
+            pass
 
 # ===================================================================
 # 25. معالج الأمان - زر التبديل
