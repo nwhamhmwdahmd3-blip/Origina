@@ -5245,6 +5245,11 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         await safe_send(context.bot, user_id, get_text(lang, 'payment_success', plan="الباقة", days=""))
     else:
         await safe_send(context.bot, user_id, get_text(lang, 'payment_failed'))
+@staticmethod
+async def flush_sentiment_periodically() -> None:
+    while True:
+        await asyncio.sleep(60)
+        await _flush_sentiment_buffer()
 
 # =====================================================================
 # 23. الدالة الرئيسية
@@ -5356,6 +5361,29 @@ async def main():
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+# --- تشغيل البوت (Webhook أو Polling) ---
+hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
+if hostname:
+    webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
+    
+    # إنشاء تطبيق aiohttp واحد يجمع بين الويبهوك والصحة
+    webhook_app = web.Application()
+    webhook_app.router.add_get('/health', health_check)
+    webhook_app.router.add_get('/', health_check)  # اختياري
+
+    # تعيين التطبيق كـ webhook_app للتطبيق الرئيسي
+    app.webhook_app = webhook_app
+
+    # تشغيل خادم الويبهوك (لا نمرر webhook_app كمعامل)
+    await app.run_webhook(
+        webhook_url=webhook_url,
+        port=CONFIG.WEB_PORT,
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query", "chat_member", "chat_join_request"]
+    )
+else:
+    # وضع Polling (للتطوير المحلي)
+    await app.run_polling(drop_pending_updates=True)
 
 # =====================================================================
 # 24. تشغيل البرنامج
