@@ -1486,21 +1486,22 @@ class GroupRepository:
             (chat_id, chat_name[:255], username[:100] if username else None, added_by, TimeUtils.utc_iso()))
         return True
 
-    @staticmethod
-    async def get_user_groups(user_id: int) -> List[tuple]:
-        result = []
-        seen = set()
-        async with DB.cursor() as cur:
-            for table, col in [("hidden_owner_groups", "owner_id"), ("hidden_admins", "admin_id"), ("group_admins", "user_id")]:
-                await cur.execute(
-                    f"SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned FROM bot_groups bg INNER JOIN {table} h ON bg.chat_id=h.chat_id WHERE h.{col}=?",
-                    (user_id,))
-                rows = await cur.fetchall()
-                for row in rows:
-                    if row[0] not in seen:
-                        seen.add(row[0])
-                        result.append(row)
-        return result
+@staticmethod
+async def get_user_groups(user_id: int) -> List[tuple]:
+    result = []
+    seen = set()
+    for table, col in [("hidden_owner_groups", "owner_id"), ("hidden_admins", "admin_id"), ("group_admins", "user_id")]:
+        rows = await DB.fetchall(
+            f"SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned "
+            f"FROM bot_groups bg INNER JOIN {table} h ON bg.chat_id=h.chat_id "
+            f"WHERE h.{col}=?",
+            (user_id,)
+        )
+        for row in rows:
+            if row[0] not in seen:
+                seen.add(row[0])
+                result.append(row)
+    return result
 
     @staticmethod
     async def sync_admins(chat_id: int, bot) -> int:
