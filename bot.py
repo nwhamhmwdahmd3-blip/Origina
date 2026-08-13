@@ -2,10 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – النسخة النهائية الكاملة
+🌿 Relax Manager – النسخة النهائية مع جميع التحسينات
 ================================================================================
 بوت تلغرام متكامل لإدارة القنوات والمجموعات مع نظام دفع عبر Telegram Stars
-مع تحسينات الردود التلقائية، الأداء، Webhook، Rate Limiter، مونيتورينغ
+مع تحسينات الردود التلقائية (كاش LRU، تحديث مجمع، تصدير/استيراد JSON، استيراد من GitHub)
+مع تحسينات الأداء: فصل معالج المجموعات، تحسين الجدولة، Webhook، Rate Limiter، مونيتورينغ
+
+الإصدار: 6.0.0-ultimate-final
 ================================================================================
 """
 
@@ -284,9 +287,10 @@ def get_ram_usage() -> dict:
         return {'total': 0, 'used': 0, 'percent': 0}
 
 # =====================================================================
-# 5.1 مونيتورينغ المقاييس
+# 5.1 مونيتورينغ المقاييس (تحسين)
 # =====================================================================
 class MetricsCollector:
+    """جمع المقاييس الأساسية للبوت"""
     def __init__(self):
         self.api_calls = deque(maxlen=1000)
         self.errors = deque(maxlen=1000)
@@ -319,9 +323,10 @@ class MetricsCollector:
 METRICS = MetricsCollector()
 
 # =====================================================================
-# 5.2 Rate Limiter
+# 5.2 Rate Limiter (تحسين)
 # =====================================================================
 class RateLimiter:
+    """تحديد معدل الطلبات لتجنب الحظر"""
     def __init__(self, max_concurrent: int = 10, max_per_second: int = 30):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._last_calls = deque(maxlen=max_per_second * 2)
@@ -377,7 +382,7 @@ _USAGE_FLUSH_LIMIT = 50
 _USAGE_FLUSH_INTERVAL = 60
 
 # =====================================================================
-# 7. الترجمات (مختصرة قليلاً لتوفير المساحة، لكنها كاملة الوظائف)
+# 7. الترجمات
 # =====================================================================
 LOCALES = {
     'ar': {
@@ -754,7 +759,7 @@ def get_text(lang: str, key: str, **kwargs) -> str:
         return text
 
 # =====================================================================
-# 8. قاعدة البيانات (مع جميع الجداول)
+# 8. قاعدة البيانات (مع كل الجداول)
 # =====================================================================
 class Database:
     _instance = None
@@ -2827,6 +2832,464 @@ class StateManager:
     @classmethod
     def clear(cls, user_id: int) -> None:
         cls._states.pop(user_id, None)
+
+# =====================================================================
+# 15. معالج الأوامر
+# =====================================================================
+class CommandHandlers:
+    @staticmethod
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        username = update.effective_user.username or ""
+        first_name = update.effective_user.first_name or ""
+        await UserRepository.register(user_id)
+        row = await DB.fetchone("SELECT username, first_name FROM users WHERE user_id=?", (user_id,))
+        if row and (row[0] != username or row[1] != first_name):
+            await DB.execute("UPDATE users SET username=?, first_name=?, updated_at=? WHERE user_id=?",
+                             (username, first_name, TimeUtils.utc_iso(), user_id))
+        args = context.args
+        if args and args[0].startswith('ref_'):
+            ref_code = args[0][4:]
+            referrer = await UserRepository.get_user_by_referral_code(ref_code)
+            if referrer and referrer != user_id and not await UserRepository.is_banned(referrer):
+                if await ReferralRepository.add(referrer, user_id):
+                    reward = await ReferralRepository.auto_reward(referrer)
+                    await safe_send(update.effective_chat.bot, referrer, f"🎁 تمت إحالة `{user_id}` (+{reward} يوم)")
+        force_ch = await SettingRepository.get_force_subscribe_channel()
+        if force_ch and user_id != CONFIG.PRIMARY_OWNER_ID:
+            try:
+                chat = await context.bot.get_chat(f"@{force_ch}")
+                member = await context.bot.get_chat_member(chat.id, user_id)
+                if member.status not in ['member', 'administrator', 'creator']:
+                    kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📢 اشترك", url=f"https://t.me/{force_ch}"),
+                         InlineKeyboardButton("✅ تحقق", callback_data=CB.CHECK_SUB)]
+                    ])
+                    await safe_send(context.bot, user_id, f"⚠️ اشترك في @{force_ch}", reply_markup=kb)
+                    return
+            except:
+                pass
+        keyboard, title = await KeyboardFactory.main_menu(user_id)
+        await safe_send(context.bot, user_id, title, reply_markup=keyboard)
+
+    @staticmethod
+    async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        lang = await UserRepository.get_language(user_id)
+        await safe_send(context.bot, user_id, get_text(lang, 'help_text'))
+
+    @staticmethod
+    async def trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        lang = await UserRepository.get_language(user_id)
+        if await UserRepository.has_used_trial(user_id):
+            await safe_send(context.bot, user_id, get_text(lang, 'trial_used'))
+            return
+        days = await UserRepository.activate_trial(user_id)
+        await safe_send(context.bot, user_id, get_text(lang, 'trial_activated', days=days))
+
+    @staticmethod
+    async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        lang = await UserRepository.get_language(user_id)
+        kb = KeyboardFactory.plans(lang)
+        await safe_send(context.bot, user_id, get_text(lang, 'plan_selector'), reply_markup=kb)
+
+    @staticmethod
+    async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        lang = await UserRepository.get_language(user_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📞 تذكرة", callback_data=CB.SUPPORT_TICKET)],
+            [InlineKeyboardButton(get_text(lang, 'back'), callback_data=CB.BACK)]
+        ])
+        await safe_send(context.bot, user_id, get_text(lang, 'send_support_message'), reply_markup=kb)
+
+    @staticmethod
+    async def developer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        await safe_send(context.bot, user_id, f"👨‍💻 {CONFIG.BOT_NAME}\n@RelaxMgr")
+
+    @staticmethod
+    async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        lang = await UserRepository.get_language(user_id)
+        stats = await UserRepository.get_stats()
+        await safe_send(context.bot, user_id,
+                        get_text(lang, 'admin_stats',
+                                 users=stats['users'],
+                                 banned=stats['banned'],
+                                 posts=stats['posts'],
+                                 groups=stats['groups'],
+                                 channels=stats['channels']))
+
+    @staticmethod
+   async def syncgroup_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    معالج أمر /syncgroup - تفعيل المجموعة وتسجيل المالك المخفي تلقائياً
+    """
+    # 1. التحقق من أن الأمر يستخدم في مجموعة
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        await safe_send(context.bot, update.effective_user.id, "❌ هذا الأمر يستخدم فقط في المجموعات")
+        return
+
+    chat_id = update.effective_chat.id
+    chat_name = update.effective_chat.title or "بدون اسم"
+    user_id = update.effective_user.id
+    lang = await UserRepository.get_language(user_id)
+
+    # 2. تسجيل المجموعة في قاعدة البيانات
+    await GroupRepository.register(chat_id, chat_name, user_id, update.effective_chat.username)
+
+    # 3. التحقق من صلاحيات البوت في المجموعة
+    bot_perms = await check_bot_permissions(context.bot, chat_id)
+    if not bot_perms.get('can_act', False):
+        missing = []
+        perms = bot_perms.get('permissions', {})
+        if not perms.get('can_delete', True):
+            missing.append("حذف الرسائل")
+        if not perms.get('can_ban', True):
+            missing.append("تقييد الأعضاء")
+        
+        msg = f"⚠️ **البوت ليس مشرفاً في المجموعة!**\n\n"
+        msg += f"📌 تم تسجيل المجموعة `{chat_name}`.\n\n"
+        if missing:
+            msg += f"🔹 الصلاحيات المفقودة: {', '.join(missing)}\n\n"
+        msg += f"🔹 **لتفعيل الميزات المتقدمة:**\n"
+        msg += f"• اجعل البوت مشرفاً في المجموعة\n"
+        msg += f"• ثم استخدم `/syncgroup` مرة أخرى\n\n"
+        msg += f"🔹 إذا كنت مالكاً أو مشرفاً، يمكنك استخدام:\n"
+        msg += f"`/add_hidden_admin` لتسجيل نفسك كمالك مخفي"
+        
+        await safe_send(context.bot, user_id, msg)
+        return
+
+    # 4. التحقق من صلاحية المستخدم (هل هو مشرف أو مالك؟)
+    is_admin = False
+    real_user_id = user_id
+
+    # التعامل مع المشرفين المجهولين
+    if user_id == CONFIG.ANONYMOUS_ADMIN_ID:
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            if admins:
+                # البحث عن المالك أولاً
+                for admin in admins:
+                    if admin.status == 'creator':
+                        real_user_id = admin.user.id
+                        is_admin = True
+                        break
+                # إذا لم يتم العثور على مالك، استخدم أول مشرف
+                if not is_admin and admins:
+                    real_user_id = admins[0].user.id
+                    is_admin = True
+        except Exception as e:
+            logger.error(f"فشل في الحصول على مشرفين من المجموعة {chat_id}: {e}")
+            is_admin = False
+    else:
+        # التحقق من التيليجرام مباشرة
+        try:
+            member = await context.bot.get_chat_member(chat_id, user_id)
+            is_admin = member.status in ['administrator', 'creator']
+            real_user_id = user_id
+        except Exception as e:
+            logger.error(f"فشل في التحقق من صلاحية المستخدم {user_id} في المجموعة {chat_id}: {e}")
+            is_admin = False
+
+    # 5. إذا كان المستخدم مشرفاً، قم بتسجيله كمالك مخفي
+    if is_admin:
+        # تسجيل المالك المخفي
+        await DB.execute(
+            "INSERT OR REPLACE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,1)",
+            (chat_id, real_user_id)
+        )
+        invalidate_auth_cache(chat_id, real_user_id)
+        
+        # مزامنة جميع المشرفين مع قاعدة البيانات
+        admin_count = await GroupRepository.sync_admins(chat_id, context.bot)
+
+        # إرسال رسالة نجاح التفعيل
+        msg = f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+        msg += f"📌 اسم المجموعة: {chat_name}\n"
+        msg += f"🆔 المعرف: {chat_id}\n"
+        msg += f"👤 تم تسجيلك كمالك مخفي (المعرف: `{real_user_id}`)\n"
+        msg += f"👥 تم مزامنة {admin_count} مشرف\n\n"
+        msg += f"🔐 استخدم `/security` لإعدادات الأمان\n"
+        msg += f"🛠️ استخدم `/panel` للوحة التحكم"
+        
+        await safe_send(context.bot, real_user_id, msg)
+
+        # إذا كان المستخدم مجهولاً، أرسل له معرفه الحقيقي
+        if user_id == CONFIG.ANONYMOUS_ADMIN_ID and user_id != real_user_id:
+            await safe_send(
+                context.bot,
+                user_id,
+                f"🔍 تم تسجيلك كمالك مخفي باستخدام معرفك الحقيقي: `{real_user_id}`"
+            )
+
+        # إرسال إشعار للمجموعة
+        try:
+            await safe_send(
+                context.bot,
+                chat_id,
+                f"🤖 **تم تفعيل البوت في المجموعة!**\n\n"
+                f"🔹 يمكن للمشرفين استخدام:\n"
+                f"• `/security` لإعدادات الأمان\n"
+                f"• `/panel` للوحة التحكم\n"
+                f"• `/lock` لقفل المجموعة\n"
+                f"• `/unlock` لفتح المجموعة\n\n"
+                f"📌 استخدم `/help` لمعرفة جميع الأوامر المتاحة."
+            )
+        except Exception as e:
+            logger.error(f"فشل إرسال إشعار التفعيل للمجموعة: {e}")
+
+    else:
+        # المستخدم ليس مشرفاً
+        msg = f"✅ **تم تسجيل المجموعة!**\n\n"
+        msg += f"📌 اسم المجموعة: {chat_name}\n"
+        msg += f"🆔 المعرف: {chat_id}\n\n"
+        msg += f"🔹 **لتفعيل الميزات المتقدمة:**\n"
+        msg += f"• تأكد من أن البوت مشرف في المجموعة\n"
+        msg += f"• يجب أن يقوم أحد المشرفين بتنفيذ الأمر\n"
+        msg += f"• سيتم إشعار مشرفي المجموعة لتفعيل البوت\n\n"
+        msg += f"📌 **إذا كنت مشرفاً:**\n"
+        msg += f"• استخدم `/add_hidden_admin` لتسجيل نفسك كمالك مخفي\n"
+        msg += f"• استخدم `/security` لإعدادات الأمان"
+        
+        await safe_send(context.bot, user_id, msg)
+        
+        # إشعار مشرفي المجموعة بطلب التفعيل
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            for admin in admins:
+                if admin.user.id != user_id:  # لا ترسل للمستخدم نفسه
+                    try:
+                        await safe_send(
+                            context.bot,
+                            admin.user.id,
+                            f"📢 **طلب تفعيل البوت في المجموعة**\n\n"
+                            f"📌 المجموعة: {chat_name}\n"
+                            f"👤 المستخدم: `{user_id}`\n\n"
+                            f"🔹 لتفعيل البوت، قم بتنفيذ الأمر `/syncgroup`\n"
+                            f"🔹 أو استخدم `/add_hidden_admin` لتسجيل نفسك كمالك مخفي"
+                        )
+                    except:
+                        pass
+        except Exception as e:
+            logger.error(f"فشل إشعار مشرفي المجموعة: {e}")
+
+    @staticmethod
+    async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, get_text(await UserRepository.get_language(user_id), 'not_authorized'))
+            return
+        lang = await UserRepository.get_language(user_id)
+        settings = await SecurityRepository.get(chat_id)
+        await safe_send(context.bot, user_id, get_text(lang, 'security_text',
+                         links='✅' if settings.get('delete_links') else '❌',
+                         mentions='✅' if settings.get('mentions') else '❌',
+                         slow='✅' if settings.get('slow_mode') else '❌',
+                         slow_sec=settings.get('slow_mode_seconds', 5),
+                         welcome='✅' if settings.get('welcome_enabled') else '❌',
+                         goodbye='✅' if settings.get('goodbye_enabled') else '❌',
+                         video='✅' if settings.get('delete_videos') else '❌',
+                         audio='✅' if settings.get('delete_audio') else '❌',
+                         animation='✅' if settings.get('delete_animation') else '❌',
+                         service='✅' if settings.get('delete_service') else '❌',
+                         documents='✅' if settings.get('delete_documents') else '❌',
+                         stickers='✅' if settings.get('delete_stickers') else '❌',
+                         forwarded='✅' if settings.get('delete_forwarded') else '❌',
+                         polls='✅' if settings.get('delete_polls') else '❌',
+                         games='✅' if settings.get('delete_games') else '❌',
+                         voice='✅' if settings.get('delete_voice') else '❌',
+                         video_note='✅' if settings.get('delete_video_note') else '❌',
+                         flood='✅' if settings.get('antiflood_enabled') else '❌',
+                         night='✅' if settings.get('night_mode_enabled') else '❌',
+                         max_len=settings.get('max_message_length', 0) or 'غير محدود',
+                         auto_penalty=settings.get('auto_penalty', 'none'),
+                         delete_penalty=settings.get('delete_penalty', 'none')),
+                        reply_markup=KeyboardFactory.security(chat_id, settings, lang))
+
+    @staticmethod
+    async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, get_text(await UserRepository.get_language(user_id), 'not_authorized'))
+            return
+        is_locked = await ChatLockRepository.is_locked(chat_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔒 قفل", callback_data=f"{CB.PANEL_LOCK}{chat_id}"),
+             InlineKeyboardButton("🔓 فتح", callback_data=f"{CB.PANEL_UNLOCK}{chat_id}")],
+            [InlineKeyboardButton(get_text('ar', 'close'), callback_data=CB.PANEL_CLOSE)]
+        ])
+        await safe_send(context.bot, user_id, f"📋 لوحة تحكم المجموعة\nالحالة: {'مقفلة' if is_locked else 'مفتوحة'}",
+                        reply_markup=kb)
+
+    @staticmethod
+    async def lock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, get_text(await UserRepository.get_language(user_id), 'not_authorized'))
+            return
+        await ChatLockRepository.set_lock(chat_id, True, user_id)
+        await safe_send(context.bot, user_id, "🔒 تم القفل")
+
+    @staticmethod
+    async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, get_text(await UserRepository.get_language(user_id), 'not_authorized'))
+            return
+        await ChatLockRepository.set_lock(chat_id, False)
+        await safe_send(context.bot, user_id, "🔓 تم الفتح")
+
+    @staticmethod
+    async def contests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        lang = await UserRepository.get_language(user_id)
+        contests = await ContestRepository.get_active(10)
+        if not contests:
+            await safe_send(context.bot, user_id, get_text(lang, 'contest_no_active'))
+            return
+        text = "🏆 **المسابقات**\n"
+        kb = []
+        for c in contests:
+            text += f"• {c['title']} - {c['participants']} مشارك\n"
+            kb.append([InlineKeyboardButton(f"📝 شارك في {c['title']}", callback_data=f"{CB.CONTEST_JOIN}{c['id']}")])
+        kb.append([InlineKeyboardButton("🏆 الفائزون", callback_data=CB.CONTEST_WINNERS)])
+        kb.append([InlineKeyboardButton(get_text(lang, 'back'), callback_data=CB.BACK)])
+        await safe_send(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(kb))
+
+    @staticmethod
+    async def language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🇸🇦 عربي", callback_data="lang_ar"),
+             InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
+            [InlineKeyboardButton(get_text('ar', 'back'), callback_data=CB.BACK)]
+        ])
+        await safe_send(context.bot, user_id, "🌐 اختر اللغة", reply_markup=kb)
+
+    @staticmethod
+    async def add_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, get_text(await UserRepository.get_language(user_id), 'not_authorized'))
+            return
+        args = context.args
+        if not args:
+            await safe_send(context.bot, user_id, "📝 /add_hidden_admin معرف_المستخدم")
+            return
+        try:
+            target = int(args[0])
+        except:
+            await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+            return
+        if await DB.fetchone("SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, target)):
+            await safe_send(context.bot, user_id, "❌ موجود مسبقاً")
+            return
+        await DB.execute("INSERT INTO hidden_admins (chat_id, admin_id, added_by, added_at) VALUES (?,?,?,?)",
+                         (chat_id, target, user_id, TimeUtils.utc_iso()))
+        invalidate_auth_cache(chat_id, target)
+        await safe_send(context.bot, user_id, f"✅ تم إضافة المشرف المخفي `{target}`")
+
+    @staticmethod
+    async def remove_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, get_text(await UserRepository.get_language(user_id), 'not_authorized'))
+            return
+        args = context.args
+        if not args:
+            await safe_send(context.bot, user_id, "📝 /remove_hidden_admin معرف_المستخدم")
+            return
+        try:
+            target = int(args[0])
+        except:
+            await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+            return
+        await DB.execute("DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, target))
+        invalidate_auth_cache(chat_id, target)
+        await safe_send(context.bot, user_id, f"✅ تم إزالة المشرف المخفي `{target}`")
+
+    @staticmethod
+    async def list_hidden_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, get_text(await UserRepository.get_language(user_id), 'not_authorized'))
+            return
+        rows = await DB.fetchall(
+            "SELECT admin_id, added_by, added_at FROM hidden_admins WHERE chat_id=? ORDER BY added_at DESC", (chat_id,))
+        if not rows:
+            await safe_send(context.bot, user_id, "📭 لا يوجد مشرفين مخفيين")
+            return
+        text = "🔒 **المشرفون المخفيون**\n" + "\n".join([f"• `{row[0]}` (أضيف بواسطة `{row[1]}`)" for row in rows])
+        await safe_send(context.bot, user_id, text)
+
+    @staticmethod
+    async def moderation(update: Update, context: ContextTypes.DEFAULT_TYPE, command: str) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, get_text(await UserRepository.get_language(user_id), 'not_authorized'))
+            return
+        args = context.args
+        if not args:
+            await safe_send(context.bot, user_id, f"📝 /{command} معرف_المستخدم [سبب]")
+            return
+        try:
+            target = int(args[0])
+        except:
+            await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+            return
+        reason = " ".join(args[1:]) if len(args) > 1 else ""
+        duration = None
+        if command == 'mute' and len(args) > 2 and args[1].isdigit():
+            duration = int(args[1])
+            reason = " ".join(args[2:]) if len(args) > 2 else ""
+        if command == 'unban':
+            try:
+                await context.bot.unban_chat_member(chat_id, target)
+                await safe_send(context.bot, user_id, f"✅ تم إلغاء حظر {target}")
+            except Exception as e:
+                await safe_send(context.bot, user_id, f"❌ {str(e)[:100]}")
+            return
+        if command == 'pin':
+            if update.message.reply_to_message:
+                try:
+                    await context.bot.pin_chat_message(chat_id, update.message.reply_to_message.message_id)
+                    await safe_send(context.bot, user_id, "📌 تم التثبيت")
+                except Exception as e:
+                    await safe_send(context.bot, user_id, f"❌ {str(e)[:100]}")
+            else:
+                await safe_send(context.bot, user_id, "❌ رد على رسالة لتثبيتها")
+            return
+        success, msg = await apply_penalty(context.bot, chat_id, target, command, duration, reason, user_id)
+        await safe_send(context.bot, user_id, msg)
 # =====================================================================
 # 15. معالج الأوامر (CommandHandlers)
 # =====================================================================
@@ -4359,11 +4822,12 @@ class CallbackHandlers:
             await query.answer("⚠️ قيد التطوير", show_alert=True)
 
 # =====================================================================
-# 17. معالج الرسائل (محسّن: فصل الخاص عن المجموعات)
+# 17. معالج الرسائل (MessageHandlers)
 # =====================================================================
 class MessageHandlers:
     @staticmethod
     async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """معالجة الرسائل الخاصة فقط (الحالات، الدعم، إلخ)"""
         if not update.message or not update.effective_user:
             return
         user_id = update.effective_user.id
@@ -4416,7 +4880,9 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_CHANNEL
+        # ============================================================
+        # ✅ WAIT_CHANNEL - معالج إضافة القناة (مُحسَّن مع رسالة واضحة)
+        # ============================================================
         if state == UserState.WAIT_CHANNEL:
             channel_id = text.strip()
             if not (channel_id.startswith('@') or channel_id.lstrip('-').isdigit()):
@@ -4429,13 +4895,43 @@ class MessageHandlers:
                     await safe_send(context.bot, user_id, get_text(lang, 'invalid_channel'))
                     StateManager.clear(user_id)
                     return
-                bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
-                if bot_member.status not in ['administrator', 'creator'] or not bot_member.can_post_messages:
-                    await safe_send(context.bot, user_id, get_text(lang, 'bot_not_admin'))
+
+                # ✅ التحقق من صلاحيات البوت في القناة مع معالجة الأخطاء
+                try:
+                    bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+                    if bot_member.status not in ['administrator', 'creator'] or not bot_member.can_post_messages:
+                        await safe_send(
+                            context.bot,
+                            user_id,
+                            "❌ **البوت ليس مشرفاً في القناة أو لا يملك صلاحية النشر.**\n\n"
+                            "📌 **الرجاء إضافة البوت كمشرف في القناة مع صلاحية النشر، ثم أعد المحاولة.**"
+                        )
+                        StateManager.clear(user_id)
+                        return
+                except BadRequest as e:
+                    error_msg = str(e)
+                    if "Member list is inaccessible" in error_msg or "USER_NOT_PARTICIPANT" in error_msg:
+                        await safe_send(
+                            context.bot,
+                            user_id,
+                            "❌ **البوت ليس عضواً في القناة أو ليس لديه صلاحية الوصول إلى قائمة الأعضاء.**\n\n"
+                            "📌 **الحل:**\n"
+                            "1️⃣ أضف البوت إلى القناة كمشرف.\n"
+                            "2️⃣ امنحه صلاحية **نشر الرسائل**.\n"
+                            "3️⃣ أعد المحاولة بعد التأكد من الصلاحيات."
+                        )
+                    else:
+                        await safe_send(context.bot, user_id, f"❌ خطأ في التحقق من صلاحيات البوت: {error_msg[:100]}")
                     StateManager.clear(user_id)
                     return
+
+                # ✅ إضافة القناة بعد التحقق من الصلاحيات
                 result = await ChannelRepository.add(user_id, str(chat.id), chat.title or "بدون اسم")
-                await safe_send(context.bot, user_id, get_text(lang, 'channel_added') if result else get_text(lang, 'channel_exists'))
+                await safe_send(
+                    context.bot,
+                    user_id,
+                    get_text(lang, 'channel_added') if result else get_text(lang, 'channel_exists')
+                )
             except Exception as e:
                 await safe_send(context.bot, user_id, f"❌ {str(e)[:100]}")
             StateManager.clear(user_id)
@@ -4485,7 +4981,7 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, get_text(lang, 'all_posts_saved'))
             return
 
-        # WAIT_MIN, WAIT_HOUR, WAIT_DAY, WAIT_PUB_TIME
+        # WAIT_MIN
         if state == UserState.WAIT_MIN:
             try:
                 val = int(text)
@@ -4501,6 +4997,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_HOUR
         if state == UserState.WAIT_HOUR:
             try:
                 val = int(text)
@@ -4516,6 +5013,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_DAY
         if state == UserState.WAIT_DAY:
             try:
                 val = int(text)
@@ -4531,6 +5029,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_PUB_TIME
         if state == UserState.WAIT_PUB_TIME:
             if ':' in text:
                 try:
@@ -4549,7 +5048,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # BANNED WORDS
+        # WAIT_GROUP_BAN
         if state == UserState.WAIT_GROUP_BAN:
             chat_id_ban = context.user_data.get('ban_chat')
             if chat_id_ban and await is_authorized_in_group(context.bot, chat_id_ban, user_id):
@@ -4567,6 +5066,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_REM_GROUP_BAN
         if state == UserState.WAIT_REM_GROUP_BAN:
             chat_id_ban = context.user_data.get('ban_chat')
             if chat_id_ban and await is_authorized_in_group(context.bot, chat_id_ban, user_id):
@@ -4581,6 +5081,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_GLOBAL_BAN
         if state == UserState.WAIT_GLOBAL_BAN:
             word = text.strip().lower()
             if len(word) < 2:
@@ -4594,6 +5095,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_REM_GLOBAL_BAN
         if state == UserState.WAIT_REM_GLOBAL_BAN:
             word = text.strip().lower()
             if word:
@@ -4604,7 +5106,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ADMIN ADD/REMOVE
+        # WAIT_ADMIN_ADD
         if state == UserState.WAIT_ADMIN_ADD:
             try:
                 target = int(text)
@@ -4615,6 +5117,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_ADMIN_REM
         if state == UserState.WAIT_ADMIN_REM:
             try:
                 target = int(text)
@@ -4625,7 +5128,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # BROADCAST
+        # WAIT_BROADCAST
         if state == UserState.WAIT_BROADCAST:
             context.user_data['broadcast_text'] = text
             StateManager.clear(user_id)
@@ -4634,7 +5137,7 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, get_text(lang, 'admin_broadcast_confirm', text=text[:200]), reply_markup=kb)
             return
 
-        # UPDATE
+        # WAIT_UPDATE
         if state == UserState.WAIT_UPDATE:
             ch = await SettingRepository.get_updates_channel()
             if ch:
@@ -4648,19 +5151,21 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_UPDATE_CH
         if state == UserState.WAIT_UPDATE_CH:
             await SettingRepository.set('updates_channel', text.replace('@', ''))
             await safe_send(context.bot, user_id, get_text(lang, 'admin_update_channel_set', channel=text.replace('@', '')))
             StateManager.clear(user_id)
             return
 
+        # WAIT_FORCE
         if state == UserState.WAIT_FORCE:
             await SettingRepository.set('force_subscribe_channel', text.replace('@', ''))
             await safe_send(context.bot, user_id, get_text(lang, 'admin_force_sub_set', channel=text.replace('@', '')))
             StateManager.clear(user_id)
             return
 
-        # REMINDER DAYS
+        # WAIT_REM_DAYS
         if state == UserState.WAIT_REM_DAYS:
             try:
                 val = int(text)
@@ -4674,7 +5179,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ADVANCED ACTIONS
+        # WAIT_BAN / WAIT_MUTE / WAIT_WARN / WAIT_KICK / WAIT_RESTRICT / WAIT_UNBAN
         if state in (UserState.WAIT_BAN, UserState.WAIT_MUTE, UserState.WAIT_WARN,
                      UserState.WAIT_KICK, UserState.WAIT_RESTRICT, UserState.WAIT_UNBAN):
             chat_id_adv = context.user_data.get('adv_chat')
@@ -4700,6 +5205,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_PIN
         if state == UserState.WAIT_PIN:
             chat_id_adv = context.user_data.get('adv_chat')
             if chat_id_adv:
@@ -4715,25 +5221,28 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # CONTESTS
+        # WAIT_CONTEST_TITLE
         if state == UserState.WAIT_CONTEST_TITLE:
             context.user_data['contest_title'] = text
             StateManager.set(user_id, UserState.WAIT_CONTEST_DESC)
             await safe_send(context.bot, user_id, "📝 أرسل الوصف:")
             return
 
+        # WAIT_CONTEST_DESC
         if state == UserState.WAIT_CONTEST_DESC:
             context.user_data['contest_desc'] = text
             StateManager.set(user_id, UserState.WAIT_CONTEST_PRIZE)
             await safe_send(context.bot, user_id, "🎁 أرسل الجائزة:")
             return
 
+        # WAIT_CONTEST_PRIZE
         if state == UserState.WAIT_CONTEST_PRIZE:
             context.user_data['contest_prize'] = text
             StateManager.set(user_id, UserState.WAIT_CONTEST_DATE)
             await safe_send(context.bot, user_id, "📅 أرسل تاريخ الانتهاء (YYYY-MM-DD HH:MM):")
             return
 
+        # WAIT_CONTEST_DATE
         if state == UserState.WAIT_CONTEST_DATE:
             try:
                 end_date = datetime.strptime(text, "%Y-%m-%d %H:%M")
@@ -4753,6 +5262,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # WAIT_CONTEST_ANSWER
         if state == UserState.WAIT_CONTEST_ANSWER:
             cid = context.user_data.get('contest_join')
             if cid:
@@ -4762,7 +5272,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # AUTO REPLY
+        # WAIT_AUTO_KEY
         if state == UserState.WAIT_AUTO_KEY:
             keyword = text.strip().lower()
             if keyword:
@@ -4774,6 +5284,7 @@ class MessageHandlers:
                 StateManager.clear(user_id)
             return
 
+        # WAIT_AUTO_REPLY
         if state == UserState.WAIT_AUTO_REPLY:
             chat_id_auto = context.user_data.get('auto_chat')
             keyword = context.user_data.get('auto_key')
@@ -4787,6 +5298,7 @@ class MessageHandlers:
             context.user_data.pop('auto_chat', None)
             return
 
+        # WAIT_AUTO_DEL
         if state == UserState.WAIT_AUTO_DEL:
             chat_id_auto = context.user_data.get('auto_chat')
             if chat_id_auto is not None:
@@ -4804,13 +5316,14 @@ class MessageHandlers:
             context.user_data.pop('auto_chat', None)
             return
 
-        # KEYWORD/REPLY (global admin)
+        # WAIT_KEYWORD (global admin)
         if state == UserState.WAIT_KEYWORD:
             context.user_data['keyword'] = text.strip().lower()
             StateManager.set(user_id, UserState.WAIT_REPLY)
             await safe_send(context.bot, user_id, get_text(lang, 'enter_reply'))
             return
 
+        # WAIT_REPLY (global admin)
         if state == UserState.WAIT_REPLY:
             keyword = context.user_data.get('keyword')
             if keyword:
@@ -4820,7 +5333,7 @@ class MessageHandlers:
             context.user_data.pop('keyword', None)
             return
 
-        # LOG CHANNEL
+        # WAIT_LOG_CH
         if state == UserState.WAIT_LOG_CH:
             try:
                 chat = await context.bot.get_chat(text)
@@ -4834,7 +5347,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # MAX LEN
+        # WAIT_MAX_LEN
         if state == UserState.WAIT_MAX_LEN:
             try:
                 val = int(text)
@@ -4850,7 +5363,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WARN COUNT
+        # WAIT_WARN_COUNT
         if state == UserState.WAIT_WARN_COUNT:
             try:
                 val = int(text)
@@ -4866,7 +5379,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # SUPPORT TICKET
+        # SUPPORT_MODE (تذكرة)
         if state == UserState.SUPPORT_MODE:
             media_type = None
             media_file_id = None
@@ -5301,7 +5814,7 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 # =====================================================================
 # 23. دالة تشغيل خادم Webhook المُوحَّد
 # =====================================================================
-TOKEN = CONFIG.TOKEN  # لاستخدامه في مسار الـ Webhook
+TOKEN = CONFIG.TOKEN
 
 async def setup_unified_web_server(application, port: int):
     from aiohttp import web
@@ -5432,19 +5945,15 @@ async def main():
     if hostname:
         logger.info(f"✅ Running in webhook mode on https://{hostname}/{TOKEN}")
 
-        # تهيئة التطبيق يدوياً
         await app.initialize()
         await app.start()
 
-        # تعيين Webhook
         await app.bot.delete_webhook(drop_pending_updates=True)
         await app.bot.set_webhook(url=f"https://{hostname}/{TOKEN}", drop_pending_updates=True)
         logger.info(f"✅ Webhook set to https://{hostname}/{TOKEN}")
 
-        # تشغيل خادم الويب المخصص
         runner = await setup_unified_web_server(app, CONFIG.WEB_PORT)
 
-        # الانتظار إلى الأبد
         try:
             await asyncio.Event().wait()
         finally:
