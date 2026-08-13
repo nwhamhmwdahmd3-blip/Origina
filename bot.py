@@ -4950,19 +4950,25 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 # =====================================================================
 # 22. الدالة الرئيسية
 # =====================================================================
+# =====================================================================
+# 22. الدالة الرئيسية (مع خادم Webhook متكامل)
+# =====================================================================
 async def main():
     logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v5.0.3-heartbeat")
     await DB.initialize()
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
 
+    # إعداد الـ HTTPX request
     if CONFIG.USE_PROXY:
         request = HTTPXRequest(proxy_url=CONFIG.PROXY_URL, read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
     else:
         request = HTTPXRequest(read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
 
+    # إنشاء تطبيق البوت
     app = Application.builder().token(CONFIG.TOKEN).request(request).build()
 
+    # إضافة المعالجات
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -4996,6 +5002,7 @@ async def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
     app.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
 
+    # تعيين قائمة الأوامر
     try:
         await app.bot.set_my_commands([
             BotCommand("start", "الرئيسية"),
@@ -5017,10 +5024,7 @@ async def main():
     except Exception as e:
         logger.warning(f"Failed to set commands: {e}")
 
-    # تشغيل خادم الصحة
-    asyncio.create_task(run_health_server())
-
-    # المهام الخلفية
+    # المهام الخلفية (نبدأها قبل تشغيل الخادم)
     tasks = [
         asyncio.create_task(BackgroundTasks.auto_publish(app.bot)),
         asyncio.create_task(BackgroundTasks.auto_backup()),
@@ -5031,19 +5035,52 @@ async def main():
         asyncio.create_task(BackgroundTasks.self_ping()),
     ]
 
+    # تحديد وضع التشغيل (Webhook أو Polling)
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
     if hostname:
+        # إعداد Webhook
+        webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
         await app.initialize()
-        await app.start()
-        await app.bot.set_webhook(url=f"https://{hostname}/{CONFIG.TOKEN}", drop_pending_updates=True)
-        logger.info(f"✅ Webhook set on https://{hostname}/{CONFIG.TOKEN}")
+        await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+        logger.info(f"✅ Webhook set on {webhook_url}")
+
+        # الحصول على معالج webhook من التطبيق (هذا هو الـ ASGI/WSGI handler)
+        webhook_app = app.webhook_app
+
+        # إنشاء خادم aiohttp الخاص بنا لدمج نقطة الصحة
+        from aiohttp import web
+        server_app = web.Application()
+
+        # نقطة الصحة
+        async def health(request):
+            return web.Response(text="OK", status=200)
+        server_app.router.add_get('/health', health)
+        server_app.router.add_get('/', health)
+
+        # ربط معالج webhook على المسار /TOKEN
+        server_app.router.add_post(f'/{CONFIG.TOKEN}', webhook_app)
+
+        # تشغيل الخادم
+        runner = web.AppRunner(server_app)
+        await runner.setup()
+        site = web.TCPSite(runner, host='0.0.0.0', port=CONFIG.WEB_PORT)
+        await site.start()
+        logger.info(f"✅ Web server running on port {CONFIG.WEB_PORT} (health + webhook)")
+
+        # انتظار الإيقاف
         try:
             await asyncio.Event().wait()
         except KeyboardInterrupt:
+            logger.info("Shutting down...")
+        finally:
+            await runner.cleanup()
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            await app.shutdown()
     else:
+        # وضع Polling (للتشغيل المحلي)
+        logger.info("No hostname found, running in polling mode")
         try:
             await app.run_polling(drop_pending_updates=True)
         except KeyboardInterrupt:
