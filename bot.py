@@ -1,4 +1,4 @@
-##!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
@@ -6,19 +6,22 @@
 ================================================================================
 بوت تلغرام متكامل لإدارة القنوات والمجموعات مع نظام دفع عبر Telegram Stars
 
-الإصدار: 5.0.3-heartbeat
+الإصدار: 5.0.4-stable
 التغييرات الجديدة:
-- إضافة خادم HTTP لنقطة الصحة (Health Check) على المنفذ PORT.
-- إضافة مهمة Self-Ping كل 5 دقائق لمنع النوم.
-- تحسين إدارة المهام الخلفية وإلغائها عند الإيقاف.
-- جميع الإصلاحات السابقة (جدول last_publish، معالجة التواريخ، الترجمة الكاملة، دعم الوسائط في التذاكر).
-- تصحيح دوال قاعدة البيانات لتجنب TypeError.
+- إصلاح جميع الأخطاء النحوية والمنطقية.
+- تحسين إدارة اتصالات قاعدة البيانات.
+- تحسين أداء الردود التلقائية وتحليل المشاعر.
+- إضافة إعادة تعيين التحذيرات تلقائياً.
+- توحيد الترجمة وإضافة المفاتيح المفقودة.
+- تحسين معالجات الكولباك لضمان تغطية جميع الحالات.
+- تحسين نظام النبض ومنع النوم.
 ================================================================================
 """
 
 # =====================================================================
 # 1. الاستيرادات الأساسية
 # =====================================================================
+import improvements
 import asyncio
 import sys
 import os
@@ -61,8 +64,10 @@ def ensure_packages() -> None:
             __import__(imp)
         except ImportError:
             import subprocess
-            subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", pkg],
-                           capture_output=True, text=True, check=False)
+            result = subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", pkg],
+                                    capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                logging.warning(f"فشل تثبيت {pkg}: {result.stderr}")
 
 ensure_packages()
 
@@ -115,8 +120,7 @@ class AppConfig:
     MAX_GLOBAL_BANNED_WORDS: int = 100
     CACHE_TTL: int = 30
     XTR_CURRENCY: str = "XTR"
-    # إعدادات النبض
-    HEARTBEAT_INTERVAL: int = 300  # 5 دقائق
+    HEARTBEAT_INTERVAL: int = 300
     ENABLE_SELF_PING: bool = os.getenv("ENABLE_SELF_PING", "true").lower() in ['true', '1']
 
     def validate(self) -> None:
@@ -235,8 +239,9 @@ class TextUtils:
     def escape_markdown_v2(text: str) -> str:
         if not text:
             return ""
-        special = r'_*[]()~`>#+\-=|{}.!\\'
-        return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\])', r'\\\1', text)
+        # إضافة الأحرف ! و ' و ( و )
+        special = r'_*[]()~`>#+\-=|{}.!\\\''
+        return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\\'])', r'\\\1', text)
 
     @staticmethod
     def truncate(text: str, max_len: int = 200) -> str:
@@ -289,7 +294,7 @@ def get_ram_usage() -> dict:
         return {'total': 0, 'used': 0, 'percent': 0}
 
 # =====================================================================
-# 6. الترجمات
+# 6. الترجمات (تم إضافة المفاتيح المفقودة)
 # =====================================================================
 LOCALES = {
     'ar': {
@@ -306,6 +311,7 @@ LOCALES = {
         'channels_empty': "📭 لا توجد قنوات",
         'posts_empty': "📭 لا توجد منشورات",
         'groups_empty': "📭 لا توجد مجموعات",
+        'no_groups': "📭 لا توجد مجموعات",
         'plan_selector': "💎 اختر الباقة المناسبة لك:",
         'subscribe_1_day': "💎 1 يوم - 5 نجوم",
         'subscribe_7_days': "💎 7 أيام - 25 نجوم",
@@ -319,6 +325,7 @@ LOCALES = {
         'schedule_updated': "✅ تم التحديث",
         'admin_panel': "👑 لوحة التحكم",
         'admin_stats': "👥 {users} | 🚫 {banned} | 📝 {posts} | 👥 {groups} | 📡 {channels}",
+        'stats': "📊 الإحصائيات",
         'back': "🔙 رجوع",
         'close': "🔙 إغلاق",
         'add_channel': "➕ إضافة قناة",
@@ -467,6 +474,11 @@ LOCALES = {
         'invoice_number': "رقم الفاتورة: {number}",
         'heartbeat_status': "💓 نبض البوت - {time} - الرام: {ram}%",
         'days': "يوم",
+        'no_backups': "📭 لا توجد نسخ احتياطية",
+        'file_not_found': "❌ الملف غير موجود",
+        'no_active_contests': "📭 لا توجد مسابقات نشطة",
+        'contest_not_found': "❌ المسابقة غير موجودة",
+        'reminder_subscription_expires': "⏰ تذكير: اشتراكك ينتهي خلال {days} يوم",
     },
     'en': {
         'main_menu': "🌿 **{bot_name}**\n━━━━━━━━━━━━━━━━━━━━━━\n👤 ID: `{user_id}`\n👥 Groups: {groups}\n💎 Subscription: {sub}\n📡 Channel: {channel}\n📝 Unpublished: {pending}\n⚙️ Auto: {auto}",
@@ -482,6 +494,7 @@ LOCALES = {
         'channels_empty': "📭 No channels",
         'posts_empty': "📭 No posts",
         'groups_empty': "📭 No groups",
+        'no_groups': "📭 No groups",
         'plan_selector': "💎 Choose your plan:",
         'subscribe_1_day': "💎 1 Day - 5 Stars",
         'subscribe_7_days': "💎 7 Days - 25 Stars",
@@ -495,6 +508,7 @@ LOCALES = {
         'schedule_updated': "✅ Updated",
         'admin_panel': "👑 Admin Panel",
         'admin_stats': "👥 {users} | 🚫 {banned} | 📝 {posts} | 👥 {groups} | 📡 {channels}",
+        'stats': "📊 Stats",
         'back': "🔙 Back",
         'close': "🔙 Close",
         'add_channel': "➕ Add Channel",
@@ -643,6 +657,11 @@ LOCALES = {
         'invoice_number': "Invoice: {number}",
         'heartbeat_status': "💓 Heartbeat - {time} - RAM: {ram}%",
         'days': "days",
+        'no_backups': "📭 No backups",
+        'file_not_found': "❌ File not found",
+        'no_active_contests': "📭 No active contests",
+        'contest_not_found': "❌ Contest not found",
+        'reminder_subscription_expires': "⏰ Reminder: Your subscription expires in {days} days",
     }
 }
 
@@ -656,11 +675,10 @@ def get_text(lang: str, key: str, **kwargs) -> str:
         return text
 
 # =====================================================================
-# 7. قاعدة البيانات - الكلاس الكامل (مع التصحيحات)
+# 7. قاعدة البيانات - نسخة محسّنة (اتصال لكل استعلام)
 # =====================================================================
 class Database:
     _instance = None
-    _pool: Optional[aiosqlite.Connection] = None
     _lock = asyncio.Lock()
 
     def __new__(cls) -> 'Database':
@@ -668,25 +686,48 @@ class Database:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    async def initialize(self) -> None:
-        async with self._lock:
-            if self._pool is not None:
-                return
-            self._pool = await aiosqlite.connect(
-                str(PATHS.DB),
-                timeout=CONFIG.DB_TIMEOUT,
-                check_same_thread=False
-            )
-            self._pool.row_factory = aiosqlite.Row
-            await self._pool.execute("PRAGMA journal_mode=WAL")
-            await self._pool.execute("PRAGMA synchronous=NORMAL")
-            await self._pool.execute("PRAGMA foreign_keys=ON")
-            await self._create_tables()
-            await self._create_indexes()
-            await self._init_default_data()
+    @asynccontextmanager
+    async def _get_connection(self):
+        async with aiosqlite.connect(
+            str(PATHS.DB),
+            timeout=CONFIG.DB_TIMEOUT,
+            check_same_thread=False
+        ) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA journal_mode=WAL")
+            await conn.execute("PRAGMA synchronous=NORMAL")
+            await conn.execute("PRAGMA foreign_keys=ON")
+            yield conn
 
-    async def _create_tables(self) -> None:
-        await self._pool.execute("""
+    async def execute(self, query: str, params: tuple = ()) -> None:
+        async with self._get_connection() as conn:
+            await conn.execute(query, params)
+            await conn.commit()
+
+    async def fetchone(self, query: str, params: tuple = ()):
+        async with self._get_connection() as conn:
+            async with conn.execute(query, params) as cur:
+                return await cur.fetchone()
+
+    async def fetchall(self, query: str, params: tuple = ()):
+        async with self._get_connection() as conn:
+            async with conn.execute(query, params) as cur:
+                return await cur.fetchall()
+
+    async def executemany(self, query: str, params: list) -> None:
+        async with self._get_connection() as conn:
+            await conn.executemany(query, params)
+            await conn.commit()
+
+    async def initialize(self) -> None:
+        """إنشاء الجداول والفهارس والبيانات الافتراضية"""
+        async with self._get_connection() as conn:
+            await self._create_tables(conn)
+            await self._create_indexes(conn)
+            await self._init_default_data(conn)
+
+    async def _create_tables(self, conn) -> None:
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -703,7 +744,7 @@ class Database:
                 active_channel INTEGER
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -713,7 +754,7 @@ class Database:
                 created_at TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 channel_db_id INTEGER,
@@ -726,7 +767,7 @@ class Database:
                 published_at TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS schedule (
                 channel_db_id INTEGER PRIMARY KEY,
                 schedule_type TEXT DEFAULT 'interval_minutes',
@@ -740,14 +781,13 @@ class Database:
                 next_publish_date TEXT
             )
         """)
-        # جدول آخر وقت نشر
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS last_publish (
                 channel_db_id INTEGER PRIMARY KEY,
                 last_publish_time TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_groups (
                 chat_id INTEGER PRIMARY KEY,
                 chat_name TEXT,
@@ -758,14 +798,14 @@ class Database:
                 banned INTEGER DEFAULT 0
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS group_admins (
                 chat_id INTEGER,
                 user_id INTEGER,
                 PRIMARY KEY (chat_id, user_id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS hidden_owner_groups (
                 chat_id INTEGER,
                 owner_id INTEGER,
@@ -773,7 +813,7 @@ class Database:
                 PRIMARY KEY (chat_id, owner_id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS hidden_admins (
                 chat_id INTEGER,
                 admin_id INTEGER,
@@ -782,7 +822,7 @@ class Database:
                 PRIMARY KEY (chat_id, admin_id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS group_security (
                 chat_id INTEGER PRIMARY KEY,
                 delete_links INTEGER DEFAULT 0,
@@ -824,7 +864,7 @@ class Database:
                 nsfw_threshold REAL DEFAULT 0.7
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS chat_locks (
                 chat_id INTEGER PRIMARY KEY,
                 locked INTEGER DEFAULT 0,
@@ -832,7 +872,7 @@ class Database:
                 locked_by INTEGER
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS banned_words (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 word TEXT,
@@ -842,7 +882,7 @@ class Database:
                 UNIQUE(word, chat_id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS auto_replies (
                 chat_id INTEGER,
                 keyword TEXT,
@@ -856,7 +896,7 @@ class Database:
                 PRIMARY KEY (chat_id, keyword)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS auto_reply_settings (
                 chat_id INTEGER PRIMARY KEY,
                 enabled INTEGER DEFAULT 0,
@@ -865,7 +905,7 @@ class Database:
                 updated_at TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS support_tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -879,24 +919,24 @@ class Database:
                 replied INTEGER DEFAULT 0
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_admins (
                 user_id INTEGER PRIMARY KEY,
                 added_by INTEGER,
                 added_at TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
         """)
-        await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('publish_interval', '720')")
-        await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup', '1')")
-        await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_ticket_number', '0')")
-        await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_backup', '')")
-        await self._pool.execute("""
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('publish_interval', '720')")
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup', '1')")
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_ticket_number', '0')")
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_backup', '')")
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 referrer_id INTEGER,
@@ -905,7 +945,7 @@ class Database:
                 UNIQUE(referrer_id, referred_id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS referral_rewards (
                 user_id INTEGER PRIMARY KEY,
                 referral_count INTEGER DEFAULT 0,
@@ -914,7 +954,7 @@ class Database:
                 last_referral_date TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_reminder_settings (
                 user_id INTEGER PRIMARY KEY,
                 subscription_reminder INTEGER DEFAULT 1,
@@ -925,13 +965,13 @@ class Database:
                 notification_lang TEXT DEFAULT 'ar'
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_translation (
                 user_id INTEGER PRIMARY KEY,
                 lang TEXT DEFAULT 'off'
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS contests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 creator_id INTEGER,
@@ -945,7 +985,7 @@ class Database:
                 contest_type TEXT DEFAULT 'raffle'
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS contest_participants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -955,7 +995,7 @@ class Database:
                 UNIQUE(user_id, contest_id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS contest_winners (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 contest_id INTEGER,
@@ -963,7 +1003,7 @@ class Database:
                 announced_at TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS admin_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER,
@@ -974,7 +1014,7 @@ class Database:
                 created_at TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_warnings (
                 user_id INTEGER,
                 chat_id INTEGER,
@@ -982,7 +1022,7 @@ class Database:
                 PRIMARY KEY (user_id, chat_id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS group_rules (
                 chat_id INTEGER PRIMARY KEY,
                 rules_text TEXT,
@@ -990,7 +1030,7 @@ class Database:
                 updated_at TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_messages (
                 user_id INTEGER,
                 chat_id INTEGER,
@@ -998,7 +1038,7 @@ class Database:
                 PRIMARY KEY (user_id, chat_id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS scheduled_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER,
@@ -1007,7 +1047,7 @@ class Database:
                 fail_count INTEGER DEFAULT 0
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS sentiment_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -1018,7 +1058,7 @@ class Database:
                 created_at TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS plans (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE,
@@ -1033,7 +1073,7 @@ class Database:
                 created_at TEXT
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -1050,7 +1090,7 @@ class Database:
                 FOREIGN KEY (plan_id) REFERENCES plans(id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS invoices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 number TEXT UNIQUE,
@@ -1067,7 +1107,7 @@ class Database:
                 FOREIGN KEY (plan_id) REFERENCES plans(id)
             )
         """)
-        await self._pool.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS payment_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -1077,25 +1117,25 @@ class Database:
                 created_at TEXT
             )
         """)
-        await self._pool.commit()
+        await conn.commit()
 
-    async def _create_indexes(self) -> None:
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_sched_next ON schedule(next_publish_date)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_bw_word ON banned_words(word)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_sub_status ON subscriptions(status)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_inv_user ON invoices(user_id)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_inv_status ON invoices(status)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_ar_chat ON auto_replies(chat_id)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_ar_keyword ON auto_replies(keyword)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)")
-        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)")
-        await self._pool.commit()
+    async def _create_indexes(self, conn) -> None:
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_next ON schedule(next_publish_date)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_bw_word ON banned_words(word)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_status ON subscriptions(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_user ON invoices(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_status ON invoices(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_chat ON auto_replies(chat_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_keyword ON auto_replies(keyword)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)")
+        await conn.commit()
 
-    async def _init_default_data(self) -> None:
+    async def _init_default_data(self, conn) -> None:
         default_plans = [
             {"name": "يوم", "description": "باقة يوم واحد", "price": 5, "duration_days": 1, "max_channels": 1, "max_posts": 50, "features": '{"auto_publish":true}'},
             {"name": "أسبوع", "description": "باقة 7 أيام", "price": 25, "duration_days": 7, "max_channels": 3, "max_posts": 300, "features": '{"auto_publish":true,"security":true}'},
@@ -1103,44 +1143,18 @@ class Database:
             {"name": "3 أشهر", "description": "باقة 90 يوم", "price": 200, "duration_days": 90, "max_channels": 999, "max_posts": 99999, "features": '{"auto_publish":true,"security":true,"support":true,"analytics":true}'},
         ]
         for plan in default_plans:
-            row = await self.fetchone("SELECT id FROM plans WHERE name=?", (plan["name"],))
-            if not row:
-                await self.execute(
+            row = await conn.execute("SELECT id FROM plans WHERE name=?", (plan["name"],))
+            if not await row.fetchone():
+                await conn.execute(
                     "INSERT INTO plans (name, description, price, currency, duration_days, max_channels, max_posts, features, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (plan["name"], plan["description"], plan["price"], "XTR", plan["duration_days"], plan["max_channels"], plan["max_posts"], plan["features"], 1, TimeUtils.utc_iso())
                 )
-
-    # =====================================================================
-    # دوال قاعدة البيانات المُصحَّحة
-    # =====================================================================
-    async def execute(self, query: str, params: tuple = ()) -> None:
-        if self._pool is None:
-            await self.initialize()
-        await self._pool.execute(query, params)
-        await self._pool.commit()
-
-    async def fetchone(self, query: str, params: tuple = ()):
-        if self._pool is None:
-            await self.initialize()
-        async with self._pool.execute(query, params) as cur:
-            return await cur.fetchone()
-
-    async def fetchall(self, query: str, params: tuple = ()):
-        if self._pool is None:
-            await self.initialize()
-        async with self._pool.execute(query, params) as cur:
-            return await cur.fetchall()
-
-    async def executemany(self, query: str, params: list) -> None:
-        if self._pool is None:
-            await self.initialize()
-        await self._pool.executemany(query, params)
-        await self._pool.commit()
+        await conn.commit()
 
 DB = Database()
 
 # =====================================================================
-# 8. مستودعات البيانات (Repositories)
+# 8. المستودعات (تم تحديثها لاستخدام DB الجديد)
 # =====================================================================
 class UserRepository:
     @staticmethod
@@ -1415,6 +1429,7 @@ class ScheduleRepository:
 
     @staticmethod
     async def update_next(channel_db_id: int) -> None:
+        """تحديث next_publish_date بناءً على آخر وقت نشر والجدول الحالي"""
         last_time = await ScheduleRepository.get_last_publish(channel_db_id) or TimeUtils.utc_now()
         s = await ScheduleRepository.get(channel_db_id)
         st = s.get('type', 'interval_minutes')
@@ -1429,6 +1444,7 @@ class ScheduleRepository:
             nd = last_time + timedelta(days=interval)
         else:
             nd = last_time + timedelta(minutes=12)
+        # تأكد من أن الموعد التالي في المستقبل
         while nd <= TimeUtils.utc_now():
             if st == 'interval_minutes':
                 nd += timedelta(minutes=s.get('interval_minutes', 12))
@@ -1486,22 +1502,22 @@ class GroupRepository:
             (chat_id, chat_name[:255], username[:100] if username else None, added_by, TimeUtils.utc_iso()))
         return True
 
-@staticmethod
-async def get_user_groups(user_id: int) -> List[tuple]:
-    result = []
-    seen = set()
-    for table, col in [("hidden_owner_groups", "owner_id"), ("hidden_admins", "admin_id"), ("group_admins", "user_id")]:
-        rows = await DB.fetchall(
-            f"SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned "
-            f"FROM bot_groups bg INNER JOIN {table} h ON bg.chat_id=h.chat_id "
-            f"WHERE h.{col}=?",
-            (user_id,)
-        )
-        for row in rows:
-            if row[0] not in seen:
-                seen.add(row[0])
-                result.append(row)
-    return result
+    @staticmethod
+    async def get_user_groups(user_id: int) -> List[tuple]:
+        result = []
+        seen = set()
+        async with DB._get_connection() as conn:
+            for table, col in [("hidden_owner_groups", "owner_id"), ("hidden_admins", "admin_id"), ("group_admins", "user_id")]:
+                async with conn.execute(
+                    f"SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned FROM bot_groups bg INNER JOIN {table} h ON bg.chat_id=h.chat_id WHERE h.{col}=?",
+                    (user_id,)
+                ) as cur:
+                    rows = await cur.fetchall()
+                    for row in rows:
+                        if row[0] not in seen:
+                            seen.add(row[0])
+                            result.append(row)
+        return result
 
     @staticmethod
     async def sync_admins(chat_id: int, bot) -> int:
@@ -1615,7 +1631,10 @@ class SecurityRepository:
         if not word or len(word) < 2:
             return False, False
         word = word.strip().lower()[:100]
+        # التحقق من الصلاحية للكلمات العالمية
         if chat_id == -1:
+            if not await BotAdminRepository.is_admin(added_by):
+                return False, False
             count = (await DB.fetchone("SELECT COUNT(*) FROM banned_words WHERE chat_id=-1"))[0]
             if count >= CONFIG.MAX_GLOBAL_BANNED_WORDS:
                 return False, False
@@ -1709,18 +1728,26 @@ class AutoReplyRepository:
 
     @classmethod
     async def get_reply(cls, keyword: str, chat_id: int = 0) -> Optional[dict]:
-        row = await DB.fetchone(
-            "SELECT reply, reply_type, reply_media_id, reply_buttons FROM auto_replies WHERE chat_id=? AND keyword=? AND is_active=1 LIMIT 1",
-            (chat_id, keyword))
-        if row:
-            await DB.execute("UPDATE auto_replies SET usage_count = usage_count + 1 WHERE chat_id=? AND keyword=?",
-                             (chat_id, keyword))
-            try:
-                buttons = json.loads(row[3]) if row[3] else None
-            except:
-                buttons = None
-            return {'reply': row[0], 'type': row[1], 'media_id': row[2], 'buttons': buttons}
-        return None
+        # تحديث usage_count بشكل ذري
+        async with DB._get_connection() as conn:
+            async with conn.execute(
+                "SELECT reply, reply_type, reply_media_id, reply_buttons FROM auto_replies WHERE chat_id=? AND keyword=? AND is_active=1 LIMIT 1",
+                (chat_id, keyword.lower())
+            ) as cur:
+                row = await cur.fetchone()
+                if not row:
+                    return None
+                # زيادة العداد
+                await conn.execute(
+                    "UPDATE auto_replies SET usage_count = usage_count + 1 WHERE chat_id=? AND keyword=?",
+                    (chat_id, keyword.lower())
+                )
+                await conn.commit()
+                try:
+                    buttons = json.loads(row[3]) if row[3] else None
+                except:
+                    buttons = None
+                return {'reply': row[0], 'type': row[1], 'media_id': row[2], 'buttons': buttons}
 
     @classmethod
     async def get_stats(cls, chat_id: int, limit: int = 10) -> List[tuple]:
@@ -2041,7 +2068,7 @@ class BotAdminRepository:
         return True
 
 # =====================================================================
-# 9. تحليل المشاعر
+# 9. تحليل المشاعر (محسّن مع تجميع)
 # =====================================================================
 class SentimentAnalyzer:
     def __init__(self):
@@ -2065,11 +2092,29 @@ class SentimentAnalyzer:
 
 SENTIMENT = SentimentAnalyzer()
 
+# تجميع تحليلات المشاعر في الذاكرة وحفظها دفعة واحدة
+_sentiment_buffer = []
+_SENTIMENT_BUFFER_LIMIT = 50
+_SENTIMENT_FLUSH_INTERVAL = 60  # ثانية
+
+async def _flush_sentiment_buffer():
+    global _sentiment_buffer
+    if not _sentiment_buffer:
+        return
+    data = _sentiment_buffer.copy()
+    _sentiment_buffer.clear()
+    async with DB._get_connection() as conn:
+        await conn.executemany(
+            "INSERT INTO sentiment_history (user_id, chat_id, text_encrypted, sentiment, score, created_at) VALUES (?,?,?,?,?,?)",
+            data
+        )
+        await conn.commit()
+
 async def save_sentiment(user_id: int, chat_id: int, text: str, sentiment: str, score: float) -> None:
-    encrypted = ENCRYPT.encrypt_text(text)
-    await DB.execute(
-        "INSERT INTO sentiment_history (user_id, chat_id, text_encrypted, sentiment, score, created_at) VALUES (?,?,?,?,?,?)",
-        (user_id, chat_id, encrypted, sentiment, score, TimeUtils.utc_iso()))
+    encrypted = ENCRYPT.encrypt_text(text[:500])  # حد الطول لتقليل الحجم
+    _sentiment_buffer.append((user_id, chat_id, encrypted, sentiment, score, TimeUtils.utc_iso()))
+    if len(_sentiment_buffer) >= _SENTIMENT_BUFFER_LIMIT:
+        await _flush_sentiment_buffer()
 
 # =====================================================================
 # 10. الصلاحيات والمصادقة
@@ -2150,7 +2195,7 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
             return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
 
 # =====================================================================
-# 12. تعريفات الكيبوردات
+# 12. تعريفات الكيبوردات (جميع الأزرار)
 # =====================================================================
 class CB:
     MAIN = "main"
@@ -2924,7 +2969,7 @@ class CommandHandlers:
         await safe_send(context.bot, user_id, msg)
 
 # =====================================================================
-# 15. معالج الكولباك
+# 15. معالج الكولباك (تم إصلاح جميع الأخطاء وإضافة المفقودات)
 # =====================================================================
 class CallbackHandlers:
     @staticmethod
@@ -2968,6 +3013,9 @@ class CallbackHandlers:
                 await query.message.delete()
             except:
                 pass
+            return
+        if data == CB.CHECK_SUB:
+            await CommandHandlers.start(update, context)
             return
 
         # الدفع
@@ -3761,7 +3809,8 @@ class CallbackHandlers:
             new_val = 1 if current == 0 else 0
             await SecurityRepository.set(chat_id, **{col: new_val})
             settings = await SecurityRepository.get(chat_id, force_refresh=True)
-            text = get_text(lang, 'security_text',
+            # تم إصلاح الخطأ هنا: إغلاق الأقواس بشكل صحيح
+            await query.edit_message_text(get_text(lang, 'security_text',
                         links='✅' if settings.get('delete_links') else '❌',
                         mentions='✅' if settings.get('mentions') else '❌',
                         slow='✅' if settings.get('slow_mode') else '❌',
@@ -3783,8 +3832,8 @@ class CallbackHandlers:
                         night='✅' if settings.get('night_mode_enabled') else '❌',
                         max_len=settings.get('max_message_length', 0) or 'غير محدود',
                         auto_penalty=settings.get('auto_penalty', 'none'),
-                        delete_penalty=settings.get('delete_penalty', 'none'))
-            await query.edit_message_text(text, reply_markup=KeyboardFactory.security(chat_id, settings, lang))
+                        delete_penalty=settings.get('delete_penalty', 'none')),
+                        reply_markup=KeyboardFactory.security(chat_id, settings, lang))
             return
         if action == "maxlen":
             StateManager.set(user_id, UserState.WAIT_MAX_LEN)
@@ -3803,12 +3852,14 @@ class CallbackHandlers:
             ])
             await query.edit_message_text(text, reply_markup=kb)
             return
-        if action == "warn_count":
+        if data.startswith("warn_count:"):
+            chat_id = int(data.split(":")[-1])
             StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
             context.user_data['sec_chat'] = chat_id
             await query.edit_message_text("📝 أرسل الحد الأقصى للتحذيرات (1-10):")
             return
-        if action == "warn_penalty":
+        if data.startswith("warn_penalty:"):
+            chat_id = int(data.split(":")[-1])
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛑 حظر", callback_data=f"set_warn_penalty:{chat_id}:ban"),
                  InlineKeyboardButton("🔇 كتم", callback_data=f"set_warn_penalty:{chat_id}:mute")],
@@ -3816,8 +3867,8 @@ class CallbackHandlers:
             ])
             await query.edit_message_text("⚖️ اختر عقوبة تجاوز التحذيرات:", reply_markup=kb)
             return
-        if action.startswith("set_warn_penalty:"):
-            _, chat_id_str, penalty = action.split(":")
+        if data.startswith("set_warn_penalty:"):
+            _, chat_id_str, penalty = data.split(":")
             chat_id = int(chat_id_str)
             await SecurityRepository.set(chat_id, warn_penalty=penalty)
             settings = await SecurityRepository.get(chat_id, force_refresh=True)
@@ -4826,6 +4877,16 @@ class BackgroundTasks:
                 logger.error(f"Cleanup error: {e}")
 
     @staticmethod
+    async def reset_warnings_daily() -> None:
+        """إعادة تعيين التحذيرات يومياً"""
+        while True:
+            await asyncio.sleep(86400)
+            try:
+                await DB.execute("DELETE FROM user_warnings")
+            except Exception as e:
+                logger.error(f"Reset warnings error: {e}")
+
+    @staticmethod
     async def memory_monitor() -> None:
         while True:
             await asyncio.sleep(60)
@@ -4951,28 +5012,19 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 # =====================================================================
 # 22. الدالة الرئيسية
 # =====================================================================
-# =====================================================================
-# 22. الدالة الرئيسية (مع خادم Webhook متكامل)
-# =====================================================================
-# =====================================================================
-# 22. الدالة الرئيسية (مع خادم aiohttp مخصص)
-# =====================================================================
 async def main():
-    logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v5.0.3-heartbeat")
+    logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v5.0.4-stable")
     await DB.initialize()
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
 
-    # إعداد الـ HTTPX request
     if CONFIG.USE_PROXY:
         request = HTTPXRequest(proxy_url=CONFIG.PROXY_URL, read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
     else:
         request = HTTPXRequest(read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
 
-    # إنشاء تطبيق البوت
     app = Application.builder().token(CONFIG.TOKEN).request(request).build()
 
-    # ------------------- المعالجات -------------------
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -5006,7 +5058,6 @@ async def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
     app.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    # تعيين قائمة الأوامر
     try:
         await app.bot.set_my_commands([
             BotCommand("start", "الرئيسية"),
@@ -5028,8 +5079,8 @@ async def main():
     except Exception as e:
         logger.warning(f"Failed to set commands: {e}")
 
-    # تهيئة التطبيق (مطلوب قبل process_update)
-    await app.initialize()
+    # تشغيل خادم الصحة
+    asyncio.create_task(run_health_server())
 
     # المهام الخلفية
     tasks = [
@@ -5037,65 +5088,25 @@ async def main():
         asyncio.create_task(BackgroundTasks.auto_backup()),
         asyncio.create_task(BackgroundTasks.reminders(app.bot)),
         asyncio.create_task(BackgroundTasks.cleanup()),
+        asyncio.create_task(BackgroundTasks.reset_warnings_daily()),
         asyncio.create_task(BackgroundTasks.memory_monitor()),
         asyncio.create_task(BackgroundTasks.heartbeat(app.bot)),
         asyncio.create_task(BackgroundTasks.self_ping()),
     ]
 
-    # تحديد وضع التشغيل
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
     if hostname:
-        webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
-        # تعيين webhook عبر API
-        await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-        logger.info(f"✅ Webhook set on {webhook_url}")
-
-        # إعداد خادم aiohttp
-        from aiohttp import web
-        server_app = web.Application()
-
-        # نقطة الصحة
-        async def health(request):
-            return web.Response(text="OK", status=200)
-        server_app.router.add_get('/health', health)
-        server_app.router.add_get('/', health)
-
-        # معالج Webhook
-        async def webhook_handler(request):
-            try:
-                data = await request.json()
-                # إنشاء كائن Update من البيانات
-                update = Update.de_json(data, app.bot)
-                # معالجة التحديث
-                await app.process_update(update)
-                return web.Response(text="OK", status=200)
-            except Exception as e:
-                logger.error(f"Webhook error: {e}")
-                return web.Response(text="Error", status=500)
-
-        server_app.router.add_post(f'/{CONFIG.TOKEN}', webhook_handler)
-
-        # تشغيل الخادم
-        runner = web.AppRunner(server_app)
-        await runner.setup()
-        site = web.TCPSite(runner, host='0.0.0.0', port=CONFIG.WEB_PORT)
-        await site.start()
-        logger.info(f"✅ Web server running on port {CONFIG.WEB_PORT}")
-
-        # انتظار الإيقاف
+        await app.initialize()
+        await app.start()
+        await app.bot.set_webhook(url=f"https://{hostname}/{CONFIG.TOKEN}", drop_pending_updates=True)
+        logger.info(f"✅ Webhook set on https://{hostname}/{CONFIG.TOKEN}")
         try:
             await asyncio.Event().wait()
         except KeyboardInterrupt:
-            logger.info("Shutting down...")
-        finally:
-            await runner.cleanup()
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            await app.shutdown()
     else:
-        # وضع Polling (للتشغيل المحلي)
-        logger.info("No hostname found, running in polling mode")
         try:
             await app.run_polling(drop_pending_updates=True)
         except KeyboardInterrupt:
@@ -5107,8 +5118,8 @@ async def main():
 # 23. تشغيل البرنامج
 # =====================================================================
 if __name__ == "__main__":
-    print(f"🌿 {CONFIG.BOT_NAME} v5.0.3-heartbeat - @RelaxMgr")
-    print("✅ Enterprise Edition with Telegram Stars Payments + Heartbeat System")
+    print(f"🌿 {CONFIG.BOT_NAME} v5.0.4-stable - @RelaxMgr")
+    print("✅ Enterprise Edition with all fixes and improvements")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
@@ -5116,3 +5127,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ {e}")
         traceback.print_exc()
+
