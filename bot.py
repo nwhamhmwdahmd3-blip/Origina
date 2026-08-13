@@ -45,7 +45,7 @@ from typing import Optional, List, Dict, Tuple, Any, Union, Callable, Awaitable
 from enum import Enum, auto
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-
+from abc import ABC, abstractmethod
 
 def ensure_packages() -> None:
     required = [
