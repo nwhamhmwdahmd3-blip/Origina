@@ -2,20 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – النسخة النهائية المُصحَّحة
+🌿 Relax Manager – النسخة النهائية مع نظام النبض الداخلي
 ================================================================================
 بوت تلغرام متكامل لإدارة القنوات والمجموعات مع نظام دفع عبر Telegram Stars
 
-الإصدار: 5.0.2-stable
-التغييرات:
-- إضافة جدول last_publish والفهارس المفقودة.
-- إصلاح أخطاء معالجة التواريخ.
-- تحسين الأمان والتحقق من الصلاحيات.
-- دعم الوسائط في تذاكر الدعم.
-- ترجمة جميع الرسائل.
-- إضافة حد أقصى للكلمات المحظورة عالمياً.
-- إلغاء nest_asyncio (غير ضروري).
-- وغيرها من التحسينات.
+الإصدار: 5.0.3-heartbeat
+التغييرات الجديدة:
+- إضافة خادم HTTP لنقطة الصحة (Health Check) على المنفذ PORT.
+- إضافة مهمة Self-Ping كل 5 دقائق لمنع النوم.
+- تحسين إدارة المهام الخلفية وإلغائها عند الإيقاف.
+- جميع الإصلاحات السابقة (جدول last_publish، معالجة التواريخ، الترجمة الكاملة، دعم الوسائط في التذاكر).
+- تصحيح دوال قاعدة البيانات لتجنب TypeError.
 ================================================================================
 """
 
@@ -91,6 +88,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 import base64
 import aiohttp
+from aiohttp import web
 from cachetools import TTLCache
 
 # =====================================================================
@@ -117,6 +115,9 @@ class AppConfig:
     MAX_GLOBAL_BANNED_WORDS: int = 100
     CACHE_TTL: int = 30
     XTR_CURRENCY: str = "XTR"
+    # إعدادات النبض
+    HEARTBEAT_INTERVAL: int = 300  # 5 دقائق
+    ENABLE_SELF_PING: bool = os.getenv("ENABLE_SELF_PING", "true").lower() in ['true', '1']
 
     def validate(self) -> None:
         if not self.TOKEN or self.PRIMARY_OWNER_ID == 0:
@@ -464,6 +465,8 @@ LOCALES = {
         'buy_plan': "شراء {plan}",
         'plan_description': "{description} - {price} نجوم",
         'invoice_number': "رقم الفاتورة: {number}",
+        'heartbeat_status': "💓 نبض البوت - {time} - الرام: {ram}%",
+        'days': "يوم",
     },
     'en': {
         'main_menu': "🌿 **{bot_name}**\n━━━━━━━━━━━━━━━━━━━━━━\n👤 ID: `{user_id}`\n👥 Groups: {groups}\n💎 Subscription: {sub}\n📡 Channel: {channel}\n📝 Unpublished: {pending}\n⚙️ Auto: {auto}",
@@ -638,6 +641,8 @@ LOCALES = {
         'buy_plan': "Buy {plan}",
         'plan_description': "{description} - {price} stars",
         'invoice_number': "Invoice: {number}",
+        'heartbeat_status': "💓 Heartbeat - {time} - RAM: {ram}%",
+        'days': "days",
     }
 }
 
@@ -651,7 +656,7 @@ def get_text(lang: str, key: str, **kwargs) -> str:
         return text
 
 # =====================================================================
-# 7. قاعدة البيانات - الكلاس الكامل
+# 7. قاعدة البيانات - الكلاس الكامل (مع التصحيحات)
 # =====================================================================
 class Database:
     _instance = None
@@ -681,7 +686,6 @@ class Database:
             await self._init_default_data()
 
     async def _create_tables(self) -> None:
-        # جدول المستخدمين
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -699,7 +703,6 @@ class Database:
                 active_channel INTEGER
             )
         """)
-        # جدول قنوات المستخدم
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS user_channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -710,7 +713,6 @@ class Database:
                 created_at TEXT
             )
         """)
-        # جدول المنشورات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -724,7 +726,6 @@ class Database:
                 published_at TEXT
             )
         """)
-        # جدول الجدولة
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS schedule (
                 channel_db_id INTEGER PRIMARY KEY,
@@ -739,14 +740,13 @@ class Database:
                 next_publish_date TEXT
             )
         """)
-        # جدول آخر وقت نشر (تم إضافته)
+        # جدول آخر وقت نشر
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS last_publish (
                 channel_db_id INTEGER PRIMARY KEY,
                 last_publish_time TEXT
             )
         """)
-        # جدول المجموعات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS bot_groups (
                 chat_id INTEGER PRIMARY KEY,
@@ -758,7 +758,6 @@ class Database:
                 banned INTEGER DEFAULT 0
             )
         """)
-        # جدول مشرفي المجموعات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS group_admins (
                 chat_id INTEGER,
@@ -766,7 +765,6 @@ class Database:
                 PRIMARY KEY (chat_id, user_id)
             )
         """)
-        # جدول المالك المخفي
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS hidden_owner_groups (
                 chat_id INTEGER,
@@ -775,7 +773,6 @@ class Database:
                 PRIMARY KEY (chat_id, owner_id)
             )
         """)
-        # جدول المشرفين المخفيين
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS hidden_admins (
                 chat_id INTEGER,
@@ -785,7 +782,6 @@ class Database:
                 PRIMARY KEY (chat_id, admin_id)
             )
         """)
-        # جدول إعدادات الأمان
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS group_security (
                 chat_id INTEGER PRIMARY KEY,
@@ -828,7 +824,6 @@ class Database:
                 nsfw_threshold REAL DEFAULT 0.7
             )
         """)
-        # جدول قفل المجموعات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS chat_locks (
                 chat_id INTEGER PRIMARY KEY,
@@ -837,7 +832,6 @@ class Database:
                 locked_by INTEGER
             )
         """)
-        # جدول الكلمات المحظورة
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS banned_words (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -848,7 +842,6 @@ class Database:
                 UNIQUE(word, chat_id)
             )
         """)
-        # جدول الردود التلقائية
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS auto_replies (
                 chat_id INTEGER,
@@ -863,7 +856,6 @@ class Database:
                 PRIMARY KEY (chat_id, keyword)
             )
         """)
-        # جدول إعدادات الردود التلقائية
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS auto_reply_settings (
                 chat_id INTEGER PRIMARY KEY,
@@ -873,7 +865,6 @@ class Database:
                 updated_at TEXT
             )
         """)
-        # جدول تذاكر الدعم (تم تعديله لدعم الوسائط)
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS support_tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -888,7 +879,6 @@ class Database:
                 replied INTEGER DEFAULT 0
             )
         """)
-        # جدول مشرفي البوت
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS bot_admins (
                 user_id INTEGER PRIMARY KEY,
@@ -896,7 +886,6 @@ class Database:
                 added_at TEXT
             )
         """)
-        # جدول الإعدادات العامة
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -907,7 +896,6 @@ class Database:
         await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup', '1')")
         await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_ticket_number', '0')")
         await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_backup', '')")
-        # جدول الإحالات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -917,7 +905,6 @@ class Database:
                 UNIQUE(referrer_id, referred_id)
             )
         """)
-        # جدول مكافآت الإحالات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS referral_rewards (
                 user_id INTEGER PRIMARY KEY,
@@ -927,7 +914,6 @@ class Database:
                 last_referral_date TEXT
             )
         """)
-        # جدول إعدادات التذكيرات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS user_reminder_settings (
                 user_id INTEGER PRIMARY KEY,
@@ -939,14 +925,12 @@ class Database:
                 notification_lang TEXT DEFAULT 'ar'
             )
         """)
-        # جدول الترجمة
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS user_translation (
                 user_id INTEGER PRIMARY KEY,
                 lang TEXT DEFAULT 'off'
             )
         """)
-        # جدول المسابقات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS contests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -961,7 +945,6 @@ class Database:
                 contest_type TEXT DEFAULT 'raffle'
             )
         """)
-        # جدول المشاركين في المسابقات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS contest_participants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -972,7 +955,6 @@ class Database:
                 UNIQUE(user_id, contest_id)
             )
         """)
-        # جدول الفائزين في المسابقات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS contest_winners (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -981,7 +963,6 @@ class Database:
                 announced_at TEXT
             )
         """)
-        # جدول سجلات المشرفين
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS admin_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -993,7 +974,6 @@ class Database:
                 created_at TEXT
             )
         """)
-        # جدول تحذيرات المستخدمين
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS user_warnings (
                 user_id INTEGER,
@@ -1002,7 +982,6 @@ class Database:
                 PRIMARY KEY (user_id, chat_id)
             )
         """)
-        # جدول قواعد المجموعات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS group_rules (
                 chat_id INTEGER PRIMARY KEY,
@@ -1011,7 +990,6 @@ class Database:
                 updated_at TEXT
             )
         """)
-        # جدول رسائل المستخدمين
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS user_messages (
                 user_id INTEGER,
@@ -1020,7 +998,6 @@ class Database:
                 PRIMARY KEY (user_id, chat_id)
             )
         """)
-        # جدول المنشورات المجدولة
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS scheduled_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1030,7 +1007,6 @@ class Database:
                 fail_count INTEGER DEFAULT 0
             )
         """)
-        # جدول تحليل المشاعر
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS sentiment_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1042,7 +1018,6 @@ class Database:
                 created_at TEXT
             )
         """)
-        # جداول الدفع والاشتراكات
         await self._pool.execute("""
             CREATE TABLE IF NOT EXISTS plans (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1105,7 +1080,6 @@ class Database:
         await self._pool.commit()
 
     async def _create_indexes(self) -> None:
-        # فهارس لتحسين الأداء
         await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)")
         await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)")
         await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)")
@@ -1136,37 +1110,37 @@ class Database:
                     (plan["name"], plan["description"], plan["price"], "XTR", plan["duration_days"], plan["max_channels"], plan["max_posts"], plan["features"], 1, TimeUtils.utc_iso())
                 )
 
-    @asynccontextmanager
-    async def cursor(self):
+    # =====================================================================
+    # دوال قاعدة البيانات المُصحَّحة
+    # =====================================================================
+    async def execute(self, query: str, params: tuple = ()) -> None:
         if self._pool is None:
             await self.initialize()
-        async with self._pool.cursor() as cur:
-            yield cur
-
-    async def execute(self, query: str, params: tuple = ()) -> None:
-        async with self.cursor() as cur:
-            await cur.execute(query, params)
-            await cur.connection.commit()
+        await self._pool.execute(query, params)
+        await self._pool.commit()
 
     async def fetchone(self, query: str, params: tuple = ()):
-        async with self.cursor() as cur:
-            await cur.execute(query, params)
+        if self._pool is None:
+            await self.initialize()
+        async with self._pool.execute(query, params) as cur:
             return await cur.fetchone()
 
     async def fetchall(self, query: str, params: tuple = ()):
-        async with self.cursor() as cur:
-            await cur.execute(query, params)
+        if self._pool is None:
+            await self.initialize()
+        async with self._pool.execute(query, params) as cur:
             return await cur.fetchall()
 
     async def executemany(self, query: str, params: list) -> None:
-        async with self.cursor() as cur:
-            await cur.executemany(query, params)
-            await cur.connection.commit()
+        if self._pool is None:
+            await self.initialize()
+        await self._pool.executemany(query, params)
+        await self._pool.commit()
 
 DB = Database()
 
 # =====================================================================
-# 8. مستودعات البيانات (Repositories) - مع التصحيحات
+# 8. مستودعات البيانات (Repositories)
 # =====================================================================
 class UserRepository:
     @staticmethod
@@ -1640,7 +1614,6 @@ class SecurityRepository:
         if not word or len(word) < 2:
             return False, False
         word = word.strip().lower()[:100]
-        # التحقق من الحد الأقصى للكلمات العالمية
         if chat_id == -1:
             count = (await DB.fetchone("SELECT COUNT(*) FROM banned_words WHERE chat_id=-1"))[0]
             if count >= CONFIG.MAX_GLOBAL_BANNED_WORDS:
@@ -1796,7 +1769,6 @@ class ReferralRepository:
     async def add(referrer_id: int, referred_id: int) -> bool:
         if referrer_id == referred_id:
             return False
-        # التحقق من أن المحيل غير محظور
         if await UserRepository.is_banned(referrer_id):
             return False
         today = TimeUtils.utc_now().date().isoformat()
@@ -2177,7 +2149,7 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
             return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
 
 # =====================================================================
-# 12. تعريفات الكيبوردات (مع التحديثات)
+# 12. تعريفات الكيبوردات
 # =====================================================================
 class CB:
     MAIN = "main"
@@ -2315,7 +2287,6 @@ class CB:
 class KeyboardFactory:
     @staticmethod
     def security(chat_id: int, settings: dict, lang: str = 'ar') -> InlineKeyboardMarkup:
-        # بناء النص الأمني
         def st(v):
             return "✅" if v else "❌"
         text = get_text(lang, 'security_text',
@@ -2606,12 +2577,10 @@ class CommandHandlers:
         username = update.effective_user.username or ""
         first_name = update.effective_user.first_name or ""
         await UserRepository.register(user_id)
-        # تحديث الاسم فقط إذا تغير
         row = await DB.fetchone("SELECT username, first_name FROM users WHERE user_id=?", (user_id,))
         if row and (row[0] != username or row[1] != first_name):
             await DB.execute("UPDATE users SET username=?, first_name=?, updated_at=? WHERE user_id=?",
                              (username, first_name, TimeUtils.utc_iso(), user_id))
-        # معالجة الإحالة
         args = context.args
         if args and args[0].startswith('ref_'):
             ref_code = args[0][4:]
@@ -2620,7 +2589,6 @@ class CommandHandlers:
                 if await ReferralRepository.add(referrer, user_id):
                     reward = await ReferralRepository.auto_reward(referrer)
                     await safe_send(update.effective_chat.bot, referrer, f"🎁 تمت إحالة `{user_id}` (+{reward} يوم)")
-        # التحقق من الاشتراك الإجباري
         force_ch = await SettingRepository.get_force_subscribe_channel()
         if force_ch:
             try:
@@ -2955,7 +2923,7 @@ class CommandHandlers:
         await safe_send(context.bot, user_id, msg)
 
 # =====================================================================
-# 15. معالج الكولباك (مع التصحيحات)
+# 15. معالج الكولباك
 # =====================================================================
 class CallbackHandlers:
     @staticmethod
@@ -2968,7 +2936,7 @@ class CallbackHandlers:
         user_id = update.effective_user.id
         lang = await UserRepository.get_language(user_id)
 
-        # ====== الأزرار العامة ======
+        # أزرار عامة
         if data in (CB.MAIN, CB.BACK):
             await CommandHandlers.start(update, context)
             return
@@ -3001,7 +2969,7 @@ class CallbackHandlers:
                 pass
             return
 
-        # ====== الدفع ======
+        # الدفع
         if data.startswith(CB.BUY_SUB):
             days = int(data.split(":")[-1])
             plan_names = {1: "يوم", 7: "أسبوع", 30: "شهر", 90: "3 أشهر"}
@@ -3049,7 +3017,7 @@ class CallbackHandlers:
             await query.edit_message_text(text, reply_markup=kb)
             return
 
-        # ====== القنوات ======
+        # القنوات
         if data == CB.CH_ADD:
             StateManager.set(user_id, UserState.WAIT_CHANNEL)
             await query.edit_message_text(get_text(lang, 'enter_channel_id'))
@@ -3070,7 +3038,7 @@ class CallbackHandlers:
             await CommandHandlers.start(update, context)
             return
 
-        # ====== المنشورات ======
+        # المنشورات
         if data == CB.POST_ADD:
             await CallbackHandlers._add_posts(query, context, user_id, lang)
             return
@@ -3104,7 +3072,7 @@ class CallbackHandlers:
             await CallbackHandlers._publish_all(query, context, user_id, lang)
             return
 
-        # ====== الإحصائيات ======
+        # الإحصائيات
         if data == CB.STATS_PEND:
             u = await PostRepository.get_user_unpublished(user_id)
             t = await PostRepository.get_user_total(user_id)
@@ -3124,7 +3092,7 @@ class CallbackHandlers:
             await query.edit_message_text(f"📊 {stats['total']} | ✅ {stats['published']} | ⏳ {stats['unpublished']}")
             return
 
-        # ====== المجموعات ======
+        # المجموعات
         if data == CB.GROUPS:
             await CallbackHandlers._my_groups(query, context, user_id, lang)
             return
@@ -3132,7 +3100,7 @@ class CallbackHandlers:
             await CallbackHandlers._group_settings(query, context, user_id, lang)
             return
 
-        # ====== الإعدادات ======
+        # الإعدادات
         if data == CB.SETTINGS:
             await CallbackHandlers._settings(query, user_id, lang)
             return
@@ -3142,7 +3110,7 @@ class CallbackHandlers:
             await CallbackHandlers._settings(query, user_id, lang)
             return
 
-        # ====== الجدولة ======
+        # الجدولة
         if data.startswith(CB.SCHEDULE):
             ch_id = int(data.split(":")[-1])
             context.user_data['schedule_ch'] = ch_id
@@ -3181,7 +3149,7 @@ class CallbackHandlers:
             await query.edit_message_text(get_text(lang, 'enter_publish_time'))
             return
 
-        # ====== الأمان ======
+        # الأمان
         if data.startswith("sec_"):
             await CallbackHandlers._security_toggle(query, context, user_id, lang)
             return
@@ -3266,7 +3234,7 @@ class CallbackHandlers:
             await query.edit_message_text("⚖️ اختر عقوبة حذف الوسائط:", reply_markup=KeyboardFactory.penalty(chat_id, lang))
             return
 
-        # ====== الكلمات المحظورة ======
+        # الكلمات المحظورة
         if data.startswith(CB.BAN_ADD):
             chat_id = int(data.split(":")[-1])
             StateManager.set(user_id, UserState.WAIT_GROUP_BAN)
@@ -3289,7 +3257,7 @@ class CallbackHandlers:
             await query.edit_message_text(get_text(lang, 'enter_word_to_remove'))
             return
 
-        # ====== العقوبات ======
+        # العقوبات
         if data.startswith(CB.PENALTY):
             chat_id = int(data.split(":")[-1])
             await query.edit_message_text("⚖️ اختر العقوبة الأساسية:", reply_markup=KeyboardFactory.penalty(chat_id, lang))
@@ -3301,7 +3269,7 @@ class CallbackHandlers:
                 await query.edit_message_text(f"✅ تم تعيين العقوبة: {p}")
                 return
 
-        # ====== الإجراءات المتقدمة ======
+        # الإجراءات المتقدمة
         if data.startswith(CB.ADV_ACT):
             chat_id = int(data.split(":")[-1])
             await query.edit_message_text("🛠️ إجراءات متقدمة:", reply_markup=KeyboardFactory.advanced_actions(chat_id, lang))
@@ -3379,7 +3347,7 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
-        # ====== لوحة التحكم ======
+        # لوحة التحكم
         if data.startswith(CB.PANEL_LOCK):
             chat_id = int(data.split(":")[-1])
             await ChatLockRepository.set_lock(chat_id, True, user_id)
@@ -3397,7 +3365,7 @@ class CallbackHandlers:
                 pass
             return
 
-        # ====== الإحالات ======
+        # الإحالات
         if data == CB.REFERRAL:
             await CallbackHandlers._referral(query, user_id, lang)
             return
@@ -3414,7 +3382,7 @@ class CallbackHandlers:
                 await query.edit_message_text(text)
             return
 
-        # ====== التذكيرات ======
+        # التذكيرات
         if data == CB.REMINDER:
             await CallbackHandlers._reminder(query, user_id, lang)
             return
@@ -3451,7 +3419,7 @@ class CallbackHandlers:
             await CallbackHandlers._reminder(query, user_id, lang)
             return
 
-        # ====== الترجمة ======
+        # الترجمة
         if data == CB.TRANSLATION:
             await CallbackHandlers._translation(query, user_id, lang)
             return
@@ -3465,7 +3433,7 @@ class CallbackHandlers:
             await query.edit_message_text(get_text(lang, 'translation_set', lang=lang_set))
             return
 
-        # ====== المسابقات ======
+        # المسابقات
         if data == CB.CONTESTS:
             await CommandHandlers.contests(update, context)
             return
@@ -3485,7 +3453,7 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
-        # ====== الردود التلقائية ======
+        # الردود التلقائية
         if data.startswith(CB.AUTO_REPLY_MENU):
             chat_id = int(data.split(":")[-1])
             await query.edit_message_text(get_text(lang, 'auto_reply_settings'),
@@ -3549,7 +3517,7 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
-        # ====== لوحة الأدمن ======
+        # لوحة الأدمن
         if data == CB.ADMIN:
             if user_id == CONFIG.PRIMARY_OWNER_ID or await BotAdminRepository.is_admin(user_id):
                 await query.edit_message_text(get_text(lang, 'admin_panel'), reply_markup=KeyboardFactory.admin(lang))
@@ -3557,12 +3525,12 @@ class CallbackHandlers:
                 await query.answer(get_text(lang, 'not_authorized'), show_alert=True)
             return
 
-        # ====== أزرار الأدمن ======
+        # أزرار الأدمن
         if data.startswith("admin_"):
             await CallbackHandlers._admin_router(query, context, user_id, lang)
             return
 
-        # ====== أزرار اللغة ======
+        # أزرار اللغة
         if data.startswith("lang_"):
             lang_set = data.split("_")[-1]
             await UserRepository.set_language(user_id, lang_set)
@@ -3570,7 +3538,6 @@ class CallbackHandlers:
             await CommandHandlers.start(update, context)
             return
 
-        # ====== أزرار متنوعة ======
         if data == "language":
             await CommandHandlers.language(update, context)
             return
@@ -3580,7 +3547,7 @@ class CallbackHandlers:
 
         await query.answer()
 
-    # ====== دوال مساعدة خاصة ======
+    # دوال مساعدة داخلية
     @staticmethod
     async def _my_channels(query, user_id, lang):
         channels = await ChannelRepository.get_all(user_id)
@@ -4123,7 +4090,7 @@ class CallbackHandlers:
             await query.answer("⚠️ قيد التطوير", show_alert=True)
 
 # =====================================================================
-# 16. معالج الرسائل (مع التصحيحات)
+# 16. معالج الرسائل
 # =====================================================================
 class MessageHandlers:
     @staticmethod
@@ -4137,7 +4104,7 @@ class MessageHandlers:
         chat_id = update.effective_chat.id if update.effective_chat else None
         lang = await UserRepository.get_language(user_id)
 
-        # ====== إضافة قناة ======
+        # إضافة قناة
         if state == UserState.WAIT_CHANNEL:
             channel_id = text.strip()
             if not (channel_id.startswith('@') or channel_id.lstrip('-').isdigit()):
@@ -4162,7 +4129,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ====== إضافة منشورات ======
+        # إضافة منشورات
         if state == UserState.ADDING_POSTS:
             session = context.user_data.get(f"session_{user_id}", [])
             target = context.user_data.get(f"session_target_{user_id}", 15)
@@ -4206,7 +4173,7 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, get_text(lang, 'all_posts_saved'))
             return
 
-        # ====== الجدولة ======
+        # الجدولة
         if state == UserState.WAIT_MIN:
             try:
                 val = int(text)
@@ -4270,7 +4237,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ====== الكلمات المحظورة ======
+        # الكلمات المحظورة
         if state == UserState.WAIT_GROUP_BAN:
             chat_id_ban = context.user_data.get('ban_chat')
             if chat_id_ban and await is_authorized_in_group(context.bot, chat_id_ban, user_id):
@@ -4325,7 +4292,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ====== المشرفين ======
+        # المشرفين
         if state == UserState.WAIT_ADMIN_ADD:
             try:
                 target = int(text)
@@ -4346,7 +4313,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ====== البث ======
+        # البث
         if state == UserState.WAIT_BROADCAST:
             context.user_data['broadcast_text'] = text
             StateManager.clear(user_id)
@@ -4355,7 +4322,7 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, get_text(lang, 'admin_broadcast_confirm', text=text[:200]), reply_markup=kb)
             return
 
-        # ====== التحديثات ======
+        # التحديثات
         if state == UserState.WAIT_UPDATE:
             ch = await SettingRepository.get_updates_channel()
             if ch:
@@ -4381,7 +4348,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ====== التذكيرات ======
+        # التذكيرات
         if state == UserState.WAIT_REM_DAYS:
             try:
                 val = int(text)
@@ -4395,7 +4362,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ====== الإجراءات المتقدمة ======
+        # الإجراءات المتقدمة
         if state in (UserState.WAIT_BAN, UserState.WAIT_MUTE, UserState.WAIT_WARN,
                      UserState.WAIT_KICK, UserState.WAIT_RESTRICT, UserState.WAIT_UNBAN):
             chat_id_adv = context.user_data.get('adv_chat')
@@ -4436,7 +4403,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ====== المسابقات ======
+        # المسابقات
         if state == UserState.WAIT_CONTEST_TITLE:
             context.user_data['contest_title'] = text
             StateManager.set(user_id, UserState.WAIT_CONTEST_DESC)
@@ -4483,7 +4450,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ====== الردود التلقائية ======
+        # الردود التلقائية
         if state == UserState.WAIT_AUTO_KEY:
             keyword = text.strip().lower()
             if keyword:
@@ -4525,7 +4492,7 @@ class MessageHandlers:
             context.user_data.pop('auto_chat', None)
             return
 
-        # ====== الردود العامة (الأدمن) ======
+        # الردود العامة (الأدمن)
         if state == UserState.WAIT_KEYWORD:
             context.user_data['keyword'] = text.strip().lower()
             StateManager.set(user_id, UserState.WAIT_REPLY)
@@ -4541,7 +4508,7 @@ class MessageHandlers:
             context.user_data.pop('keyword', None)
             return
 
-        # ====== إعدادات أخرى ======
+        # إعدادات أخرى
         if state == UserState.WAIT_LOG_CH:
             try:
                 chat = await context.bot.get_chat(text)
@@ -4585,7 +4552,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ====== الدعم (تذكرة) مع دعم الوسائط ======
+        # الدعم (تذكرة) مع دعم الوسائط
         if state == UserState.SUPPORT_MODE:
             media_type = None
             media_file_id = None
@@ -4620,23 +4587,17 @@ class MessageHandlers:
             await SettingRepository.set('last_ticket_number', str(ticket_num))
             await TicketRepository.save(user_id, update.effective_user.username or "", content, ticket_num, media_type, media_file_id)
             await safe_send(context.bot, user_id, get_text(lang, 'support_ticket_created', num=ticket_num))
-            # إبلاغ المشرفين
-            if await BotAdminRepository.is_admin(user_id):
-                pass
-            else:
-                admins = await DB.fetchall("SELECT user_id FROM bot_admins")
-                for admin_id, in admins:
-                    try:
-                        await safe_send(context.bot, admin_id,
-                                        f"📞 تذكرة جديدة #{ticket_num} من `{user_id}`\n{content[:100]}...")
-                        if media_file_id:
-                            await context.bot.send_media_group(admin_id, [media_file_id])
-                    except:
-                        pass
+            admins = await DB.fetchall("SELECT user_id FROM bot_admins")
+            for admin_id, in admins:
+                try:
+                    await safe_send(context.bot, admin_id,
+                                    f"📞 تذكرة جديدة #{ticket_num} من `{user_id}`\n{content[:100]}...")
+                except:
+                    pass
             StateManager.clear(user_id)
             return
 
-        # ====== ردود تلقائية في المجموعات ======
+        # ردود تلقائية في المجموعات
         if text and update.effective_chat and update.effective_chat.type in ['group', 'supergroup']:
             chat_id_grp = update.effective_chat.id
             ars = await AutoReplyRepository.get_settings(chat_id_grp)
@@ -4663,7 +4624,6 @@ class MessageHandlers:
                                 await update.message.reply_text("", reply_markup=kb)
                         except:
                             pass
-            # تحليل المشاعر
             if len(text) > 3:
                 try:
                     res = SENTIMENT.analyze(text)
@@ -4671,11 +4631,11 @@ class MessageHandlers:
                 except:
                     pass
 
-        # ====== الحالة غير المعروفة ======
+        # الحالة غير المعروفة
         await CommandHandlers.start(update, context)
 
 # =====================================================================
-# 17. نظام العقوبات (مع التحسينات)
+# 17. نظام العقوبات
 # =====================================================================
 class PenaltyFactory:
     @staticmethod
@@ -4782,7 +4742,7 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
     return await strategy.apply(bot, chat_id, user_id, duration=duration, reason=reason)
 
 # =====================================================================
-# 18. المهام الخلفية (مع تصحيحات)
+# 18. المهام الخلفية ونظام النبض
 # =====================================================================
 class BackgroundTasks:
     @staticmethod
@@ -4875,8 +4835,54 @@ class BackgroundTasks:
             except:
                 pass
 
+    @staticmethod
+    async def heartbeat(bot) -> None:
+        """إرسال نبض كل 5 دقائق لمنع النوم"""
+        while True:
+            await asyncio.sleep(CONFIG.HEARTBEAT_INTERVAL)
+            try:
+                log_channel = await SettingRepository.get_log_channel_id()
+                ram = get_ram_usage()
+                msg = get_text('ar', 'heartbeat_status', time=TimeUtils.mecca_iso(), ram=ram['percent'])
+                if log_channel:
+                    await bot.send_message(log_channel, msg)
+                else:
+                    await bot.send_message(CONFIG.PRIMARY_OWNER_ID, msg)
+            except Exception as e:
+                logger.error(f"Heartbeat error: {e}")
+
+    @staticmethod
+    async def self_ping() -> None:
+        """إرسال طلب لنفسه كل 5 دقائق لمنع النوم"""
+        if not CONFIG.ENABLE_SELF_PING:
+            return
+        while True:
+            await asyncio.sleep(CONFIG.HEARTBEAT_INTERVAL)
+            try:
+                async with aiohttp.ClientSession() as session:
+                    await session.get(f"http://127.0.0.1:{CONFIG.WEB_PORT}/health", timeout=5)
+            except Exception as e:
+                logger.warning(f"Self-ping failed: {e}")
+
 # =====================================================================
-# 19. معالجات الأحداث
+# 19. خادم الصحة HTTP (Health Check)
+# =====================================================================
+async def health_check(request):
+    return web.Response(text="OK", status=200)
+
+async def run_health_server():
+    app = web.Application()
+    app.router.add_get('/health', health_check)
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host='0.0.0.0', port=CONFIG.WEB_PORT)
+    await site.start()
+    logger.info(f"✅ Health check server running on port {CONFIG.WEB_PORT}")
+    await asyncio.Event().wait()
+
+# =====================================================================
+# 20. معالجات الأحداث
 # =====================================================================
 async def track_chat_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     result = update.my_chat_member
@@ -4923,7 +4929,7 @@ async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT
             pass
 
 # =====================================================================
-# 20. معالجات الدفع
+# 21. معالجات الدفع
 # =====================================================================
 async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
@@ -4942,10 +4948,10 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         await safe_send(context.bot, user_id, get_text(lang, 'payment_failed'))
 
 # =====================================================================
-# 21. الدالة الرئيسية main()
+# 22. الدالة الرئيسية
 # =====================================================================
 async def main():
-    logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v5.0.2-stable")
+    logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v5.0.3-heartbeat")
     await DB.initialize()
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
@@ -5011,13 +5017,18 @@ async def main():
     except Exception as e:
         logger.warning(f"Failed to set commands: {e}")
 
-    # حفظ مراجع المهام الخلفية لإيقافها لاحقاً
+    # تشغيل خادم الصحة
+    asyncio.create_task(run_health_server())
+
+    # المهام الخلفية
     tasks = [
         asyncio.create_task(BackgroundTasks.auto_publish(app.bot)),
         asyncio.create_task(BackgroundTasks.auto_backup()),
         asyncio.create_task(BackgroundTasks.reminders(app.bot)),
         asyncio.create_task(BackgroundTasks.cleanup()),
-        asyncio.create_task(BackgroundTasks.memory_monitor())
+        asyncio.create_task(BackgroundTasks.memory_monitor()),
+        asyncio.create_task(BackgroundTasks.heartbeat(app.bot)),
+        asyncio.create_task(BackgroundTasks.self_ping()),
     ]
 
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
@@ -5029,7 +5040,6 @@ async def main():
         try:
             await asyncio.Event().wait()
         except KeyboardInterrupt:
-            # إلغاء المهام عند الإيقاف
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -5042,11 +5052,11 @@ async def main():
             await asyncio.gather(*tasks, return_exceptions=True)
 
 # =====================================================================
-# 22. تشغيل البرنامج
+# 23. تشغيل البرنامج
 # =====================================================================
 if __name__ == "__main__":
-    print(f"🌿 {CONFIG.BOT_NAME} v5.0.2-stable - @RelaxMgr")
-    print("✅ Enterprise Edition with Telegram Stars Payments")
+    print(f"🌿 {CONFIG.BOT_NAME} v5.0.3-heartbeat - @RelaxMgr")
+    print("✅ Enterprise Edition with Telegram Stars Payments + Heartbeat System")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
