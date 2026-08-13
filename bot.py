@@ -46,7 +46,7 @@ from enum import Enum, auto
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
-
+from abc import ABC, abstractmethod
 def ensure_packages() -> None:
     required = [
         ("python-dotenv", "dotenv"),
@@ -379,16 +379,22 @@ class Database:
         return cls._instance
 
     async def initialize(self) -> None:
-        async with self._lock:
-            if self._pool is not None:
-                return
-            self._pool = await aiosqlite.connect(str(PATHS.DB), timeout=CONFIG.DB_TIMEOUT)
-            self._pool.row_factory = aiosqlite.Row
-            await self._pool.execute("PRAGMA journal_mode=WAL")
-            await self._pool.execute("PRAGMA synchronous=NORMAL")
-            await self._pool.execute("PRAGMA foreign_keys=ON")
-            await self._create_tables()
-            await self._init_default_data()
+    """تهيئة اتصال قاعدة البيانات مع تجميع الاتصالات"""
+    async with self._lock:
+        if self._pool is not None:
+            return
+        # إنشاء الاتصال مع إضافة check_same_thread=False لحل مشكلة تعدد السلاسل
+        self._pool = await aiosqlite.connect(
+            str(PATHS.DB),
+            timeout=CONFIG.DB_TIMEOUT,
+            check_same_thread=False   # <-- هذه الإضافة تحل المشكلة
+        )
+        self._pool.row_factory = aiosqlite.Row
+        await self._pool.execute("PRAGMA journal_mode=WAL")
+        await self._pool.execute("PRAGMA synchronous=NORMAL")
+        await self._pool.execute("PRAGMA foreign_keys=ON")
+        await self._create_tables()
+        await self._init_default_data()
 
     async def _create_tables(self) -> None:
         tables = [
