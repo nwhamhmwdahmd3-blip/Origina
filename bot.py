@@ -1,6 +1,3 @@
-بما أن الكود طويل جداً، سأقوم بإرساله كاملاً في هذه الرسالة. لقد دمجت جميع التعديلات المطلوبة: استيراد الردود من GitHub، الدوال المساعدة، وحسّنت بعض الأجزاء.
-
-```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -5252,281 +5249,121 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 # =====================================================================
 # 23. الدالة الرئيسية
 # =====================================================================
-# =====================================================================
-# 23. الدالة الرئيسية (مكتملة)
-# =====================================================================
 async def main():
     logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v5.0.6-ultimate")
-    
-    # تهيئة قاعدة البيانات
     await DB.initialize()
-    
-    # تسجيل المطور الأساسي
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
-    
-    # تحميل الكلمات المحظورة من الملف (إذا وجد)
-    try:
-        words = load_banned_words_from_file(BANNED_WORDS_FILE)
-        if words:
-            for word in words:
-                await SecurityRepository.add_banned_word(word, -1, CONFIG.PRIMARY_OWNER_ID)
-            logger.info(f"✅ تم تحميل {len(words)} كلمة محظورة من الملف")
-    except Exception as e:
-        logger.error(f"❌ فشل تحميل الكلمات المحظورة: {e}")
-    
-    # إعداد الطلب
+
     if CONFIG.USE_PROXY:
-        request = HTTPXRequest(
-            proxy_url=CONFIG.PROXY_URL,
-            read_timeout=60,
-            write_timeout=30,
-            connect_timeout=30,
-            connection_pool_size=CONFIG.MAX_CONNECTIONS
-        )
+        request = HTTPXRequest(proxy_url=CONFIG.PROXY_URL, read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
     else:
-        request = HTTPXRequest(
-            read_timeout=60,
-            write_timeout=30,
-            connect_timeout=30,
-            connection_pool_size=CONFIG.MAX_CONNECTIONS
-        )
-    
-    # إنشاء التطبيق
-    application = Application.builder().token(CONFIG.TOKEN).request(request).build()
-    
-    # إضافة معالج الأخطاء العالمي
-    async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        try:
-            error_id = log_error(context.error, {'update': update.to_dict() if update else None})
-            if update and update.effective_user:
-                await safe_send(context.bot, update.effective_user.id, f"❌ خطأ: `{error_id}`")
-        except:
-            pass
-    
-    application.add_error_handler(error_handler)
-    
-    # =================================================================
-    # تسجيل الأوامر
-    # =================================================================
-    application.add_handler(CommandHandler("start", CommandHandlers.start))
-    application.add_handler(CommandHandler("help", CommandHandlers.help_command))
-    application.add_handler(CommandHandler("trial", CommandHandlers.trial))
-    application.add_handler(CommandHandler("subscribe", CommandHandlers.subscribe))
-    application.add_handler(CommandHandler("support", CommandHandlers.support))
-    application.add_handler(CommandHandler("developer", CommandHandlers.developer))
-    application.add_handler(CommandHandler("stats", CommandHandlers.stats))
-    application.add_handler(CommandHandler("language", CommandHandlers.language))
-    application.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
-    application.add_handler(CommandHandler("security", CommandHandlers.security))
-    application.add_handler(CommandHandler("panel", CommandHandlers.panel))
-    application.add_handler(CommandHandler("lock", CommandHandlers.lock))
-    application.add_handler(CommandHandler("unlock", CommandHandlers.unlock))
-    application.add_handler(CommandHandler("contests", CommandHandlers.contests))
-    application.add_handler(CommandHandler("add_hidden_admin", CommandHandlers.add_hidden_admin))
-    application.add_handler(CommandHandler("remove_hidden_admin", CommandHandlers.remove_hidden_admin))
-    application.add_handler(CommandHandler("list_hidden_admins", CommandHandlers.list_hidden_admins))
-    
-    # أوامر الإدارة
+        request = HTTPXRequest(read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
+
+    app = Application.builder().token(CONFIG.TOKEN).request(request).build()
+
+    # إضافة المعالجات
+    app.add_handler(CommandHandler("start", CommandHandlers.start))
+    app.add_handler(CommandHandler("help", CommandHandlers.help_command))
+    app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
+    app.add_handler(CommandHandler("security", CommandHandlers.security))
+    app.add_handler(CommandHandler("panel", CommandHandlers.panel))
+    app.add_handler(CommandHandler("lock", CommandHandlers.lock))
+    app.add_handler(CommandHandler("unlock", CommandHandlers.unlock))
+    app.add_handler(CommandHandler("stats", CommandHandlers.stats))
+    app.add_handler(CommandHandler("contests", CommandHandlers.contests))
+    app.add_handler(CommandHandler("support", CommandHandlers.support))
+    app.add_handler(CommandHandler("trial", CommandHandlers.trial))
+    app.add_handler(CommandHandler("subscribe", CommandHandlers.subscribe))
+    app.add_handler(CommandHandler("developer", CommandHandlers.developer))
+    app.add_handler(CommandHandler("language", CommandHandlers.language))
+    app.add_handler(CommandHandler("add_hidden_admin", CommandHandlers.add_hidden_admin))
+    app.add_handler(CommandHandler("remove_hidden_admin", CommandHandlers.remove_hidden_admin))
+    app.add_handler(CommandHandler("list_hidden_admins", CommandHandlers.list_hidden_admins))
+
     for cmd in ["ban", "mute", "warn", "kick", "restrict", "unban", "pin"]:
-        application.add_handler(CommandHandler(cmd, 
-            lambda update, context, c=cmd: CommandHandlers.moderation(update, context, c)))
-    
-    # =================================================================
-    # تسجيل معالج الكولباك
-    # =================================================================
-    application.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
-    
-    # =================================================================
-    # تسجيل معالجات الرسائل
-    # =================================================================
-    application.add_handler(MessageHandler(
-        (filters.TEXT | filters.CAPTION) & filters.ChatType.GROUPS & ~filters.COMMAND,
-        MessageHandlers.handle
-    ), group=1)
-    
-    application.add_handler(MessageHandler(
-        filters.ChatType.PRIVATE & ~filters.COMMAND,
-        MessageHandlers.handle
-    ))
-    
-    # معالجات الوسائط في الخاص
-    for media_filter in [filters.PHOTO, filters.VIDEO, filters.AUDIO, filters.VOICE, 
-                         filters.ANIMATION, filters.Document.ALL]:
-        application.add_handler(MessageHandler(
-            media_filter & filters.ChatType.PRIVATE,
-            MessageHandlers.handle
-        ))
-    
-    # =================================================================
-    # تسجيل معالجات الأحداث
-    # =================================================================
-    application.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members_handler))
-    application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
-    application.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
-    
-    # =================================================================
-    # تعيين أوامر البوت
-    # =================================================================
+        app.add_handler(CommandHandler(cmd, lambda u, c, cmd=cmd: CommandHandlers.moderation(u, c, cmd)))
+
+    app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, MessageHandlers.handle))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, MessageHandlers.handle), group=1)
+
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
+
+    app.add_handler(ChatJoinRequestHandler(lambda u, c: u.chat_join_request.approve()))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members_handler))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
+    app.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
+
     try:
-        await application.bot.set_my_commands([
+        await app.bot.set_my_commands([
             BotCommand("start", "الرئيسية"),
-            BotCommand("help", "المساعدة"),
-            BotCommand("trial", "تجربة مجانية"),
-            BotCommand("subscribe", "الاشتراك"),
-            BotCommand("support", "الدعم"),
-            BotCommand("syncgroup", "تفعيل المجموعة"),
-            BotCommand("security", "إعدادات الأمان"),
-            BotCommand("panel", "لوحة التحكم"),
-            BotCommand("lock", "قفل المجموعة"),
-            BotCommand("unlock", "فتح المجموعة"),
-            BotCommand("contests", "المسابقات"),
-            BotCommand("stats", "الإحصائيات"),
-            BotCommand("language", "تغيير اللغة"),
+            BotCommand("help", "مساعدة"),
+            BotCommand("syncgroup", "تفعيل مجموعة"),
+            BotCommand("security", "الأمان"),
+            BotCommand("panel", "لوحة تحكم"),
+            BotCommand("lock", "قفل"),
+            BotCommand("unlock", "فتح"),
+            BotCommand("ban", "حظر"),
+            BotCommand("mute", "كتم"),
+            BotCommand("warn", "تحذير"),
+            BotCommand("stats", "إحصائيات"),
+            BotCommand("contests", "مسابقات"),
+            BotCommand("support", "دعم"),
+            BotCommand("subscribe", "اشتراك"),
+            BotCommand("trial", "تجربة"),
         ])
     except Exception as e:
-        logger.error(f"❌ فشل تعيين الأوامر: {e}")
-    
-    # =================================================================
-    # تشغيل المهام الخلفية
-    # =================================================================
-    tasks = [
-        BackgroundTasks.auto_publish(application.bot),
-        BackgroundTasks.auto_backup,
-        BackgroundTasks.reminders(application.bot),
-        BackgroundTasks.cleanup,
-        BackgroundTasks.reset_warnings_daily,
-        BackgroundTasks.memory_monitor,
-        BackgroundTasks.heartbeat(application.bot),
-        BackgroundTasks.self_ping,
-        BackgroundTasks.flush_sentiment_periodically,
-        flush_usage_periodically,
-    ]
-    
-    for task in tasks:
-        asyncio.create_task(safe_loop(task, task.__name__ if hasattr(task, '__name__') else "task"))
-    
-    # =================================================================
-    # تشغيل خادم الصحة (Health Check)
-    # =================================================================
+        logger.warning(f"Failed to set commands: {e}")
+
+    # تشغيل خادم الصحة
     asyncio.create_task(run_health_server())
-    
-    # =================================================================
-    # تشغيل البوت (Webhook أو Polling)
-    # =================================================================
+
+    # المهام الخلفية
+    tasks = [
+        asyncio.create_task(BackgroundTasks.auto_publish(app.bot)),
+        asyncio.create_task(BackgroundTasks.auto_backup()),
+        asyncio.create_task(BackgroundTasks.reminders(app.bot)),
+        asyncio.create_task(BackgroundTasks.cleanup()),
+        asyncio.create_task(BackgroundTasks.reset_warnings_daily()),
+        asyncio.create_task(BackgroundTasks.memory_monitor()),
+        asyncio.create_task(BackgroundTasks.heartbeat(app.bot)),
+        asyncio.create_task(BackgroundTasks.self_ping()),
+        asyncio.create_task(flush_usage_periodically()),
+        asyncio.create_task(BackgroundTasks.flush_sentiment_periodically()),
+    ]
+
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
-    
     if hostname:
-        # بيئة سحابية: Webhook
-        logger.info(f"🚀 باستخدام Webhook على: https://{hostname}")
-        await application.initialize()
-        await application.start()
-        try:
-            await application.bot.set_webhook(
-                url=f"https://{hostname}/{CONFIG.TOKEN}",
-                drop_pending_updates=True,
-                allowed_updates=["message", "callback_query", "chat_member", "chat_join_request", "pre_checkout_query"]
-            )
-            logger.info(f"✅ تم تعيين Webhook")
-        except Exception as e:
-            logger.error(f"❌ فشل تعيين Webhook: {e}")
-        
-        # إرسال إشعار التشغيل
-        try:
-            await application.bot.send_message(
-                CONFIG.PRIMARY_OWNER_ID,
-                f"✅ {CONFIG.BOT_NAME} يعمل الآن (Webhook mode)"
-            )
-        except:
-            pass
-        
-        # الانتظار حتى إيقاف البوت
+        await app.initialize()
+        await app.start()
+        await app.bot.set_webhook(url=f"https://{hostname}/{CONFIG.TOKEN}", drop_pending_updates=True)
+        logger.info(f"✅ Webhook set on https://{hostname}/{CONFIG.TOKEN}")
         try:
             await asyncio.Event().wait()
         except KeyboardInterrupt:
-            logger.info("🛑 تم إيقاف البوت")
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     else:
-        # بيئة محلية: Polling
-        logger.info("🔄 باستخدام Polling (بدون Webhook)")
         try:
-            await application.bot.delete_webhook()
-        except:
-            pass
-        
-        # إرسال إشعار التشغيل
-        try:
-            await application.bot.send_message(
-                CONFIG.PRIMARY_OWNER_ID,
-                f"✅ {CONFIG.BOT_NAME} يعمل الآن (Polling mode)"
-            )
-        except:
-            pass
-        
-        try:
-            await application.run_polling(drop_pending_updates=True)
-        except Exception as e:
-            logger.error(f"❌ فشل Polling: {e}")
-            await asyncio.sleep(10)
-    
-    # =================================================================
-    # تنظيف عند الإيقاف
-    # =================================================================
-    logger.info("🛑 جاري إيقاف البوت...")
-    await _flush_sentiment_buffer()
-    await _flush_usage_updates()
-    logger.info("👋 تم إيقاف البوت")
+            await app.run_polling(drop_pending_updates=True)
+        except KeyboardInterrupt:
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 # =====================================================================
-# 24. حلقة آمنة للمهام
-# =====================================================================
-async def safe_loop(coro, name: str = "task"):
-    """تشغيل مهمة مع إعادة المحاولة عند الفشل"""
-    while True:
-        try:
-            if asyncio.iscoroutinefunction(coro):
-                await coro()
-            else:
-                await coro
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"❌ خطأ في {name}: {e}")
-            await asyncio.sleep(60)
-
-# =====================================================================
-# 25. دوال مساعدة إضافية
-# =====================================================================
-def load_banned_words_from_file(file_path: Path) -> List[str]:
-    """تحميل الكلمات المحظورة من ملف نصي"""
-    if not file_path.exists():
-        file_path.write_text("# قائمة الكلمات المحظورة - كل كلمة في سطر منفصل\n", encoding='utf-8')
-        return []
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return [line.strip().lower() for line in f if line.strip() and not line.startswith('#') and len(line.strip()) >= 2]
-    except Exception as e:
-        logger.error(f"❌ فشل تحميل الكلمات المحظورة: {e}")
-        return []
-
-# =====================================================================
-# 26. تشغيل البوت
+# 24. تشغيل البرنامج
 # =====================================================================
 if __name__ == "__main__":
-    print("=" * 60)
-    print(f"🌿 {CONFIG.BOT_NAME} v5.0.6-ultimate")
-    print("=" * 60)
-    print(f"👤 المطور: @RelaxMgr")
-    print(f"🤖 المعرف: @{CONFIG.BOT_USERNAME}")
-    print("=" * 60)
-    
+    print(f"🌿 {CONFIG.BOT_NAME} v5.0.6-ultimate - @RelaxMgr")
+    print("✅ Ultimate Edition with GitHub import and all improvements")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n👋 تم إيقاف البوت")
+        print("\n👋 تم الإيقاف")
     except Exception as e:
-        print(f"\n❌ خطأ فادح: {e}")
+        print(f"❌ {e}")
         traceback.print_exc()
-        sys.exit(1)
-
