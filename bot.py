@@ -5171,6 +5171,44 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         await safe_send(context.bot, user_id, get_text(lang, 'payment_success', plan="الباقة", days=""))
     else:
         await safe_send(context.bot, user_id, get_text(lang, 'payment_failed'))
+async def setup_unified_web_server(application, port: int):
+    from aiohttp import web
+    from telegram import Update
+
+    # إنشاء تطبيق ويب منفصل (بدلاً من الاعتماد على application.web_app)
+    web_app = web.Application()
+
+    async def health(request):
+        return web.Response(text="OK")
+
+    async def index(request):
+        return web.Response(
+            text="<h1>🌿 ريلاكس مانيجر</h1><p>✅ يعمل</p>",
+            content_type="text/html",
+            charset="utf-8"
+        )
+
+    async def webhook(request):
+        try:
+            data = await request.json()
+            # معالجة التحديث
+            await application.process_update(Update.de_json(data, application.bot))
+            return web.Response(status=200, text="OK")
+        except Exception as e:
+            logger.error(f"Webhook error: {e}")
+            # نعيد 200 دائماً لتجنب إعادة محاولات متكررة من Telegram
+            return web.Response(status=200, text="OK")
+
+    # تسجيل المسارات
+    web_app.router.add_get('/', index)
+    web_app.router.add_get('/health', health)
+    web_app.router.add_post(f'/{TOKEN}', webhook)   # المسار الصحيح
+
+    # تشغيل الخادم
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    logger.info(f"✅ خادم ويب على {port}")
 
 # =====================================================================
 # 23. الدالة الرئيسية
