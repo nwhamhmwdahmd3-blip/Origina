@@ -2,26 +2,18 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – النسخة النهائية مع نظام النبض الداخلي
+🌿 Relax Manager – النسخة النهائية مع جميع التحسينات
 ================================================================================
 بوت تلغرام متكامل لإدارة القنوات والمجموعات مع نظام دفع عبر Telegram Stars
+مع تحسينات الردود التلقائية (كاش LRU، تحديث مجمع، تصدير/استيراد JSON)
 
-الإصدار: 5.0.4-stable
-التغييرات الجديدة:
-- إصلاح جميع الأخطاء النحوية والمنطقية.
-- تحسين إدارة اتصالات قاعدة البيانات.
-- تحسين أداء الردود التلقائية وتحليل المشاعر.
-- إضافة إعادة تعيين التحذيرات تلقائياً.
-- توحيد الترجمة وإضافة المفاتيح المفقودة.
-- تحسين معالجات الكولباك لضمان تغطية جميع الحالات.
-- تحسين نظام النبض ومنع النوم.
+الإصدار: 5.0.5-ultimate
 ================================================================================
 """
 
 # =====================================================================
 # 1. الاستيرادات الأساسية
 # =====================================================================
-import improvements
 import asyncio
 import sys
 import os
@@ -45,6 +37,7 @@ from enum import Enum, auto
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 
 # =====================================================================
 # 2. تثبيت الحزم والاستيرادات الإضافية
@@ -67,7 +60,7 @@ def ensure_packages() -> None:
             result = subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", pkg],
                                     capture_output=True, text=True, check=False)
             if result.returncode != 0:
-                logging.warning(f"فشل تثبيت {pkg}: {result.stderr}")
+                print(f"⚠️ فشل تثبيت {pkg}: {result.stderr}")
 
 ensure_packages()
 
@@ -239,7 +232,6 @@ class TextUtils:
     def escape_markdown_v2(text: str) -> str:
         if not text:
             return ""
-        # إضافة الأحرف ! و ' و ( و )
         special = r'_*[]()~`>#+\-=|{}.!\\\''
         return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\\'])', r'\\\1', text)
 
@@ -294,7 +286,43 @@ def get_ram_usage() -> dict:
         return {'total': 0, 'used': 0, 'percent': 0}
 
 # =====================================================================
-# 6. الترجمات (تم إضافة المفاتيح المفقودة)
+# 6. كاش LRU للردود التلقائية (تحسين جديد)
+# =====================================================================
+class AutoReplyCache:
+    """ذاكرة تخزين مؤقت للردود الأكثر استخداماً (LRU)"""
+    def __init__(self, maxsize: int = 200):
+        self.cache = OrderedDict()
+        self.maxsize = maxsize
+
+    def get(self, key: str):
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        return None
+
+    def set(self, key: str, value: dict):
+        if key in self.cache:
+            self.cache.move_to_end(key)
+        self.cache[key] = value
+        if len(self.cache) > self.maxsize:
+            self.cache.popitem(last=False)
+
+    def invalidate(self, key: str = None):
+        if key:
+            self.cache.pop(key, None)
+        else:
+            self.cache.clear()
+
+    def size(self) -> int:
+        return len(self.cache)
+
+_auto_reply_cache = AutoReplyCache(maxsize=200)
+_usage_updates: Dict[Tuple[int, str], int] = {}
+_USAGE_FLUSH_LIMIT = 50
+_USAGE_FLUSH_INTERVAL = 60
+
+# =====================================================================
+# 7. الترجمات
 # =====================================================================
 LOCALES = {
     'ar': {
@@ -376,15 +404,7 @@ LOCALES = {
         'groups_list': "👥 **مجموعاتي**",
         'add_group': "➕ أضف المجموعة",
         'settings_auto': "⚙️ نشر تلقائي: {status}",
-        'security_text': "🔐 <b>إعدادات الأمان للمجموعة</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-                         "🔗 الروابط: {links}\n@ المعرفات: {mentions}\n"
-                         "⏱️ البطيء: {slow} ({slow_sec}ث)\n🎯 الترحيب: {welcome}\n👋 الوداع: {goodbye}\n"
-                         "🎬 فيديوهات: {video}\n🎵 صوتيات: {audio}\n🎞️ متحركات: {animation}\n"
-                         "🛠️ الخدمة: {service}\n📄 ملفات: {documents}\n🖼️ ملصقات: {stickers}\n"
-                         "📨 المُعاد: {forwarded}\n📊 استطلاعات: {polls}\n🎮 ألعاب: {games}\n"
-                         "🎤 صوتيات: {voice}\n🎥 فيديو نوت: {video_note}\n🌊 مضاد الفيضان: {flood}\n"
-                         "🌙 ليلي: {night}\n📏 الطول: {max_len}\n⚖️ العقوبة الأساسية: {auto_penalty}\n"
-                         "⚖️ عقوبة الحذف: {delete_penalty}\n━━━━━━━━━━━━━━━━━━━━\n📌 اختر الإعداد:",
+        'security_text': "🔐 <b>إعدادات الأمان للمجموعة</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 الروابط: {links}\n@ المعرفات: {mentions}\n⏱️ البطيء: {slow} ({slow_sec}ث)\n🎯 الترحيب: {welcome}\n👋 الوداع: {goodbye}\n🎬 فيديوهات: {video}\n🎵 صوتيات: {audio}\n🎞️ متحركات: {animation}\n🛠️ الخدمة: {service}\n📄 ملفات: {documents}\n🖼️ ملصقات: {stickers}\n📨 المُعاد: {forwarded}\n📊 استطلاعات: {polls}\n🎮 ألعاب: {games}\n🎤 صوتيات: {voice}\n🎥 فيديو نوت: {video_note}\n🌊 مضاد الفيضان: {flood}\n🌙 ليلي: {night}\n📏 الطول: {max_len}\n⚖️ العقوبة الأساسية: {auto_penalty}\n⚖️ عقوبة الحذف: {delete_penalty}\n━━━━━━━━━━━━━━━━━━━━\n📌 اختر الإعداد:",
         'warning_settings': "⚠️ **إعدادات التحذير**\nالحد الأقصى للتحذيرات: {max_warnings}\nعقوبة التجاوز: {warn_penalty}",
         'warning_count_updated': "✅ تم تعيين {count} تحذيرات كحد أقصى",
         'warning_penalty_updated': "✅ تم تعيين عقوبة التجاوز: {penalty}",
@@ -559,15 +579,7 @@ LOCALES = {
         'groups_list': "👥 **My Groups**",
         'add_group': "➕ Add Group",
         'settings_auto': "⚙️ Auto publish: {status}",
-        'security_text': "🔐 <b>Security Settings</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-                         "🔗 Links: {links}\n@ Mentions: {mentions}\n"
-                         "⏱️ Slow mode: {slow} ({slow_sec}s)\n🎯 Welcome: {welcome}\n👋 Goodbye: {goodbye}\n"
-                         "🎬 Videos: {video}\n🎵 Audio: {audio}\n🎞️ Animation: {animation}\n"
-                         "🛠️ Service: {service}\n📄 Documents: {documents}\n🖼️ Stickers: {stickers}\n"
-                         "📨 Forwarded: {forwarded}\n📊 Polls: {polls}\n🎮 Games: {games}\n"
-                         "🎤 Voice: {voice}\n🎥 Video note: {video_note}\n🌊 Antiflood: {flood}\n"
-                         "🌙 Night mode: {night}\n📏 Max length: {max_len}\n⚖️ Default penalty: {auto_penalty}\n"
-                         "⚖️ Delete penalty: {delete_penalty}\n━━━━━━━━━━━━━━━━━━━━\n📌 Choose setting:",
+        'security_text': "🔐 <b>Security Settings</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Links: {links}\n@ Mentions: {mentions}\n⏱️ Slow mode: {slow} ({slow_sec}s)\n🎯 Welcome: {welcome}\n👋 Goodbye: {goodbye}\n🎬 Videos: {video}\n🎵 Audio: {audio}\n🎞️ Animation: {animation}\n🛠️ Service: {service}\n📄 Documents: {documents}\n🖼️ Stickers: {stickers}\n📨 Forwarded: {forwarded}\n📊 Polls: {polls}\n🎮 Games: {games}\n🎤 Voice: {voice}\n🎥 Video note: {video_note}\n🌊 Antiflood: {flood}\n🌙 Night mode: {night}\n📏 Max length: {max_len}\n⚖️ Default penalty: {auto_penalty}\n⚖️ Delete penalty: {delete_penalty}\n━━━━━━━━━━━━━━━━━━━━\n📌 Choose setting:",
         'warning_settings': "⚠️ **Warning Settings**\nMax warnings: {max_warnings}\nPenalty: {warn_penalty}",
         'warning_count_updated': "✅ Max warnings set to {count}",
         'warning_penalty_updated': "✅ Penalty set to {penalty}",
@@ -675,7 +687,7 @@ def get_text(lang: str, key: str, **kwargs) -> str:
         return text
 
 # =====================================================================
-# 7. قاعدة البيانات - نسخة محسّنة (اتصال لكل استعلام)
+# 8. قاعدة البيانات (مع اتصال لكل استعلام)
 # =====================================================================
 class Database:
     _instance = None
@@ -720,7 +732,6 @@ class Database:
             await conn.commit()
 
     async def initialize(self) -> None:
-        """إنشاء الجداول والفهارس والبيانات الافتراضية"""
         async with self._get_connection() as conn:
             await self._create_tables(conn)
             await self._create_indexes(conn)
@@ -1131,6 +1142,7 @@ class Database:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_status ON invoices(status)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_chat ON auto_replies(chat_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_keyword ON auto_replies(keyword)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_replies_lookup ON auto_replies(chat_id, keyword, is_active)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)")
         await conn.commit()
@@ -1154,7 +1166,7 @@ class Database:
 DB = Database()
 
 # =====================================================================
-# 8. المستودعات (تم تحديثها لاستخدام DB الجديد)
+# 9. المستودعات (Repositories)
 # =====================================================================
 class UserRepository:
     @staticmethod
@@ -1429,7 +1441,6 @@ class ScheduleRepository:
 
     @staticmethod
     async def update_next(channel_db_id: int) -> None:
-        """تحديث next_publish_date بناءً على آخر وقت نشر والجدول الحالي"""
         last_time = await ScheduleRepository.get_last_publish(channel_db_id) or TimeUtils.utc_now()
         s = await ScheduleRepository.get(channel_db_id)
         st = s.get('type', 'interval_minutes')
@@ -1444,7 +1455,6 @@ class ScheduleRepository:
             nd = last_time + timedelta(days=interval)
         else:
             nd = last_time + timedelta(minutes=12)
-        # تأكد من أن الموعد التالي في المستقبل
         while nd <= TimeUtils.utc_now():
             if st == 'interval_minutes':
                 nd += timedelta(minutes=s.get('interval_minutes', 12))
@@ -1631,7 +1641,6 @@ class SecurityRepository:
         if not word or len(word) < 2:
             return False, False
         word = word.strip().lower()[:100]
-        # التحقق من الصلاحية للكلمات العالمية
         if chat_id == -1:
             if not await BotAdminRepository.is_admin(added_by):
                 return False, False
@@ -1728,26 +1737,49 @@ class AutoReplyRepository:
 
     @classmethod
     async def get_reply(cls, keyword: str, chat_id: int = 0) -> Optional[dict]:
-        # تحديث usage_count بشكل ذري
+        """نسخة محسّنة مع كاش LRU وتحديث مجمع"""
+        cache_key = f"{chat_id}:{keyword.lower()}"
+        
+        # 1. حاول جلب الرد من الكاش
+        cached = _auto_reply_cache.get(cache_key)
+        if cached:
+            # زيادة العداد في الخلفية دون انتظار
+            asyncio.create_task(_increment_usage_async(chat_id, keyword.lower()))
+            return cached.copy()
+        
+        # 2. غير موجود في الكاش → استعلام من قاعدة البيانات
         async with DB._get_connection() as conn:
             async with conn.execute(
-                "SELECT reply, reply_type, reply_media_id, reply_buttons FROM auto_replies WHERE chat_id=? AND keyword=? AND is_active=1 LIMIT 1",
+                "SELECT reply, reply_type, reply_media_id, reply_buttons FROM auto_replies "
+                "WHERE chat_id=? AND keyword=? AND is_active=1 LIMIT 1",
                 (chat_id, keyword.lower())
             ) as cur:
                 row = await cur.fetchone()
                 if not row:
                     return None
+                
                 # زيادة العداد
                 await conn.execute(
                     "UPDATE auto_replies SET usage_count = usage_count + 1 WHERE chat_id=? AND keyword=?",
                     (chat_id, keyword.lower())
                 )
                 await conn.commit()
+                
                 try:
                     buttons = json.loads(row[3]) if row[3] else None
                 except:
                     buttons = None
-                return {'reply': row[0], 'type': row[1], 'media_id': row[2], 'buttons': buttons}
+                
+                reply_data = {
+                    'reply': row[0],
+                    'type': row[1],
+                    'media_id': row[2],
+                    'buttons': buttons
+                }
+                
+                # تخزين في الكاش
+                _auto_reply_cache.set(cache_key, reply_data)
+                return reply_data
 
     @classmethod
     async def get_stats(cls, chat_id: int, limit: int = 10) -> List[tuple]:
@@ -1763,6 +1795,88 @@ class AutoReplyRepository:
     async def reset(cls, chat_id: int) -> None:
         await DB.execute("DELETE FROM auto_replies WHERE chat_id=?", (chat_id,))
         cls._cache.pop(chat_id, None)
+        _auto_reply_cache.invalidate()
+
+async def _increment_usage_async(chat_id: int, keyword: str):
+    """زيادة العداد بشكل غير متزامن (تجميع)"""
+    global _usage_updates
+    key = (chat_id, keyword.lower())
+    _usage_updates[key] = _usage_updates.get(key, 0) + 1
+    if len(_usage_updates) >= _USAGE_FLUSH_LIMIT:
+        await _flush_usage_updates()
+
+async def _flush_usage_updates():
+    """حفظ التحديثات المجمعة لـ usage_count في قاعدة البيانات"""
+    global _usage_updates
+    if not _usage_updates:
+        return
+    data = list(_usage_updates.items())
+    _usage_updates.clear()
+    
+    async with DB._get_connection() as conn:
+        for (chat_id, keyword), count in data:
+            await conn.execute(
+                "UPDATE auto_replies SET usage_count = usage_count + ? WHERE chat_id=? AND keyword=?",
+                (count, chat_id, keyword)
+            )
+        await conn.commit()
+
+async def flush_usage_periodically():
+    """مهمة خلفية لتخزين الإحصائيات كل 60 ثانية"""
+    while True:
+        await asyncio.sleep(_USAGE_FLUSH_INTERVAL)
+        await _flush_usage_updates()
+
+async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
+    """تصدير جميع الردود النشطة لمجموعة معينة إلى ملف JSON"""
+    rows = await DB.fetchall(
+        "SELECT keyword, reply, reply_type, reply_media_id, reply_buttons "
+        "FROM auto_replies WHERE chat_id=? AND is_active=1",
+        (chat_id,)
+    )
+    if not rows:
+        return 0
+    
+    data = [dict(row) for row in rows]
+    if file_path is None:
+        file_path = f"auto_replies_{chat_id}.json"
+    
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return len(data)
+
+async def import_auto_replies(chat_id: int, file_path: str, overwrite: bool = False) -> int:
+    """استيراد الردود من ملف JSON إلى مجموعة معينة"""
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    count = 0
+    for item in data:
+        keyword = item.get('keyword', '').strip().lower()
+        if not keyword:
+            continue
+        reply = item.get('reply', '').strip()
+        if not reply:
+            continue
+        
+        if overwrite:
+            await DB.execute(
+                "DELETE FROM auto_replies WHERE chat_id=? AND keyword=?",
+                (chat_id, keyword)
+            )
+        
+        await AutoReplyRepository.add_reply(
+            chat_id,
+            keyword,
+            reply,
+            item.get('reply_type', 'text'),
+            item.get('reply_media_id'),
+            item.get('reply_buttons')
+        )
+        count += 1
+    
+    _auto_reply_cache.invalidate()
+    return count
 
 class TicketRepository:
     @staticmethod
@@ -2068,7 +2182,7 @@ class BotAdminRepository:
         return True
 
 # =====================================================================
-# 9. تحليل المشاعر (محسّن مع تجميع)
+# 10. تحليل المشاعر
 # =====================================================================
 class SentimentAnalyzer:
     def __init__(self):
@@ -2091,11 +2205,8 @@ class SentimentAnalyzer:
         return {'sentiment': sentiment, 'score': round(score, 3)}
 
 SENTIMENT = SentimentAnalyzer()
-
-# تجميع تحليلات المشاعر في الذاكرة وحفظها دفعة واحدة
 _sentiment_buffer = []
 _SENTIMENT_BUFFER_LIMIT = 50
-_SENTIMENT_FLUSH_INTERVAL = 60  # ثانية
 
 async def _flush_sentiment_buffer():
     global _sentiment_buffer
@@ -2111,13 +2222,13 @@ async def _flush_sentiment_buffer():
         await conn.commit()
 
 async def save_sentiment(user_id: int, chat_id: int, text: str, sentiment: str, score: float) -> None:
-    encrypted = ENCRYPT.encrypt_text(text[:500])  # حد الطول لتقليل الحجم
+    encrypted = ENCRYPT.encrypt_text(text[:500])
     _sentiment_buffer.append((user_id, chat_id, encrypted, sentiment, score, TimeUtils.utc_iso()))
     if len(_sentiment_buffer) >= _SENTIMENT_BUFFER_LIMIT:
         await _flush_sentiment_buffer()
 
 # =====================================================================
-# 10. الصلاحيات والمصادقة
+# 11. الصلاحيات والمصادقة
 # =====================================================================
 _auth_cache = TTLCache(maxsize=1000, ttl=10)
 
@@ -2172,7 +2283,7 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
         return {'can_act': False, 'reason': 'خطأ في التحقق'}
 
 # =====================================================================
-# 11. دوال الإرسال الآمن
+# 12. دوال الإرسال الآمن
 # =====================================================================
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
     if not text:
@@ -2195,7 +2306,7 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
             return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
 
 # =====================================================================
-# 12. تعريفات الكيبوردات (جميع الأزرار)
+# 13. تعريفات الكيبوردات (الأزرار)
 # =====================================================================
 class CB:
     MAIN = "main"
@@ -2329,6 +2440,10 @@ class CB:
     CHECK_SUB = "check_sub"
     PLANS = "plans"
     INVOICES = "invoices"
+    ADMIN_EXPORT_REPLIES = "admin_export_replies"
+    ADMIN_IMPORT_REPLIES = "admin_import_replies"
+    ADMIN_REFRESH_CACHE = "admin_refresh_cache"
+    ADMIN_CONFIRM_IMPORT = "admin_confirm_import"
 
 class KeyboardFactory:
     @staticmethod
@@ -2413,6 +2528,9 @@ class KeyboardFactory:
              InlineKeyboardButton("📊 مراقبة", callback_data=CB.ADMIN_METRICS)],
             [InlineKeyboardButton("💎 الباقات", callback_data=CB.PLANS),
              InlineKeyboardButton("🧾 فواتيري", callback_data=CB.INVOICES)],
+            [InlineKeyboardButton("📤 تصدير الردود", callback_data=CB.ADMIN_EXPORT_REPLIES),
+             InlineKeyboardButton("📥 استيراد الردود", callback_data=CB.ADMIN_IMPORT_REPLIES)],
+            [InlineKeyboardButton("🔄 تحديث الكاش", callback_data=CB.ADMIN_REFRESH_CACHE)],
             [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
         ])
 
@@ -2553,7 +2671,7 @@ class KeyboardFactory:
         return InlineKeyboardMarkup(kb), title
 
 # =====================================================================
-# 13. إدارة حالات المستخدم
+# 14. إدارة حالات المستخدم
 # =====================================================================
 class UserState(Enum):
     NONE = auto()
@@ -2596,6 +2714,7 @@ class UserState(Enum):
     WAIT_AUTO_REPLY = auto()
     WAIT_AUTO_DEL = auto()
     WAIT_BACKUP_INTERVAL = auto()
+    WAIT_IMPORT_FILE = auto()
     SUPPORT_MODE = auto()
 
 class StateManager:
@@ -2614,7 +2733,7 @@ class StateManager:
         cls._states.pop(user_id, None)
 
 # =====================================================================
-# 14. معالج الأوامر
+# 15. معالج الأوامر
 # =====================================================================
 class CommandHandlers:
     @staticmethod
@@ -2969,7 +3088,7 @@ class CommandHandlers:
         await safe_send(context.bot, user_id, msg)
 
 # =====================================================================
-# 15. معالج الكولباك (تم إصلاح جميع الأخطاء وإضافة المفقودات)
+# 16. معالج الكولباك (مع الأزرار الجديدة)
 # =====================================================================
 class CallbackHandlers:
     @staticmethod
@@ -3016,6 +3135,22 @@ class CallbackHandlers:
             return
         if data == CB.CHECK_SUB:
             await CommandHandlers.start(update, context)
+            return
+
+        # أزرار تحسينات الردود التلقائية
+        if data == CB.ADMIN_EXPORT_REPLIES:
+            chat_id = -1  # يمكن تعديلها لتصدير ردود مجموعة محددة
+            count = await export_auto_replies(chat_id)
+            await query.edit_message_text(f"✅ تم تصدير {count} رد إلى ملف `auto_replies_{chat_id}.json`")
+            return
+        if data == CB.ADMIN_IMPORT_REPLIES:
+            StateManager.set(user_id, UserState.WAIT_IMPORT_FILE)
+            context.user_data['import_chat_id'] = -1
+            await query.edit_message_text("📤 أرسل ملف JSON للاستيراد (سيتم استبدال الردود الموجودة)")
+            return
+        if data == CB.ADMIN_REFRESH_CACHE:
+            _auto_reply_cache.invalidate()
+            await query.edit_message_text("🔄 تم تحديث الكاش بنجاح")
             return
 
         # الدفع
@@ -3809,7 +3944,6 @@ class CallbackHandlers:
             new_val = 1 if current == 0 else 0
             await SecurityRepository.set(chat_id, **{col: new_val})
             settings = await SecurityRepository.get(chat_id, force_refresh=True)
-            # تم إصلاح الخطأ هنا: إغلاق الأقواس بشكل صحيح
             await query.edit_message_text(get_text(lang, 'security_text',
                         links='✅' if settings.get('delete_links') else '❌',
                         mentions='✅' if settings.get('mentions') else '❌',
@@ -3852,14 +3986,12 @@ class CallbackHandlers:
             ])
             await query.edit_message_text(text, reply_markup=kb)
             return
-        if data.startswith("warn_count:"):
-            chat_id = int(data.split(":")[-1])
+        if action == "warn_count":
             StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
             context.user_data['sec_chat'] = chat_id
             await query.edit_message_text("📝 أرسل الحد الأقصى للتحذيرات (1-10):")
             return
-        if data.startswith("warn_penalty:"):
-            chat_id = int(data.split(":")[-1])
+        if action == "warn_penalty":
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛑 حظر", callback_data=f"set_warn_penalty:{chat_id}:ban"),
                  InlineKeyboardButton("🔇 كتم", callback_data=f"set_warn_penalty:{chat_id}:mute")],
@@ -3867,8 +3999,8 @@ class CallbackHandlers:
             ])
             await query.edit_message_text("⚖️ اختر عقوبة تجاوز التحذيرات:", reply_markup=kb)
             return
-        if data.startswith("set_warn_penalty:"):
-            _, chat_id_str, penalty = data.split(":")
+        if action.startswith("set_warn_penalty:"):
+            _, chat_id_str, penalty = action.split(":")
             chat_id = int(chat_id_str)
             await SecurityRepository.set(chat_id, warn_penalty=penalty)
             settings = await SecurityRepository.get(chat_id, force_refresh=True)
@@ -4142,7 +4274,7 @@ class CallbackHandlers:
             await query.answer("⚠️ قيد التطوير", show_alert=True)
 
 # =====================================================================
-# 16. معالج الرسائل
+# 17. معالج الرسائل (مع دعم استيراد الملفات)
 # =====================================================================
 class MessageHandlers:
     @staticmethod
@@ -4155,6 +4287,34 @@ class MessageHandlers:
         state = StateManager.get(user_id)
         chat_id = update.effective_chat.id if update.effective_chat else None
         lang = await UserRepository.get_language(user_id)
+
+        # معالج استيراد ملف JSON
+        if state == UserState.WAIT_IMPORT_FILE:
+            if not msg.document:
+                await safe_send(context.bot, user_id, "❌ أرسل ملف JSON (بامتداد .json)")
+                return
+            
+            file = msg.document
+            if not file.file_name.endswith('.json'):
+                await safe_send(context.bot, user_id, "❌ الملف يجب أن يكون JSON")
+                return
+            
+            try:
+                file_obj = await context.bot.get_file(file.file_id)
+                temp_path = f"/tmp/import_{user_id}.json"
+                await file_obj.download_to_drive(temp_path)
+                
+                import_chat_id = context.user_data.get('import_chat_id', -1)
+                count = await import_auto_replies(import_chat_id, temp_path, overwrite=True)
+                await safe_send(context.bot, user_id, f"✅ تم استيراد {count} رد بنجاح")
+                
+                Path(temp_path).unlink(missing_ok=True)
+            except Exception as e:
+                await safe_send(context.bot, user_id, f"❌ فشل الاستيراد: {str(e)[:100]}")
+            
+            StateManager.clear(user_id)
+            context.user_data.pop('import_chat_id', None)
+            return
 
         # إضافة قناة
         if state == UserState.WAIT_CHANNEL:
@@ -4687,7 +4847,7 @@ class MessageHandlers:
         await CommandHandlers.start(update, context)
 
 # =====================================================================
-# 17. نظام العقوبات
+# 18. نظام العقوبات
 # =====================================================================
 class PenaltyFactory:
     @staticmethod
@@ -4794,7 +4954,7 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
     return await strategy.apply(bot, chat_id, user_id, duration=duration, reason=reason)
 
 # =====================================================================
-# 18. المهام الخلفية ونظام النبض
+# 19. المهام الخلفية
 # =====================================================================
 class BackgroundTasks:
     @staticmethod
@@ -4878,7 +5038,6 @@ class BackgroundTasks:
 
     @staticmethod
     async def reset_warnings_daily() -> None:
-        """إعادة تعيين التحذيرات يومياً"""
         while True:
             await asyncio.sleep(86400)
             try:
@@ -4899,7 +5058,6 @@ class BackgroundTasks:
 
     @staticmethod
     async def heartbeat(bot) -> None:
-        """إرسال نبض كل 5 دقائق لمنع النوم"""
         while True:
             await asyncio.sleep(CONFIG.HEARTBEAT_INTERVAL)
             try:
@@ -4915,7 +5073,6 @@ class BackgroundTasks:
 
     @staticmethod
     async def self_ping() -> None:
-        """إرسال طلب لنفسه كل 5 دقائق لمنع النوم"""
         if not CONFIG.ENABLE_SELF_PING:
             return
         while True:
@@ -4926,8 +5083,14 @@ class BackgroundTasks:
             except Exception as e:
                 logger.warning(f"Self-ping failed: {e}")
 
+    @staticmethod
+    async def flush_sentiment_periodically() -> None:
+        while True:
+            await asyncio.sleep(60)
+            await _flush_sentiment_buffer()
+
 # =====================================================================
-# 19. خادم الصحة HTTP (Health Check)
+# 20. خادم الصحة HTTP
 # =====================================================================
 async def health_check(request):
     return web.Response(text="OK", status=200)
@@ -4944,7 +5107,7 @@ async def run_health_server():
     await asyncio.Event().wait()
 
 # =====================================================================
-# 20. معالجات الأحداث
+# 21. معالجات الأحداث
 # =====================================================================
 async def track_chat_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     result = update.my_chat_member
@@ -4991,7 +5154,7 @@ async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT
             pass
 
 # =====================================================================
-# 21. معالجات الدفع
+# 22. معالجات الدفع
 # =====================================================================
 async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
@@ -5008,49 +5171,16 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         await safe_send(context.bot, user_id, get_text(lang, 'payment_success', plan="الباقة", days=""))
     else:
         await safe_send(context.bot, user_id, get_text(lang, 'payment_failed'))
-async def load_auto_replies_from_file():
-    file_path = PATHS.DATA / "auto_replies.json"
-    if not file_path.exists():
-        logger.info("📭 لا يوجد ملف auto_replies.json، تخطي التحميل.")
-        return
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        for item in data:
-            chat_id = item.get('chat_id', 0)
-            keyword = item.get('keyword', '').strip().lower()
-            if not keyword:
-                continue
-            # التحقق من وجود الرد مسبقاً
-            existing = await DB.fetchone(
-                "SELECT 1 FROM auto_replies WHERE chat_id=? AND keyword=?",
-                (chat_id, keyword)
-            )
-            if not existing:
-                await DB.execute(
-                    """
-                    INSERT INTO auto_replies 
-                    (chat_id, keyword, reply, reply_type, reply_media_id, reply_buttons, created_at, is_active)
-                    VALUES (?,?,?,?,?,?,?,?)
-                    """,
-                    (chat_id, keyword, item.get('reply', ''), item.get('reply_type', 'text'),
-                     item.get('reply_media_id'), json.dumps(item.get('reply_buttons')) if item.get('reply_buttons') else None,
-                     TimeUtils.utc_iso(), 1)
-                )
-                logger.info(f"✅ تم إضافة رد تلقائي: {keyword}")
-        logger.info(f"✅ تم تحميل الردود التلقائية من الملف ({len(data)} رد)")
-    except Exception as e:
-        logger.error(f"❌ فشل تحميل الردود التلقائية: {e}")
 
 # =====================================================================
-# 22. الدالة الرئيسية
+# 23. الدالة الرئيسية
 # =====================================================================
 async def main():
-    logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v5.0.4-stable")
+    logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v5.0.5-ultimate")
     await DB.initialize()
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
-    await load_auto_replies_from_file() 
+
     if CONFIG.USE_PROXY:
         request = HTTPXRequest(proxy_url=CONFIG.PROXY_URL, read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
     else:
@@ -5058,6 +5188,7 @@ async def main():
 
     app = Application.builder().token(CONFIG.TOKEN).request(request).build()
 
+    # إضافة المعالجات
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -5125,6 +5256,8 @@ async def main():
         asyncio.create_task(BackgroundTasks.memory_monitor()),
         asyncio.create_task(BackgroundTasks.heartbeat(app.bot)),
         asyncio.create_task(BackgroundTasks.self_ping()),
+        asyncio.create_task(flush_usage_periodically()),
+        asyncio.create_task(BackgroundTasks.flush_sentiment_periodically()),
     ]
 
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
@@ -5148,11 +5281,12 @@ async def main():
             await asyncio.gather(*tasks, return_exceptions=True)
 
 # =====================================================================
-# 23. تشغيل البرنامج
+# 24. تشغيل البرنامج
 # =====================================================================
 if __name__ == "__main__":
-    print(f"🌿 {CONFIG.BOT_NAME} v5.0.4-stable - @RelaxMgr")
-    print("✅ Enterprise Edition with all fixes and improvements")
+    print(f"🌿 {CONFIG.BOT_NAME} v5.0.5-ultimate - @RelaxMgr")
+    print("✅ Ultimate Edition with all improvements and fixes")
+    print("📊 Auto-reply cache: 200 replies | Usage batch updates: 50 operations")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
@@ -5160,4 +5294,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ {e}")
         traceback.print_exc()
-
