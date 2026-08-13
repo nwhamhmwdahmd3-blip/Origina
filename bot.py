@@ -395,7 +395,6 @@ class Database:
         await self._pool.execute("PRAGMA foreign_keys=ON")
         await self._create_tables()
         await self._init_default_data()
-
     async def _create_tables(self) -> None:
         tables = [
             """
