@@ -5218,7 +5218,7 @@ async def main():
     await DB.initialize()
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
-
+    await setup_unified_web_server(application, port)
     if CONFIG.USE_PROXY:
         request = HTTPXRequest(proxy_url=CONFIG.PROXY_URL, read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
     else:
