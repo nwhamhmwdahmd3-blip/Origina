@@ -378,16 +378,15 @@ class Database:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    async def initialize(self) -> None:
+async def initialize(self) -> None:
     """تهيئة اتصال قاعدة البيانات مع تجميع الاتصالات"""
     async with self._lock:
         if self._pool is not None:
             return
-        # إنشاء الاتصال مع إضافة check_same_thread=False لحل مشكلة تعدد السلاسل
         self._pool = await aiosqlite.connect(
             str(PATHS.DB),
             timeout=CONFIG.DB_TIMEOUT,
-            check_same_thread=False   # <-- هذه الإضافة تحل المشكلة
+            check_same_thread=False
         )
         self._pool.row_factory = aiosqlite.Row
         await self._pool.execute("PRAGMA journal_mode=WAL")
@@ -395,6 +394,7 @@ class Database:
         await self._pool.execute("PRAGMA foreign_keys=ON")
         await self._create_tables()
         await self._init_default_data()
+
     async def _create_tables(self) -> None:
         tables = [
             """
