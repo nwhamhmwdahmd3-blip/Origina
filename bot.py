@@ -5330,6 +5330,20 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         await safe_send(context.bot, user_id, get_text(lang, 'payment_success', plan="الباقة", days=""))
     else:
         await safe_send(context.bot, user_id, get_text(lang, 'payment_failed'))
+async def run_health_server():
+    """تشغيل خادم صحي منفصل على منفذ مختلف لتجنب التعارض مع webhook"""
+    app_web = web.Application()
+    app_web.router.add_get('/health', health_check)
+    app_web.router.add_get('/', health_check)
+    runner = web.AppRunner(app_web)
+    await runner.setup()
+    # استخدم منفذ مختلف (WEB_PORT + 1) حتى لا يتعارض مع run_webhook
+    port = CONFIG.WEB_PORT + 1
+    site = web.TCPSite(runner, host='0.0.0.0', port=port)
+    await site.start()
+    logger.info(f"✅ Health check server running on port {port}")
+    # ابقِ الخادم شغالاً إلى الأبد
+    await asyncio.Event().wait()
 
 # =====================================================================
 # 23. الدالة الرئيسية (مع تحسين Webhook)
