@@ -5008,6 +5008,39 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         await safe_send(context.bot, user_id, get_text(lang, 'payment_success', plan="الباقة", days=""))
     else:
         await safe_send(context.bot, user_id, get_text(lang, 'payment_failed'))
+async def load_auto_replies_from_file():
+    file_path = PATHS.DATA / "auto_replies.json"
+    if not file_path.exists():
+        logger.info("📭 لا يوجد ملف auto_replies.json، تخطي التحميل.")
+        return
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        for item in data:
+            chat_id = item.get('chat_id', 0)
+            keyword = item.get('keyword', '').strip().lower()
+            if not keyword:
+                continue
+            # التحقق من وجود الرد مسبقاً
+            existing = await DB.fetchone(
+                "SELECT 1 FROM auto_replies WHERE chat_id=? AND keyword=?",
+                (chat_id, keyword)
+            )
+            if not existing:
+                await DB.execute(
+                    """
+                    INSERT INTO auto_replies 
+                    (chat_id, keyword, reply, reply_type, reply_media_id, reply_buttons, created_at, is_active)
+                    VALUES (?,?,?,?,?,?,?,?)
+                    """,
+                    (chat_id, keyword, item.get('reply', ''), item.get('reply_type', 'text'),
+                     item.get('reply_media_id'), json.dumps(item.get('reply_buttons')) if item.get('reply_buttons') else None,
+                     TimeUtils.utc_iso(), 1)
+                )
+                logger.info(f"✅ تم إضافة رد تلقائي: {keyword}")
+        logger.info(f"✅ تم تحميل الردود التلقائية من الملف ({len(data)} رد)")
+    except Exception as e:
+        logger.error(f"❌ فشل تحميل الردود التلقائية: {e}")
 
 # =====================================================================
 # 22. الدالة الرئيسية
@@ -5017,7 +5050,7 @@ async def main():
     await DB.initialize()
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
-
+    await load_auto_replies_from_file() 
     if CONFIG.USE_PROXY:
         request = HTTPXRequest(proxy_url=CONFIG.PROXY_URL, read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
     else:
