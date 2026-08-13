@@ -4537,6 +4537,550 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     else:
         await safe_send(context.bot, user_id, "❌ حدث خطأ أثناء معالجة الدفع، يرجى التواصل مع الدعم.")
 
+# =====================================================================
+# ضع هذا الكلاس بالكامل فوق دالة main() مباشرة
+# استبدل كلاس Database الموجود بهذا الكلاس الجديد
+# =====================================================================
+
+class Database:
+    """اتصال قاعدة البيانات مع تجميع الاتصالات (Singleton)"""
+    _instance = None
+    _pool: Optional[aiosqlite.Connection] = None
+    _lock = asyncio.Lock()
+
+    def __new__(cls) -> 'Database':
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    async def initialize(self) -> None:
+        """تهيئة اتصال قاعدة البيانات مع تجميع الاتصالات"""
+        async with self._lock:
+            if self._pool is not None:
+                return
+            self._pool = await aiosqlite.connect(
+                str(PATHS.DB),
+                timeout=CONFIG.DB_TIMEOUT,
+                check_same_thread=False
+            )
+            self._pool.row_factory = aiosqlite.Row
+            await self._pool.execute("PRAGMA journal_mode=WAL")
+            await self._pool.execute("PRAGMA synchronous=NORMAL")
+            await self._pool.execute("PRAGMA foreign_keys=ON")
+            await self._create_tables()
+            await self._init_default_data()
+
+    async def _create_tables(self) -> None:
+        """إنشاء جميع الجداول المطلوبة في قاعدة البيانات"""
+        # جدول المستخدمين
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                language TEXT DEFAULT 'ar',
+                auto_publish INTEGER DEFAULT 1,
+                auto_recycle INTEGER DEFAULT 1,
+                banned INTEGER DEFAULT 0,
+                trial_used INTEGER DEFAULT 0,
+                subscription_end TEXT,
+                referral_code TEXT UNIQUE,
+                created_at TEXT,
+                updated_at TEXT,
+                active_channel INTEGER
+            )
+        """)
+        # جدول قنوات المستخدم
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS user_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                channel_id TEXT,
+                channel_name TEXT,
+                banned INTEGER DEFAULT 0,
+                created_at TEXT
+            )
+        """)
+        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)")
+        
+        # جدول المنشورات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_db_id INTEGER,
+                text TEXT,
+                media_type TEXT,
+                media_file_id TEXT,
+                published INTEGER DEFAULT 0,
+                fail_count INTEGER DEFAULT 0,
+                created_at TEXT,
+                published_at TEXT
+            )
+        """)
+        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)")
+        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)")
+        
+        # جدول الجدولة
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS schedule (
+                channel_db_id INTEGER PRIMARY KEY,
+                schedule_type TEXT DEFAULT 'interval_minutes',
+                interval_minutes INTEGER DEFAULT 12,
+                interval_hours INTEGER DEFAULT 0,
+                interval_days INTEGER DEFAULT 0,
+                days_of_week TEXT DEFAULT '[]',
+                specific_dates TEXT DEFAULT '[]',
+                publish_time TEXT DEFAULT '00:00',
+                cron_expression TEXT,
+                next_publish_date TEXT
+            )
+        """)
+        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_sched_next ON schedule(next_publish_date)")
+        
+        # جدول المجموعات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS bot_groups (
+                chat_id INTEGER PRIMARY KEY,
+                chat_name TEXT,
+                username TEXT,
+                added_by INTEGER,
+                added_at TEXT,
+                updated_at TEXT,
+                banned INTEGER DEFAULT 0
+            )
+        """)
+        
+        # جدول مشرفي المجموعات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS group_admins (
+                chat_id INTEGER,
+                user_id INTEGER,
+                PRIMARY KEY (chat_id, user_id)
+            )
+        """)
+        
+        # جدول المالك المخفي
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS hidden_owner_groups (
+                chat_id INTEGER,
+                owner_id INTEGER,
+                is_hidden INTEGER DEFAULT 1,
+                PRIMARY KEY (chat_id, owner_id)
+            )
+        """)
+        
+        # جدول المشرفين المخفيين
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS hidden_admins (
+                chat_id INTEGER,
+                admin_id INTEGER,
+                added_by INTEGER,
+                added_at TEXT,
+                PRIMARY KEY (chat_id, admin_id)
+            )
+        """)
+        
+        # جدول إعدادات الأمان
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS group_security (
+                chat_id INTEGER PRIMARY KEY,
+                delete_links INTEGER DEFAULT 0,
+                mentions INTEGER DEFAULT 0,
+                slow_mode INTEGER DEFAULT 0,
+                slow_mode_seconds INTEGER DEFAULT 5,
+                welcome_enabled INTEGER DEFAULT 0,
+                welcome_text TEXT DEFAULT 'مرحباً {user} في {chat} 🤍',
+                goodbye_enabled INTEGER DEFAULT 0,
+                goodbye_text TEXT DEFAULT 'وداعاً {user} 👋',
+                delete_banned_words INTEGER DEFAULT 0,
+                auto_penalty TEXT DEFAULT 'none',
+                auto_mute_duration INTEGER DEFAULT 60,
+                delete_videos INTEGER DEFAULT 0,
+                delete_audio INTEGER DEFAULT 0,
+                delete_animation INTEGER DEFAULT 0,
+                delete_service INTEGER DEFAULT 0,
+                delete_documents INTEGER DEFAULT 0,
+                delete_stickers INTEGER DEFAULT 0,
+                delete_forwarded INTEGER DEFAULT 0,
+                delete_polls INTEGER DEFAULT 0,
+                delete_games INTEGER DEFAULT 0,
+                delete_voice INTEGER DEFAULT 0,
+                delete_video_note INTEGER DEFAULT 0,
+                delete_penalty TEXT DEFAULT 'none',
+                delete_penalty_duration INTEGER DEFAULT 0,
+                antiflood_enabled INTEGER DEFAULT 0,
+                antiflood_messages INTEGER DEFAULT 5,
+                antiflood_seconds INTEGER DEFAULT 10,
+                antiflood_penalty TEXT DEFAULT 'mute',
+                max_warnings INTEGER DEFAULT 3,
+                warn_penalty TEXT DEFAULT 'ban',
+                max_message_length INTEGER DEFAULT 0,
+                night_mode_enabled INTEGER DEFAULT 0,
+                night_mode_start TEXT DEFAULT '23:00',
+                night_mode_end TEXT DEFAULT '06:00',
+                night_mode_action TEXT DEFAULT 'mute',
+                nsfw_enabled INTEGER DEFAULT 0,
+                nsfw_threshold REAL DEFAULT 0.7
+            )
+        """)
+        
+        # جدول قفل المجموعات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS chat_locks (
+                chat_id INTEGER PRIMARY KEY,
+                locked INTEGER DEFAULT 0,
+                locked_at TEXT,
+                locked_by INTEGER
+            )
+        """)
+        
+        # جدول الكلمات المحظورة
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS banned_words (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word TEXT,
+                chat_id INTEGER,
+                added_by INTEGER,
+                added_at TEXT,
+                UNIQUE(word, chat_id)
+            )
+        """)
+        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_bw_word ON banned_words(word)")
+        
+        # جدول الردود التلقائية
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS auto_replies (
+                chat_id INTEGER,
+                keyword TEXT,
+                reply TEXT,
+                reply_type TEXT DEFAULT 'text',
+                reply_media_id TEXT,
+                reply_buttons TEXT,
+                created_at TEXT,
+                is_active INTEGER DEFAULT 1,
+                usage_count INTEGER DEFAULT 0,
+                PRIMARY KEY (chat_id, keyword)
+            )
+        """)
+        
+        # جدول إعدادات الردود التلقائية
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS auto_reply_settings (
+                chat_id INTEGER PRIMARY KEY,
+                enabled INTEGER DEFAULT 0,
+                only_admins INTEGER DEFAULT 0,
+                ignore_bots INTEGER DEFAULT 1,
+                updated_at TEXT
+            )
+        """)
+        
+        # جدول تذاكر الدعم
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS support_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                message TEXT,
+                ticket_number INTEGER,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT,
+                replied INTEGER DEFAULT 0
+            )
+        """)
+        
+        # جدول مشرفي البوت
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS bot_admins (
+                user_id INTEGER PRIMARY KEY,
+                added_by INTEGER,
+                added_at TEXT
+            )
+        """)
+        
+        # جدول الإعدادات العامة
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        
+        # إدخال الإعدادات الافتراضية
+        await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('publish_interval', '720')")
+        await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup', '1')")
+        await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_ticket_number', '0')")
+        await self._pool.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_backup', '')")
+        
+        # جدول الإحالات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS referrals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                referrer_id INTEGER,
+                referred_id INTEGER,
+                created_at TEXT,
+                UNIQUE(referrer_id, referred_id)
+            )
+        """)
+        
+        # جدول مكافآت الإحالات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS referral_rewards (
+                user_id INTEGER PRIMARY KEY,
+                referral_count INTEGER DEFAULT 0,
+                total_reward_days INTEGER DEFAULT 0,
+                claimed_reward_days INTEGER DEFAULT 0,
+                last_referral_date TEXT
+            )
+        """)
+        
+        # جدول إعدادات التذكيرات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS user_reminder_settings (
+                user_id INTEGER PRIMARY KEY,
+                subscription_reminder INTEGER DEFAULT 1,
+                daily_stats_reminder INTEGER DEFAULT 0,
+                weekly_report INTEGER DEFAULT 1,
+                reminder_days_before INTEGER DEFAULT 3,
+                last_reminder_sent TEXT,
+                notification_lang TEXT DEFAULT 'ar'
+            )
+        """)
+        
+        # جدول الترجمة
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS user_translation (
+                user_id INTEGER PRIMARY KEY,
+                lang TEXT DEFAULT 'off'
+            )
+        """)
+        
+        # جدول المسابقات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS contests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                creator_id INTEGER,
+                title TEXT,
+                description TEXT,
+                prize TEXT,
+                end_date TEXT,
+                status TEXT DEFAULT 'active',
+                winner_id INTEGER,
+                created_at TEXT,
+                contest_type TEXT DEFAULT 'raffle'
+            )
+        """)
+        
+        # جدول المشاركين في المسابقات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS contest_participants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                contest_id INTEGER,
+                answer TEXT,
+                joined_at TEXT,
+                UNIQUE(user_id, contest_id)
+            )
+        """)
+        
+        # جدول الفائزين في المسابقات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS contest_winners (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contest_id INTEGER,
+                winner_id INTEGER,
+                announced_at TEXT
+            )
+        """)
+        
+        # جدول سجلات المشرفين
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS admin_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                admin_id INTEGER,
+                action TEXT,
+                target_id INTEGER,
+                reason TEXT,
+                created_at TEXT
+            )
+        """)
+        
+        # جدول تحذيرات المستخدمين
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS user_warnings (
+                user_id INTEGER,
+                chat_id INTEGER,
+                warnings INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, chat_id)
+            )
+        """)
+        
+        # جدول قواعد المجموعات
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS group_rules (
+                chat_id INTEGER PRIMARY KEY,
+                rules_text TEXT,
+                updated_by INTEGER,
+                updated_at TEXT
+            )
+        """)
+        
+        # جدول رسائل المستخدمين
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS user_messages (
+                user_id INTEGER,
+                chat_id INTEGER,
+                message_time TEXT,
+                PRIMARY KEY (user_id, chat_id)
+            )
+        """)
+        
+        # جدول المنشورات المجدولة
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                text TEXT,
+                publish_time TEXT,
+                fail_count INTEGER DEFAULT 0
+            )
+        """)
+        
+        # جدول تحليل المشاعر
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS sentiment_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                chat_id INTEGER,
+                text_encrypted BLOB,
+                sentiment TEXT,
+                score REAL,
+                created_at TEXT
+            )
+        """)
+        
+        # ===== جداول الدفع والاشتراكات =====
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE,
+                description TEXT,
+                price INTEGER,
+                currency TEXT DEFAULT 'XTR',
+                duration_days INTEGER,
+                max_channels INTEGER,
+                max_posts INTEGER,
+                features TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT
+            )
+        """)
+        
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                plan_id INTEGER,
+                status TEXT DEFAULT 'active',
+                start_date TEXT,
+                end_date TEXT,
+                auto_renew INTEGER DEFAULT 0,
+                provider TEXT DEFAULT 'xtr',
+                provider_subscription_id TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (plan_id) REFERENCES plans(id)
+            )
+        """)
+        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id)")
+        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_sub_status ON subscriptions(status)")
+        
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS invoices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                number TEXT UNIQUE,
+                user_id INTEGER,
+                plan_id INTEGER,
+                amount INTEGER,
+                currency TEXT DEFAULT 'XTR',
+                status TEXT DEFAULT 'pending',
+                provider TEXT DEFAULT 'xtr',
+                provider_payment_id TEXT,
+                paid_at TEXT,
+                created_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (plan_id) REFERENCES plans(id)
+            )
+        """)
+        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_inv_user ON invoices(user_id)")
+        await self._pool.execute("CREATE INDEX IF NOT EXISTS idx_inv_status ON invoices(status)")
+        
+        await self._pool.execute("""
+            CREATE TABLE IF NOT EXISTS payment_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                provider TEXT DEFAULT 'xtr',
+                event_type TEXT,
+                data TEXT,
+                created_at TEXT
+            )
+        """)
+        
+        await self._pool.commit()
+
+    async def _init_default_data(self) -> None:
+        """إدخال الباقات الافتراضية في قاعدة البيانات"""
+        default_plans = [
+            {"name": "يوم", "description": "باقة يوم واحد", "price": 5, "duration_days": 1, "max_channels": 1, "max_posts": 50, "features": '{"auto_publish":true}'},
+            {"name": "أسبوع", "description": "باقة 7 أيام", "price": 25, "duration_days": 7, "max_channels": 3, "max_posts": 300, "features": '{"auto_publish":true,"security":true}'},
+            {"name": "شهر", "description": "باقة 30 يوم", "price": 75, "duration_days": 30, "max_channels": 10, "max_posts": 1500, "features": '{"auto_publish":true,"security":true,"support":true}'},
+            {"name": "3 أشهر", "description": "باقة 90 يوم", "price": 200, "duration_days": 90, "max_channels": 999, "max_posts": 99999, "features": '{"auto_publish":true,"security":true,"support":true,"analytics":true}'},
+        ]
+        for plan in default_plans:
+            row = await self.fetchone("SELECT id FROM plans WHERE name=?", (plan["name"],))
+            if not row:
+                await self.execute(
+                    "INSERT INTO plans (name, description, price, currency, duration_days, max_channels, max_posts, features, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (plan["name"], plan["description"], plan["price"], "XTR", plan["duration_days"], plan["max_channels"], plan["max_posts"], plan["features"], 1, TimeUtils.utc_iso())
+                )
+
+    @asynccontextmanager
+    async def cursor(self):
+        """توفير مؤشر لقاعدة البيانات"""
+        if self._pool is None:
+            await self.initialize()
+        async with self._pool.cursor() as cur:
+            yield cur
+
+    async def execute(self, query: str, params: tuple = ()) -> None:
+        """تنفيذ استعلام (INSERT, UPDATE, DELETE)"""
+        async with self.cursor() as cur:
+            await cur.execute(query, params)
+            await cur.connection.commit()
+
+    async def fetchone(self, query: str, params: tuple = ()):
+        """جلب صف واحد"""
+        async with self.cursor() as cur:
+            await cur.execute(query, params)
+            return await cur.fetchone()
+
+    async def fetchall(self, query: str, params: tuple = ()):
+        """جلب جميع الصفوف"""
+        async with self.cursor() as cur:
+            await cur.execute(query, params)
+            return await cur.fetchall()
+
+    async def executemany(self, query: str, params: list) -> None:
+        """تنفيذ استعلام متعدد (INSERT متعدد)"""
+        async with self.cursor() as cur:
+            await cur.executemany(query, params)
+            await cur.connection.commit()
+
+# =====================================================================
+# إنشاء كائن قاعدة البيانات (Singleton)
+# =====================================================================
+DB = Database()
 
 # =====================================================================
 # 24. الدالة الرئيسية
