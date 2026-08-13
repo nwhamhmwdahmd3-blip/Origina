@@ -5376,12 +5376,10 @@ async def main():
     web_app.router.add_get('/health', health_check)
     web_app.router.add_get('/', health_check)
 
-    # بناء تطبيق البوت مع ربط web_app
     app = Application.builder() \
-        .token(CONFIG.TOKEN) \
-        .request(request) \
-        .web_app(web_app) \
-        .build()
+    .token(CONFIG.TOKEN) \
+    .request(request) \
+    .build()
 
     # إضافة المعالجات
     app.add_handler(CommandHandler("start", CommandHandlers.start))
