@@ -5175,7 +5175,7 @@ async def setup_unified_web_server(application, port: int):
     from aiohttp import web
     from telegram import Update
 
-    # إنشاء تطبيق ويب منفصل (بدلاً من الاعتماد على application.web_app)
+    # ✅ المفتاح: ننشئ تطبيق ويب مستقل (لا نعتمد على application.web_app)
     web_app = web.Application()
 
     async def health(request):
@@ -5191,18 +5191,18 @@ async def setup_unified_web_server(application, port: int):
     async def webhook(request):
         try:
             data = await request.json()
-            # معالجة التحديث
+            # معالجة التحديث باستخدام application الحالي
             await application.process_update(Update.de_json(data, application.bot))
             return web.Response(status=200, text="OK")
         except Exception as e:
             logger.error(f"Webhook error: {e}")
-            # نعيد 200 دائماً لتجنب إعادة محاولات متكررة من Telegram
+            # نعيد 200 دائماً حتى لا يعيد تيليجرام محاولة الإرسال
             return web.Response(status=200, text="OK")
 
-    # تسجيل المسارات
+    # تسجيل المسارات (انتبه: نستخدم f"/{TOKEN}" وليس "/webhook")
     web_app.router.add_get('/', index)
     web_app.router.add_get('/health', health)
-    web_app.router.add_post(f'/{TOKEN}', webhook)   # المسار الصحيح
+    web_app.router.add_post(f'/{TOKEN}', webhook)
 
     # تشغيل الخادم
     runner = web.AppRunner(web_app)
