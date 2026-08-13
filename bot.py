@@ -4953,6 +4953,9 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 # =====================================================================
 # 22. الدالة الرئيسية (مع خادم Webhook متكامل)
 # =====================================================================
+# =====================================================================
+# 22. الدالة الرئيسية (مع خادم aiohttp مخصص)
+# =====================================================================
 async def main():
     logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v5.0.3-heartbeat")
     await DB.initialize()
@@ -4968,7 +4971,7 @@ async def main():
     # إنشاء تطبيق البوت
     app = Application.builder().token(CONFIG.TOKEN).request(request).build()
 
-    # إضافة المعالجات
+    # ------------------- المعالجات -------------------
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -5024,7 +5027,10 @@ async def main():
     except Exception as e:
         logger.warning(f"Failed to set commands: {e}")
 
-    # المهام الخلفية (نبدأها قبل تشغيل الخادم)
+    # تهيئة التطبيق (مطلوب قبل process_update)
+    await app.initialize()
+
+    # المهام الخلفية
     tasks = [
         asyncio.create_task(BackgroundTasks.auto_publish(app.bot)),
         asyncio.create_task(BackgroundTasks.auto_backup()),
@@ -5035,19 +5041,15 @@ async def main():
         asyncio.create_task(BackgroundTasks.self_ping()),
     ]
 
-    # تحديد وضع التشغيل (Webhook أو Polling)
+    # تحديد وضع التشغيل
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
     if hostname:
-        # إعداد Webhook
         webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
-        await app.initialize()
+        # تعيين webhook عبر API
         await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
         logger.info(f"✅ Webhook set on {webhook_url}")
 
-        # الحصول على معالج webhook من التطبيق (هذا هو الـ ASGI/WSGI handler)
-        webhook_app = app.webhook_app
-
-        # إنشاء خادم aiohttp الخاص بنا لدمج نقطة الصحة
+        # إعداد خادم aiohttp
         from aiohttp import web
         server_app = web.Application()
 
@@ -5057,15 +5059,27 @@ async def main():
         server_app.router.add_get('/health', health)
         server_app.router.add_get('/', health)
 
-        # ربط معالج webhook على المسار /TOKEN
-        server_app.router.add_post(f'/{CONFIG.TOKEN}', webhook_app)
+        # معالج Webhook
+        async def webhook_handler(request):
+            try:
+                data = await request.json()
+                # إنشاء كائن Update من البيانات
+                update = Update.de_json(data, app.bot)
+                # معالجة التحديث
+                await app.process_update(update)
+                return web.Response(text="OK", status=200)
+            except Exception as e:
+                logger.error(f"Webhook error: {e}")
+                return web.Response(text="Error", status=500)
+
+        server_app.router.add_post(f'/{CONFIG.TOKEN}', webhook_handler)
 
         # تشغيل الخادم
         runner = web.AppRunner(server_app)
         await runner.setup()
         site = web.TCPSite(runner, host='0.0.0.0', port=CONFIG.WEB_PORT)
         await site.start()
-        logger.info(f"✅ Web server running on port {CONFIG.WEB_PORT} (health + webhook)")
+        logger.info(f"✅ Web server running on port {CONFIG.WEB_PORT}")
 
         # انتظار الإيقاف
         try:
