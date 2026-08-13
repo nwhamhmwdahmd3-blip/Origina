@@ -2,13 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – النسخة النهائية مع جميع التحسينات
+🌿 Relax Manager – النسخة النهائية الكاملة
 ================================================================================
 بوت تلغرام متكامل لإدارة القنوات والمجموعات مع نظام دفع عبر Telegram Stars
-مع تحسينات الردود التلقائية (كاش LRU، تحديث مجمع، تصدير/استيراد JSON، استيراد من GitHub)
-مع تحسينات الأداء: فصل معالج المجموعات، تحسين الجدولة، Webhook، Rate Limiter، مونيتورينغ
-
-الإصدار: 6.0.0-ultimate-final
+مع تحسينات الردود التلقائية، الأداء، Webhook، Rate Limiter، مونيتورينغ
 ================================================================================
 """
 
@@ -287,10 +284,9 @@ def get_ram_usage() -> dict:
         return {'total': 0, 'used': 0, 'percent': 0}
 
 # =====================================================================
-# 5.1 مونيتورينغ المقاييس (تحسين)
+# 5.1 مونيتورينغ المقاييس
 # =====================================================================
 class MetricsCollector:
-    """جمع المقاييس الأساسية للبوت"""
     def __init__(self):
         self.api_calls = deque(maxlen=1000)
         self.errors = deque(maxlen=1000)
@@ -323,10 +319,9 @@ class MetricsCollector:
 METRICS = MetricsCollector()
 
 # =====================================================================
-# 5.2 Rate Limiter (تحسين)
+# 5.2 Rate Limiter
 # =====================================================================
 class RateLimiter:
-    """تحديد معدل الطلبات لتجنب الحظر"""
     def __init__(self, max_concurrent: int = 10, max_per_second: int = 30):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._last_calls = deque(maxlen=max_per_second * 2)
@@ -382,7 +377,7 @@ _USAGE_FLUSH_LIMIT = 50
 _USAGE_FLUSH_INTERVAL = 60
 
 # =====================================================================
-# 7. الترجمات
+# 7. الترجمات (مختصرة قليلاً لتوفير المساحة، لكنها كاملة الوظائف)
 # =====================================================================
 LOCALES = {
     'ar': {
@@ -759,7 +754,7 @@ def get_text(lang: str, key: str, **kwargs) -> str:
         return text
 
 # =====================================================================
-# 8. قاعدة البيانات (مع كل الجداول)
+# 8. قاعدة البيانات (مع جميع الجداول)
 # =====================================================================
 class Database:
     _instance = None
@@ -2832,9 +2827,8 @@ class StateManager:
     @classmethod
     def clear(cls, user_id: int) -> None:
         cls._states.pop(user_id, None)
-
 # =====================================================================
-# 15. معالج الأوامر
+# 15. معالج الأوامر (CommandHandlers)
 # =====================================================================
 class CommandHandlers:
     @staticmethod
@@ -3187,8 +3181,9 @@ class CommandHandlers:
             return
         success, msg = await apply_penalty(context.bot, chat_id, target, command, duration, reason, user_id)
         await safe_send(context.bot, user_id, msg)
+
 # =====================================================================
-# 16. معالج الكولباك
+# 16. معالج الكولباك (CallbackHandlers)
 # =====================================================================
 class CallbackHandlers:
     @staticmethod
@@ -3835,7 +3830,6 @@ class CallbackHandlers:
 
         await query.answer()
 
-    # دوال مساعدة داخلية
     @staticmethod
     async def _my_channels(query, user_id, lang):
         channels = await ChannelRepository.get_all(user_id)
@@ -5260,7 +5254,7 @@ class BackgroundTasks:
             await _flush_sentiment_buffer()
 
 # =====================================================================
-# 20. خادم الصحة والويب هوك (محسّن)
+# 20. خادم الصحة (معالج بسيط)
 # =====================================================================
 async def health_check(request):
     return web.Response(text="OK", status=200)
@@ -5330,20 +5324,6 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         await safe_send(context.bot, user_id, get_text(lang, 'payment_success', plan="الباقة", days=""))
     else:
         await safe_send(context.bot, user_id, get_text(lang, 'payment_failed'))
-async def run_health_server():
-    """تشغيل خادم صحي منفصل على منفذ مختلف لتجنب التعارض مع webhook"""
-    app_web = web.Application()
-    app_web.router.add_get('/health', health_check)
-    app_web.router.add_get('/', health_check)
-    runner = web.AppRunner(app_web)
-    await runner.setup()
-    # استخدم منفذ مختلف (WEB_PORT + 1) حتى لا يتعارض مع run_webhook
-    port = CONFIG.WEB_PORT + 1
-    site = web.TCPSite(runner, host='0.0.0.0', port=port)
-    await site.start()
-    logger.info(f"✅ Health check server running on port {port}")
-    # ابقِ الخادم شغالاً إلى الأبد
-    await asyncio.Event().wait()
 
 # =====================================================================
 # 23. الدالة الرئيسية (مع تحسين Webhook)
@@ -5354,32 +5334,12 @@ async def main():
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
 
-    # إعداد الـ Proxy
     if CONFIG.USE_PROXY:
-        request = HTTPXRequest(
-            proxy_url=CONFIG.PROXY_URL,
-            read_timeout=60,
-            write_timeout=30,
-            connect_timeout=30,
-            connection_pool_size=CONFIG.MAX_CONNECTIONS
-        )
+        request = HTTPXRequest(proxy_url=CONFIG.PROXY_URL, read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
     else:
-        request = HTTPXRequest(
-            read_timeout=60,
-            write_timeout=30,
-            connect_timeout=30,
-            connection_pool_size=CONFIG.MAX_CONNECTIONS
-        )
+        request = HTTPXRequest(read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
 
-    # إنشاء تطبيق ويب للصحة والويب هوك
-    web_app = web.Application()
-    web_app.router.add_get('/health', health_check)
-    web_app.router.add_get('/', health_check)
-
-    app = Application.builder() \
-    .token(CONFIG.TOKEN) \
-    .request(request) \
-    .build()
+    app = Application.builder().token(CONFIG.TOKEN).request(request).build()
 
     # إضافة المعالجات
     app.add_handler(CommandHandler("start", CommandHandlers.start))
@@ -5415,7 +5375,6 @@ async def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
     app.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    # تعيين أوامر البوت
     try:
         await app.bot.set_my_commands([
             BotCommand("start", "الرئيسية"),
@@ -5437,7 +5396,7 @@ async def main():
     except Exception as e:
         logger.warning(f"Failed to set commands: {e}")
 
-    # تشغيل المهام الخلفية
+    # المهام الخلفية
     tasks = [
         asyncio.create_task(BackgroundTasks.auto_publish(app.bot)),
         asyncio.create_task(BackgroundTasks.auto_backup()),
@@ -5451,20 +5410,15 @@ async def main():
         asyncio.create_task(BackgroundTasks.flush_sentiment_periodically()),
     ]
 
-    # تحديد بيئة التشغيل
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
 
     if hostname:
         logger.info(f"✅ Running in webhook mode on https://{hostname}/{CONFIG.TOKEN}")
-        # حذف أي webhook سابق وتعيين الجديد
         await app.bot.delete_webhook(drop_pending_updates=True)
-        await app.bot.set_webhook(
-            url=f"https://{hostname}/{CONFIG.TOKEN}",
-            drop_pending_updates=True
-        )
+        await app.bot.set_webhook(url=f"https://{hostname}/{CONFIG.TOKEN}", drop_pending_updates=True)
         logger.info(f"✅ Webhook set to https://{hostname}/{CONFIG.TOKEN}")
 
-        # تشغيل الويب هوك (web_app مدمج، لا حاجة لـ run_health_server)
+        # ✅ لا حاجة لـ run_health_server() نهائياً
         await app.run_webhook(
             listen="0.0.0.0",
             port=CONFIG.WEB_PORT,
@@ -5479,7 +5433,6 @@ async def main():
         except KeyboardInterrupt:
             pass
 
-    # عند الخروج، إلغاء المهام
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
@@ -5497,4 +5450,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ {e}")
         traceback.print_exc()
-
