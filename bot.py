@@ -5262,7 +5262,7 @@ async def main():
 
     app = Application.builder().token(CONFIG.TOKEN).request(request).build()
 
-    # إضافة المعالجات
+    # --- إضافة المعالجات ---
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -5317,10 +5317,7 @@ async def main():
     except Exception as e:
         logger.warning(f"Failed to set commands: {e}")
 
-    # تشغيل خادم الصحة
-    asyncio.create_task(run_health_server())
-
-    # المهام الخلفية
+    # --- المهام الخلفية (لا تشمل خادم الصحة لأنه سيُدمج مع ويبهوك) ---
     tasks = [
         asyncio.create_task(BackgroundTasks.auto_publish(app.bot)),
         asyncio.create_task(BackgroundTasks.auto_backup()),
@@ -5334,25 +5331,31 @@ async def main():
         asyncio.create_task(BackgroundTasks.flush_sentiment_periodically()),
     ]
 
+    # --- تشغيل البوت (Webhook أو Polling) ---
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
     if hostname:
-        await app.initialize()
-        await app.start()
-        await app.bot.set_webhook(url=f"https://{hostname}/{CONFIG.TOKEN}", drop_pending_updates=True)
-        logger.info(f"✅ Webhook set on https://{hostname}/{CONFIG.TOKEN}")
-        try:
-            await asyncio.Event().wait()
-        except KeyboardInterrupt:
-            for t in tasks:
-                t.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+        webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
+        # إنشاء تطبيق aiohttp واحد يجمع بين الويبهوك والصحة
+        webhook_app = web.Application()
+        webhook_app.router.add_get('/health', health_check)
+        webhook_app.router.add_get('/', health_check)  # اختياري
+
+        # تشغيل خادم الويبهوك (يحجب)
+        await app.run_webhook(
+            webhook_url=webhook_url,
+            webhook_app=webhook_app,
+            port=CONFIG.WEB_PORT,
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query", "chat_member", "chat_join_request"]
+        )
     else:
-        try:
-            await app.run_polling(drop_pending_updates=True)
-        except KeyboardInterrupt:
-            for t in tasks:
-                t.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+        # وضع Polling (للتطوير المحلي)
+        await app.run_polling(drop_pending_updates=True)
+
+    # تنظيف عند الإيقاف (لن يصل هنا إلا في حالة استثناء)
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 # =====================================================================
 # 24. تشغيل البرنامج
