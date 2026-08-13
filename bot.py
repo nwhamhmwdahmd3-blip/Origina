@@ -5340,12 +5340,34 @@ async def main():
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
 
+    # إعداد الـ Proxy
     if CONFIG.USE_PROXY:
-        request = HTTPXRequest(proxy_url=CONFIG.PROXY_URL, read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
+        request = HTTPXRequest(
+            proxy_url=CONFIG.PROXY_URL,
+            read_timeout=60,
+            write_timeout=30,
+            connect_timeout=30,
+            connection_pool_size=CONFIG.MAX_CONNECTIONS
+        )
     else:
-        request = HTTPXRequest(read_timeout=60, write_timeout=30, connect_timeout=30, connection_pool_size=CONFIG.MAX_CONNECTIONS)
+        request = HTTPXRequest(
+            read_timeout=60,
+            write_timeout=30,
+            connect_timeout=30,
+            connection_pool_size=CONFIG.MAX_CONNECTIONS
+        )
 
-    app = Application.builder().token(CONFIG.TOKEN).request(request).build()
+    # إنشاء تطبيق ويب للصحة والويب هوك
+    web_app = web.Application()
+    web_app.router.add_get('/health', health_check)
+    web_app.router.add_get('/', health_check)
+
+    # بناء تطبيق البوت مع ربط web_app
+    app = Application.builder() \
+        .token(CONFIG.TOKEN) \
+        .request(request) \
+        .web_app(web_app) \
+        .build()
 
     # إضافة المعالجات
     app.add_handler(CommandHandler("start", CommandHandlers.start))
@@ -5381,6 +5403,7 @@ async def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
     app.add_handler(ChatMemberHandler(track_chat_add, ChatMemberHandler.MY_CHAT_MEMBER))
 
+    # تعيين أوامر البوت
     try:
         await app.bot.set_my_commands([
             BotCommand("start", "الرئيسية"),
@@ -5402,7 +5425,7 @@ async def main():
     except Exception as e:
         logger.warning(f"Failed to set commands: {e}")
 
-    # المهام الخلفية
+    # تشغيل المهام الخلفية
     tasks = [
         asyncio.create_task(BackgroundTasks.auto_publish(app.bot)),
         asyncio.create_task(BackgroundTasks.auto_backup()),
@@ -5416,18 +5439,20 @@ async def main():
         asyncio.create_task(BackgroundTasks.flush_sentiment_periodically()),
     ]
 
+    # تحديد بيئة التشغيل
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
 
     if hostname:
         logger.info(f"✅ Running in webhook mode on https://{hostname}/{CONFIG.TOKEN}")
+        # حذف أي webhook سابق وتعيين الجديد
         await app.bot.delete_webhook(drop_pending_updates=True)
-        await app.bot.set_webhook(url=f"https://{hostname}/{CONFIG.TOKEN}", drop_pending_updates=True)
+        await app.bot.set_webhook(
+            url=f"https://{hostname}/{CONFIG.TOKEN}",
+            drop_pending_updates=True
+        )
         logger.info(f"✅ Webhook set to https://{hostname}/{CONFIG.TOKEN}")
 
-        # تشغيل خادم الصحة في الخلفية
-        asyncio.create_task(run_health_server())
-
-        # تشغيل Webhook
+        # تشغيل الويب هوك (web_app مدمج، لا حاجة لـ run_health_server)
         await app.run_webhook(
             listen="0.0.0.0",
             port=CONFIG.WEB_PORT,
@@ -5442,6 +5467,7 @@ async def main():
         except KeyboardInterrupt:
             pass
 
+    # عند الخروج، إلغاء المهام
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
