@@ -3,8 +3,8 @@
 ملف الردود التلقائية - يمكن تعديله بسهولة دون المساس بالكود الأساسي
 """
 
-import random
-from typing import List, Union
+#import random
+#from typing import List, Union
 
 # ===================== قواميس الردود =====================
 
