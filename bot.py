@@ -19,14 +19,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# استيرادات تيليجرام - تم تصحيحها
 from telegram import (
-    Update, InlineKeyboardMarkup, InlineKeyboardButton,
-    BotCommand, ChatPermissions, BadRequest
+    Update, 
+    InlineKeyboardMarkup, 
+    InlineKeyboardButton,
+    BotCommand, 
+    ChatPermissions
 )
+from telegram.error import BadRequest  # ✅ التصحيح هنا
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, PreCheckoutQueryHandler,
-    ChatMemberHandler, ContextTypes
+    Application, 
+    CommandHandler, 
+    CallbackQueryHandler,
+    MessageHandler, 
+    filters, 
+    PreCheckoutQueryHandler,
+    ChatMemberHandler, 
+    ContextTypes
 )
 from telegram.request import HTTPXRequest
 
@@ -294,7 +304,6 @@ class KeyboardFactory:
             for item in row:
                 # معالجة الأزرار الخاصة
                 if item.endswith("_url"):
-                    # زر رابط
                     key = item.replace("_url", "")
                     text = cls.get_text(key)
                     url = "https://t.me/" + CONFIG.BOT_USERNAME + "?startgroup"
@@ -302,11 +311,9 @@ class KeyboardFactory:
                         url = extra_data["url"]
                     btn_row.append(InlineKeyboardButton(text, url=url))
                 else:
-                    # زر عادي
                     text = cls.get_text(item)
                     callback = item
                     
-                    # إضافة chat_id إذا كان متاحاً والزر يحتاج إليه
                     if chat_id and ":" in item:
                         callback = f"{item}{chat_id}"
                     elif chat_id and item in ["sec_close", "panel_close", "back", "main"]:
@@ -360,6 +367,7 @@ class KeyboardFactory:
             "━━━━━━━━━━━━━━━━━━━━"
         ]
         return "\n".join(lines)
+
 # =====================================================================
 # 5. دوال مساعدة
 # =====================================================================
@@ -390,7 +398,7 @@ async def safe_send(bot, user_id: int, text: str, reply_markup=None, parse_mode=
                 **kwargs
             )
         return result
-    except Exception as e:
+    except BadRequest as e:
         error_msg = str(e).lower()
         if "bot" in error_msg or "user_bot" in error_msg:
             logger.warning(f"تجاهل إرسال لمشرف مخفي {user_id}: {e}")
@@ -401,6 +409,9 @@ async def safe_send(bot, user_id: int, text: str, reply_markup=None, parse_mode=
         else:
             logger.error(f"فشل إرسال الرسالة إلى {user_id}: {e}")
             return None
+    except Exception as e:
+        logger.error(f"فشل إرسال الرسالة إلى {user_id}: {e}")
+        return None
 
 async def get_text(lang: str, key: str, **kwargs):
     """الحصول على نص مترجم"""
@@ -416,7 +427,7 @@ async def get_text(lang: str, key: str, **kwargs):
             'my_posts': "📋 منشوراتي",
             'recycle': "♻️ تدوير",
             'stats': "📊 إحصائيات",
-            'help': "🆘 مساعدة",
+            'help_text': "🆘 **المساعدة**\n\n/publish - نشر المنشورات\n/add - إضافة قناة\n/mychannels - عرض قنواتي\n/security - إعدادات الأمان\n/panel - لوحة التحكم",
             'trial': "🎁 تجربة",
             'subscribe': "💎 اشتراك",
             'developer': "👨‍💻 المطور",
@@ -464,7 +475,6 @@ async def get_text(lang: str, key: str, **kwargs):
             'trial_used': "❌ لقد استخدمت النسخة التجريبية بالفعل",
             'send_support_message': "📝 أرسل رسالتك وسيتم إيصالها للدعم",
             'support_ticket_created': "✅ تم إنشاء التذكرة #{num}",
-            'help_text': "🆘 **المساعدة**\n\n/publish - نشر المنشورات\n/add - إضافة قناة\n/mychannels - عرض قنواتي\n/security - إعدادات الأمان\n/panel - لوحة التحكم",
             'admin_panel': "🛠️ **لوحة الأدمن**",
             'admin_users': "👥 المستخدمين: {users}\n⛔ المحظورين: {banned}",
             'admin_banned_list': "⛔ **المحظورين**\n{list}",
@@ -580,15 +590,10 @@ async def check_bot_permissions(bot, chat_id: int) -> Dict:
 async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
     """التحقق من أن المستخدم مصرح له في المجموعة"""
     try:
-        # المالك الأساسي
         if user_id == CONFIG.PRIMARY_OWNER_ID:
             return True
-        
-        # مشرف مخفي
         if user_id == CONFIG.ANONYMOUS_ADMIN_ID:
             return True
-        
-        # التحقق من الصلاحيات
         member = await bot.get_chat_member(chat_id, user_id)
         return member.status in ['administrator', 'creator']
     except:
@@ -1229,6 +1234,7 @@ class UserState:
     SUPPORT_MODE = "support_mode"
     WAIT_IMPORT_FILE = "wait_import_file"
     WAIT_GITHUB_URL = "wait_github_url"
+
 # =====================================================================
 # 8. معالج الأوامر - CommandHandlers
 # =====================================================================
@@ -1411,7 +1417,6 @@ class CommandHandlers:
         user_id = update.effective_user.id
         lang = await UserRepository.get_language(user_id)
         
-        # التحقق من أن المستخدم ليس بوتاً
         if user_id < 0:
             await safe_send(context.bot, chat_id, "❌ البوتات لا تستطيع استخدام هذا الأمر")
             return
@@ -1476,19 +1481,15 @@ class CommandHandlers:
             msg += f"🔐 استخدم `/security` لإعدادات الأمان\n"
             msg += f"🛠️ استخدم `/panel` للوحة التحكم"
             
-            # إرسال للمستخدم المناسب
             if is_hidden:
-                # مشرف مخفي - أرسل للمجموعة
                 await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت بواسطة مشرف مخفي!**")
                 await safe_send(context.bot, chat_id, msg)
-                # حاول إرسال للمالك الحقيقي
                 if real_user_id and real_user_id > 0 and real_user_id != CONFIG.ANONYMOUS_ADMIN_ID:
                     try:
                         await safe_send(context.bot, real_user_id, msg)
                     except Exception as e:
                         logger.warning(f"لا يمكن إرسال للمالك الحقيقي {real_user_id}: {e}")
             else:
-                # مستخدم عادي
                 await safe_send(context.bot, real_user_id, msg)
                 await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت في المجموعة!**")
         else:
@@ -1536,7 +1537,6 @@ class CallbackHandlers:
         lang = await UserRepository.get_language(user_id)
         
         try:
-            # الأزرار الأساسية
             if data == CB.MAIN or data == CB.BACK:
                 await query.answer()
                 await CommandHandlers.start(update, context)
@@ -1568,7 +1568,6 @@ class CallbackHandlers:
                 await CommandHandlers.support(update, context)
                 return
             
-            # إدارة القنوات
             if data == CB.CH_ADD:
                 has_sub = await UserRepository.has_active_subscription(user_id)
                 has_trial = await UserRepository.has_used_trial(user_id)
@@ -1594,7 +1593,6 @@ class CallbackHandlers:
                 await query.edit_message_text(text, reply_markup=kb)
                 return
             
-            # لوحة الأدمن
             if data == CB.ADMIN:
                 if user_id == CONFIG.PRIMARY_OWNER_ID or await BotAdminRepository.is_admin(user_id):
                     kb = KeyboardFactory.build("admin_panel")
@@ -1604,7 +1602,6 @@ class CallbackHandlers:
                     await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
                 return
             
-            # أزرار الأمان
             if data.startswith("sec_"):
                 parts = data.split(":")
                 if data == CB.SEC_CLOSE:
@@ -1630,7 +1627,6 @@ class CallbackHandlers:
                     await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
                     return
                 
-                # تبديل الإعدادات
                 field_map = {
                     "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
                     "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
@@ -1657,7 +1653,6 @@ class CallbackHandlers:
                 await query.answer()
                 return
             
-            # أزرار اللغة
             if data.startswith("lang_"):
                 await query.answer()
                 lang_set = data.split("_")[-1]
@@ -1671,7 +1666,6 @@ class CallbackHandlers:
                 await CommandHandlers.language(update, context)
                 return
             
-            # الإعدادات
             if data == CB.SETTINGS:
                 await query.answer()
                 auto = "✅" if await UserRepository.get_auto_status(user_id) else "❌"
@@ -1686,7 +1680,6 @@ class CallbackHandlers:
                 await CallbackHandlers.handle(update, context)
                 return
             
-            # أزرار أخرى
             if data == CB.PLANS:
                 await query.answer()
                 kb = KeyboardFactory.build("plans")
@@ -1751,7 +1744,6 @@ class CallbackHandlers:
                 await safe_send(context.bot, user_id, f"💎 **شراء اشتراك**\n\nمدة الاشتراك: {days} يوم\n\nللشراء، استخدم الأمر /subscribe")
                 return
             
-            # المجموعات
             if data == CB.GROUPS:
                 await query.answer()
                 groups = await GroupRepository.get_user_groups(user_id)
@@ -1768,7 +1760,6 @@ class CallbackHandlers:
                 await query.edit_message_text(text, reply_markup=kb)
                 return
             
-            # المنشورات
             if data == CB.POST_ADD:
                 await query.answer()
                 active = await ChannelRepository.get_active(user_id)
@@ -1811,7 +1802,6 @@ class CallbackHandlers:
                 await query.edit_message_text(text)
                 return
             
-            # أزرار الأدمن (مختصرة)
             if data.startswith("admin_"):
                 if user_id != CONFIG.PRIMARY_OWNER_ID and not await BotAdminRepository.is_admin(user_id):
                     await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
@@ -1833,12 +1823,15 @@ class CallbackHandlers:
                 
                 if data == CB.ADMIN_RAM:
                     await query.answer()
-                    import psutil
-                    mem = psutil.virtual_memory()
-                    await query.edit_message_text(await get_text(lang, 'admin_ram', 
-                                                         used=mem.used // (1024*1024),
-                                                         total=mem.total // (1024*1024),
-                                                         percent=mem.percent))
+                    try:
+                        import psutil
+                        mem = psutil.virtual_memory()
+                        await query.edit_message_text(await get_text(lang, 'admin_ram', 
+                                                             used=mem.used // (1024*1024),
+                                                             total=mem.total // (1024*1024),
+                                                             percent=mem.percent))
+                    except:
+                        await query.edit_message_text("🖥️ **الرام**\nغير متاح")
                     return
                 
                 if data == CB.ADMIN_STATS:
@@ -1873,7 +1866,6 @@ class CallbackHandlers:
                 await query.answer("⚠️ قيد التطوير", show_alert=True)
                 return
             
-            # الأزرار الأخرى
             if data == CB.PANEL_LOCK or data == CB.PANEL_UNLOCK:
                 await query.answer()
                 chat_id = int(data.split(":")[-1])
@@ -1919,7 +1911,6 @@ class MessageHandlers:
         state = StateManager.get(user_id)
         lang = await UserRepository.get_language(user_id)
         
-        # معالجة إضافة القناة
         if state == UserState.WAIT_CHANNEL:
             channel_input = text.strip()
             if not channel_input:
@@ -1955,7 +1946,6 @@ class MessageHandlers:
             await CommandHandlers.start(update, context)
             return
         
-        # إضافة المنشورات
         if state == UserState.ADDING_POSTS:
             session = context.user_data.get(f"session_{user_id}", [])
             target = context.user_data.get(f"session_target_{user_id}", 15)
@@ -2002,7 +1992,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, await get_text(lang, 'all_posts_saved'))
             return
         
-        # البث
         if state == UserState.WAIT_BROADCAST:
             context.user_data['broadcast_text'] = text
             StateManager.clear(user_id)
@@ -2013,18 +2002,15 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, await get_text(lang, 'admin_broadcast_confirm', text=text[:200]), reply_markup=kb)
             return
         
-        # وضع الدعم
         if state == UserState.SUPPORT_MODE:
             await safe_send(context.bot, user_id, await get_text(lang, 'support_ticket_created', num=1))
             StateManager.clear(user_id)
             return
         
-        # بدء القائمة الرئيسية
         await CommandHandlers.start(update, context)
 
     @staticmethod
     async def handle_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        # معالجة رسائل المجموعة (بسيطة)
         pass
 
 # =====================================================================
@@ -2034,18 +2020,14 @@ class MessageHandlers:
 async def main():
     logger.info(f"🚀 Starting {CONFIG.BOT_NAME}")
     
-    # تهيئة قاعدة البيانات
     await DB.initialize()
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
     
-    # تحميل الأزرار
     KeyboardFactory.load_config()
     
-    # إعداد البوت
     app = Application.builder().token(CONFIG.TOKEN).build()
     
-    # تسجيل الأوامر
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -2061,14 +2043,10 @@ async def main():
     app.add_handler(CommandHandler("developer", CommandHandlers.developer))
     app.add_handler(CommandHandler("language", CommandHandlers.language))
     
-    # تسجيل معالج الكولباك
     app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
-    
-    # تسجيل معالج الرسائل
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, MessageHandlers.handle_private))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, MessageHandlers.handle_group))
     
-    # تشغيل البوت
     logger.info("✅ البوت جاهز للتشغيل")
     await app.run_polling(drop_pending_updates=True)
 
@@ -2086,4 +2064,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ {e}")
         traceback.print_exc()
-
