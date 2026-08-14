@@ -9,6 +9,7 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 - CallbackHandlers: معالجة ضغطات الأزرار
 - MessageHandlers: معالجة الرسائل (خاصة ومجموعات)
 مع تفعيل زر التجربة المجانية (30 يوم) وإعادة التدوير التلقائي
+ومعالجة دقيقة لإضافة القناة مع رسائل خطأ واضحة
 """
 
 import asyncio
@@ -2084,67 +2085,199 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: إضافة قناة
+        # ✅ حالة: إضافة قناة (مع رسائل خطأ واضحة)
         # ============================================================
         if state == UserState.WAIT_CHANNEL:
+            # 1️⃣ التحقق من الاشتراك
             has_sub = await DB.has_active_subscription(user_id)
             has_trial = await DB.has_used_trial(user_id)
+            
             if not has_sub and not has_trial:
-                await safe_send(context.bot, user_id, await get_text(lang, 'subscription_expired'))
+                await safe_send(
+                    context.bot, 
+                    user_id, 
+                    "⚠️ **انتهى اشتراكك!**\n\n"
+                    "لإضافة قناة جديدة، تحتاج إلى:\n"
+                    "• 🎁 استخدام زر **'تجربة'** (30 يوم مجاناً)\n"
+                    "• 💎 الاشتراك في إحدى الباقات المتاحة\n\n"
+                    "يمكنك الضغط على زر **'💎 اشتراك'** أو **'🎁 تجربة'**"
+                )
                 StateManager.clear(user_id)
                 return
 
             channel_input = text.strip()
+            
             if not channel_input:
-                await safe_send(context.bot, user_id, await get_text(lang, 'invalid_format'))
+                await safe_send(
+                    context.bot, 
+                    user_id, 
+                    "❌ **لم تدخل أي معرف!**\n\n"
+                    "الرجاء إدخال معرف القناة بالصيغة:\n"
+                    "• `@username` (للقنوات العامة)\n"
+                    "• `-1001234567890` (للقنوات الخاصة)"
+                )
                 StateManager.clear(user_id)
                 return
 
+            # 2️⃣ جلب القناة من Telegram
             try:
                 chat = await context.bot.get_chat(channel_input)
+            except BadRequest as e:
+                error_msg = str(e).lower()
+                if "chat not found" in error_msg or "user not found" in error_msg:
+                    await safe_send(
+                        context.bot, 
+                        user_id, 
+                        f"❌ **القناة غير موجودة!**\n\n"
+                        f"المعرف `{channel_input}` غير صحيح.\n"
+                        "تأكد من:\n"
+                        "• كتابة المعرف بشكل صحيح\n"
+                        "• أن القناة موجودة فعلاً\n"
+                        "• استخدام @username أو -100...\n\n"
+                        "💡 جرب `/start` ثم '➕ إضافة قناة' مرة أخرى"
+                    )
+                else:
+                    await safe_send(
+                        context.bot, 
+                        user_id, 
+                        f"❌ **خطأ في جلب القناة:**\n`{str(e)[:200]}`"
+                    )
+                StateManager.clear(user_id)
+                return
             except Exception as e:
-                await safe_send(context.bot, user_id, f"❌ خطأ: {str(e)[:100]}")
+                await safe_send(
+                    context.bot, 
+                    user_id, 
+                    f"❌ **خطأ غير متوقع:**\n`{str(e)[:200]}`"
+                )
                 StateManager.clear(user_id)
                 return
 
+            # 3️⃣ التأكد من أن الكائن هو قناة وليس مجموعة
             if chat.type != 'channel':
-                await safe_send(context.bot, user_id, await get_text(lang, 'invalid_channel'))
+                await safe_send(
+                    context.bot, 
+                    user_id, 
+                    f"❌ **`{channel_input}` ليس قناة!**\n\n"
+                    f"النوع: `{chat.type}`\n"
+                    "الرجاء إدخال معرف قناة صحيح."
+                )
                 StateManager.clear(user_id)
                 return
 
+            # 4️⃣ التحقق من صلاحيات البوت في القناة
             try:
                 bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
-                if bot_member.status != 'administrator':
-                    await safe_send(context.bot, user_id, await get_text(lang, 'bot_not_admin'))
-                    StateManager.clear(user_id)
-                    return
-                if not bot_member.can_post_messages:
-                    await safe_send(context.bot, user_id, "❌ البوت لا يملك صلاحية النشر في القناة")
-                    StateManager.clear(user_id)
-                    return
+            except BadRequest as e:
+                error_msg = str(e).lower()
+                if "user not participant" in error_msg:
+                    await safe_send(
+                        context.bot, 
+                        user_id, 
+                        f"❌ **البوت ليس عضواً في القناة!**\n\n"
+                        f"القناة: `{chat.title or chat.id}`\n\n"
+                        "لحل المشكلة:\n"
+                        "1️⃣ أضف البوت إلى القناة (كعضو)\n"
+                        "2️⃣ اجعله **مشرفاً** مع صلاحية **نشر الرسائل**\n"
+                        "3️⃣ ثم حاول مرة أخرى"
+                    )
+                else:
+                    await safe_send(
+                        context.bot, 
+                        user_id, 
+                        f"❌ **فشل التحقق من صلاحيات البوت:**\n`{str(e)[:200]}`"
+                    )
+                StateManager.clear(user_id)
+                return
             except Exception as e:
-                await safe_send(context.bot, user_id, f"❌ فشل التحقق من صلاحيات البوت: {str(e)[:100]}")
+                await safe_send(
+                    context.bot, 
+                    user_id, 
+                    f"❌ **خطأ غير متوقع:**\n`{str(e)[:200]}`"
+                )
                 StateManager.clear(user_id)
                 return
 
+            # 5️⃣ التحقق من أن البوت مشرف
+            if bot_member.status != 'administrator':
+                await safe_send(
+                    context.bot, 
+                    user_id, 
+                    f"❌ **البوت ليس مشرفاً في القناة!**\n\n"
+                    f"القناة: `{chat.title or chat.id}`\n\n"
+                    "الرجاء جعل البوت مشرفاً في القناة مع:\n"
+                    "✅ صلاحية **نشر الرسائل**\n"
+                    "✅ صلاحية **تحرير الرسائل** (يفضل)\n\n"
+                    "ثم حاول مرة أخرى."
+                )
+                StateManager.clear(user_id)
+                return
+
+            # 6️⃣ التحقق من صلاحية النشر
+            if not bot_member.can_post_messages:
+                await safe_send(
+                    context.bot, 
+                    user_id, 
+                    f"❌ **البوت لا يملك صلاحية النشر!**\n\n"
+                    f"القناة: `{chat.title or chat.id}`\n\n"
+                    "الرجاء تفعيل صلاحية **`post_messages`** للبوت في القناة.\n\n"
+                    "💡 اذهب إلى إعدادات القناة → المشرفين → البوت → فعّل 'نشر الرسائل'"
+                )
+                StateManager.clear(user_id)
+                return
+
+            # 7️⃣ إضافة القناة إلى قاعدة البيانات
             try:
                 channel_id = chat.id
                 channel_name = chat.title or "بدون اسم"
                 result = await DB.add_channel(user_id, channel_id, channel_name)
+                
                 if result:
                     await DB.set_active_channel(user_id, result)
-                    await safe_send(context.bot, user_id, f"✅ تمت إضافة القناة **{channel_name}** بنجاح!")
+                    await safe_send(
+                        context.bot, 
+                        user_id, 
+                        f"✅ **تمت إضافة القناة بنجاح!**\n\n"
+                        f"📌 الاسم: `{channel_name}`\n"
+                        f"🆔 المعرف: `{channel_id}`\n"
+                        f"📝 عدد المنشورات: 0\n\n"
+                        f"💡 استخدم **'📥 إضافة منشورات'** لإضافة محتوى،\n"
+                        f"أو **'📤 نشر واحد'** لنشر منشور فوري."
+                    )
                 else:
-                    await safe_send(context.bot, user_id, await get_text(lang, 'channel_exists'))
+                    # القناة موجودة مسبقاً
+                    channels = await DB.get_user_channels(user_id)
+                    if channels:
+                        text_msg = f"⚠️ **القناة مضافتة مسبقاً!**\n\n"
+                        text_msg += f"القناة `{channel_name}` موجودة في قائمتك.\n\n"
+                        text_msg += "📡 **قنواتك:**\n"
+                        for ch in channels:
+                            st = "✅" if ch['id'] == result else "⏳"
+                            text_msg += f"{st} {ch['channel_name']} (ID: {ch['id']})\n"
+                        text_msg += f"\n💡 اختر قناة من **'📡 قنواتي'** لتصبح نشطة."
+                        await safe_send(context.bot, user_id, text_msg)
+                    else:
+                        await safe_send(
+                            context.bot, 
+                            user_id, 
+                            f"⚠️ **القناة مضافتة مسبقاً!**\n\n"
+                            f"القناة `{channel_name}` موجودة بالفعل.\n"
+                            f"استخدم **'📡 قنواتي'** لعرض القنوات."
+                        )
             except Exception as e:
-                await safe_send(context.bot, user_id, f"❌ فشل إضافة القناة: {str(e)[:100]}")
+                await safe_send(
+                    context.bot, 
+                    user_id, 
+                    f"❌ **فشل إضافة القناة في قاعدة البيانات:**\n`{str(e)[:200]}`\n\n"
+                    "يرجى المحاولة مرة أخرى، وإذا استمرت المشكلة، تواصل مع الدعم."
+                )
 
             StateManager.clear(user_id)
             await CommandHandlers.start(update, context)
             return
 
         # ============================================================
-        # حالة: إضافة منشورات
+        # باقي الحالات (إضافة منشورات، جدولة، كلمات محظورة، إلخ)
         # ============================================================
         if state == UserState.ADDING_POSTS:
             session = context.user_data.get(f"session_{user_id}", [])
@@ -2194,7 +2327,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: الجدولة (دقائق، ساعات، أيام، وقت)
+        # الجدولة
         # ============================================================
         if state == UserState.WAIT_MIN:
             try:
@@ -2260,7 +2393,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: الكلمات المحظورة (مجموعة)
+        # الكلمات المحظورة (مجموعة)
         # ============================================================
         if state == UserState.WAIT_GROUP_BAN:
             chat_id_ban = context.user_data.get('ban_chat')
@@ -2294,7 +2427,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: الكلمات المحظورة (عامة)
+        # الكلمات المحظورة (عامة)
         # ============================================================
         if state == UserState.WAIT_GLOBAL_BAN:
             word = text.strip().lower()
@@ -2320,7 +2453,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: إدارة المشرفين (إضافة/حذف)
+        # إدارة المشرفين (إضافة/حذف)
         # ============================================================
         if state == UserState.WAIT_ADMIN_ADD:
             try:
@@ -2344,7 +2477,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: البث
+        # البث
         # ============================================================
         if state == UserState.WAIT_BROADCAST:
             context.user_data['broadcast_text'] = text
@@ -2358,7 +2491,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: التحديثات
+        # التحديثات
         # ============================================================
         if state == UserState.WAIT_UPDATE:
             ch = await DB.get_updates_channel()
@@ -2380,7 +2513,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: الاشتراك الإجباري
+        # الاشتراك الإجباري
         # ============================================================
         if state == UserState.WAIT_FORCE:
             await DB.set_setting('force_subscribe_channel', text.replace('@', ''))
@@ -2389,7 +2522,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: التذكيرات
+        # التذكيرات
         # ============================================================
         if state == UserState.WAIT_REM_DAYS:
             try:
@@ -2405,7 +2538,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: الإجراءات المتقدمة (حظر، كتم، تحذير، ...)
+        # الإجراءات المتقدمة (حظر، كتم، تحذير، ...)
         # ============================================================
         if state in (UserState.WAIT_BAN, UserState.WAIT_MUTE, UserState.WAIT_WARN,
                      UserState.WAIT_KICK, UserState.WAIT_RESTRICT, UserState.WAIT_UNBAN):
@@ -2440,7 +2573,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: تثبيت رسالة
+        # تثبيت رسالة
         # ============================================================
         if state == UserState.WAIT_PIN:
             chat_id_adv = context.user_data.get('adv_chat')
@@ -2458,7 +2591,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: المسابقات (إنشاء)
+        # المسابقات (إنشاء)
         # ============================================================
         if state == UserState.WAIT_CONTEST_TITLE:
             context.user_data['contest_title'] = text
@@ -2498,7 +2631,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: المشاركة في مسابقة
+        # المشاركة في مسابقة
         # ============================================================
         if state == UserState.WAIT_CONTEST_ANSWER:
             cid = context.user_data.get('contest_join')
@@ -2510,7 +2643,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: إضافة رد تلقائي
+        # إضافة رد تلقائي
         # ============================================================
         if state == UserState.WAIT_AUTO_KEY:
             keyword = text.strip().lower()
@@ -2537,7 +2670,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: حذف رد تلقائي
+        # حذف رد تلقائي
         # ============================================================
         if state == UserState.WAIT_AUTO_DEL:
             chat_id_auto = context.user_data.get('auto_chat')
@@ -2557,7 +2690,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: إضافة رد (عام)
+        # إضافة رد (عام)
         # ============================================================
         if state == UserState.WAIT_KEYWORD:
             context.user_data['keyword'] = text.strip().lower()
@@ -2575,7 +2708,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: قناة السجلات
+        # قناة السجلات
         # ============================================================
         if state == UserState.WAIT_LOG_CH:
             try:
@@ -2591,7 +2724,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: الحد الأقصى للطول
+        # الحد الأقصى للطول
         # ============================================================
         if state == UserState.WAIT_MAX_LEN:
             try:
@@ -2612,7 +2745,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: عدد التحذيرات
+        # عدد التحذيرات
         # ============================================================
         if state == UserState.WAIT_WARN_COUNT:
             try:
@@ -2633,7 +2766,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # حالة: الدعم
+        # الدعم
         # ============================================================
         if state == UserState.SUPPORT_MODE:
             media_type = None
@@ -2855,4 +2988,3 @@ class MessageHandlers:
                         await _increment_usage_async(chat_id, text.lower())
                     except:
                         pass
-
