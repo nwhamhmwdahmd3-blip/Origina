@@ -19,7 +19,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# استيرادات تيليجرام - تم تصحيحها
 from telegram import (
     Update, 
     InlineKeyboardMarkup, 
@@ -39,6 +38,9 @@ from telegram.ext import (
     ContextTypes
 )
 from telegram.request import HTTPXRequest
+
+# استيراد aiohttp للـ Webhook
+from aiohttp import web
 
 from config import CONFIG, PATHS
 
@@ -2013,11 +2015,48 @@ class MessageHandlers:
         pass
 
 # =====================================================================
-# 11. الدالة الرئيسية
+# 11. خادم الويب والـ Webhook
 # =====================================================================
 
+async def health_check(request):
+    """نقطة نهاية للتحقق من صحة البوت"""
+    return web.Response(text="OK")
+
+async def webhook(request):
+    """معالج الـ Webhook"""
+    try:
+        data = await request.json()
+        await app.process_update(Update.de_json(data, app.bot))
+        return web.Response(status=200, text="OK")
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return web.Response(status=500, text="ERROR")
+
+async def setup_webhook(app, port: int):
+    """إعداد خادم الويب والـ Webhook"""
+    # إعداد خادم الويب
+    web_app = web.Application()
+    web_app.router.add_get('/health', health_check)
+    web_app.router.add_post(f"/{CONFIG.TOKEN}", webhook)
+    
+    # تشغيل الخادم
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"✅ خادم الويب يعمل على المنفذ {port}")
+    return runner
+
+# =====================================================================
+# 12. الدالة الرئيسية
+# =====================================================================
+
+app = None  # متغير عام للوصول إليه في الـ Webhook
+
 async def main():
-    logger.info(f"🚀 Starting {CONFIG.BOT_NAME}")
+    global app
+    
+    logger.info(f"🚀 Starting {CONFIG.BOT_NAME} in Webhook mode")
     
     await DB.initialize()
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
@@ -2025,8 +2064,10 @@ async def main():
     
     KeyboardFactory.load_config()
     
+    # إنشاء التطبيق
     app = Application.builder().token(CONFIG.TOKEN).build()
     
+    # تسجيل المعالجات
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -2046,17 +2087,44 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, MessageHandlers.handle_private))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, MessageHandlers.handle_group))
     
-    logger.info("✅ البوت جاهز للتشغيل")
-    await app.run_polling(drop_pending_updates=True)
+    # إعداد الـ Webhook
+    port = int(CONFIG.WEB_PORT)
+    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
+    
+    if hostname:
+        webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
+        logger.info(f"🔗 تعيين Webhook إلى: {webhook_url}")
+        
+        # حذف أي Webhook قديم
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        
+        # تعيين الـ Webhook الجديد
+        await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+        logger.info("✅ تم تعيين Webhook بنجاح")
+    else:
+        logger.warning("⚠️ لا يوجد اسم نطاق، سيتم استخدام Polling بدلاً من Webhook")
+        await app.run_polling(drop_pending_updates=True)
+        return
+    
+    # إعداد خادم الويب
+    runner = await setup_webhook(app, port)
+    
+    # الانتظار حتى يتم إيقاف البوت
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()
 
 # =====================================================================
-# 12. تشغيل البرنامج - تم التصحيح
+# 13. تشغيل البرنامج
 # =====================================================================
 
 if __name__ == "__main__":
+    import os
+    
     print(f"🌿 {CONFIG.BOT_NAME}")
     print("✅ الأزرار تُقرأ من ملف buttons_config.json")
-    print("✅ البوت يعمل على Render - تم إصلاح مشكلة Event Loop")
+    print("✅ يعمل عبر Webhook - الحل الأمثل لـ Render")
     
     try:
         asyncio.run(main())
@@ -2065,12 +2133,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ خطأ غير متوقع: {e}")
         traceback.print_exc()
-    finally:
-        # تنظيف الموارد إذا لزم الأمر
-        try:
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                loop.stop()
-        except:
-            pass
-        print("✅ تم إيقاف البوت بشكل نظيف")
