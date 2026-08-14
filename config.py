@@ -10,11 +10,10 @@ class Config:
     BOT_USERNAME = os.getenv("BOT_USERNAME", "YourBotUsername")
     BOT_NAME = os.getenv("BOT_NAME", "Relax Manager")
     
-    # المالك الأساسي (المطور الرئيسي)
-    PRIMARY_OWNER_ID = int(os.getenv("PRIMARY_OWNER_ID", "123456789"))
+    # المالك الأساسي (المطور الرئيسي) - يقرأ من المتغيرات
+    PRIMARY_OWNER_ID = int(os.getenv("PRIMARY_OWNER_ID", "0"))
     
-    # قائمة المطورين (يمكن إضافة أكثر من مطور)
-    # أضف معرفات المطورين هنا مفصولة بفواصل في ملف .env
+    # قائمة المطورين - تقرأ من متغير البيئة DEVELOPER_IDS
     # مثال: DEVELOPER_IDS=123456789,987654321,555555555
     DEVELOPER_IDS = []
     
@@ -27,10 +26,13 @@ class Config:
                 cls.DEVELOPER_IDS = [int(x.strip()) for x in dev_ids_str.split(",") if x.strip()]
             except ValueError:
                 cls.DEVELOPER_IDS = []
+        else:
+            cls.DEVELOPER_IDS = []
         
-        # التأكد من وجود المالك الأساسي في القائمة
-        if cls.PRIMARY_OWNER_ID not in cls.DEVELOPER_IDS:
-            cls.DEVELOPER_IDS.append(cls.PRIMARY_OWNER_ID)
+        # إذا كان PRIMARY_OWNER_ID معرف بشكل صحيح ولم يكن في القائمة، أضفه
+        if cls.PRIMARY_OWNER_ID and cls.PRIMARY_OWNER_ID > 0:
+            if cls.PRIMARY_OWNER_ID not in cls.DEVELOPER_IDS:
+                cls.DEVELOPER_IDS.append(cls.PRIMARY_OWNER_ID)
         
         return cls.DEVELOPER_IDS
     
@@ -85,4 +87,8 @@ PATHS.ensure_dirs()
 # طباعة معلومات المطورين عند بدء التشغيل
 print(f"👨‍💼 المالك الأساسي: {CONFIG.PRIMARY_OWNER_ID}")
 print(f"👨‍💻 عدد المطورين: {len(CONFIG.DEVELOPER_IDS)}")
-print(f"📋 قائمة المطورين: {CONFIG.DEVELOPER_IDS}")
+if CONFIG.DEVELOPER_IDS:
+    print(f"📋 قائمة المطورين: {CONFIG.DEVELOPER_IDS}")
+else:
+    print("⚠️ لا يوجد مطورين مسجلين! تأكد من تعيين PRIMARY_OWNER_ID و DEVELOPER_IDS")
+
