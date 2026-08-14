@@ -2067,6 +2067,9 @@ async def main():
     # إنشاء التطبيق
     app = Application.builder().token(CONFIG.TOKEN).build()
     
+    # ✅ تهيئة التطبيق - هذا هو الحل
+    await app.initialize()
+    
     # تسجيل المعالجات
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
@@ -2115,9 +2118,6 @@ async def main():
     finally:
         await runner.cleanup()
 
-# =====================================================================
-# 13. تشغيل البرنامج
-# =====================================================================
 
 if __name__ == "__main__":
     import os
@@ -2133,3 +2133,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ خطأ غير متوقع: {e}")
         traceback.print_exc()
+
