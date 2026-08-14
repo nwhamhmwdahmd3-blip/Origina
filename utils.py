@@ -22,12 +22,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any
 from enum import Enum, auto
 from collections import OrderedDict, deque
-from telegram import Update
-from telegram.ext import ContextTypes
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+from abc import ABC, abstractmethod
+
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton, ChatPermissions, Update
 from telegram.error import BadRequest
+from telegram.ext import ContextTypes
 from cachetools import TTLCache
+
 import aiohttp.web as web
+
 from config import CONFIG, PATHS
 from database import DB
 
@@ -330,7 +333,7 @@ class StateManager:
         cls._timestamps.pop(user_id, None)
 
 # =====================================================================
-# 8. تعريفات الأزرار
+# 8. تعريفات الأزرار (CB)
 # =====================================================================
 
 class CB:
@@ -707,8 +710,6 @@ def get_ram_usage() -> dict:
 # 11. نظام العقوبات
 # =====================================================================
 
-from abc import ABC, abstractmethod
-
 class PenaltyStrategy(ABC):
     @abstractmethod
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
@@ -983,7 +984,6 @@ class BackgroundTasks:
 # =====================================================================
 
 async def setup_webhook(app, port: int):
-    from aiohttp import web
     web_app = web.Application()
     web_app.router.add_get('/health', lambda r: web.Response(text="OK"))
     web_app.router.add_post(f"/{CONFIG.TOKEN}", webhook_handler)
@@ -996,8 +996,8 @@ async def setup_webhook(app, port: int):
 async def webhook_handler(request):
     try:
         data = await request.json()
+        from bot import app  # <---- استيراد من bot
         from telegram import Update
-        from handlers import app
         await app.process_update(Update.de_json(data, app.bot))
         return web.Response(status=200, text="OK")
     except Exception as e:
