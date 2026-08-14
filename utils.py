@@ -991,12 +991,16 @@ async def setup_webhook(app, port: int):
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
+    logger.info(f"✅ Webhook server running on port {port}")
     return runner
 
 async def webhook_handler(request):
     try:
         data = await request.json()
-        from bot import app  # <---- استيراد من bot
+        from bot import app
+        if app is None:
+            logger.error("❌ app is None in webhook_handler")
+            return web.Response(status=500, text="App not initialized")
         from telegram import Update
         await app.process_update(Update.de_json(data, app.bot))
         return web.Response(status=200, text="OK")
@@ -1019,4 +1023,3 @@ class ErrorHandler:
                     await safe_send(context.bot, update.effective_user.id, f"⚠️ {str(error)[:200]}")
         except Exception as e:
             logger.error(f"Error in error handler: {e}")
-
