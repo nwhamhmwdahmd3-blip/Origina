@@ -27,10 +27,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = None
+app = None  # <---- متغير عام
 
 async def main():
-    global app
+    global app  # <---- أعلن أن app عام
 
     print(f"🌿 {CONFIG.BOT_NAME} v9.0.0")
     print(f"👨‍💼 المالك الأساسي: {CONFIG.PRIMARY_OWNER_ID}")
@@ -55,7 +55,7 @@ async def main():
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
 
     # إنشاء التطبيق
-    app = Application.builder().token(CONFIG.TOKEN).build()
+    app = Application.builder().token(CONFIG.TOKEN).build()  # <---- تعيين app
     await app.initialize()
 
     # إضافة المعالجات
