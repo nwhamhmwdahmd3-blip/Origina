@@ -63,3 +63,4 @@ class PathManager:
 
 CONFIG = AppConfig()
 PATHS = PathManager()
+

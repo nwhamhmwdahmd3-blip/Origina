@@ -19,7 +19,7 @@
     "add_group": "➕ أضف المجموعة",
     "add_group_url": "➕ أضف المجموعة",
     "toggle_auto": "⚙️ النشر التلقائي",
-    "toggle_rec": "♻️ إعادة التدوير",
+    "toggle_recycle": "♻️ إعادة التدوير",
     "trial": "🎁 تجربة",
     "subscribe": "💎 اشتراك",
     "developer": "👨‍💻 المطور",
@@ -182,6 +182,7 @@
     "settings": {
       "rows": [
         ["toggle_auto"],
+        ["toggle_recycle"],
         ["back"]
       ]
     },

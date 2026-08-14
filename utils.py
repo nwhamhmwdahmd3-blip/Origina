@@ -4,12 +4,6 @@
 """
 utils.py - الأدوات المساعدة للبوت
 ==================================
-تحتوي على: TimeUtils, TextUtils, RateLimiter, Metrics,
-TranslationManager, KeyboardFactory, StateManager,
-دوال مساعدة أخرى
-مع إضافة:
-- التحقق من الاشتراك قبل النشر التلقائي
-- إعادة التدوير التلقائي عند انتهاء المنشورات
 """
 
 import asyncio
@@ -880,7 +874,7 @@ async def fetch_json_from_url(url: str) -> Optional[list]:
         return None
 
 # =====================================================================
-# 13. المهام الخلفية (مع التحقق من الاشتراك وإعادة التدوير التلقائي)
+# 13. المهام الخلفية
 # =====================================================================
 
 class BackgroundTasks:
@@ -895,7 +889,7 @@ class BackgroundTasks:
                     await asyncio.sleep(60)
                     continue
                 for ch in channels:
-                    # ✅ التحقق من الاشتراك قبل النشر
+                    # التحقق من الاشتراك
                     has_sub = await DB.has_active_subscription(ch['user_id'])
                     has_trial = await DB.has_used_trial(ch['user_id'])
                     
@@ -905,19 +899,16 @@ class BackgroundTasks:
                     
                     post = await DB.get_next_post(ch['id'])
                     
-                    # ✅ إذا انتهت المنشورات والتدوير التلقائي مفعل
+                    # إذا انتهت المنشورات والتدوير التلقائي مفعل
                     if not post:
                         auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
                         if auto_recycle:
-                            # إعادة تدوير جميع المنشورات
                             count = await DB.reset_posts(ch['id'])
                             logger.info(f"♻️ إعادة تدوير تلقائي للقناة {ch['channel_id']} - {count} منشور")
-                            # جلب المنشور الأول بعد إعادة التدوير
                             post = await DB.get_next_post(ch['id'])
                             if not post:
                                 continue
                         else:
-                            # إعادة التدوير معطل، تخطي القناة
                             logger.info(f"⏹️ انتهت منشورات القناة {ch['channel_id']} - إعادة التدوير معطل")
                             continue
                     
@@ -990,7 +981,6 @@ class BackgroundTasks:
     async def flush_sentiment_periodically() -> None:
         while True:
             await asyncio.sleep(60)
-            # يتم التعامل مع تحليل المشاعر في handle_group
 
     @staticmethod
     async def flush_usage_periodically() -> None:
@@ -1011,7 +1001,6 @@ class BackgroundTasks:
 # 14. خادم الويب
 # =====================================================================
 
-# متغير عام لتخزين مرجع التطبيق
 _webhook_app = None
 
 async def setup_webhook(app, port: int):
@@ -1057,3 +1046,4 @@ class ErrorHandler:
                     await safe_send(context.bot, update.effective_user.id, f"⚠️ {str(error)[:200]}")
         except Exception as e:
             logger.error(f"Error in error handler: {e}")
+

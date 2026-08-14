@@ -8,7 +8,7 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 - CommandHandlers: معالجة الأوامر (/start, /help, ...)
 - CallbackHandlers: معالجة ضغطات الأزرار
 - MessageHandlers: معالجة الرسائل (خاصة ومجموعات)
-مع تفعيل زر التجربة المجانية (30 يوم)
+مع تفعيل زر التجربة المجانية (30 يوم) وإعادة التدوير التلقائي
 """
 
 import asyncio
@@ -101,14 +101,56 @@ class CommandHandlers:
         sub_text = "✅ مفعل" if has_sub else "❌ غير مفعل"
         auto = await DB.get_auto_publish_status(user_id)
         auto_text = "مفعل" if auto else "معطل"
+        recycle = await DB.get_auto_recycle_status(user_id)
+        recycle_text = "مفعل" if recycle else "معطل"
+
+        # بناء القائمة الرئيسية مع زر الأدمن للمطورين فقط
+        kb_rows = KeyboardFactory.get_menu("main_menu")
+        keyboard = []
+        
+        # الأزرار العادية
+        for row in kb_rows:
+            btn_row = []
+            for item in row:
+                # إذا كان زر الأدمن، نتحكم في ظهوره
+                if item == "admin_panel_btn":
+                    if CONFIG.is_developer(user_id):
+                        text_btn = KeyboardFactory.get_text("admin_panel_btn")
+                        btn_row.append(InlineKeyboardButton(text_btn, callback_data=CB.ADMIN))
+                else:
+                    text_btn = KeyboardFactory.get_text(item)
+                    if item.endswith("_url"):
+                        url = f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup"
+                        btn_row.append(InlineKeyboardButton(text_btn, url=url))
+                    else:
+                        btn_row.append(InlineKeyboardButton(text_btn, callback_data=item))
+            if btn_row:
+                keyboard.append(btn_row)
+        
+        # إضافة زر الأدمن للمطورين فقط (إذا لم يتم إضافته من القائمة)
+        if CONFIG.is_developer(user_id):
+            has_admin_btn = False
+            for row in keyboard:
+                for btn in row:
+                    if btn.callback_data == CB.ADMIN:
+                        has_admin_btn = True
+                        break
+                if has_admin_btn:
+                    break
+            if not has_admin_btn:
+                keyboard.append([InlineKeyboardButton("👑 لوحة الأدمن", callback_data=CB.ADMIN)])
+        
+        kb = InlineKeyboardMarkup(keyboard)
 
         title = await get_text(lang, 'main_menu',
                                user_id=user_id, groups=groups,
                                sub=sub_text, channel=ch_display,
                                pending=cnt, auto=auto_text,
                                bot_name=CONFIG.BOT_NAME)
+        
+        # إضافة حالة إعادة التدوير للقائمة
+        title += f"\n♻️ إعادة التدوير: {recycle_text}"
 
-        kb = KeyboardFactory.build("main_menu")
         await safe_send(context.bot, user_id, title, reply_markup=kb)
 
     @staticmethod
@@ -124,12 +166,10 @@ class CommandHandlers:
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
         
-        # التحقق مما إذا كان المستخدم قد استخدم التجربة مسبقاً
         if await DB.has_used_trial(user_id):
             await safe_send(context.bot, user_id, await get_text(lang, 'trial_used'))
             return
         
-        # تفعيل التجربة (30 يوم)
         days = await DB.activate_trial(user_id)
         await safe_send(context.bot, user_id, await get_text(lang, 'trial_activated', days=days))
 
@@ -459,7 +499,6 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
             return
 
-        # التحقق من أن المستهدف ليس مشرفاً
         if await is_authorized_in_group(context.bot, chat_id, target):
             await safe_send(context.bot, user_id,
                             await get_text(await DB.get_user_language(user_id), 'error_user_admin'))
@@ -526,16 +565,11 @@ class CallbackHandlers:
                 await CommandHandlers.help_command(update, context)
                 return
 
-            # ====================================================
-            # زر التجربة المجانية (30 يوم)
-            # ====================================================
             if data == CB.TRIAL:
                 await query.answer()
-                # التحقق مما إذا كان المستخدم قد استخدم التجربة مسبقاً
                 if await DB.has_used_trial(user_id):
                     await query.edit_message_text(await get_text(lang, 'trial_used'))
                     return
-                # تفعيل التجربة (30 يوم)
                 days = await DB.activate_trial(user_id)
                 await query.edit_message_text(await get_text(lang, 'trial_activated', days=days))
                 return
@@ -571,14 +605,27 @@ class CallbackHandlers:
             if data == CB.SETTINGS:
                 await query.answer()
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
+                recycle = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
                 kb = KeyboardFactory.build("settings")
-                await query.edit_message_text(await get_text(lang, 'settings_auto', status=auto), reply_markup=kb)
+                await query.edit_message_text(
+                    f"⚙️ **الإعدادات**\n\n"
+                    f"📤 النشر التلقائي: {auto}\n"
+                    f"♻️ إعادة التدوير التلقائي: {recycle}",
+                    reply_markup=kb
+                )
                 return
 
             if data == CB.TOGGLE_AUTO:
                 await query.answer()
                 cur = await DB.get_auto_publish_status(user_id)
                 await DB.set_auto_publish(user_id, not cur)
+                await CallbackHandlers.handle(update, context)
+                return
+
+            if data == CB.TOGGLE_REC:
+                await query.answer()
+                cur = await DB.get_auto_recycle_status(user_id)
+                await DB.set_auto_recycle(user_id, not cur)
                 await CallbackHandlers.handle(update, context)
                 return
 
@@ -603,7 +650,6 @@ class CallbackHandlers:
                     await query.answer(await get_text(lang, 'plan_not_found'), show_alert=True)
                     return
 
-                # إنشاء فاتورة وإرسالها
                 invoice_number = await DB.create_invoice(user_id, plan['id'], plan['price'])
                 if not invoice_number:
                     await query.answer(await get_text(lang, 'payment_init_failed'), show_alert=True)
@@ -973,7 +1019,8 @@ class CallbackHandlers:
                 ch = len(await DB.get_user_channels(user_id))
                 g = len(await DB.get_user_groups(user_id))
                 auto = "مفعل" if await DB.get_auto_publish_status(user_id) else "معطل"
-                text = f"📊 **الإحصائيات**\n\n📝 منشورات: {t}\n⏳ غير منشورة: {u}\n📡 قنوات: {ch}\n👥 مجموعات: {g}\n⚙️ النشر التلقائي: {auto}"
+                recycle = "مفعل" if await DB.get_auto_recycle_status(user_id) else "معطل"
+                text = f"📊 **الإحصائيات**\n\n📝 منشورات: {t}\n⏳ غير منشورة: {u}\n📡 قنوات: {ch}\n👥 مجموعات: {g}\n⚙️ النشر التلقائي: {auto}\n♻️ إعادة التدوير: {recycle}"
                 await query.edit_message_text(text)
                 return
 
@@ -1226,7 +1273,7 @@ class CallbackHandlers:
                 return
 
             # ====================================================
-            # أزرار الأدمن (للمطورين فقط)
+            # أزرار الأدمن (للمطورين فقط) - كاملة
             # ====================================================
             if data.startswith("admin_"):
                 if not CONFIG.is_developer(user_id):
@@ -1468,7 +1515,7 @@ class CallbackHandlers:
 
     @staticmethod
     async def _handle_admin_callback(update, context, query, user_id, lang):
-        """معالجة أزرار لوحة الأدمن"""
+        """معالجة أزرار لوحة الأدمن - كاملة"""
         data = query.data
 
         # ============================================================
@@ -1493,7 +1540,7 @@ class CallbackHandlers:
             return
 
         # ============================================================
-        # القنوات
+        # القنوات - كاملة
         # ============================================================
         if data == CB.ADMIN_CHANNELS:
             channels = await DB.fetchall("SELECT id, channel_id, channel_name, banned FROM user_channels LIMIT 50")
@@ -1505,22 +1552,26 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
+        # ✅ ADMIN_BANNED_CH - عرض القنوات المحظورة
         if data == CB.ADMIN_BANNED_CH:
             channels = await DB.fetchall("SELECT id, channel_id, channel_name FROM user_channels WHERE banned=1 LIMIT 50")
             if not channels:
                 await query.edit_message_text("📭 لا توجد قنوات محظورة")
                 return
-            text = "🚫 **القنوات المحظورة**\n\n" + "\n".join([f"• `{c[1]}` - {c[2]}" for c in channels])
+            text = "🚫 **القنوات المحظورة**\n\n"
+            for c in channels:
+                text += f"• `{c[1]}` - {c[2]}\n"
             await query.edit_message_text(text)
             return
 
+        # ✅ ADMIN_ACTIVATE_CH - تفعيل جميع القنوات المحظورة
         if data == CB.ADMIN_ACTIVATE_CH:
             await DB.execute("UPDATE user_channels SET banned=0 WHERE banned=1")
-            await query.edit_message_text(await get_text(lang, 'admin_activated_channels'))
+            await query.edit_message_text("✅ تم تفعيل جميع القنوات المحظورة")
             return
 
         # ============================================================
-        # المجموعات
+        # المجموعات - كاملة
         # ============================================================
         if data == CB.ADMIN_GROUPS:
             groups = await DB.fetchall("SELECT chat_id, chat_name, banned FROM bot_groups LIMIT 50")
@@ -1532,18 +1583,22 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
+        # ✅ ADMIN_BANNED_GR - عرض المجموعات المحظورة
         if data == CB.ADMIN_BANNED_GR:
             groups = await DB.fetchall("SELECT chat_id, chat_name FROM bot_groups WHERE banned=1 LIMIT 50")
             if not groups:
                 await query.edit_message_text("📭 لا توجد مجموعات محظورة")
                 return
-            text = "🚫 **المجموعات المحظورة**\n\n" + "\n".join([f"• `{g[0]}` - {g[1]}" for g in groups])
+            text = "🚫 **المجموعات المحظورة**\n\n"
+            for g in groups:
+                text += f"• `{g[0]}` - {g[1]}\n"
             await query.edit_message_text(text)
             return
 
+        # ✅ ADMIN_UNBAN_GR - إلغاء حظر جميع المجموعات المحظورة
         if data == CB.ADMIN_UNBAN_GR:
             await DB.execute("UPDATE bot_groups SET banned=0 WHERE banned=1")
-            await query.edit_message_text(await get_text(lang, 'admin_unbanned_groups'))
+            await query.edit_message_text("✅ تم إلغاء حظر جميع المجموعات")
             return
 
         # ============================================================
@@ -1639,9 +1694,10 @@ class CallbackHandlers:
             await query.edit_message_text("📢 أرسل معرف القناة (بدون @):")
             return
 
+        # ✅ ADMIN_SHOW_UPDATE - عرض قناة التحديثات
         if data == CB.ADMIN_SHOW_UPDATE:
             ch = await DB.get_updates_channel()
-            await query.edit_message_text(f"📢 القناة: @{ch}" if ch else "لا توجد قناة تحديثات")
+            await query.edit_message_text(f"📢 قناة التحديثات: @{ch}" if ch else "📢 لا توجد قناة تحديثات")
             return
 
         if data == CB.ADMIN_FORCE_SUB:
@@ -1753,7 +1809,7 @@ class CallbackHandlers:
             return
 
         # ============================================================
-        # الكلمات المحظورة (عامة)
+        # الكلمات المحظورة (عامة) - كاملة
         # ============================================================
         if data == CB.ADMIN_BANNED_WORDS:
             words = await DB.get_banned_words(-1)
@@ -1765,6 +1821,18 @@ class CallbackHandlers:
         if data == CB.ADMIN_ADD_BANNED:
             StateManager.set(user_id, UserState.WAIT_GLOBAL_BAN)
             await query.edit_message_text(await get_text(lang, 'enter_word'))
+            return
+
+        # ✅ ADMIN_LIST_BANNED - عرض الكلمات المحظورة
+        if data == CB.ADMIN_LIST_BANNED:
+            words = await DB.get_banned_words(-1)
+            if not words:
+                await query.edit_message_text("📭 لا توجد كلمات محظورة عالمياً")
+                return
+            text = "🚫 **الكلمات المحظورة عالمياً**\n\n"
+            for w in words:
+                text += f"• `{w}`\n"
+            await query.edit_message_text(text)
             return
 
         if data == CB.ADMIN_REM_BANNED:
@@ -2019,7 +2087,6 @@ class MessageHandlers:
         # حالة: إضافة قناة
         # ============================================================
         if state == UserState.WAIT_CHANNEL:
-            # التحقق من الاشتراك أو التجربة
             has_sub = await DB.has_active_subscription(user_id)
             has_trial = await DB.has_used_trial(user_id)
             if not has_sub and not has_trial:
@@ -2045,7 +2112,6 @@ class MessageHandlers:
                 StateManager.clear(user_id)
                 return
 
-            # التحقق من صلاحيات البوت
             try:
                 bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
                 if bot_member.status != 'administrator':
@@ -2684,7 +2750,7 @@ class MessageHandlers:
                     except:
                         pass
 
-        # 2.4 حذف أنواع الوسائط المحددة
+        # 2.4 حذف أنواع الوسائط المحددة (كاملة)
         media_checks = {
             'delete_videos': 'video',
             'delete_audio': 'audio',
