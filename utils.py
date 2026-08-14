@@ -2,578 +2,1020 @@
 # -*- coding: utf-8 -*-
 
 """
-دوال مساعدة عامة – النسخة النهائية الشاملة
-- جميع دوال الوقت، التشفير، الترجمة، الضغط
-- دوال لوحات المفاتيح (Keyboards)
-- compress_backup / decompress_backup
-- contains_link / contains_mention / contains_hashtag
+utils.py - الأدوات المساعدة للبوت
+==================================
+تحتوي على: TimeUtils, TextUtils, RateLimiter, Metrics,
+TranslationManager, KeyboardFactory, StateManager,
+دوال مساعدة أخرى
 """
 
-import re, json, time as time_module, secrets, hashlib, html, os, sys, gc, asyncio, socket, logging
+import asyncio
+import os
+import re
+import json
+import time
+import html
+import shutil
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any
-import urllib.parse
-from collections import defaultdict, OrderedDict
+from enum import Enum, auto
+from collections import OrderedDict, deque
 
-try: import bleach
-except ImportError: bleach = None
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.error import BadRequest
+from cachetools import TTLCache
 
-from cryptography.fernet import Fernet
+from config import CONFIG, PATHS
+from database import DB
 
-from constants import (
-    ENCRYPTION_KEY, BACKUP_ENCRYPTION_KEY, DB_ENCRYPTION,
-    DATA_PATH, TEMP_PATH, LOG_PATH, DB_PATH,
-    SUPPORTED_LANGUAGES, PRIMARY_OWNER_ID,
-    user_points_last_hour, user_language,
-    get_nsfw_lock, CallbackData
-)
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def get_env_int(key: str, default: int) -> int:
-    try: return int(os.getenv(key, str(default)))
-    except: return default
+# =====================================================================
+# 1. أدوات الوقت
+# =====================================================================
 
-def get_env_bool(key: str, default: bool) -> bool:
-    return os.getenv(key, str(default)).lower() in ['true','1','yes','on']
+class TimeUtils:
+    @staticmethod
+    def utc_now() -> datetime:
+        return datetime.now(timezone.utc).replace(tzinfo=None)
 
-def get_env_float(key: str, default: float) -> float:
-    try: return float(os.getenv(key, str(default)))
-    except: return default
+    @staticmethod
+    def mecca_now() -> datetime:
+        return TimeUtils.utc_now() + timedelta(hours=3)
 
-def escape_markdown_v2(text: str) -> str:
-    if not text: return ""
-    for char in r'_*[]()~`>#+\-=|{}.!': text = text.replace(char, f'\\{char}')
-    return text
+    @staticmethod
+    def utc_iso() -> str:
+        return TimeUtils.utc_now().isoformat()
 
-def clean_text_for_telegram(text: str) -> str:
-    if not text: return ""
-    text = re.sub(r'[\u200b\u200c\u200d\u2060\uFEFF\u202a\u202b\u202c\u202d\u202e]', '', text)
-    return text.replace('\ufeff','').replace('\ufffc','')
+    @staticmethod
+    def mecca_iso() -> str:
+        return TimeUtils.mecca_now().isoformat()
 
-def sanitize_text(text: str, max_length: int = 4096, allow_tags: list = None) -> str:
-    if not text: return ""
-    if bleach is not None:
-        try:
-            if allow_tags is None: allow_tags = ['b','i','u','s','a','code','pre','strong','em']
-            text = bleach.clean(text, tags=allow_tags, attributes={'a':['href','title']}, styles=[], strip=True)
-        except: pass
-    else:
-        text = re.sub(r'<[^>]*>', '', text)
-    if len(text) > max_length: text = text[:max_length]
-    return text
+    @staticmethod
+    def mecca_to_utc(dt: datetime) -> datetime:
+        return dt - timedelta(hours=3) if dt else None
 
-def encode_callback_data(data: str) -> str: return urllib.parse.quote(data, safe='')
-def decode_callback_data(data: str) -> str: return urllib.parse.unquote(data)
-def safe_int(value, default=0):
-    try: return int(value)
-    except: return default
+    @staticmethod
+    def utc_to_mecca(dt: datetime) -> datetime:
+        return dt + timedelta(hours=3) if dt else None
 
-def utc_now(): return datetime.now(timezone.utc).replace(tzinfo=None)
-def mecca_now(): return utc_now() + timedelta(hours=3)
-def utc_now_iso(): return utc_now().isoformat()
-def mecca_now_iso(): return mecca_now().isoformat()
-
-def to_naive(dt):
-    if dt is None: return None
-    if hasattr(dt,'tzinfo') and dt.tzinfo is not None: return dt.replace(tzinfo=None)
-    return dt
-
-def mecca_to_utc(mecca_dt):
-    if mecca_dt is None: return None
-    if hasattr(mecca_dt,'tzinfo') and mecca_dt.tzinfo is not None: mecca_dt = mecca_dt.replace(tzinfo=None)
-    return mecca_dt - timedelta(hours=3)
-
-def utc_to_mecca(utc_dt):
-    if utc_dt is None: return None
-    if hasattr(utc_dt,'tzinfo') and utc_dt.tzinfo is not None: utc_dt = utc_dt.replace(tzinfo=None)
-    return utc_dt + timedelta(hours=3)
-
-def encrypt_file(path: Path, cipher: Fernet) -> Path:
-    data = path.read_bytes()
-    encrypted = cipher.encrypt(data)
-    encrypted_path = path.with_suffix('.enc')
-    encrypted_path.write_bytes(encrypted)
-    return encrypted_path
-
-def decrypt_file(path: Path, cipher: Fernet) -> Path:
-    encrypted = path.read_bytes()
-    decrypted = cipher.decrypt(encrypted)
-    decrypted_path = path.with_suffix('.dec')
-    decrypted_path.write_bytes(decrypted)
-    return decrypted_path
-
-def encrypt_db_backup():
-    if not DB_ENCRYPTION: return DB_PATH
-    return encrypt_file(DB_PATH, Fernet(ENCRYPTION_KEY))
-
-try:
-    import zstandard
-    ZSTD_AVAILABLE = True; ZSTD_COMPRESSOR = zstandard.ZstdCompressor(level=3); ZSTD_DECOMPRESSOR = zstandard.ZstdDecompressor()
-except ImportError:
-    ZSTD_AVAILABLE = False; ZSTD_COMPRESSOR = None; ZSTD_DECOMPRESSOR = None
-
-def compress_backup(data: bytes) -> bytes:
-    if ZSTD_AVAILABLE and ZSTD_COMPRESSOR:
-        try: return ZSTD_COMPRESSOR.compress(data)
-        except: pass
-    return data
-
-def decompress_backup(data: bytes) -> bytes:
-    if ZSTD_AVAILABLE and ZSTD_DECOMPRESSOR:
-        try: return ZSTD_DECOMPRESSOR.decompress(data)
-        except: pass
-    return data
-
-try:
-    from cachetools import TTLCache
-    CACHETOOLS_AVAILABLE = True
-    _admin_cache = TTLCache(maxsize=1000, ttl=300)
-    _security_cache = TTLCache(maxsize=500, ttl=60)
-    _auth_cache = TTLCache(maxsize=1000, ttl=300)
-except ImportError:
-    CACHETOOLS_AVAILABLE = False
-    class SimpleTTLCache:
-        def __init__(self, maxsize=1000, ttl=300):
-            self.maxsize, self.ttl = maxsize, ttl
-            self.cache = OrderedDict(); self.timestamps = {}
-        def _clean_expired(self):
-            now = time_module.time()
-            for k in [k for k,ts in self.timestamps.items() if now-ts>=self.ttl]:
-                del self.cache[k]; del self.timestamps[k]
-        def __contains__(self, key): self._clean_expired(); return key in self.cache
-        def __getitem__(self, key):
-            self._clean_expired()
-            if key in self.cache: self.cache.move_to_end(key); return self.cache[key]
-            raise KeyError
-        def __setitem__(self, key, value):
-            self._clean_expired()
-            if key in self.cache: del self.cache[key]
-            elif len(self.cache)>=self.maxsize:
-                oldest, _ = self.cache.popitem(last=False); del self.timestamps[oldest]
-            self.cache[key] = value; self.timestamps[key] = time_module.time()
-        def get(self, key, default=None):
-            try: return self[key]
-            except KeyError: return default
-        def pop(self, key, default=None):
-            self._clean_expired()
-            if key in self.cache:
-                v = self.cache[key]; del self.cache[key]; del self.timestamps[key]; return v
-            return default
-        def clear(self): self.cache.clear(); self.timestamps.clear()
-        def clear_pattern(self, prefix):
-            self._clean_expired()
-            for k in [k for k in list(self.cache.keys()) if k.startswith(prefix)]:
-                del self.cache[k]; del self.timestamps[k]
-    _admin_cache = SimpleTTLCache(1000,300)
-    _security_cache = SimpleTTLCache(500,60)
-    _auth_cache = SimpleTTLCache(1000,300)
-
-class TimedLRUCache:
-    def __init__(self, maxsize=200, ttl=3600):
-        self.cache = OrderedDict(); self.maxsize = maxsize; self.ttl = ttl; self._lock = asyncio.Lock()
-    async def get(self, key):
-        async with self._lock:
-            if key in self.cache:
-                v, ts = self.cache[key]
-                if time_module.time()-ts < self.ttl: self.cache.move_to_end(key); return v
-                del self.cache[key]
+    @staticmethod
+    def safe_parse_iso(date_str: Optional[str]) -> Optional[datetime]:
+        if not date_str:
             return None
-    async def set(self, key, value):
-        async with self._lock:
-            if key in self.cache: del self.cache[key]
-            self.cache[key] = (value, time_module.time())
-            if len(self.cache) > self.maxsize: self.cache.popitem(last=False)
-    async def clear(self):
-        async with self._lock: self.cache.clear()
+        try:
+            return datetime.fromisoformat(date_str)
+        except ValueError:
+            return None
 
-_translation_cache = TimedLRUCache(500, 3600)
+# =====================================================================
+# 2. أدوات النصوص
+# =====================================================================
 
-async def memory_optimizer():
-    try:
-        _admin_cache.clear(); _security_cache.clear(); _auth_cache.clear()
-        await _translation_cache.clear(); gc.collect()
+class TextUtils:
+    @staticmethod
+    def contains_link(text: Optional[str]) -> bool:
+        if not text:
+            return False
+        return bool(re.search(r'(?:https?://|www\.|t\.me/|telegram\.me/)\S+', text, re.IGNORECASE))
+
+    @staticmethod
+    def contains_mention(text: Optional[str]) -> bool:
+        return bool(re.search(r'@\w+', text)) if text else False
+
+    @staticmethod
+    def sanitize(text: str, max_len: int = 4096) -> str:
+        if not text:
+            return ""
+        text = re.sub(r'[\u200b\u200c\u200d\u2060\uFEFF]', '', text)
+        return text[:max_len]
+
+    @staticmethod
+    def escape_markdown_v2(text: str) -> str:
+        if not text:
+            return ""
+        special = r'_*[]()~`>#+\-=|{}.!\\\''
+        return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\\'])', r'\\\1', text)
+
+    @staticmethod
+    def truncate(text: str, max_len: int = 200) -> str:
+        return text[:max_len] + ("..." if len(text) > max_len else "")
+
+# =====================================================================
+# 3. Rate Limiter
+# =====================================================================
+
+class RateLimiter:
+    def __init__(self, max_concurrent: int = 10, max_per_second: int = 30):
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self._last_calls = deque(maxlen=max_per_second * 2)
+        self._lock = asyncio.Lock()
+
+    async def acquire(self):
+        async with self.semaphore:
+            async with self._lock:
+                now = time.time()
+                while self._last_calls and now - self._last_calls[0] > 1:
+                    self._last_calls.popleft()
+                if len(self._last_calls) >= 30:
+                    wait_time = 1 - (now - self._last_calls[0])
+                    if wait_time > 0:
+                        await asyncio.sleep(wait_time)
+                self._last_calls.append(now)
+
+RATE_LIMITER = RateLimiter(max_concurrent=15, max_per_second=30)
+
+# =====================================================================
+# 4. مقاييس الأداء
+# =====================================================================
+
+class MetricsCollector:
+    def __init__(self):
+        self.api_calls = deque(maxlen=1000)
+        self.errors = deque(maxlen=1000)
+        self.messages_processed = 0
+        self.start_time = time.time()
+
+    def record_api_call(self, method: str, duration: float):
+        self.api_calls.append((time.time(), method, duration))
+
+    def record_error(self, error_type: str, context: str = ""):
+        self.errors.append((time.time(), error_type, context))
+
+    def get_stats(self) -> dict:
+        now = time.time()
+        calls_in_last_hour = sum(1 for t, _, _ in self.api_calls if now - t < 3600)
+        errors_in_last_hour = sum(1 for t, _, _ in self.errors if now - t < 3600)
+        uptime = now - self.start_time
+        return {
+            'api_calls_last_hour': calls_in_last_hour,
+            'errors_last_hour': errors_in_last_hour,
+            'uptime_seconds': int(uptime),
+            'messages_processed': self.messages_processed,
+            'total_api_calls': len(self.api_calls),
+            'total_errors': len(self.errors)
+        }
+
+    def increment_messages(self):
+        self.messages_processed += 1
+
+METRICS = MetricsCollector()
+
+# =====================================================================
+# 5. كاش الردود التلقائية
+# =====================================================================
+
+class AutoReplyCache:
+    def __init__(self, maxsize: int = 300):
+        self.cache = OrderedDict()
+        self.maxsize = maxsize
+
+    def get(self, key: str):
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        return None
+
+    def set(self, key: str, value: dict):
+        if key in self.cache:
+            self.cache.move_to_end(key)
+        self.cache[key] = value
+        if len(self.cache) > self.maxsize:
+            self.cache.popitem(last=False)
+
+    def invalidate(self, key: str = None):
+        if key:
+            self.cache.pop(key, None)
+        else:
+            self.cache.clear()
+
+_auto_reply_cache = AutoReplyCache(maxsize=300)
+
+# =====================================================================
+# 6. الترجمات
+# =====================================================================
+
+class TranslationManager:
+    _translations: Dict[str, Dict] = {}
+    _locales_dir: str = "locales"
+    _default_lang: str = "ar"
+
+    @classmethod
+    def load_translation(cls, lang: str) -> Dict:
+        if lang in cls._translations:
+            return cls._translations[lang]
+        file_path = Path(cls._locales_dir) / f"{lang}.json"
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                cls._translations[lang] = data
+                return data
+        except:
+            if lang != cls._default_lang:
+                return cls.load_translation(cls._default_lang)
+            return {}
+
+    @classmethod
+    def get_text(cls, lang: str, key: str, **kwargs) -> str:
+        translations = cls.load_translation(lang)
+        template = translations.get(key)
+        if template is None and lang != cls._default_lang:
+            translations = cls.load_translation(cls._default_lang)
+            template = translations.get(key)
+        if template is None:
+            template = key
+        try:
+            return template.format(**kwargs)
+        except KeyError:
+            return template
+
+    @classmethod
+    def get_available_languages(cls) -> Dict[str, str]:
+        languages = {
+            "ar": "العربية 🇸🇦",
+            "en": "English 🇬🇧",
+            "fr": "Français 🇫🇷",
+            "tr": "Türkçe 🇹🇷",
+            "zh": "中文 🇨🇳",
+            "ru": "Русский 🇷🇺",
+            "de": "Deutsch 🇩🇪",
+            "es": "Español 🇪🇸",
+            "it": "Italiano 🇮🇹",
+            "pt": "Português 🇵🇹",
+            "ja": "日本語 🇯🇵",
+            "ko": "한국어 🇰🇷"
+        }
+        available = {}
+        for code, name in languages.items():
+            if (Path(cls._locales_dir) / f"{code}.json").exists():
+                available[code] = name
+        if not available:
+            available["ar"] = languages["ar"]
+        return available
+
+async def get_text(lang: str, key: str, **kwargs) -> str:
+    return TranslationManager.get_text(lang, key, **kwargs)
+
+# =====================================================================
+# 7. إدارة الحالات
+# =====================================================================
+
+class UserState(Enum):
+    NONE = auto()
+    ADDING_POSTS = auto()
+    WAIT_CHANNEL = auto()
+    WAIT_MIN = auto()
+    WAIT_HOUR = auto()
+    WAIT_DAY = auto()
+    WAIT_PUB_TIME = auto()
+    WAIT_ADMIN_ADD = auto()
+    WAIT_ADMIN_REM = auto()
+    WAIT_BROADCAST = auto()
+    WAIT_UPDATE = auto()
+    WAIT_UPDATE_CH = auto()
+    WAIT_FORCE = auto()
+    WAIT_REM_DAYS = auto()
+    WAIT_BAN = auto()
+    WAIT_MUTE = auto()
+    WAIT_WARN = auto()
+    WAIT_KICK = auto()
+    WAIT_RESTRICT = auto()
+    WAIT_UNBAN = auto()
+    WAIT_PIN = auto()
+    WAIT_GROUP_BAN = auto()
+    WAIT_REM_GROUP_BAN = auto()
+    WAIT_GLOBAL_BAN = auto()
+    WAIT_REM_GLOBAL_BAN = auto()
+    WAIT_KEYWORD = auto()
+    WAIT_REPLY = auto()
+    WAIT_REPLY_BUTTONS = auto()
+    WAIT_LOG_CH = auto()
+    WAIT_CONTEST_TITLE = auto()
+    WAIT_CONTEST_DESC = auto()
+    WAIT_CONTEST_PRIZE = auto()
+    WAIT_CONTEST_DATE = auto()
+    WAIT_CONTEST_ANSWER = auto()
+    WAIT_MAX_LEN = auto()
+    WAIT_WARN_COUNT = auto()
+    WAIT_AUTO_KEY = auto()
+    WAIT_AUTO_REPLY = auto()
+    WAIT_AUTO_DEL = auto()
+    WAIT_IMPORT_FILE = auto()
+    WAIT_GITHUB_URL = auto()
+    SUPPORT_MODE = auto()
+
+class StateManager:
+    _states: Dict[int, UserState] = {}
+    _timestamps: Dict[int, float] = {}
+    _timeout = 300
+
+    @classmethod
+    def get(cls, user_id: int) -> UserState:
+        if user_id in cls._timestamps:
+            if time.time() - cls._timestamps[user_id] > cls._timeout:
+                cls.clear(user_id)
+        return cls._states.get(user_id, UserState.NONE)
+
+    @classmethod
+    def set(cls, user_id: int, state: UserState) -> None:
+        cls._states[user_id] = state
+        cls._timestamps[user_id] = time.time()
+
+    @classmethod
+    def clear(cls, user_id: int) -> None:
+        cls._states.pop(user_id, None)
+        cls._timestamps.pop(user_id, None)
+
+# =====================================================================
+# 8. تعريفات الأزرار
+# =====================================================================
+
+class CB:
+    MAIN = "main"
+    BACK = "back"
+    CANCEL = "cancel"
+    HELP = "help"
+    SETTINGS = "settings"
+    LANGUAGE = "language"
+    CHECK_SUB = "check_sub"
+
+    CH_ADD = "ch_add"
+    CH_LIST = "ch_list"
+    CH_DEL = "ch_del:"
+    CH_SEL = "ch_sel:"
+    CH_STATS = "ch_stats:"
+
+    POST_ADD = "post_add"
+    POST_PUB = "post_pub"
+    POST_LIST = "post_list"
+    POST_REC = "post_rec"
+    POST_DEL = "post_del:"
+    POST_CLEAR = "post_clear:"
+    PUB_ALL = "pub_all"
+
+    STATS_PEND = "stats_pend"
+    STATS_FULL = "stats_full"
+
+    GROUPS = "groups"
+    GRP_SET = "grp_set:"
+
+    TOGGLE_AUTO = "toggle_auto"
+    TOGGLE_REC = "toggle_rec"
+
+    SCHEDULE = "schedule:"
+    SCHED_MIN = "sched_min:"
+    SCHED_HOUR = "sched_hour:"
+    SCHED_DAY = "sched_day:"
+    SCHED_TIME = "sched_time:"
+
+    SEC_BANNED = "sec_banned:"
+    SEC_CLOSE = "sec_close"
+    SEC_ENABLE_ALL = "sec_enable_all:"
+    SEC_DISABLE_ALL = "sec_disable_all:"
+    SEC_DEL_PEN = "sec_del_pen:"
+
+    BAN_ADD = "ban_add:"
+    BAN_LIST = "ban_list:"
+    BAN_REM = "ban_rem:"
+
+    PENALTY = "penalty:"
+    PEN_KICK = "pen_kick:"
+    PEN_BAN = "pen_ban:"
+    PEN_MUTE = "pen_mute:"
+    PEN_WARN = "pen_warn:"
+    PEN_RESTRICT = "pen_restrict:"
+    PEN_NONE = "pen_none:"
+
+    ADV_ACT = "adv_act:"
+    ACT_BAN = "act_ban:"
+    ACT_MUTE = "act_mute:"
+    ACT_WARN = "act_warn:"
+    ACT_KICK = "act_kick:"
+    ACT_RESTRICT = "act_restrict:"
+    ACT_PIN = "act_pin:"
+    ACT_LOG = "act_log:"
+    ACT_UNBAN = "act_unban:"
+    MUTE_DUR = "mute_dur:"
+
+    PANEL_LOCK = "panel_lock:"
+    PANEL_UNLOCK = "panel_unlock:"
+    PANEL_CLOSE = "panel_close"
+
+    SUPPORT = "support"
+    SUPPORT_TICKET = "support_ticket"
+
+    TRIAL = "trial"
+    SUBSCRIBE = "subscribe"
+    BUY_SUB = "buy_sub:"
+    PLANS = "plans"
+    INVOICES = "invoices"
+
+    DEVELOPER = "developer"
+
+    REFERRAL = "referral"
+    REF_CLAIM = "ref_claim"
+    REF_LIST = "ref_list"
+
+    REMINDER = "reminder"
+    REM_TOGGLE_SUB = "rem_sub"
+    REM_TOGGLE_DAILY = "rem_daily"
+    REM_TOGGLE_WEEKLY = "rem_weekly"
+    REM_SET_DAYS = "rem_days"
+    REM_SET_LANG = "rem_lang"
+    REM_LANG = "rem_lang:"
+
+    TRANSLATION = "translation"
+    TRANS_OFF = "trans_off"
+    TRANS_SET = "trans_set:"
+
+    CONTESTS = "contests"
+    CONTEST_JOIN = "contest_join:"
+    CONTEST_WINNERS = "contest_winners"
+    DECLARE_WINNER_SEL = "declare_winner_sel:"
+
+    ADMIN = "admin"
+    ADMIN_USERS = "admin_users"
+    ADMIN_BANNED = "admin_banned"
+    ADMIN_UNBAN_ALL = "admin_unban_all"
+    ADMIN_CHANNELS = "admin_channels"
+    ADMIN_BANNED_CH = "admin_banned_ch"
+    ADMIN_ACTIVATE_CH = "admin_activate_ch"
+    ADMIN_GROUPS = "admin_groups"
+    ADMIN_BANNED_GR = "admin_banned_gr"
+    ADMIN_UNBAN_GR = "admin_unban_gr"
+    ADMIN_ADD_ADMIN = "admin_add_admin"
+    ADMIN_REM_ADMIN = "admin_rem_admin"
+    ADMIN_RAM = "admin_ram"
+    ADMIN_STATS = "admin_stats"
+    ADMIN_METRICS = "admin_metrics"
+    ADMIN_BACKUP = "admin_backup"
+    ADMIN_RESTORE = "admin_restore"
+    ADMIN_RESTORE_SEL = "admin_restore_sel:"
+    ADMIN_SEND_UPDATE = "admin_send_update"
+    ADMIN_SET_UPDATE_CH = "admin_set_update_ch"
+    ADMIN_SHOW_UPDATE = "admin_show_update"
+    ADMIN_FORCE_SUB = "admin_force_sub"
+    ADMIN_SET_FORCE = "admin_set_force"
+    ADMIN_BROADCAST = "admin_broadcast"
+    ADMIN_CONFIRM_BROADCAST = "admin_confirm_broadcast"
+    ADMIN_TICKETS = "admin_tickets"
+    ADMIN_DEL_TICKETS = "admin_del_tickets"
+    ADMIN_CONFIRM_DEL_TICKETS = "admin_confirm_del_tickets"
+    ADMIN_LOG_CH = "admin_log_ch"
+    ADMIN_SET_LOG_CH = "admin_set_log_ch"
+    ADMIN_REPLIES = "admin_replies"
+    ADMIN_ADD_REPLY = "admin_add_reply"
+    ADMIN_LIST_REPLIES = "admin_list_replies"
+    ADMIN_DEL_REPLY = "admin_del_reply"
+    ADMIN_BANNED_WORDS = "admin_banned_words"
+    ADMIN_ADD_BANNED = "admin_add_banned"
+    ADMIN_LIST_BANNED = "admin_list_banned"
+    ADMIN_REM_BANNED = "admin_rem_banned"
+    ADMIN_CREATE_CONTEST = "admin_create_contest"
+    ADMIN_DECLARE_WINNER = "admin_declare_winner"
+    ADMIN_DEL_CONTEST = "admin_del_contest:"
+    ADMIN_EXPORT_REPLIES = "admin_export_replies"
+    ADMIN_IMPORT_REPLIES = "admin_import_replies"
+    ADMIN_REFRESH_CACHE = "admin_refresh_cache"
+    ADMIN_IMPORT_GITHUB = "admin_import_github"
+
+    AUTO_REPLY_MENU = "auto_reply_menu:"
+    AUTO_REPLY_TOGGLE = "auto_reply_toggle:"
+    AUTO_REPLY_ADMINS = "auto_reply_admins:"
+    AUTO_REPLY_RESET = "auto_reply_reset:"
+    AUTO_REPLY_CONFIRM_RESET = "auto_reply_confirm_reset:"
+    AUTO_REPLY_STATS = "auto_reply_stats:"
+    AUTO_REPLY_ADD = "auto_reply_add:"
+    AUTO_REPLY_DEL = "auto_reply_del:"
+    AUTO_REPLY_LIST = "auto_reply_list:"
+
+# =====================================================================
+# 9. مصنع الكيبوردات
+# =====================================================================
+
+class KeyboardFactory:
+    _config: Dict = None
+    _config_path: str = "buttons_config.json"
+
+    @classmethod
+    def load_config(cls):
+        if cls._config is None:
+            try:
+                with open(cls._config_path, "r", encoding="utf-8") as f:
+                    cls._config = json.load(f)
+            except:
+                cls._config = {"texts": {}, "menus": {}}
+        return cls._config
+
+    @classmethod
+    def get_text(cls, key: str) -> str:
+        config = cls.load_config()
+        return config.get("texts", {}).get(key, key)
+
+    @classmethod
+    def get_menu(cls, menu_name: str) -> List[List[str]]:
+        config = cls.load_config()
+        menu = config.get("menus", {}).get(menu_name, {})
+        return menu.get("rows", [])
+
+    @classmethod
+    def build(cls, menu_name: str, chat_id: int = None, extra_data: Dict = None) -> InlineKeyboardMarkup:
+        rows = cls.get_menu(menu_name)
+        keyboard = []
+        for row in rows:
+            btn_row = []
+            for item in row:
+                if item.endswith("_url"):
+                    key = item.replace("_url", "")
+                    text = cls.get_text(key)
+                    url = f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup"
+                    if extra_data and "url" in extra_data:
+                        url = extra_data["url"]
+                    btn_row.append(InlineKeyboardButton(text, url=url))
+                else:
+                    text = cls.get_text(item)
+                    callback = item
+                    if chat_id and ":" in item:
+                        callback = f"{item}{chat_id}"
+                    elif chat_id and item in ["sec_close", "panel_close", "back", "main"]:
+                        callback = item
+                    elif chat_id:
+                        callback = f"{item}:{chat_id}"
+                    btn_row.append(InlineKeyboardButton(text, callback_data=callback))
+            keyboard.append(btn_row)
+        return InlineKeyboardMarkup(keyboard)
+
+    @classmethod
+    def _status_icon(cls, value: bool) -> str:
+        return "✅" if value else "❌"
+
+    @classmethod
+    async def _format_security_text(cls, settings: dict) -> str:
+        st = cls._status_icon
+        lines = [
+            "🔐 **إعدادات الأمان**",
+            "━━━━━━━━━━━━━━━━━━━━\n",
+            "🛡️ **الحماية**",
+            f"🔗 الروابط: {st(settings.get('delete_links', False))}",
+            f"👤 المعرفات: {st(settings.get('mentions', False))}",
+            f"🌊 الفيضان: {st(settings.get('antiflood_enabled', False))}\n",
+            "🎬 **المحتوى**",
+            f"🎬 فيديو: {st(settings.get('delete_videos', False))}",
+            f"🎵 موسيقى: {st(settings.get('delete_audio', False))}",
+            f"🎞️ متحرك: {st(settings.get('delete_animation', False))}",
+            f"🎤 صوتي: {st(settings.get('delete_voice', False))}",
+            f"🎥 فيديو نوت: {st(settings.get('delete_video_note', False))}",
+            f"🖼️ ملصقات: {st(settings.get('delete_stickers', False))}",
+            f"📄 ملفات: {st(settings.get('delete_documents', False))}",
+            f"📨 مُعاد: {st(settings.get('delete_forwarded', False))}",
+            f"📊 استطلاع: {st(settings.get('delete_polls', False))}",
+            f"🎮 ألعاب: {st(settings.get('delete_games', False))}",
+            f"🛠️ خدمة: {st(settings.get('delete_service', False))}\n",
+            "👋 **الترحيب**",
+            f"🎯 ترحيب: {st(settings.get('welcome_enabled', False))}",
+            f"👋 وداع: {st(settings.get('goodbye_enabled', False))}\n",
+            "⚙️ **القيود**",
+            f"⏱️ بطيء: {st(settings.get('slow_mode', False))} ({settings.get('slow_mode_seconds', 5)}ث)",
+            f"📏 طول: {settings.get('max_message_length', 0) or 'غير محدود'}",
+            f"🌙 ليلي: {st(settings.get('night_mode_enabled', False))}",
+            f"⚠️ تحذيرات: {settings.get('max_warnings', 3)}\n",
+            "⚖️ **العقوبات**",
+            f"🗑️ حذف: {settings.get('delete_penalty', 'none')}",
+            f"⚖️ أساسية: {settings.get('auto_penalty', 'none')}",
+            "━━━━━━━━━━━━━━━━━━━━"
+        ]
+        return "\n".join(lines)
+
+# =====================================================================
+# 10. دوال مساعدة أخرى
+# =====================================================================
+
+_auth_cache = TTLCache(maxsize=CONFIG.AUTH_CACHE_SIZE, ttl=CONFIG.AUTH_CACHE_TTL)
+
+async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
+    if user_id == CONFIG.PRIMARY_OWNER_ID:
         return True
-    except: return False
-
-async def is_authorized_in_group(bot, chat_id, user_id):
-    if user_id == PRIMARY_OWNER_ID: return True
     cache_key = f"auth_{chat_id}_{user_id}"
-    if cache_key in _auth_cache: return _auth_cache[cache_key]
-    from database import db_is_real_admin, db_is_hidden_owner, db_is_hidden_admin
-    authorized = await db_is_real_admin(chat_id, user_id) or await db_is_hidden_owner(chat_id, user_id) or await db_is_hidden_admin(chat_id, user_id)
+    if cache_key in _auth_cache:
+        return _auth_cache[cache_key]
+    authorized = False
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        if member.status in ['administrator', 'creator']:
+            authorized = True
+        else:
+            row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
+            if row:
+                authorized = True
+            else:
+                row2 = await DB.fetchone("SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, user_id))
+                if row2:
+                    authorized = True
+                else:
+                    linked = await DB.fetchone("SELECT 1 FROM user_groups_link WHERE user_id=? AND chat_id=?", (user_id, chat_id))
+                    if linked:
+                        authorized = True
+    except:
+        authorized = False
     _auth_cache[cache_key] = authorized
     return authorized
 
-def invalidate_auth_cache(chat_id=None, user_id=None):
-    if chat_id and user_id: _auth_cache.pop(f"auth_{chat_id}_{user_id}", None)
-    elif chat_id:
-        if hasattr(_auth_cache,'clear_pattern'): _auth_cache.clear_pattern(f"auth_{chat_id}_")
+def invalidate_auth_cache(chat_id: int = None, user_id: int = None) -> None:
+    try:
+        if chat_id and user_id:
+            _auth_cache.pop(f"auth_{chat_id}_{user_id}", None)
+        elif chat_id:
+            for k in list(_auth_cache.keys()):
+                if k.startswith(f"auth_{chat_id}_"):
+                    _auth_cache.pop(k, None)
         else:
-            for k in [k for k in _auth_cache if k.startswith(f"auth_{chat_id}_")]: del _auth_cache[k]
-    else: _auth_cache.clear()
+            _auth_cache.clear()
+    except:
+        pass
 
-def invalidate_user_cache(user_id): pass
-
-async def safe_send_markdown(bot, chat_id, text, reply_markup=None, **kwargs):
-    if not text: return None
-    clean = sanitize_text(text)
+async def check_bot_permissions(bot, chat_id: int) -> dict:
     try:
-        escaped = escape_markdown_v2(clean)
-        if len(escaped)>4096: escaped = escaped[:4093]+"..."
-        return await bot.send_message(chat_id=chat_id, text=escaped, parse_mode='MarkdownV2', reply_markup=reply_markup, **kwargs)
-    except Exception as e:
-        if "can't parse entities" in str(e).lower():
-            try:
-                html_text = clean.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-                if len(html_text)>4096: html_text = html_text[:4093]+"..."
-                return await bot.send_message(chat_id=chat_id, text=html_text, parse_mode='HTML', reply_markup=reply_markup, **kwargs)
-            except:
-                try: return await bot.send_message(chat_id=chat_id, text=clean[:4096], reply_markup=reply_markup, **kwargs)
-                except: raise
-        else: raise
-
-async def safe_edit_markdown(query, text, reply_markup=None, **kwargs):
-    if not query or not query.message: return None
-    clean = sanitize_text(text)
-    try:
-        escaped = escape_markdown_v2(clean)
-        if len(escaped)>4096: escaped = escaped[:4093]+"..."
-        return await query.edit_message_text(text=escaped, parse_mode='MarkdownV2', reply_markup=reply_markup, **kwargs)
-    except Exception as e:
-        err = str(e).lower()
-        if "can't parse entities" in err:
-            try:
-                html_text = clean.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-                if len(html_text)>4096: html_text = html_text[:4093]+"..."
-                return await query.edit_message_text(text=html_text, parse_mode='HTML', reply_markup=reply_markup, **kwargs)
-            except:
-                try: return await query.edit_message_text(text=clean[:4096], reply_markup=reply_markup, **kwargs)
-                except: raise
-        elif "message is not modified" in err:
-            try: await query.answer("✅ تم التحديث")
-            except: pass
-            return None
-        else: raise
-
-async def safe_send_plain(bot, chat_id, text, **kwargs):
-    if not text: return
-    return await bot.send_message(chat_id=chat_id, text=sanitize_text(text)[:4096], parse_mode=None, **kwargs)
-
-async def safe_send_error(bot, chat_id, text):
-    try: return await safe_send_markdown(bot, chat_id, text)
-    except: return await bot.send_message(chat_id=chat_id, text=text[:4000], parse_mode=None)
-
-async def safe_send_long_message(bot, chat_id, text, reply_markup=None, max_length=4000):
-    if len(text) <= max_length: return await safe_send_markdown(bot, chat_id, text, reply_markup)
-    parts = []; current = ""
-    for line in text.split('\n'):
-        if len(current)+len(line)+1 > max_length: parts.append(current); current = line
-        else: current += "\n"+line if current else line
-    if current: parts.append(current)
-    first = True
-    for part in parts:
-        if first and reply_markup: await safe_send_markdown(bot, chat_id, part, reply_markup); first = False
-        else: await safe_send_markdown(bot, chat_id, part)
-        await asyncio.sleep(0.5)
-
-class AsyncTranslator:
-    def __init__(self): self.session = None; self.pending = {}
-    async def get_session(self):
-        if self.session is None:
-            import aiohttp; self.session = aiohttp.ClientSession()
-        return self.session
-    async def translate(self, text, target):
-        if not text or target not in SUPPORTED_LANGUAGES: return text
-        cache_key = hashlib.md5(f"{text}_{target}".encode()).hexdigest()
-        cached = await _translation_cache.get(cache_key)
-        if cached: return cached
-        key = (text, target)
-        if key in self.pending:
-            future = asyncio.Future(); self.pending[key].append(future); return await future
-        self.pending[key] = []
-        try:
-            session = await self.get_session()
-            url = "https://translate.googleapis.com/translate_a/single"
-            params = {"client":"gtx","sl":"auto","tl":target,"dt":"t","q":text}
-            async with session.get(url, params=params, timeout=10) as resp:
-                data = await resp.json()
-                translated = data[0][0][0] if data and data[0] and data[0][0] else text
-            await _translation_cache.set(cache_key, translated)
-            for future in self.pending[key]:
-                if not future.done(): future.set_result(translated)
-            return translated
-        except (Exception, asyncio.CancelledError) as e:
-            for future in self.pending[key]:
-                if not future.done(): future.set_result(text)
-            return text
-        finally:
-            if key in self.pending: del self.pending[key]
-
-smart_translator = AsyncTranslator()
-translate_text = smart_translator.translate
-
-def get_ram_usage():
-    try:
-        import psutil; return {'percent': psutil.virtual_memory().percent}
-    except ImportError: return {'percent': 0}
-
-async def check_database_health():
-    try:
-        from database import execute_db
-        await execute_db(lambda conn: conn.execute("SELECT 1"))
-        return True
-    except: return False
-
-async def check_telegram_health(): return True
-
-class AdvancedLogger:
-    def log_error(self, message, error=None, context=None):
-        import traceback
-        eid = secrets.token_hex(4)
-        msg = f"[{eid}] {message}"
-        if error: msg += f" - {error}"
-        if context: msg += f" - {json.dumps(context, default=str)[:200]}"
-        logger.error(msg)
-        if error: traceback.print_exc()
-        return eid
-    def log_access(self, uid, action, details=None):
-        msg = f"User: {uid} - Action: {action}"
-        if details: msg += f" - {json.dumps(details, default=str)[:100]}"
-        logger.info(msg)
-
-advanced_logger = AdvancedLogger()
-log_error = advanced_logger.log_error
-
-class RateLimiter:
-    def __init__(self): self.requests = {}; self.lock = asyncio.Lock()
-    async def check_rate_limit(self, user_id, action, max_requests, time_window):
-        async with self.lock:
-            key = f"{user_id}:{action}"; now = time_module.time()
-            if key in self.requests:
-                self.requests[key] = [t for t in self.requests[key] if now-t < time_window]
-                if not self.requests[key]: del self.requests[key]
-            if key not in self.requests: self.requests[key] = [now]; return True
-            if len(self.requests[key]) >= max_requests: return False
-            self.requests[key].append(now); return True
-    async def cleanup_old_entries(self, max_age=600):
-        async with self.lock:
-            now = time_module.time()
-            for key in [k for k,ts in self.requests.items() if not ts or now-ts[-1]>max_age]:
-                del self.requests[key]
-
-rate_limiter = RateLimiter()
-
-def parse_days_of_week_safe(days_str):
-    if not days_str: return []
-    try:
-        days = json.loads(days_str)
-        if isinstance(days,list): return [int(d) for d in days if str(d).isdigit()]
-    except: pass
-    return []
-
-def parse_dates_safe(dates_str):
-    if not dates_str: return []
-    try:
-        dates = json.loads(dates_str)
-        if isinstance(dates,list): return [str(d) for d in dates if isinstance(d,str)]
-    except: pass
-    return []
-
-def check_single_instance():
-    try:
-        sock_path = TEMP_PATH / "bot.sock"
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try: sock.bind(str(sock_path)); return sock
-        except socket.error: logger.error("❌ البوت يعمل بالفعل!"); return False
-    except AttributeError: logger.warning("⚠️ AF_UNIX غير مدعوم"); return None
-    except: return None
-
-async def check_bot_permissions(bot, chat_id, chat_type=None):
-    try:
-        if chat_type is None: chat_type = (await bot.get_chat(chat_id)).type
         me = await bot.get_chat_member(chat_id, bot.id)
-        if me.status not in ('administrator','creator'): return False, "البوت ليس مشرفاً"
-        if chat_type == 'channel' and not me.can_post_messages: return False, "البوت لا يملك صلاحية النشر"
-        return True, ""
-    except Exception as e: return False, f"فشل التحقق: {e}"
+        if me.status not in ['administrator', 'creator']:
+            return {'can_act': False, 'reason': 'البوت ليس مشرفاً'}
+        can_delete = getattr(me, 'can_delete_messages', False)
+        can_ban = getattr(me, 'can_restrict_members', False)
+        if not can_delete or not can_ban:
+            return {'can_act': False, 'reason': 'صلاحيات ناقصة (حذف/تقييد)'}
+        return {'can_act': True, 'reason': '', 'permissions': {'can_delete': can_delete, 'can_ban': can_ban}}
+    except Exception as e:
+        return {'can_act': False, 'reason': f'خطأ في التحقق: {str(e)[:50]}'}
 
-# ===================== دوال فحص الروابط والإشارات =====================
-def contains_link(text: str) -> bool:
-    if not text: return False
-    patterns = [r'https?://[^\s]+', r'www\.[a-zA-Z0-9][^\s]*\.[a-zA-Z]{2,}[^\s]*',
-                r'[a-zA-Z0-9][^\s]*\.(com|net|org|io|gov|edu|me|info|xyz|online|site|store|web|co|uk|de|fr|ru|ir|sa|ae|eg)/[^\s]*']
-    for p in patterns:
-        if re.search(p, text, re.IGNORECASE): return True
-    return False
+async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
+    if not text:
+        return
+    await RATE_LIMITER.acquire()
+    start_time = time.time()
+    try:
+        escaped = TextUtils.escape_markdown_v2(text)
+        if len(escaped) > 4096:
+            escaped = escaped[:4093] + "..."
+        result = await bot.send_message(
+            chat_id=chat_id,
+            text=escaped,
+            parse_mode='MarkdownV2',
+            reply_markup=reply_markup,
+            **kwargs
+        )
+        METRICS.record_api_call('send_message', time.time() - start_time)
+        return result
+    except:
+        try:
+            html_text = html.escape(text)
+            if len(html_text) > 4096:
+                html_text = html_text[:4093] + "..."
+            result = await bot.send_message(
+                chat_id=chat_id,
+                text=html_text,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                **kwargs
+            )
+            METRICS.record_api_call('send_message_html', time.time() - start_time)
+            return result
+        except:
+            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', text)
+            if len(plain) > 4096:
+                plain = plain[:4093] + "..."
+            result = await bot.send_message(
+                chat_id=chat_id,
+                text=plain,
+                reply_markup=reply_markup,
+                **kwargs
+            )
+            METRICS.record_api_call('send_message_plain', time.time() - start_time)
+            return result
 
-def contains_mention(text: str) -> bool:
-    if not text: return False
-    return bool(re.search(r'@\w{5,}', text))
+def get_ram_usage() -> dict:
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        return {'total': round(mem.total / (1024 ** 3), 1), 'used': round(mem.used / (1024 ** 3), 1),
+                'percent': mem.percent}
+    except:
+        return {'total': 0, 'used': 0, 'percent': 0}
 
-def contains_hashtag(text: str) -> bool:
-    if not text: return False
-    return bool(re.search(r'#\w+', text))
+# =====================================================================
+# 11. نظام العقوبات
+# =====================================================================
 
-# ===================== لوحات المفاتيح =====================
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from abc import ABC, abstractmethod
 
-def get_advanced_group_actions_keyboard(chat_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛑 حظر", callback_data=f"{CallbackData.GROUP_ACTION_BAN}:{chat_id}"),
-         InlineKeyboardButton("🔇 كتم", callback_data=f"{CallbackData.GROUP_ACTION_MUTE}:{chat_id}")],
-        [InlineKeyboardButton("⚠️ تحذير", callback_data=f"{CallbackData.GROUP_ACTION_WARN}:{chat_id}"),
-         InlineKeyboardButton("👢 طرد", callback_data=f"{CallbackData.GROUP_ACTION_KICK}:{chat_id}")],
-        [InlineKeyboardButton("🔒 تقييد", callback_data=f"{CallbackData.GROUP_ACTION_RESTRICT}:{chat_id}"),
-         InlineKeyboardButton("📌 تثبيت", callback_data=f"{CallbackData.GROUP_ACTION_PIN}:{chat_id}")],
-        [InlineKeyboardButton("🔓 إلغاء حظر", callback_data=f"{CallbackData.GROUP_ACTION_UNBAN}:{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
-    ])
+class PenaltyStrategy(ABC):
+    @abstractmethod
+    async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
+        pass
 
-def get_advanced_mute_duration_keyboard(chat_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏱️ 5 دقائق", callback_data=f"adv_mute_duration:5:{chat_id}"),
-         InlineKeyboardButton("⏱️ 30 دقيقة", callback_data=f"adv_mute_duration:30:{chat_id}")],
-        [InlineKeyboardButton("⏱️ 1 ساعة", callback_data=f"adv_mute_duration:60:{chat_id}"),
-         InlineKeyboardButton("⏱️ 12 ساعة", callback_data=f"adv_mute_duration:720:{chat_id}")],
-        [InlineKeyboardButton("📆 يوم", callback_data=f"adv_mute_duration:1440:{chat_id}"),
-         InlineKeyboardButton("📆 أسبوع", callback_data=f"adv_mute_duration:10080:{chat_id}")],
-        [InlineKeyboardButton("🔇 كتم دائم", callback_data=f"adv_mute_duration:0:{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")]
-    ])
+class BanPenalty(PenaltyStrategy):
+    async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
+        if user_id == bot.id:
+            return False, "لا يمكن حظر البوت"
+        try:
+            await bot.ban_chat_member(chat_id, user_id)
+            return True, "✅ تم الحظر"
+        except Exception as e:
+            return False, str(e)[:100]
 
-def security_keyboard(chat_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 حذف الروابط", callback_data=f"{CallbackData.SECURITY_LINKS_PREFIX}{chat_id}"),
-         InlineKeyboardButton("@ حذف المعرفات", callback_data=f"{CallbackData.SECURITY_MENTIONS_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("🚫 كلمات محظورة", callback_data=f"{CallbackData.SECURITY_BANNED_WORDS_MENU_PREFIX}{chat_id}"),
-         InlineKeyboardButton("⏱️ الوضع البطيء", callback_data=f"{CallbackData.SECURITY_SLOWMODE_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("🎯 الترحيب", callback_data=f"{CallbackData.SECURITY_WELCOME_PREFIX}{chat_id}"),
-         InlineKeyboardButton("👋 الوداع", callback_data=f"{CallbackData.SECURITY_GOODBYE_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("🎴 حذف الملصقات", callback_data=f"{CallbackData.SECURITY_STICKERS_PREFIX}{chat_id}"),
-         InlineKeyboardButton("🎬 حذف الفيديوهات", callback_data=f"{CallbackData.SECURITY_VIDEOS_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("📨 حذف رسائل الخدمة", callback_data=f"{CallbackData.SECURITY_SERVICE_MESSAGES_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("⚖️ تحديد العقوبة", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}"),
-         InlineKeyboardButton("📝 إعدادات الردود", callback_data=CallbackData.ADMIN_AUTO_REPLY)],
-        [InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:{chat_id}")],
-        [InlineKeyboardButton("📜 سجل الإجراءات", callback_data=f"{CallbackData.GROUP_ACTION_LOG}:{chat_id}")],
-        [InlineKeyboardButton("🔙 إغلاق", callback_data=CallbackData.SECURITY_CLOSE)]
-    ])
+class MutePenalty(PenaltyStrategy):
+    async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
+        if user_id == bot.id:
+            return False, "لا يمكن كتم البوت"
+        duration = kwargs.get('duration', 60)
+        until = TimeUtils.utc_now() + timedelta(minutes=duration) if duration else None
+        try:
+            await bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=False), until_date=until)
+            return True, f"✅ تم الكتم {duration} دقيقة"
+        except Exception as e:
+            return False, str(e)[:100]
 
-def get_admin_keyboard(user_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👥 المستخدمين", callback_data=CallbackData.ADMIN_USERS),
-         InlineKeyboardButton("🚫 المحظورين", callback_data=CallbackData.ADMIN_BANNED_USERS)],
-        [InlineKeyboardButton("📡 القنوات", callback_data=CallbackData.ADMIN_ALL_CHANNELS),
-         InlineKeyboardButton("⛔ قنوات محظورة", callback_data=CallbackData.ADMIN_BANNED_CHANNELS)],
-        [InlineKeyboardButton("📊 المجموعات", callback_data=CallbackData.ADMIN_GROUPS),
-         InlineKeyboardButton("🚷 مجموعات محظورة", callback_data=CallbackData.ADMIN_BANNED_GROUPS)],
-        [InlineKeyboardButton("📢 قنوات البوت", callback_data=CallbackData.ADMIN_BOT_CHANNELS),
-         InlineKeyboardButton("🚫 قنوات بوت محظورة", callback_data=CallbackData.ADMIN_BANNED_BOT_CHANNELS)],
-        [InlineKeyboardButton("❤️ تنشيط الكل", callback_data=CallbackData.ADMIN_ACTIVATE_ALL_CHANNELS),
-         InlineKeyboardButton("📂 مراقبة المستخدمين", callback_data=CallbackData.ADMIN_MONITOR_USERS)],
-        [InlineKeyboardButton("👑 + مشرف", callback_data=CallbackData.ADMIN_ADD_ADMIN),
-         InlineKeyboardButton("🗑️ - مشرف", callback_data=CallbackData.ADMIN_REMOVE_ADMIN)],
-        [InlineKeyboardButton("💬 ردود المجموعة", callback_data=CallbackData.ADMIN_REPLIES),
-         InlineKeyboardButton("🚫 كلمات محظورة (عامة)", callback_data=CallbackData.ADMIN_BANNED_WORDS)],
-        [InlineKeyboardButton("📝 إعدادات الردود", callback_data=CallbackData.ADMIN_AUTO_REPLY)],
-        [InlineKeyboardButton("🔒 إعدادات NSFW", callback_data=CallbackData.NSFW_SETTINGS)],
-        [InlineKeyboardButton("🏆 إنشاء مسابقة", callback_data=CallbackData.ADMIN_CREATE_CONTEST),
-         InlineKeyboardButton("🏅 إعلان فائز", callback_data=CallbackData.ADMIN_DECLARE_WINNER)],
-        [InlineKeyboardButton("🛠️ إجراءات متقدمة", callback_data=f"{CallbackData.ADVANCED_ACTIONS}:0")],
-        [InlineKeyboardButton("🖥️ حالة الرام", callback_data=CallbackData.ADMIN_RAM),
-         InlineKeyboardButton("📊 إحصائيات عامة", callback_data=CallbackData.ADMIN_STATS)],
-        [InlineKeyboardButton("📈 مقاييس الأداء", callback_data=CallbackData.ADMIN_METRICS)],
-        [InlineKeyboardButton("💾 نسخة احتياطية", callback_data=CallbackData.ADMIN_BACKUP),
-         InlineKeyboardButton("🔄 استعادة نسخة", callback_data=CallbackData.ADMIN_RESTORE_BACKUP)],
-        [InlineKeyboardButton("⏱️ وقت النشر (عام)", callback_data=CallbackData.ADMIN_CHANGE_INTERVAL),
-         InlineKeyboardButton("⚙️ إعدادات النسخ", callback_data=CallbackData.ADMIN_BACKUP_SETTINGS)],
-        [InlineKeyboardButton("📢 نشر تحديث", callback_data=CallbackData.ADMIN_SEND_UPDATE),
-         InlineKeyboardButton("⚙️ قناة التحديثات", callback_data=CallbackData.ADMIN_SET_UPDATE_CHANNEL)],
-        [InlineKeyboardButton("📢 عرض القناة الحالية", callback_data=CallbackData.ADMIN_SHOW_UPDATE_CHANNEL)],
-        [InlineKeyboardButton("🔄 التحديثات", callback_data=CallbackData.ADMIN_UPDATES),
-         InlineKeyboardButton("🔒 الاشتراك الإجباري", callback_data=CallbackData.ADMIN_FORCE_SUBSCRIBE)],
-        [InlineKeyboardButton("⚙️ تعيين القناة", callback_data=CallbackData.ADMIN_SET_FORCE_CHANNEL),
-         InlineKeyboardButton("📨 إرسال رسالة", callback_data=CallbackData.ADMIN_BROADCAST)],
-        [InlineKeyboardButton("📋 تذاكر الدعم", callback_data=CallbackData.ADMIN_SUPPORT_TICKETS),
-         InlineKeyboardButton("🗑️ حذف جميع التذاكر", callback_data=CallbackData.ADMIN_DELETE_ALL_TICKETS)],
-        [InlineKeyboardButton("📁 صلاحية /sendcode", callback_data=CallbackData.ADMIN_MANAGE_SENDCODE),
-         InlineKeyboardButton("📋 قناة التقارير", callback_data=CallbackData.ADMIN_SHOW_LOG_CHANNEL)],
-        [InlineKeyboardButton("📋 تعيين قناة التقارير", callback_data=CallbackData.ADMIN_SET_LOG_CHANNEL)],
-        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
-    ])
+class KickPenalty(PenaltyStrategy):
+    async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
+        if user_id == bot.id:
+            return False, "لا يمكن طرد البوت"
+        try:
+            await bot.ban_chat_member(chat_id, user_id)
+            await bot.unban_chat_member(chat_id, user_id)
+            return True, "✅ تم الطرد"
+        except Exception as e:
+            return False, str(e)[:100]
 
-def get_group_banned_words_keyboard(chat_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"{CallbackData.BANNED_WORDS_ADD_PREFIX}{chat_id}"),
-         InlineKeyboardButton("📋 عرض الكلمات", callback_data=f"{CallbackData.BANNED_WORDS_LIST_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"{CallbackData.BANNED_WORDS_REMOVE_PREFIX}{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
-    ])
+class WarnPenalty(PenaltyStrategy):
+    async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
+        if user_id == bot.id:
+            return False, "لا يمكن تحذير البوت"
+        try:
+            row = await DB.fetchone("SELECT warnings FROM user_warnings WHERE user_id=? AND chat_id=?", (user_id, chat_id))
+            w = (row[0] if row else 0) + 1
+            await DB.execute("INSERT OR REPLACE INTO user_warnings (user_id, chat_id, warnings) VALUES (?,?,?)", (user_id, chat_id, w))
+            return True, f"⚠️ تحذير {w}"
+        except Exception as e:
+            return False, str(e)[:100]
 
-def get_replies_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة رد", callback_data=CallbackData.ADMIN_ADD_REPLY),
-         InlineKeyboardButton("📋 عرض الردود", callback_data=CallbackData.ADMIN_LIST_REPLIES)],
-        [InlineKeyboardButton("🗑️ حذف رد", callback_data=CallbackData.ADMIN_DEL_REPLY),
-         InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
-    ])
+class RestrictPenalty(PenaltyStrategy):
+    async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
+        if user_id == bot.id:
+            return False, "لا يمكن تقييد البوت"
+        try:
+            await bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=True, can_send_media_messages=False))
+            return True, "✅ تم التقييد"
+        except Exception as e:
+            return False, str(e)[:100]
 
-def get_auto_reply_keyboard(chat_id, settings):
-    status = "🟢 مفعل" if settings.get('enabled') else "🔴 معطل"
-    admin = "👑 مشرفين فقط" if settings.get('only_admins') else "👥 الجميع"
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"📝 الردود التلقائية: {status}", callback_data=f"{CallbackData.AUTO_REPLY_TOGGLE_PREFIX}{chat_id}")],
-        [InlineKeyboardButton(f"👥 المستخدمون: {admin}", callback_data=f"{CallbackData.AUTO_REPLY_ADMINS_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("🔄 إعادة تعيين الردود", callback_data=f"{CallbackData.AUTO_REPLY_RESET_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("📊 إحصائيات الردود", callback_data=f"{CallbackData.AUTO_REPLY_STATS_PREFIX}{chat_id}")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
-    ])
+class UnbanPenalty(PenaltyStrategy):
+    async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
+        try:
+            await bot.unban_chat_member(chat_id, user_id)
+            return True, "✅ تم إلغاء الحظر"
+        except Exception as e:
+            return False, str(e)[:100]
 
-def get_user_auto_reply_keyboard(user_id, enabled):
-    status = "🟢 مفعل" if enabled else "🔴 معطل"
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"📝 الردود التلقائية: {status}", callback_data=f"{CallbackData.USER_AUTO_REPLY_TOGGLE_PREFIX}{user_id}")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.BACK)]
-    ])
+class PenaltyFactory:
+    @staticmethod
+    def get_strategy(penalty_type: str):
+        if penalty_type == 'ban':
+            return BanPenalty()
+        elif penalty_type == 'mute':
+            return MutePenalty()
+        elif penalty_type == 'kick':
+            return KickPenalty()
+        elif penalty_type == 'warn':
+            return WarnPenalty()
+        elif penalty_type == 'restrict':
+            return RestrictPenalty()
+        elif penalty_type == 'unban':
+            return UnbanPenalty()
+        return WarnPenalty()
 
-def get_banned_words_admin_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة كلمة عامة", callback_data=CallbackData.ADMIN_ADD_BANNED_WORD),
-         InlineKeyboardButton("📋 عرض الكلمات", callback_data=CallbackData.ADMIN_LIST_BANNED_WORDS)],
-        [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=CallbackData.ADMIN_REMOVE_BANNED_WORD),
-         InlineKeyboardButton("🔙 رجوع", callback_data=CallbackData.ADMIN_PANEL)]
-    ])
+async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration: int = 0, reason: str = "", moderator: int = None) -> Tuple[bool, str]:
+    if user_id == CONFIG.PRIMARY_OWNER_ID:
+        return False, "لا يمكن معاملة المالك"
+    if user_id == bot.id:
+        return False, "لا يمكن معاملة البوت"
+    if await is_authorized_in_group(bot, chat_id, user_id):
+        return False, "لا يمكن معاملة مشرف"
+    perms = await check_bot_permissions(bot, chat_id)
+    if not perms['can_act']:
+        return False, "الصلاحيات غير كافية"
+    strategy = PenaltyFactory.get_strategy(penalty)
+    return await strategy.apply(bot, chat_id, user_id, duration=duration)
 
-def penalty_keyboard(chat_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔴 طرد", callback_data=f"{CallbackData.PENALTY_KICK}:{chat_id}"),
-         InlineKeyboardButton("🛑 حظر", callback_data=f"{CallbackData.PENALTY_BAN}:{chat_id}")],
-        [InlineKeyboardButton("🔇 كتم", callback_data=f"{CallbackData.PENALTY_MUTE}:{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.GROUPS_SETTINGS_PREFIX}{chat_id}")]
-    ])
+# =====================================================================
+# 12. دوال الردود التلقائية والاستيراد
+# =====================================================================
 
-def mute_duration_keyboard(chat_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏱️ 5 دقائق", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_5}:{chat_id}"),
-         InlineKeyboardButton("⏱️ 30 دقيقة", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_30}:{chat_id}")],
-        [InlineKeyboardButton("⏱️ 1 ساعة", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_60}:{chat_id}"),
-         InlineKeyboardButton("⏱️ 12 ساعة", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_720}:{chat_id}")],
-        [InlineKeyboardButton("📆 يوم", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_1440}:{chat_id}"),
-         InlineKeyboardButton("📆 أسبوع", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_10080}:{chat_id}")],
-        [InlineKeyboardButton("🔇 كتم دائم", callback_data=f"{CallbackData.GROUP_MUTE_DURATION_PERMANENT}:{chat_id}"),
-         InlineKeyboardButton("🔙 رجوع", callback_data=f"{CallbackData.PENALTY_MENU}:{chat_id}")]
-    ])
+_usage_updates: Dict[Tuple[int, str], int] = {}
+_USAGE_FLUSH_LIMIT = 50
+_USAGE_FLUSH_INTERVAL = 60
 
-async def build_days_keyboard(user_id, context):
-    selected = context.user_data.get('selected_days', [])
-    day_names = ['الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد']
-    keyboard = []
-    for i, name in enumerate(day_names):
-        status = "✅" if i in selected else "⬜"
-        keyboard.append([InlineKeyboardButton(f"{status} {name}", callback_data=f"{CallbackData.SCHEDULE_DAY_SELECT_PREFIX}{i}")])
-    keyboard.append([InlineKeyboardButton("💾 حفظ", callback_data=CallbackData.SCHEDULE_SAVE_DAYS)])
-    keyboard.append([InlineKeyboardButton("🔙 إلغاء", callback_data=CallbackData.BACK)])
-    return InlineKeyboardMarkup(keyboard)
+async def _increment_usage_async(chat_id: int, keyword: str):
+    global _usage_updates
+    key = (chat_id, keyword.lower())
+    _usage_updates[key] = _usage_updates.get(key, 0) + 1
+    if len(_usage_updates) >= _USAGE_FLUSH_LIMIT:
+        await _flush_usage_updates()
+
+async def _flush_usage_updates():
+    global _usage_updates
+    if not _usage_updates:
+        return
+    data = list(_usage_updates.items())
+    _usage_updates.clear()
+    async with DB._get_connection() as conn:
+        for (chat_id, keyword), count in data:
+            await conn.execute("UPDATE auto_replies SET usage_count = usage_count + ? WHERE chat_id=? AND keyword=?", (count, chat_id, keyword))
+        await conn.commit()
+
+async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
+    rows = await DB.fetchall("SELECT keyword, reply, reply_type, reply_media_id, reply_buttons FROM auto_replies WHERE chat_id=? AND is_active=1", (chat_id,))
+    if not rows:
+        return 0
+    data = [dict(row) for row in rows]
+    if file_path is None:
+        file_path = f"auto_replies_{chat_id}.json"
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return len(data)
+
+async def import_auto_replies(chat_id: int, file_path: str, overwrite: bool = False) -> int:
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    count = 0
+    for item in data:
+        keyword = item.get('keyword', '').strip().lower()
+        if not keyword:
+            continue
+        reply = item.get('reply', '').strip()
+        if not reply:
+            continue
+        if overwrite:
+            await DB.execute("DELETE FROM auto_replies WHERE chat_id=? AND keyword=?", (chat_id, keyword))
+        await DB.add_auto_reply(chat_id, keyword, reply, item.get('reply_type', 'text'), item.get('reply_media_id'), item.get('reply_buttons'))
+        count += 1
+    _auto_reply_cache.invalidate()
+    return count
+
+async def fetch_json_from_url(url: str) -> Optional[list]:
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=30) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if isinstance(data, list):
+                        return data
+                return None
+    except:
+        return None
+
+# =====================================================================
+# 13. المهام الخلفية
+# =====================================================================
+
+class BackgroundTasks:
+    @staticmethod
+    async def auto_publish(bot) -> None:
+        await asyncio.sleep(10)
+        while True:
+            try:
+                channels = await DB.get_channels_to_publish(CONFIG.MAX_CHANNELS_PER_CYCLE)
+                if not channels:
+                    await asyncio.sleep(60)
+                    continue
+                for ch in channels:
+                    post = await DB.get_next_post(ch['id'])
+                    if not post:
+                        continue
+                    try:
+                        if post['media_type'] == 'photo' and post['media_file_id']:
+                            await bot.send_photo(ch['channel_id'], post['media_file_id'], caption=post['text'][:1024] if post['text'] else None)
+                        elif post['media_type'] == 'video' and post['media_file_id']:
+                            await bot.send_video(ch['channel_id'], post['media_file_id'], caption=post['text'][:1024] if post['text'] else None)
+                        else:
+                            await bot.send_message(ch['channel_id'], post['text'][:4096] if post['text'] else ".")
+                        await DB.mark_post_published(post['id'])
+                        await DB.update_last_publish(ch['id'])
+                        await DB.update_next_publish(ch['id'])
+                    except Exception as e:
+                        await DB.increment_post_fail(post['id'])
+                await asyncio.sleep(max(60, await DB.get_publish_interval()))
+            except Exception as e:
+                logger.error(f"Auto publish error: {e}")
+                await asyncio.sleep(60)
+
+    @staticmethod
+    async def auto_backup() -> None:
+        while True:
+            await asyncio.sleep(86400)
+            try:
+                if await DB.get_auto_backup():
+                    backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+                    shutil.copy2(PATHS.DB, backup_file)
+                    await DB.set_setting('last_backup', TimeUtils.utc_iso())
+                    backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
+                    for old in backups[CONFIG.MAX_BACKUPS:]:
+                        old.unlink()
+            except Exception as e:
+                logger.error(f"Auto backup error: {e}")
+
+    @staticmethod
+    async def reminders(bot) -> None:
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                users = await DB.get_users_for_reminder()
+                for u in users:
+                    try:
+                        lang = u.get('language', 'ar')
+                        days = int(u['days_left'])
+                        text = await get_text(lang, 'reminder_subscription_expires', days=days)
+                        await bot.send_message(u['user_id'], text)
+                    except:
+                        pass
+            except Exception as e:
+                logger.error(f"Reminders error: {e}")
+
+    @staticmethod
+    async def heartbeat(bot) -> None:
+        while True:
+            await asyncio.sleep(CONFIG.HEARTBEAT_INTERVAL)
+            try:
+                log_channel = await DB.get_log_channel()
+                ram = get_ram_usage()
+                msg = await get_text('ar', 'heartbeat_status', time=TimeUtils.mecca_iso(), ram=ram['percent'])
+                if log_channel:
+                    await bot.send_message(log_channel, msg)
+                else:
+                    await bot.send_message(CONFIG.PRIMARY_OWNER_ID, msg)
+            except Exception as e:
+                logger.error(f"Heartbeat error: {e}")
+
+    @staticmethod
+    async def flush_sentiment_periodically() -> None:
+        while True:
+            await asyncio.sleep(60)
+            # يتم التعامل مع تحليل المشاعر في handle_group
+
+    @staticmethod
+    async def flush_usage_periodically() -> None:
+        while True:
+            await asyncio.sleep(_USAGE_FLUSH_INTERVAL)
+            await _flush_usage_updates()
+
+    @staticmethod
+    async def expire_subscriptions() -> None:
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                await DB.expire_expired_subscriptions()
+            except Exception as e:
+                logger.error(f"Expire subscriptions error: {e}")
+
+# =====================================================================
+# 14. خادم الويب
+# =====================================================================
+
+async def setup_webhook(app, port: int):
+    from aiohttp import web
+    web_app = web.Application()
+    web_app.router.add_get('/health', lambda r: web.Response(text="OK"))
+    web_app.router.add_post(f"/{CONFIG.TOKEN}", webhook_handler)
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    return runner
+
+async def webhook_handler(request):
+    try:
+        data = await request.json()
+        from telegram import Update
+        from handlers import app
+        await app.process_update(Update.de_json(data, app.bot))
+        return web.Response(status=200, text="OK")
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return web.Response(status=500, text="ERROR")
+
+# =====================================================================
+# 15. معالج الأخطاء
+# =====================================================================
+
+class ErrorHandler:
+    @staticmethod
+    async def handle_error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            error = context.error
+            logger.error(f"Error: {error}", exc_info=True)
+            if isinstance(error, BadRequest):
+                if update and update.effective_user:
+                    await safe_send(context.bot, update.effective_user.id, f"⚠️ {str(error)[:200]}")
+        except Exception as e:
+            logger.error(f"Error in error handler: {e}")
+

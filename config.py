@@ -1,94 +1,58 @@
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+from dataclasses import dataclass
 
-load_dotenv()
+@dataclass(frozen=True)
+class AppConfig:
+    TOKEN: str = os.getenv("BOT_TOKEN", "")
+    PRIMARY_OWNER_ID: int = int(os.getenv("MAIN_ADMIN_ID", "0"))
+    DEVELOPER_IDS: list = [int(id) for id in os.getenv("DEVELOPER_IDS", "").split(",") if id]
+    BOT_NAME: str = os.getenv("BOT_NAME", "ريلاكس مانيجر")
+    BOT_USERNAME: str = os.getenv("BOT_USERNAME", "Reelaaaxbot")
+    USE_PROXY: bool = os.getenv("USE_PROXY", "false").lower() in ['true', '1']
+    PROXY_URL: str = os.getenv("PROXY_URL", "http://127.0.0.1:10809")
+    WEB_PORT: int = int(os.getenv("PORT", "10000"))
+    MAX_CONNECTIONS: int = 20
+    MAX_BACKUPS: int = 20
+    DEFAULT_PUBLISH_INTERVAL: int = 720
+    MAX_CHANNELS_PER_CYCLE: int = 20
+    PUBLISH_RETRY_DELAY: int = 300
+    MAX_UNPUBLISHED_POSTS: int = 1000
+    DB_TIMEOUT: int = 30
+    MAX_DAILY_REFERRALS: int = 5
+    MAX_GLOBAL_BANNED_WORDS: int = 100
+    CACHE_TTL: int = 30
+    XTR_CURRENCY: str = "XTR"
+    HEARTBEAT_INTERVAL: int = 300
+    ENABLE_SELF_PING: bool = os.getenv("ENABLE_SELF_PING", "true").lower() in ['true', '1']
+    AUTH_CACHE_SIZE: int = 2000
+    AUTH_CACHE_TTL: int = 15
+    ANONYMOUS_ADMIN_ID: int = 1087968824
 
-class Config:
-    # توكن البوت
-    TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-    BOT_USERNAME = os.getenv("BOT_USERNAME", "YourBotUsername")
-    BOT_NAME = os.getenv("BOT_NAME", "Relax Manager")
+    def is_developer(self, user_id: int) -> bool:
+        return user_id == self.PRIMARY_OWNER_ID or user_id in self.DEVELOPER_IDS
     
-    # المالك الأساسي (المطور الرئيسي) - يقرأ من المتغيرات
-    PRIMARY_OWNER_ID = int(os.getenv("PRIMARY_OWNER_ID", "0"))
-    
-    # قائمة المطورين - تقرأ من متغير البيئة DEVELOPER_IDS
-    # مثال: DEVELOPER_IDS=123456789,987654321,555555555
-    DEVELOPER_IDS = []
-    
-    @classmethod
-    def load_developers(cls):
-        """تحميل قائمة المطورين من متغير البيئة"""
-        dev_ids_str = os.getenv("DEVELOPER_IDS", "")
-        if dev_ids_str:
-            try:
-                cls.DEVELOPER_IDS = [int(x.strip()) for x in dev_ids_str.split(",") if x.strip()]
-            except ValueError:
-                cls.DEVELOPER_IDS = []
-        else:
-            cls.DEVELOPER_IDS = []
-        
-        # إذا كان PRIMARY_OWNER_ID معرف بشكل صحيح ولم يكن في القائمة، أضفه
-        if cls.PRIMARY_OWNER_ID and cls.PRIMARY_OWNER_ID > 0:
-            if cls.PRIMARY_OWNER_ID not in cls.DEVELOPER_IDS:
-                cls.DEVELOPER_IDS.append(cls.PRIMARY_OWNER_ID)
-        
-        return cls.DEVELOPER_IDS
-    
-    # معرف المشرف المخفي (المعرف الخاص بتليجرام)
-    ANONYMOUS_ADMIN_ID = 777000
-    
-    # إعدادات النشر
-    MAX_UNPUBLISHED_POSTS = 50
-    MAX_CHANNELS_PER_CYCLE = 20
-    
-    # إعدادات الويب
-    WEB_PORT = int(os.getenv("PORT", 8080))
-    USE_PROXY = os.getenv("USE_PROXY", "False").lower() == "true"
-    PROXY_URL = os.getenv("PROXY_URL", "")
-    
-    # إعدادات النسخ الاحتياطي
-    MAX_BACKUPS = 10
-    
-    # إعدادات المهام الخلفية
-    HEARTBEAT_INTERVAL = 3600
-    
-    @classmethod
-    def is_developer(cls, user_id: int) -> bool:
-        """التحقق مما إذا كان المستخدم مطوراً"""
-        return user_id in cls.DEVELOPER_IDS
-    
-    @classmethod
-    def is_owner(cls, user_id: int) -> bool:
-        """التحقق مما إذا كان المستخدم هو المالك الأساسي"""
-        return user_id == cls.PRIMARY_OWNER_ID
+    def is_owner(self, user_id: int) -> bool:
+        return user_id == self.PRIMARY_OWNER_ID
 
-# تحميل إعدادات المطورين
-CONFIG = Config()
-CONFIG.load_developers()
-
-# مسارات الملفات
-class Paths:
-    BASE = Path(__file__).parent
-    DB = BASE / "bot_data.db"
-    BACKUPS = BASE / "backups"
-    BUTTONS_FILE = BASE / "buttons_config.json"
-    LOCALES_DIR = BASE / "locales"
+class PathManager:
+    _instance = None
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._init_paths()
+        return cls._instance
     
-    @classmethod
-    def ensure_dirs(cls):
-        cls.BACKUPS.mkdir(exist_ok=True)
-        cls.LOCALES_DIR.mkdir(exist_ok=True)
+    def _init_paths(self):
+        self.BASE = Path(__file__).parent.resolve()
+        self.DATA = self.BASE / "data"
+        self.BACKUPS = self.BASE / "backups"
+        self.LOGS = self.BASE / "logs"
+        self.DB = self.DATA / "bot_data.db"
+        self.LOG_FILE = self.LOGS / "bot.log"
+        for d in [self.DATA, self.BACKUPS, self.LOGS]:
+            d.mkdir(parents=True, exist_ok=True)
 
-PATHS = Paths()
-PATHS.ensure_dirs()
-
-# طباعة معلومات المطورين عند بدء التشغيل
-print(f"👨‍💼 المالك الأساسي: {CONFIG.PRIMARY_OWNER_ID}")
-print(f"👨‍💻 عدد المطورين: {len(CONFIG.DEVELOPER_IDS)}")
-if CONFIG.DEVELOPER_IDS:
-    print(f"📋 قائمة المطورين: {CONFIG.DEVELOPER_IDS}")
-else:
-    print("⚠️ لا يوجد مطورين مسجلين! تأكد من تعيين PRIMARY_OWNER_ID و DEVELOPER_IDS")
+CONFIG = AppConfig()
+PATHS = PathManager()
 
