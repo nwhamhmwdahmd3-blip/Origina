@@ -8,6 +8,7 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 - CommandHandlers: معالجة الأوامر (/start, /help, ...)
 - CallbackHandlers: معالجة ضغطات الأزرار
 - MessageHandlers: معالجة الرسائل (خاصة ومجموعات)
+مع تفعيل زر التجربة المجانية (30 يوم)
 """
 
 import asyncio
@@ -119,12 +120,16 @@ class CommandHandlers:
 
     @staticmethod
     async def trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تفعيل النسخة التجريبية"""
+        """تفعيل النسخة التجريبية (30 يوم)"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
+        
+        # التحقق مما إذا كان المستخدم قد استخدم التجربة مسبقاً
         if await DB.has_used_trial(user_id):
             await safe_send(context.bot, user_id, await get_text(lang, 'trial_used'))
             return
+        
+        # تفعيل التجربة (30 يوم)
         days = await DB.activate_trial(user_id)
         await safe_send(context.bot, user_id, await get_text(lang, 'trial_activated', days=days))
 
@@ -521,9 +526,18 @@ class CallbackHandlers:
                 await CommandHandlers.help_command(update, context)
                 return
 
+            # ====================================================
+            # زر التجربة المجانية (30 يوم)
+            # ====================================================
             if data == CB.TRIAL:
                 await query.answer()
-                await CommandHandlers.trial(update, context)
+                # التحقق مما إذا كان المستخدم قد استخدم التجربة مسبقاً
+                if await DB.has_used_trial(user_id):
+                    await query.edit_message_text(await get_text(lang, 'trial_used'))
+                    return
+                # تفعيل التجربة (30 يوم)
+                days = await DB.activate_trial(user_id)
+                await query.edit_message_text(await get_text(lang, 'trial_activated', days=days))
                 return
 
             if data == CB.DEVELOPER:
@@ -2005,7 +2019,10 @@ class MessageHandlers:
         # حالة: إضافة قناة
         # ============================================================
         if state == UserState.WAIT_CHANNEL:
-            if not await DB.has_active_subscription(user_id) and not await DB.has_used_trial(user_id):
+            # التحقق من الاشتراك أو التجربة
+            has_sub = await DB.has_active_subscription(user_id)
+            has_trial = await DB.has_used_trial(user_id)
+            if not has_sub and not has_trial:
                 await safe_send(context.bot, user_id, await get_text(lang, 'subscription_expired'))
                 StateManager.clear(user_id)
                 return
