@@ -46,13 +46,13 @@ from aiohttp import web
 from config import CONFIG, PATHS
 
 # =====================================================================
-# 2. استيراد ملف الردود التلقائية
+# 2. استيراد ملف الردود التلقائية (replies.py)
 # =====================================================================
 
 try:
     from replies import get_random_reply, get_all_replies
     REPLIES_LOADED = True
-    logger.info("✅ تم تحميل ملف replies.py")
+    logger.info("✅ تم تحميل replies.py")
 except ImportError:
     logger.warning("⚠️ ملف replies.py غير موجود، سيتم استخدام الردود الافتراضية")
     REPLIES_LOADED = False
@@ -62,7 +62,19 @@ except ImportError:
         return {}
 
 # =====================================================================
-# 3. أداة الوقت
+# 3. التحقق من صلاحيات المطور
+# =====================================================================
+
+def is_developer(user_id: int) -> bool:
+    """التحقق مما إذا كان المستخدم مطوراً"""
+    return CONFIG.is_developer(user_id)
+
+def is_owner(user_id: int) -> bool:
+    """التحقق مما إذا كان المستخدم هو المالك الأساسي"""
+    return CONFIG.is_owner(user_id)
+
+# =====================================================================
+# 4. أداة الوقت
 # =====================================================================
 
 class TimeUtils:
@@ -90,7 +102,7 @@ class TimeUtils:
             return None
 
 # =====================================================================
-# 4. نظام الترجمة المتقدم - يقرأ من مجلد locales/
+# 5. نظام الترجمة المتقدم - يقرأ من مجلد locales/
 # =====================================================================
 
 class TranslationManager:
@@ -159,7 +171,7 @@ class TranslationManager:
         
         available = {}
         for code, name in languages.items():
-            if Path(cls._locales_dir / f"{code}.json").exists():
+            if (Path(cls._locales_dir) / f"{code}.json").exists():
                 available[code] = name
         
         if not available:
@@ -173,7 +185,7 @@ async def get_text(lang: str, key: str, **kwargs) -> str:
     return TranslationManager.get_text(lang, key, **kwargs)
 
 # =====================================================================
-# 5. تعريفات الأزرار (CB - Callback Data)
+# 6. تعريفات الأزرار (CB - Callback Data)
 # =====================================================================
 
 class CB:
@@ -366,7 +378,7 @@ class CB:
     AUTO_REPLY_LIST = "auto_reply_list:"
 
 # =====================================================================
-# 6. مصنع الكيبوردات - يقرأ من ملف buttons_config.json
+# 7. مصنع الكيبوردات - يقرأ من ملف buttons_config.json
 # =====================================================================
 
 class KeyboardFactory:
@@ -470,7 +482,7 @@ class KeyboardFactory:
         return "\n".join(lines)
 
 # =====================================================================
-# 7. دوال مساعدة
+# 8. دوال مساعدة
 # =====================================================================
 
 async def safe_send(bot, user_id: int, text: str, reply_markup=None, parse_mode="Markdown", **kwargs):
@@ -533,7 +545,7 @@ async def check_bot_permissions(bot, chat_id: int) -> Dict:
 async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
     """التحقق من أن المستخدم مصرح له في المجموعة"""
     try:
-        if user_id == CONFIG.PRIMARY_OWNER_ID:
+        if is_developer(user_id):
             return True
         if user_id == CONFIG.ANONYMOUS_ADMIN_ID:
             return True
@@ -547,7 +559,7 @@ def invalidate_auth_cache(chat_id: int, user_id: int):
     pass
 
 # =====================================================================
-# 8. قاعدة بيانات محاكاة
+# 9. قاعدة بيانات محاكاة
 # =====================================================================
 
 class Database:
@@ -568,7 +580,7 @@ class Database:
                 'groups': {},
                 'posts': {},
                 'settings': {},
-                'admins': [CONFIG.PRIMARY_OWNER_ID],
+                'admins': [],
                 'security': {},
                 'auto_reply': {},
                 'subscriptions': {},
@@ -581,8 +593,15 @@ class Database:
                 'banned_words': {},
                 'user_warnings': {}
             }
+            
+            # إضافة المطورين كمسؤولين
+            for dev_id in CONFIG.DEVELOPER_IDS:
+                if dev_id not in self._data['admins']:
+                    self._data['admins'].append(dev_id)
+            
             self._initialized = True
             logger.info("✅ قاعدة البيانات مهيأة")
+            logger.info(f"👨‍💻 عدد المسؤولين: {len(self._data['admins'])}")
         return self
     
     async def execute(self, query: str, params: tuple = None):
@@ -600,7 +619,7 @@ class Database:
 DB = Database()
 
 # =====================================================================
-# 9. المستودعات (Repositories) - محاكاة
+# 10. المستودعات (Repositories) - محاكاة
 # =====================================================================
 
 class UserRepository:
@@ -616,6 +635,9 @@ class UserRepository:
                 'subscription_end': None,
                 'referral_code': f"ref_{user_id}"
             }
+            # إذا كان المستخدم مطوراً، أضفه كمسؤول
+            if is_developer(user_id) and user_id not in db._data['admins']:
+                db._data['admins'].append(user_id)
         return True
     
     @staticmethod
@@ -1179,7 +1201,7 @@ class UserState:
     WAIT_GITHUB_URL = "wait_github_url"
 
 # =====================================================================
-# 10. معالج الأوامر - CommandHandlers
+# 11. معالج الأوامر - CommandHandlers
 # =====================================================================
 
 class CommandHandlers:
@@ -1215,15 +1237,34 @@ class CommandHandlers:
         auto = await UserRepository.get_auto_status(user_id)
         auto_text = "مفعل" if auto else "معطل"
         
-        title = await get_text(lang, 'main_menu',
-                         user_id=user_id,
-                         groups=groups,
-                         sub=sub_text,
-                         channel=ch_display,
-                         pending=cnt,
-                         auto=auto_text)
+        # إضافة معلومات المطور للمطورين
+        if is_developer(user_id):
+            title = await get_text(lang, 'main_menu',
+                             user_id=user_id,
+                             groups=groups,
+                             sub=sub_text,
+                             channel=ch_display,
+                             pending=cnt,
+                             auto=auto_text)
+            title += f"\n\n👑 **مطور** ✅"
+        else:
+            title = await get_text(lang, 'main_menu',
+                             user_id=user_id,
+                             groups=groups,
+                             sub=sub_text,
+                             channel=ch_display,
+                             pending=cnt,
+                             auto=auto_text)
         
         kb = KeyboardFactory.build("main_menu")
+        
+        # إضافة زر لوحة الأدمن للمطورين فقط
+        if is_developer(user_id):
+            kb = KeyboardFactory.build("main_menu")
+            # يمكن إضافة زر إضافي هنا
+        else:
+            kb = KeyboardFactory.build("main_menu")
+        
         await safe_send(context.bot, user_id, title, reply_markup=kb)
 
     @staticmethod
@@ -1258,12 +1299,35 @@ class CommandHandlers:
 
     @staticmethod
     async def developer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """عرض معلومات المطور"""
         user_id = update.effective_user.id
-        await safe_send(context.bot, user_id, f"👨‍💻 {CONFIG.BOT_NAME}\n@RelaxMgr")
+        lang = await UserRepository.get_language(user_id)
+        
+        text = f"""
+👨‍💻 **معلومات المطور**
+
+📌 المعرف الأساسي: `{CONFIG.PRIMARY_OWNER_ID}`
+👤 اسم البوت: {CONFIG.BOT_NAME}
+🔗 المعرف: @{CONFIG.BOT_USERNAME}
+
+🛠️ **المطورون المسجلون:**
+"""
+        for dev_id in CONFIG.DEVELOPER_IDS:
+            text += f"• `{dev_id}`\n"
+        
+        text += f"\n🔐 هل أنت مطور؟ {'✅ نعم' if is_developer(user_id) else '❌ لا'}"
+        
+        await safe_send(context.bot, user_id, text)
 
     @staticmethod
     async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """عرض إحصائيات البوت (للمطورين فقط)"""
         user_id = update.effective_user.id
+        
+        if not is_developer(user_id):
+            await safe_send(context.bot, user_id, "❌ هذا الأمر للمطورين فقط")
+            return
+        
         lang = await UserRepository.get_language(user_id)
         stats = await UserRepository.get_stats()
         await safe_send(context.bot, user_id,
@@ -1360,6 +1424,19 @@ class CommandHandlers:
         
         kb = InlineKeyboardMarkup(buttons)
         await safe_send(context.bot, user_id, await get_text(lang, 'language_select', current=lang), reply_markup=kb)
+
+    @staticmethod
+    async def replies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """عرض عدد الردود المحملة"""
+        user_id = update.effective_user.id
+        lang = await UserRepository.get_language(user_id)
+        
+        if REPLIES_LOADED:
+            all_replies = get_all_replies()
+            count = len(all_replies)
+            await safe_send(context.bot, user_id, f"📚 **الردود التلقائية**\n\n✅ عدد الردود المحملة: {count}\n📁 المصدر: replies.py")
+        else:
+            await safe_send(context.bot, user_id, "❌ ملف replies.py غير موجود")
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1476,21 +1553,8 @@ class CommandHandlers:
             except:
                 pass
 
-    @staticmethod
-    async def replies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض عدد الردود المحملة"""
-        user_id = update.effective_user.id
-        lang = await UserRepository.get_language(user_id)
-        
-        if REPLIES_LOADED:
-            all_replies = get_all_replies()
-            count = len(all_replies)
-            await safe_send(context.bot, user_id, f"📚 **الردود التلقائية**\n\n✅ عدد الردود المحملة: {count}\n📁 المصدر: replies.py")
-        else:
-            await safe_send(context.bot, user_id, "❌ ملف replies.py غير موجود")
-
 # =====================================================================
-# 11. معالج الكولباك - CallbackHandlers
+# 12. معالج الكولباك - CallbackHandlers
 # =====================================================================
 
 class CallbackHandlers:
@@ -1536,6 +1600,237 @@ class CallbackHandlers:
                 await CommandHandlers.support(update, context)
                 return
             
+            if data == CB.CH_ADD:
+                has_sub = await UserRepository.has_active_subscription(user_id)
+                has_trial = await UserRepository.has_used_trial(user_id)
+                if not has_sub and not has_trial:
+                    await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
+                    return
+                await query.answer()
+                StateManager.set(user_id, UserState.WAIT_CHANNEL)
+                await query.edit_message_text(await get_text(lang, 'enter_channel_id'))
+                return
+            
+            if data == CB.CH_LIST:
+                await query.answer()
+                channels = await ChannelRepository.get_all(user_id)
+                if not channels:
+                    await query.edit_message_text(await get_text(lang, 'channels_empty'))
+                    return
+                text = "📡 **قنواتي**\n\n"
+                for ch in channels:
+                    st = "🚫" if ch['banned'] else "✅"
+                    text += f"{st} {ch['channel_name']} (ID: {ch['id']})\n"
+                kb = KeyboardFactory.build("main_menu")
+                await query.edit_message_text(text, reply_markup=kb)
+                return
+            
+            # ✅ لوحة الأدمن - متاحة فقط للمطورين
+            if data == CB.ADMIN:
+                if is_developer(user_id):
+                    kb = KeyboardFactory.build("admin_panel")
+                    await query.edit_message_text(await get_text(lang, 'admin_panel'), reply_markup=kb)
+                    await query.answer()
+                else:
+                    await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
+                return
+            
+            if data.startswith("sec_"):
+                parts = data.split(":")
+                if data == CB.SEC_CLOSE:
+                    await query.answer()
+                    try:
+                        await query.message.delete()
+                    except:
+                        pass
+                    return
+                
+                if len(parts) < 2:
+                    await query.answer("❌ خطأ في البيانات", show_alert=True)
+                    return
+                
+                action = parts[0].replace("sec_", "")
+                try:
+                    chat_id = int(parts[1])
+                except:
+                    await query.answer("❌ خطأ في البيانات", show_alert=True)
+                    return
+                
+                if not await is_authorized_in_group(context.bot, chat_id, user_id):
+                    await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
+                    return
+                
+                field_map = {
+                    "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
+                    "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
+                    "service": "delete_service", "doc": "delete_documents", "sticker": "delete_stickers",
+                    "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
+                    "voice": "delete_voice", "videonote": "delete_video_note",
+                    "welcome": "welcome_enabled", "goodbye": "goodbye_enabled",
+                    "flood": "antiflood_enabled", "night": "night_mode_enabled"
+                }
+                
+                if action in field_map:
+                    col = field_map[action]
+                    settings = await SecurityRepository.get(chat_id)
+                    new_val = not settings.get(col, False)
+                    await SecurityRepository.set(chat_id, **{col: new_val})
+                    SecurityRepository.invalidate_cache(chat_id)
+                    settings = await SecurityRepository.get(chat_id, force_refresh=True)
+                    text = await KeyboardFactory._format_security_text(settings)
+                    kb = KeyboardFactory.build("security", chat_id)
+                    await query.edit_message_text(text, reply_markup=kb)
+                    await query.answer()
+                    return
+                
+                if action == "banned":
+                    await query.answer()
+                    await query.edit_message_text("🚫 **الكلمات المحظورة**",
+                                                  reply_markup=KeyboardFactory.build("banned_words", chat_id))
+                    return
+                
+                if action == "maxlen":
+                    await query.answer()
+                    StateManager.set(user_id, UserState.WAIT_MAX_LEN)
+                    context.user_data[f"sec_chat_{user_id}"] = chat_id
+                    await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
+                    return
+                
+                if action == "warn":
+                    await query.answer()
+                    settings = await SecurityRepository.get(chat_id)
+                    text = await get_text(lang, 'warning_settings',
+                                    max_warnings=settings.get('max_warnings', 3),
+                                    warn_penalty=settings.get('warn_penalty', 'ban'))
+                    kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📝 عدد التحذيرات", callback_data=f"sec_warn_count:{chat_id}"),
+                         InlineKeyboardButton("⚖️ العقوبة", callback_data=f"sec_warn_penalty:{chat_id}")],
+                        [InlineKeyboardButton(await get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
+                    ])
+                    await query.edit_message_text(text, reply_markup=kb)
+                    return
+                
+                if action == "warn_count":
+                    await query.answer()
+                    StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
+                    context.user_data[f"sec_chat_{user_id}"] = chat_id
+                    await query.edit_message_text("📝 أرسل الحد الأقصى للتحذيرات (1-10):")
+                    return
+                
+                if action == "warn_penalty":
+                    await query.answer()
+                    kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🛑 حظر", callback_data=f"sec_set_warn_penalty:{chat_id}:ban"),
+                         InlineKeyboardButton("🔇 كتم", callback_data=f"sec_set_warn_penalty:{chat_id}:mute")],
+                        [InlineKeyboardButton(await get_text(lang, 'back'), callback_data=f"sec_warn:{chat_id}")]
+                    ])
+                    await query.edit_message_text("⚖️ اختر عقوبة تجاوز التحذيرات:", reply_markup=kb)
+                    return
+                
+                if action == "set_warn_penalty":
+                    if len(parts) >= 3:
+                        penalty = parts[2]
+                        if penalty not in ["ban", "mute"]:
+                            await query.answer("❌ عقوبة غير صالحة", show_alert=True)
+                            return
+                        await SecurityRepository.set(chat_id, warn_penalty=penalty)
+                        SecurityRepository.invalidate_cache(chat_id)
+                        settings = await SecurityRepository.get(chat_id, force_refresh=True)
+                        text = await get_text(lang, 'warning_settings',
+                                        max_warnings=settings.get('max_warnings', 3),
+                                        warn_penalty=settings.get('warn_penalty', 'ban'))
+                        kb = InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📝 عدد التحذيرات", callback_data=f"sec_warn_count:{chat_id}"),
+                             InlineKeyboardButton("⚖️ العقوبة", callback_data=f"sec_warn_penalty:{chat_id}")],
+                            [InlineKeyboardButton(await get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
+                        ])
+                        try:
+                            await query.edit_message_text(text, reply_markup=kb)
+                        except BadRequest as e:
+                            if "Message is not modified" not in str(e):
+                                raise
+                        await query.answer()
+                        return
+                
+                if action == "enable_all":
+                    await query.answer()
+                    await SecurityRepository.set(chat_id, **{f: 1 for f in
+                        ['delete_videos', 'delete_audio', 'delete_animation',
+                         'delete_service', 'delete_documents', 'delete_stickers',
+                         'delete_forwarded', 'delete_polls', 'delete_games', 'delete_voice',
+                         'delete_video_note']})
+                    SecurityRepository.invalidate_cache(chat_id)
+                    settings = await SecurityRepository.get(chat_id, force_refresh=True)
+                    text = await KeyboardFactory._format_security_text(settings)
+                    kb = KeyboardFactory.build("security", chat_id)
+                    await query.edit_message_text(text, reply_markup=kb)
+                    return
+                
+                if action == "disable_all":
+                    await query.answer()
+                    await SecurityRepository.set(chat_id, **{f: 0 for f in
+                        ['delete_videos', 'delete_audio', 'delete_animation',
+                         'delete_service', 'delete_documents', 'delete_stickers',
+                         'delete_forwarded', 'delete_polls', 'delete_games', 'delete_voice',
+                         'delete_video_note']})
+                    SecurityRepository.invalidate_cache(chat_id)
+                    settings = await SecurityRepository.get(chat_id, force_refresh=True)
+                    text = await KeyboardFactory._format_security_text(settings)
+                    kb = KeyboardFactory.build("security", chat_id)
+                    await query.edit_message_text(text, reply_markup=kb)
+                    return
+                
+                if action == "del_pen":
+                    await query.answer()
+                    await query.edit_message_text("⚖️ اختر عقوبة حذف الوسائط:",
+                                                  reply_markup=KeyboardFactory.build("penalty", chat_id))
+                    return
+                
+                if action == "penalty":
+                    await query.answer()
+                    await query.edit_message_text("⚖️ اختر العقوبة الأساسية:",
+                                                  reply_markup=KeyboardFactory.build("penalty", chat_id))
+                    return
+                
+                if action == "adv_act":
+                    await query.answer()
+                    await query.edit_message_text("🛠️ إجراءات متقدمة:",
+                                                  reply_markup=KeyboardFactory.build("advanced_actions", chat_id))
+                    return
+                
+                if action == "act_log":
+                    await query.answer()
+                    logs = await DB.fetchall(
+                        "SELECT admin_id, action, target_id, reason, created_at FROM admin_logs WHERE chat_id=? ORDER BY id DESC LIMIT 20",
+                        (chat_id,))
+                    if not logs:
+                        await query.edit_message_text("📭 لا توجد سجلات")
+                        return
+                    text = "📜 **آخر الإجراءات**\n"
+                    for admin_id, action_name, target_id, reason, created_at in logs:
+                        time_str = TimeUtils.safe_parse_iso(created_at)
+                        if time_str:
+                            time_str = time_str.strftime("%H:%M")
+                        else:
+                            time_str = "??"
+                        text += f"• {time_str} - `{admin_id}` {action_name}"
+                        if target_id:
+                            text += f" → `{target_id}`"
+                        if reason:
+                            text += f" ({reason})"
+                        text += "\n"
+                    await query.edit_message_text(text)
+                    return
+                
+                if action == "auto_reply_menu":
+                    await query.answer()
+                    await query.edit_message_text(await get_text(lang, 'auto_reply_settings'),
+                                                  reply_markup=KeyboardFactory.build("auto_reply_manage", chat_id))
+                    return
+                
+                await query.answer()
+                return
+            
             if data.startswith("lang_"):
                 await query.answer()
                 lang_set = data.split("_")[-1]
@@ -1553,7 +1848,223 @@ class CallbackHandlers:
                 await CommandHandlers.language(update, context)
                 return
             
-            # باقي المعالجات...
+            if data == CB.SETTINGS:
+                await query.answer()
+                auto = "✅" if await UserRepository.get_auto_status(user_id) else "❌"
+                kb = KeyboardFactory.build("settings")
+                await query.edit_message_text(await get_text(lang, 'settings_auto', status=auto), reply_markup=kb)
+                return
+            
+            if data == CB.TOGGLE_AUTO:
+                await query.answer()
+                cur = await UserRepository.get_auto_status(user_id)
+                await UserRepository.set_auto(user_id, not cur)
+                await CallbackHandlers.handle(update, context)
+                return
+            
+            if data == CB.PLANS:
+                await query.answer()
+                kb = KeyboardFactory.build("plans")
+                await query.edit_message_text(await get_text(lang, 'plan_selector'), reply_markup=kb)
+                return
+            
+            if data == CB.REFERRAL:
+                await query.answer()
+                stats = await ReferralRepository.get_stats(user_id)
+                code = await UserRepository.get_referral_code(user_id)
+                text = await get_text(lang, 'referral_header',
+                                link=f"https://t.me/{CONFIG.BOT_USERNAME}?start=ref_{code}",
+                                total=stats['total'],
+                                available=stats['available'])
+                kb = KeyboardFactory.build("referral")
+                await query.edit_message_text(text, reply_markup=kb)
+                return
+            
+            if data == CB.CONTESTS:
+                await query.answer()
+                await CommandHandlers.contests(update, context)
+                return
+            
+            if data == CB.REMINDER:
+                await query.answer()
+                settings = await ReminderRepository.get_settings(user_id)
+                sub = "✅" if settings['sub'] else "❌"
+                daily = "✅" if settings['daily'] else "❌"
+                weekly = "✅" if settings['weekly'] else "❌"
+                days = settings['days']
+                text = f"⏰ **إعدادات التذكيرات**\n\n🔔 تذكير الاشتراك: {sub}\n📊 يومي: {daily}\n📈 أسبوعي: {weekly}\n📅 عدد الأيام: {days}"
+                kb = KeyboardFactory.build("reminder")
+                await query.edit_message_text(text, reply_markup=kb)
+                return
+            
+            if data == CB.TRANSLATION:
+                await query.answer()
+                current_lang = await UserRepository.get_language(user_id)
+                text = f"🌐 الترجمة: {current_lang}"
+                kb = KeyboardFactory.build("translation")
+                await query.edit_message_text(text, reply_markup=kb)
+                return
+            
+            if data == CB.SUPPORT_TICKET:
+                await query.answer()
+                StateManager.set(user_id, UserState.SUPPORT_MODE)
+                await safe_send(context.bot, user_id, await get_text(lang, 'send_support_message'))
+                try:
+                    await query.message.delete()
+                except:
+                    pass
+                return
+            
+            if data == CB.INVOICES:
+                await query.answer()
+                await safe_send(context.bot, user_id, "🧾 **فواتيري**\n\nلا توجد فواتير حتى الآن")
+                return
+            
+            if data.startswith("buy_sub_"):
+                await query.answer()
+                days = int(data.split("_")[-1])
+                await safe_send(context.bot, user_id, f"💎 **شراء اشتراك**\n\nمدة الاشتراك: {days} يوم\n\nللشراء، استخدم الأمر /subscribe")
+                return
+            
+            if data == CB.GROUPS:
+                await query.answer()
+                groups = await GroupRepository.get_user_groups(user_id)
+                if not groups:
+                    text = await get_text(lang, 'groups_empty')
+                    kb = InlineKeyboardMarkup([[InlineKeyboardButton(await get_text(lang, 'add_group'), url=f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup")]])
+                    await query.edit_message_text(text, reply_markup=kb)
+                    return
+                text = "👥 **المجموعات**\n\n"
+                for gid, name, username, banned in groups:
+                    st = "⛔" if banned else "✅"
+                    text += f"{st} {name} (ID: {gid})\n"
+                kb = KeyboardFactory.build("main_menu")
+                await query.edit_message_text(text, reply_markup=kb)
+                return
+            
+            if data == CB.POST_ADD:
+                await query.answer()
+                active = await ChannelRepository.get_active(user_id)
+                if not active:
+                    await query.edit_message_text(await get_text(lang, 'no_active_channel'))
+                    return
+                unpub = await PostRepository.get_unpublished_count(active)
+                if unpub >= CONFIG.MAX_UNPUBLISHED_POSTS:
+                    await query.edit_message_text(await get_text(lang, 'max_posts_reached'))
+                    return
+                target = min(15, CONFIG.MAX_UNPUBLISHED_POSTS - unpub)
+                context.user_data[f"session_{user_id}"] = []
+                context.user_data[f"session_target_{user_id}"] = target
+                StateManager.set(user_id, UserState.ADDING_POSTS)
+                await query.edit_message_text(await get_text(lang, 'enter_posts', count=target))
+                return
+            
+            if data == CB.POST_PUB:
+                await query.answer()
+                active = await ChannelRepository.get_active(user_id)
+                if not active:
+                    await query.edit_message_text(await get_text(lang, 'no_active_channel'))
+                    return
+                await query.edit_message_text(await get_text(lang, 'publish_success'))
+                return
+            
+            if data == CB.PUB_ALL:
+                await query.answer()
+                await query.edit_message_text(await get_text(lang, 'publish_success'))
+                return
+            
+            if data == CB.STATS_PEND or data == CB.STATS_FULL:
+                await query.answer()
+                u = await PostRepository.get_user_unpublished(user_id)
+                t = await PostRepository.get_user_total(user_id)
+                ch = len(await ChannelRepository.get_all(user_id))
+                g = len(await GroupRepository.get_user_groups(user_id))
+                auto = "مفعل" if await UserRepository.get_auto_status(user_id) else "معطل"
+                text = f"📊 **الإحصائيات**\n\n📝 منشورات: {t}\n⏳ غير منشورة: {u}\n📡 قنوات: {ch}\n👥 مجموعات: {g}\n⚙️ النشر التلقائي: {auto}"
+                await query.edit_message_text(text)
+                return
+            
+            # ✅ أزرار الأدمن - متاحة فقط للمطورين
+            if data.startswith("admin_"):
+                if not is_developer(user_id):
+                    await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
+                    return
+                
+                if data == CB.ADMIN_USERS:
+                    await query.answer()
+                    stats = await UserRepository.get_stats()
+                    await query.edit_message_text(await get_text(lang, 'admin_users', users=stats['users'], banned=stats['banned']))
+                    return
+                
+                if data == CB.ADMIN_BANNED:
+                    await query.answer()
+                    users = await UserRepository.get_all_users()
+                    banned_list = [str(u[0]) for u in users if u[1] == 1]
+                    text = "⛔ **المحظورين**\n\n" + "\n".join([f"• `{u}`" for u in banned_list[:20]]) if banned_list else await get_text(lang, 'no_banned_words')
+                    await query.edit_message_text(text)
+                    return
+                
+                if data == CB.ADMIN_RAM:
+                    await query.answer()
+                    try:
+                        import psutil
+                        mem = psutil.virtual_memory()
+                        await query.edit_message_text(await get_text(lang, 'admin_ram', 
+                                                             used=mem.used // (1024*1024),
+                                                             total=mem.total // (1024*1024),
+                                                             percent=mem.percent))
+                    except:
+                        await query.edit_message_text("🖥️ **الرام**\nغير متاح")
+                    return
+                
+                if data == CB.ADMIN_STATS:
+                    await query.answer()
+                    stats = await UserRepository.get_stats()
+                    await query.edit_message_text(await get_text(lang, 'admin_stats_text',
+                                                           users=stats['users'], banned=stats['banned'],
+                                                           posts=stats['posts'], groups=stats['groups'], channels=stats['channels']))
+                    return
+                
+                if data == CB.ADMIN_BACKUP:
+                    await query.answer()
+                    try:
+                        backup_file = PATHS.BACKUPS / f"backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
+                        shutil.copy2(PATHS.DB, backup_file)
+                        await safe_send(context.bot, user_id, await get_text(lang, 'admin_backup_created', filename=backup_file.name))
+                    except Exception as e:
+                        await safe_send(context.bot, user_id, await get_text(lang, 'admin_backup_failed', error=str(e)[:100]))
+                    return
+                
+                if data == CB.ADMIN_BROADCAST:
+                    await query.answer()
+                    StateManager.set(user_id, UserState.WAIT_BROADCAST)
+                    await query.edit_message_text(await get_text(lang, 'admin_broadcast_confirm', text="أرسل الرسالة:"))
+                    return
+                
+                if data == CB.ADMIN_REFRESH_CACHE:
+                    await query.answer()
+                    await query.edit_message_text("🔄 تم تحديث الكاش بنجاح")
+                    return
+                
+                await query.answer("⚠️ قيد التطوير", show_alert=True)
+                return
+            
+            if data == CB.PANEL_LOCK or data == CB.PANEL_UNLOCK:
+                await query.answer()
+                chat_id = int(data.split(":")[-1])
+                locked = data == CB.PANEL_LOCK
+                await ChatLockRepository.set_lock(chat_id, locked, user_id)
+                await query.edit_message_text(f"🔒 تم القفل" if locked else "🔓 تم الفتح")
+                return
+            
+            if data == CB.PANEL_CLOSE:
+                await query.answer()
+                try:
+                    await query.message.delete()
+                except:
+                    pass
+                return
+            
             await query.answer("⚠️ قيد التطوير", show_alert=True)
             
         except Exception as e:
@@ -1569,7 +2080,7 @@ class CallbackHandlers:
                 pass
 
 # =====================================================================
-# 12. معالج الرسائل - MessageHandlers
+# 13. معالج الرسائل - MessageHandlers
 # =====================================================================
 
 class MessageHandlers:
@@ -1733,8 +2244,10 @@ class MessageHandlers:
                 logger.error(f"فشل إرسال رد تلقائي في المجموعة {chat_id}: {e}")
 
 # =====================================================================
-# 13. خادم الويب والـ Webhook
+# 14. خادم الويب والـ Webhook
 # =====================================================================
+
+app = None
 
 async def health_check(request):
     return web.Response(text="OK")
@@ -1761,10 +2274,8 @@ async def setup_webhook(app, port: int):
     return runner
 
 # =====================================================================
-# 14. الدالة الرئيسية
+# 15. الدالة الرئيسية
 # =====================================================================
-
-app = None
 
 async def main():
     global app
@@ -1772,8 +2283,13 @@ async def main():
     logger.info(f"🚀 Starting {CONFIG.BOT_NAME} in Webhook mode")
     
     await DB.initialize()
-    await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
-    await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
+    
+    # تسجيل جميع المطورين
+    for dev_id in CONFIG.DEVELOPER_IDS:
+        await UserRepository.register(dev_id)
+        await BotAdminRepository.add(dev_id)
+    
+    logger.info(f"✅ تم تسجيل {len(CONFIG.DEVELOPER_IDS)} مطور")
     
     KeyboardFactory.load_config()
     
@@ -1781,10 +2297,6 @@ async def main():
     for lang in available_langs:
         TranslationManager.load_translation(lang)
     logger.info(f"✅ تم تحميل {len(available_langs)} لغة: {', '.join(available_langs.keys())}")
-    
-    if REPLIES_LOADED:
-        all_replies = get_all_replies()
-        logger.info(f"✅ تم تحميل {len(all_replies)} رد تلقائي من replies.py")
     
     app = Application.builder().token(CONFIG.TOKEN).build()
     await app.initialize()
@@ -1832,11 +2344,13 @@ async def main():
         await runner.cleanup()
 
 # =====================================================================
-# 15. تشغيل البرنامج
+# 16. تشغيل البرنامج
 # =====================================================================
 
 if __name__ == "__main__":
     print(f"🌿 {CONFIG.BOT_NAME}")
+    print(f"👨‍💼 المالك الأساسي: {CONFIG.PRIMARY_OWNER_ID}")
+    print(f"👨‍💻 عدد المطورين: {len(CONFIG.DEVELOPER_IDS)}")
     print("✅ الأزرار تُقرأ من ملف buttons_config.json")
     print("✅ الترجمات تُقرأ من مجلد locales/ (12 لغة)")
     print("✅ الردود التلقائية من ملف replies.py")
