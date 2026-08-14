@@ -27,7 +27,7 @@ from telegram import (
     BotCommand, 
     ChatPermissions
 )
-from telegram.error import BadRequest  # ✅ التصحيح هنا
+from telegram.error import BadRequest
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -302,7 +302,6 @@ class KeyboardFactory:
         for row in rows:
             btn_row = []
             for item in row:
-                # معالجة الأزرار الخاصة
                 if item.endswith("_url"):
                     key = item.replace("_url", "")
                     text = cls.get_text(key)
@@ -2026,10 +2025,8 @@ async def main():
     
     KeyboardFactory.load_config()
     
-    # إعداد التطبيق
     app = Application.builder().token(CONFIG.TOKEN).build()
     
-    # تسجيل المعالجات...
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -2050,40 +2047,30 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, MessageHandlers.handle_group))
     
     logger.info("✅ البوت جاهز للتشغيل")
-    
-    # ✅ استخدم run_polling بدون await إضافي
     await app.run_polling(drop_pending_updates=True)
 
-# ✅ تشغيل البرنامج بشكل صحيح
+# =====================================================================
+# 12. تشغيل البرنامج - تم التصحيح
+# =====================================================================
+
 if __name__ == "__main__":
     print(f"🌿 {CONFIG.BOT_NAME}")
     print("✅ الأزرار تُقرأ من ملف buttons_config.json")
+    print("✅ البوت يعمل على Render - تم إصلاح مشكلة Event Loop")
     
-    # ✅ الحل الصحيح لـ Render
-    import sys
-    if sys.platform == 'linux':
-        # Render Linux environment
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 تم إيقاف البوت بواسطة المستخدم")
+    except Exception as e:
+        print(f"❌ خطأ غير متوقع: {e}")
+        traceback.print_exc()
+    finally:
+        # تنظيف الموارد إذا لزم الأمر
         try:
-            loop.run_until_complete(main())
-        except KeyboardInterrupt:
-            print("\n👋 تم الإيقاف")
-        except Exception as e:
-            print(f"❌ {e}")
-            traceback.print_exc()
-        finally:
-            try:
-                loop.close()
-            except:
-                pass
-    else:
-        # Local development
-        try:
-            asyncio.run(main())
-        except KeyboardInterrupt:
-            print("\n👋 تم الإيقاف")
-        except Exception as e:
-            print(f"❌ {e}")
-            traceback.print_exc()
-
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.stop()
+        except:
+            pass
+        print("✅ تم إيقاف البوت بشكل نظيف")
