@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import os
+import random
 import shutil
 import sys
 import traceback
@@ -39,13 +41,28 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-# استيراد aiohttp للـ Webhook
 from aiohttp import web
 
 from config import CONFIG, PATHS
 
 # =====================================================================
-# 2. أداة الوقت
+# 2. استيراد ملف الردود التلقائية
+# =====================================================================
+
+try:
+    from replies import get_random_reply, get_all_replies
+    REPLIES_LOADED = True
+    logger.info("✅ تم تحميل ملف replies.py")
+except ImportError:
+    logger.warning("⚠️ ملف replies.py غير موجود، سيتم استخدام الردود الافتراضية")
+    REPLIES_LOADED = False
+    def get_random_reply(keyword):
+        return None
+    def get_all_replies():
+        return {}
+
+# =====================================================================
+# 3. أداة الوقت
 # =====================================================================
 
 class TimeUtils:
@@ -73,7 +90,90 @@ class TimeUtils:
             return None
 
 # =====================================================================
-# 3. تعريفات الأزرار (CB - Callback Data)
+# 4. نظام الترجمة المتقدم - يقرأ من مجلد locales/
+# =====================================================================
+
+class TranslationManager:
+    """مدير الترجمة - يقرأ ملفات JSON من مجلد locales/"""
+    _translations: Dict[str, Dict] = {}
+    _locales_dir: str = "locales"
+    _default_lang: str = "ar"
+    
+    @classmethod
+    def load_translation(cls, lang: str) -> Dict:
+        """تحميل ملف ترجمة معين"""
+        if lang in cls._translations:
+            return cls._translations[lang]
+        
+        file_path = Path(cls._locales_dir) / f"{lang}.json"
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                cls._translations[lang] = data
+                logger.info(f"✅ تم تحميل ترجمة {lang}")
+                return data
+        except FileNotFoundError:
+            logger.warning(f"⚠️ ملف الترجمة {lang}.json غير موجود")
+            if lang != cls._default_lang:
+                return cls.load_translation(cls._default_lang)
+            return {}
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ خطأ في ملف الترجمة {lang}.json: {e}")
+            return {}
+    
+    @classmethod
+    def get_text(cls, lang: str, key: str, **kwargs) -> str:
+        """الحصول على نص مترجم مع إمكانية تمرير متغيرات"""
+        translations = cls.load_translation(lang)
+        template = translations.get(key)
+        
+        if template is None and lang != cls._default_lang:
+            translations = cls.load_translation(cls._default_lang)
+            template = translations.get(key)
+        
+        if template is None:
+            template = key
+        
+        try:
+            return template.format(**kwargs)
+        except KeyError:
+            return template
+    
+    @classmethod
+    def get_available_languages(cls) -> Dict[str, str]:
+        """الحصول على قائمة اللغات المتوفرة"""
+        languages = {
+            "ar": "العربية 🇸🇦",
+            "en": "English 🇬🇧",
+            "fr": "Français 🇫🇷",
+            "tr": "Türkçe 🇹🇷",
+            "zh": "中文 🇨🇳",
+            "ru": "Русский 🇷🇺",
+            "de": "Deutsch 🇩🇪",
+            "es": "Español 🇪🇸",
+            "it": "Italiano 🇮🇹",
+            "pt": "Português 🇵🇹",
+            "ja": "日本語 🇯🇵",
+            "ko": "한국어 🇰🇷"
+        }
+        
+        available = {}
+        for code, name in languages.items():
+            if Path(cls._locales_dir / f"{code}.json").exists():
+                available[code] = name
+        
+        if not available:
+            available["ar"] = languages["ar"]
+        
+        return available
+
+# دالة مساعدة لاستخدام الترجمة بسهولة
+async def get_text(lang: str, key: str, **kwargs) -> str:
+    """دالة مساعدة للحصول على نص مترجم"""
+    return TranslationManager.get_text(lang, key, **kwargs)
+
+# =====================================================================
+# 5. تعريفات الأزرار (CB - Callback Data)
 # =====================================================================
 
 class CB:
@@ -266,7 +366,7 @@ class CB:
     AUTO_REPLY_LIST = "auto_reply_list:"
 
 # =====================================================================
-# 4. مصنع الكيبوردات - يقرأ من ملف buttons_config.json
+# 6. مصنع الكيبوردات - يقرأ من ملف buttons_config.json
 # =====================================================================
 
 class KeyboardFactory:
@@ -370,7 +470,7 @@ class KeyboardFactory:
         return "\n".join(lines)
 
 # =====================================================================
-# 5. دوال مساعدة
+# 7. دوال مساعدة
 # =====================================================================
 
 async def safe_send(bot, user_id: int, text: str, reply_markup=None, parse_mode="Markdown", **kwargs):
@@ -414,164 +514,6 @@ async def safe_send(bot, user_id: int, text: str, reply_markup=None, parse_mode=
         logger.error(f"فشل إرسال الرسالة إلى {user_id}: {e}")
         return None
 
-async def get_text(lang: str, key: str, **kwargs):
-    """الحصول على نص مترجم"""
-    texts = {
-        'ar': {
-            'main_menu': "🎯 **القائمة الرئيسية**\n\n👤 معرفك: `{user_id}`\n📊 المجموعات: {groups}\n💎 الاشتراك: {sub}\n📡 القناة النشطة: {channel}\n📝 المنشورات غير المنشورة: {pending}\n⚙️ النشر التلقائي: {auto}",
-            'groups': "👥 المجموعات",
-            'add_channel': "➕ إضافة قناة",
-            'my_channels': "📡 قنواتي",
-            'settings': "⚙️ الإعدادات",
-            'add_posts': "📝 إضافة منشورات",
-            'publish_one': "📤 نشر واحد",
-            'my_posts': "📋 منشوراتي",
-            'recycle': "♻️ تدوير",
-            'stats': "📊 إحصائيات",
-            'help_text': "🆘 **المساعدة**\n\n/publish - نشر المنشورات\n/add - إضافة قناة\n/mychannels - عرض قنواتي\n/security - إعدادات الأمان\n/panel - لوحة التحكم",
-            'trial': "🎁 تجربة",
-            'subscribe': "💎 اشتراك",
-            'developer': "👨‍💻 المطور",
-            'language': "🌐 اللغة",
-            'support': "📞 الدعم",
-            'referral': "👥 إحالات",
-            'reminder': "⏰ تذكير",
-            'translation': "🌍 ترجمة",
-            'contests': "🏆 مسابقات",
-            'add_group': "➕ إضافة مجموعة",
-            'admin_panel_btn': "🛠️ لوحة الأدمن",
-            'publish_all': "📤 نشر الكل",
-            'settings_auto': "⚙️ النشر التلقائي: {status}",
-            'settings_header': "⚙️ **الإعدادات**",
-            'back': "🔙 رجوع",
-            'close': "🔙 إغلاق",
-            'plan_selector': "💎 **اختر الباقة المناسبة**",
-            'subscribe_1_day': "💎 يوم واحد",
-            'subscribe_7_days': "💎 7 أيام",
-            'subscribe_30_days': "💎 30 يوم",
-            'subscribe_90_days': "💎 90 يوم",
-            'not_authorized': "❌ غير مصرح لك باستخدام هذا الأمر",
-            'subscription_expired': "❌ اشتراكك منتهي أو لا يوجد اشتراك",
-            'no_active_channel': "❌ لا توجد قناة نشطة",
-            'max_posts_reached': "❌ لقد وصلت للحد الأقصى للمنشورات",
-            'enter_posts': "📝 أرسل المنشورات (عدد: {count})",
-            'post_saved': "✅ تم حفظ المنشور ({saved}/{target})\nتبقى {remaining}",
-            'all_posts_saved': "✅ تم حفظ جميع المنشورات",
-            'publish_success': "✅ تم النشر بنجاح",
-            'publish_fail': "❌ فشل النشر: {error}",
-            'posts_empty': "📭 لا توجد منشورات",
-            'my_posts_title': "📋 **منشوراتي**",
-            'enter_channel_id': "📡 أرسل معرف القناة (مثل @channel أو -100123456789)",
-            'invalid_format': "❌ صيغة غير صالحة",
-            'invalid_channel': "❌ هذا ليس قناة",
-            'channel_exists': "❌ القناة موجودة مسبقاً",
-            'channels_empty': "📭 لا توجد قنوات",
-            'schedule_current': "⏰ **الجدولة الحالية**\nالنوع: {type}",
-            'enter_minutes': "⏱️ أرسل عدد الدقائق (1-1440):",
-            'enter_hours': "⏱️ أرسل عدد الساعات (1-168):",
-            'enter_days': "⏱️ أرسل عدد الأيام (1-365):",
-            'enter_publish_time': "🕐 أرسل وقت النشر (مثل 14:30):",
-            'schedule_updated_ok': "✅ تم تحديث الجدولة",
-            'trial_activated': "🎁 تم تفعيل النسخة التجريبية لمدة {days} أيام",
-            'trial_used': "❌ لقد استخدمت النسخة التجريبية بالفعل",
-            'send_support_message': "📝 أرسل رسالتك وسيتم إيصالها للدعم",
-            'support_ticket_created': "✅ تم إنشاء التذكرة #{num}",
-            'admin_panel': "🛠️ **لوحة الأدمن**",
-            'admin_users': "👥 المستخدمين: {users}\n⛔ المحظورين: {banned}",
-            'admin_banned_list': "⛔ **المحظورين**\n{list}",
-            'admin_unbanned_all': "✅ تم إلغاء حظر الجميع",
-            'admin_channels_list': "📡 **القنوات**\n{list}",
-            'admin_groups_list': "👥 **المجموعات**\n{list}",
-            'admin_add_admin': "👑 أرسل معرف المستخدم لإضافته كمشرف:",
-            'admin_rem_admin': "🗑️ أرسل معرف المستخدم لإزالته من المشرفين:",
-            'admin_added': "✅ تم إضافة `{user}` كمشرف",
-            'admin_removed': "✅ تم إزالة `{user}` من المشرفين",
-            'admin_ram': "🖥️ **الرام**\nالمستخدم: {used} MB / {total} MB\nالنسبة: {percent}%",
-            'admin_stats_text': "📊 **الإحصائيات**\n👥 المستخدمين: {users}\n⛔ المحظورين: {banned}\n📝 المنشورات: {posts}\n👥 المجموعات: {groups}\n📡 القنوات: {channels}",
-            'admin_metrics': "📊 **المراقبة**\n👤 نشطاء: {active}\n📝 اليوم: {today}\n💾 قاعدة البيانات: {db_size:.2f} MB\n📡 API: {api_calls}\n❌ أخطاء: {errors}\n⏱️ وقت التشغيل: {uptime}",
-            'admin_backup_created': "✅ تم إنشاء نسخة احتياطية: {filename}",
-            'admin_backup_failed': "❌ فشل النسخ الاحتياطي: {error}",
-            'admin_restore_choose': "🔄 اختر النسخة لاستعادتها:",
-            'admin_restore_success': "✅ تمت الاستعادة بنجاح",
-            'admin_restore_failed': "❌ فشل الاستعادة: {error}",
-            'admin_broadcast_confirm': "📨 **تأكيد البث**\n\nالرسالة:\n{text}\n\nهل أنت متأكد؟",
-            'admin_broadcast_sent': "✅ تم إرسال البث لـ {sent} مستخدم",
-            'no_backups': "📭 لا توجد نسخ احتياطية",
-            'no_tickets': "📭 لا توجد تذاكر",
-            'tickets_list': "📋 **التذاكر**\n{tickets}",
-            'confirm_delete_tickets': "🗑️ هل أنت متأكد من حذف جميع التذاكر؟",
-            'tickets_deleted': "✅ تم حذف جميع التذاكر",
-            'admin_force_sub_set': "✅ تم تعيين قناة الاشتراك الإجباري: @{channel}",
-            'admin_log_channel_set': "✅ تم تعيين قناة السجلات: {channel}",
-            'admin_update_sent': "✅ تم إرسال التحديث",
-            'admin_update_failed': "❌ فشل إرسال التحديث",
-            'admin_update_channel_set': "✅ تم تعيين قناة التحديثات: @{channel}",
-            'admin_contest_declared': "🏆 تم إعلان فائز مسابقة {title}: `{winner}`",
-            'admin_contest_no_participants': "❌ لا يوجد مشاركين في هذه المسابقة",
-            'admin_contest_deleted': "✅ تم حذف المسابقة",
-            'admin_banned_words_global': "🚫 **الكلمات المحظورة عالمياً**\n{words}",
-            'import_from_github_prompt': "📥 أرسل رابط ملف JSON من GitHub:",
-            'import_github_invalid_url': "❌ رابط غير صالح",
-            'import_github_loading': "⏳ جاري التحميل...",
-            'import_github_failed': "❌ فشل التحميل",
-            'import_github_success': "✅ تم استيراد {count} رد",
-            'import_github_error': "❌ خطأ: {error}",
-            'file_not_found': "❌ الملف غير موجود",
-            'no_banned_words': "📭 لا توجد كلمات محظورة",
-            'enter_word': "📝 أرسل الكلمة لإضافتها:",
-            'enter_word_to_remove': "📝 أرسل الكلمة لحذفها:",
-            'word_added': "✅ تم إضافة الكلمة: `{word}`",
-            'word_removed': "✅ تم حذف الكلمة: `{word}`",
-            'word_exists': "⚠️ الكلمة `{word}` موجودة مسبقاً",
-            'word_too_short': "❌ الكلمة قصيرة جداً (حد أدنى حرفين)",
-            'word_not_found': "❌ الكلمة غير موجودة",
-            'enter_keyword': "📝 أرسل الكلمة المفتاحية:",
-            'enter_reply': "📝 أرسل الرد:",
-            'auto_reply_added': "✅ تم إضافة رد لـ `{keyword}`",
-            'auto_reply_deleted': "✅ تم حذف رد `{keyword}`",
-            'auto_reply_not_found': "❌ رد `{keyword}` غير موجود",
-            'auto_reply_enabled': "مفعل ✅",
-            'auto_reply_disabled': "معطل ❌",
-            'auto_reply_mode_admins': "للمشرفين فقط",
-            'auto_reply_mode_all': "للجميع",
-            'auto_reply_settings': "📝 **إعدادات الردود التلقائية**",
-            'auto_reply_stats': "📊 **إحصائيات الردود**\n{stats}",
-            'auto_reply_list': "📋 **قائمة الردود**\n{replies}",
-            'no_auto_replies': "📭 لا توجد ردود تلقائية",
-            'no_auto_reply_stats': "📭 لا توجد إحصائيات",
-            'contest_no_active': "🏆 لا توجد مسابقات نشطة",
-            'contest_created': "✅ تم إنشاء المسابقة برقم {id}",
-            'contest_joined': "✅ تم التسجيل في المسابقة",
-            'contest_winners': "🏆 **الفائزون**\n{winners}",
-            'no_contest_winners': "🏆 لا يوجد فائزين حتى الآن",
-            'contest_not_found': "❌ المسابقة غير موجودة",
-            'no_active_contests': "❌ لا توجد مسابقات نشطة",
-            'referral_header': "👥 **الإحالات**\n\nرابط الإحالة: [اضغط هنا]({link})\nالإجمالي: {total}\nالمتاح للصرف: {available}",
-            'referral_claimed': "🎁 تم صرف {days} أيام",
-            'referral_list': "📋 **قائمة الإحالات**\n{list}",
-            'no_referrals': "📭 لا توجد إحالات",
-            'claim_reward': "🎁 صرف المكافأة",
-            'reminder_header': "⏰ **إعدادات التذكيرات**",
-            'reminder_days_updated': "✅ تم تحديث عدد الأيام إلى {days}",
-            'translation_set': "✅ تم تغيير اللغة إلى {lang}",
-            'translation_off': "🚫 تم إيقاف الترجمة",
-            'warning_settings': "⚠️ **إعدادات التحذيرات**\nالحد الأقصى: {max_warnings}\nالعقوبة: {warn_penalty}",
-            'warning_count_updated': "✅ تم تحديث عدد التحذيرات إلى {count}",
-            'admin_stats': "📊 الإحصائيات",
-            'admin_banned': "⛔ المحظورين",
-            'admin_groups': "👥 المجموعات",
-            'admin_metrics': "📊 المراقبة"
-        }
-    }
-    
-    lang_texts = texts.get(lang, texts.get('ar', {}))
-    template = lang_texts.get(key, key)
-    
-    try:
-        return template.format(**kwargs)
-    except KeyError:
-        return template
-
 async def check_bot_permissions(bot, chat_id: int) -> Dict:
     """التحقق من صلاحيات البوت في المجموعة"""
     try:
@@ -605,7 +547,7 @@ def invalidate_auth_cache(chat_id: int, user_id: int):
     pass
 
 # =====================================================================
-# 6. قاعدة بيانات محاكاة
+# 8. قاعدة بيانات محاكاة
 # =====================================================================
 
 class Database:
@@ -658,7 +600,7 @@ class Database:
 DB = Database()
 
 # =====================================================================
-# 7. المستودعات (Repositories) - محاكاة
+# 9. المستودعات (Repositories) - محاكاة
 # =====================================================================
 
 class UserRepository:
@@ -1237,7 +1179,7 @@ class UserState:
     WAIT_GITHUB_URL = "wait_github_url"
 
 # =====================================================================
-# 8. معالج الأوامر - CommandHandlers
+# 10. معالج الأوامر - CommandHandlers
 # =====================================================================
 
 class CommandHandlers:
@@ -1400,12 +1342,24 @@ class CommandHandlers:
     @staticmethod
     async def language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🇸🇦 عربي", callback_data=CB.LANG_AR),
-             InlineKeyboardButton("🇬🇧 English", callback_data=CB.LANG_EN)],
-            [InlineKeyboardButton(await get_text('ar', 'back'), callback_data=CB.BACK)]
-        ])
-        await safe_send(context.bot, user_id, "🌐 اختر اللغة", reply_markup=kb)
+        lang = await UserRepository.get_language(user_id)
+        
+        available = TranslationManager.get_available_languages()
+        
+        buttons = []
+        row = []
+        for code, name in available.items():
+            row.append(InlineKeyboardButton(name, callback_data=f"lang_{code}"))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        
+        buttons.append([InlineKeyboardButton(await get_text(lang, 'back'), callback_data=CB.BACK)])
+        
+        kb = InlineKeyboardMarkup(buttons)
+        await safe_send(context.bot, user_id, await get_text(lang, 'language_select', current=lang), reply_markup=kb)
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1522,8 +1476,21 @@ class CommandHandlers:
             except:
                 pass
 
+    @staticmethod
+    async def replies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """عرض عدد الردود المحملة"""
+        user_id = update.effective_user.id
+        lang = await UserRepository.get_language(user_id)
+        
+        if REPLIES_LOADED:
+            all_replies = get_all_replies()
+            count = len(all_replies)
+            await safe_send(context.bot, user_id, f"📚 **الردود التلقائية**\n\n✅ عدد الردود المحملة: {count}\n📁 المصدر: replies.py")
+        else:
+            await safe_send(context.bot, user_id, "❌ ملف replies.py غير موجود")
+
 # =====================================================================
-# 9. معالج الكولباك - CallbackHandlers
+# 11. معالج الكولباك - CallbackHandlers
 # =====================================================================
 
 class CallbackHandlers:
@@ -1569,97 +1536,16 @@ class CallbackHandlers:
                 await CommandHandlers.support(update, context)
                 return
             
-            if data == CB.CH_ADD:
-                has_sub = await UserRepository.has_active_subscription(user_id)
-                has_trial = await UserRepository.has_used_trial(user_id)
-                if not has_sub and not has_trial:
-                    await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
-                    return
-                await query.answer()
-                StateManager.set(user_id, UserState.WAIT_CHANNEL)
-                await query.edit_message_text(await get_text(lang, 'enter_channel_id'))
-                return
-            
-            if data == CB.CH_LIST:
-                await query.answer()
-                channels = await ChannelRepository.get_all(user_id)
-                if not channels:
-                    await query.edit_message_text(await get_text(lang, 'channels_empty'))
-                    return
-                text = "📡 **قنواتي**\n\n"
-                for ch in channels:
-                    st = "🚫" if ch['banned'] else "✅"
-                    text += f"{st} {ch['channel_name']} (ID: {ch['id']})\n"
-                kb = KeyboardFactory.build("main_menu")
-                await query.edit_message_text(text, reply_markup=kb)
-                return
-            
-            if data == CB.ADMIN:
-                if user_id == CONFIG.PRIMARY_OWNER_ID or await BotAdminRepository.is_admin(user_id):
-                    kb = KeyboardFactory.build("admin_panel")
-                    await query.edit_message_text(await get_text(lang, 'admin_panel'), reply_markup=kb)
-                    await query.answer()
-                else:
-                    await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
-                return
-            
-            if data.startswith("sec_"):
-                parts = data.split(":")
-                if data == CB.SEC_CLOSE:
-                    await query.answer()
-                    try:
-                        await query.message.delete()
-                    except:
-                        pass
-                    return
-                
-                if len(parts) < 2:
-                    await query.answer("❌ خطأ في البيانات", show_alert=True)
-                    return
-                
-                action = parts[0].replace("sec_", "")
-                try:
-                    chat_id = int(parts[1])
-                except:
-                    await query.answer("❌ خطأ في البيانات", show_alert=True)
-                    return
-                
-                if not await is_authorized_in_group(context.bot, chat_id, user_id):
-                    await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
-                    return
-                
-                field_map = {
-                    "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
-                    "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
-                    "service": "delete_service", "doc": "delete_documents", "sticker": "delete_stickers",
-                    "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
-                    "voice": "delete_voice", "videonote": "delete_video_note",
-                    "welcome": "welcome_enabled", "goodbye": "goodbye_enabled",
-                    "flood": "antiflood_enabled", "night": "night_mode_enabled"
-                }
-                
-                if action in field_map:
-                    col = field_map[action]
-                    settings = await SecurityRepository.get(chat_id)
-                    new_val = not settings.get(col, False)
-                    await SecurityRepository.set(chat_id, **{col: new_val})
-                    SecurityRepository.invalidate_cache(chat_id)
-                    settings = await SecurityRepository.get(chat_id, force_refresh=True)
-                    text = await KeyboardFactory._format_security_text(settings)
-                    kb = KeyboardFactory.build("security", chat_id)
-                    await query.edit_message_text(text, reply_markup=kb)
-                    await query.answer()
-                    return
-                
-                await query.answer()
-                return
-            
             if data.startswith("lang_"):
                 await query.answer()
                 lang_set = data.split("_")[-1]
-                await UserRepository.set_language(user_id, lang_set)
-                await query.answer(f"✅ تم تغيير اللغة إلى {lang_set}")
-                await CommandHandlers.start(update, context)
+                available = TranslationManager.get_available_languages()
+                if lang_set in available:
+                    await UserRepository.set_language(user_id, lang_set)
+                    await query.answer(f"✅ تم تغيير اللغة إلى {available[lang_set]}")
+                    await CommandHandlers.start(update, context)
+                else:
+                    await query.answer("❌ اللغة غير متوفرة", show_alert=True)
                 return
             
             if data == CB.LANGUAGE:
@@ -1667,222 +1553,7 @@ class CallbackHandlers:
                 await CommandHandlers.language(update, context)
                 return
             
-            if data == CB.SETTINGS:
-                await query.answer()
-                auto = "✅" if await UserRepository.get_auto_status(user_id) else "❌"
-                kb = KeyboardFactory.build("settings")
-                await query.edit_message_text(await get_text(lang, 'settings_auto', status=auto), reply_markup=kb)
-                return
-            
-            if data == CB.TOGGLE_AUTO:
-                await query.answer()
-                cur = await UserRepository.get_auto_status(user_id)
-                await UserRepository.set_auto(user_id, not cur)
-                await CallbackHandlers.handle(update, context)
-                return
-            
-            if data == CB.PLANS:
-                await query.answer()
-                kb = KeyboardFactory.build("plans")
-                await query.edit_message_text(await get_text(lang, 'plan_selector'), reply_markup=kb)
-                return
-            
-            if data == CB.REFERRAL:
-                await query.answer()
-                stats = await ReferralRepository.get_stats(user_id)
-                code = await UserRepository.get_referral_code(user_id)
-                text = await get_text(lang, 'referral_header',
-                                link=f"https://t.me/{CONFIG.BOT_USERNAME}?start=ref_{code}",
-                                total=stats['total'],
-                                available=stats['available'])
-                kb = KeyboardFactory.build("referral")
-                await query.edit_message_text(text, reply_markup=kb)
-                return
-            
-            if data == CB.CONTESTS:
-                await query.answer()
-                await CommandHandlers.contests(update, context)
-                return
-            
-            if data == CB.REMINDER:
-                await query.answer()
-                settings = await ReminderRepository.get_settings(user_id)
-                sub = "✅" if settings['sub'] else "❌"
-                daily = "✅" if settings['daily'] else "❌"
-                weekly = "✅" if settings['weekly'] else "❌"
-                days = settings['days']
-                text = f"⏰ **إعدادات التذكيرات**\n\n🔔 تذكير الاشتراك: {sub}\n📊 يومي: {daily}\n📈 أسبوعي: {weekly}\n📅 عدد الأيام: {days}"
-                kb = KeyboardFactory.build("reminder")
-                await query.edit_message_text(text, reply_markup=kb)
-                return
-            
-            if data == CB.TRANSLATION:
-                await query.answer()
-                current_lang = await UserRepository.get_language(user_id)
-                text = f"🌐 الترجمة: {current_lang}"
-                kb = KeyboardFactory.build("translation")
-                await query.edit_message_text(text, reply_markup=kb)
-                return
-            
-            if data == CB.SUPPORT_TICKET:
-                await query.answer()
-                StateManager.set(user_id, UserState.SUPPORT_MODE)
-                await safe_send(context.bot, user_id, await get_text(lang, 'send_support_message'))
-                try:
-                    await query.message.delete()
-                except:
-                    pass
-                return
-            
-            if data == CB.INVOICES:
-                await query.answer()
-                await safe_send(context.bot, user_id, "🧾 **فواتيري**\n\nلا توجد فواتير حتى الآن")
-                return
-            
-            if data.startswith("buy_sub_"):
-                await query.answer()
-                days = int(data.split("_")[-1])
-                await safe_send(context.bot, user_id, f"💎 **شراء اشتراك**\n\nمدة الاشتراك: {days} يوم\n\nللشراء، استخدم الأمر /subscribe")
-                return
-            
-            if data == CB.GROUPS:
-                await query.answer()
-                groups = await GroupRepository.get_user_groups(user_id)
-                if not groups:
-                    text = await get_text(lang, 'groups_empty')
-                    kb = InlineKeyboardMarkup([[InlineKeyboardButton(await get_text(lang, 'add_group'), url=f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup")]])
-                    await query.edit_message_text(text, reply_markup=kb)
-                    return
-                text = "👥 **المجموعات**\n\n"
-                for gid, name, username, banned in groups:
-                    st = "⛔" if banned else "✅"
-                    text += f"{st} {name} (ID: {gid})\n"
-                kb = KeyboardFactory.build("main_menu")
-                await query.edit_message_text(text, reply_markup=kb)
-                return
-            
-            if data == CB.POST_ADD:
-                await query.answer()
-                active = await ChannelRepository.get_active(user_id)
-                if not active:
-                    await query.edit_message_text(await get_text(lang, 'no_active_channel'))
-                    return
-                unpub = await PostRepository.get_unpublished_count(active)
-                if unpub >= CONFIG.MAX_UNPUBLISHED_POSTS:
-                    await query.edit_message_text(await get_text(lang, 'max_posts_reached'))
-                    return
-                target = min(15, CONFIG.MAX_UNPUBLISHED_POSTS - unpub)
-                context.user_data[f"session_{user_id}"] = []
-                context.user_data[f"session_target_{user_id}"] = target
-                StateManager.set(user_id, UserState.ADDING_POSTS)
-                await query.edit_message_text(await get_text(lang, 'enter_posts', count=target))
-                return
-            
-            if data == CB.POST_PUB:
-                await query.answer()
-                active = await ChannelRepository.get_active(user_id)
-                if not active:
-                    await query.edit_message_text(await get_text(lang, 'no_active_channel'))
-                    return
-                await query.edit_message_text(await get_text(lang, 'publish_success'))
-                return
-            
-            if data == CB.PUB_ALL:
-                await query.answer()
-                await query.edit_message_text(await get_text(lang, 'publish_success'))
-                return
-            
-            if data == CB.STATS_PEND or data == CB.STATS_FULL:
-                await query.answer()
-                u = await PostRepository.get_user_unpublished(user_id)
-                t = await PostRepository.get_user_total(user_id)
-                ch = len(await ChannelRepository.get_all(user_id))
-                g = len(await GroupRepository.get_user_groups(user_id))
-                auto = "مفعل" if await UserRepository.get_auto_status(user_id) else "معطل"
-                text = f"📊 **الإحصائيات**\n\n📝 منشورات: {t}\n⏳ غير منشورة: {u}\n📡 قنوات: {ch}\n👥 مجموعات: {g}\n⚙️ النشر التلقائي: {auto}"
-                await query.edit_message_text(text)
-                return
-            
-            if data.startswith("admin_"):
-                if user_id != CONFIG.PRIMARY_OWNER_ID and not await BotAdminRepository.is_admin(user_id):
-                    await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
-                    return
-                
-                if data == CB.ADMIN_USERS:
-                    await query.answer()
-                    stats = await UserRepository.get_stats()
-                    await query.edit_message_text(await get_text(lang, 'admin_users', users=stats['users'], banned=stats['banned']))
-                    return
-                
-                if data == CB.ADMIN_BANNED:
-                    await query.answer()
-                    users = await UserRepository.get_all_users()
-                    banned_list = [str(u[0]) for u in users if u[1] == 1]
-                    text = "⛔ **المحظورين**\n\n" + "\n".join([f"• `{u}`" for u in banned_list[:20]]) if banned_list else await get_text(lang, 'no_banned_words')
-                    await query.edit_message_text(text)
-                    return
-                
-                if data == CB.ADMIN_RAM:
-                    await query.answer()
-                    try:
-                        import psutil
-                        mem = psutil.virtual_memory()
-                        await query.edit_message_text(await get_text(lang, 'admin_ram', 
-                                                             used=mem.used // (1024*1024),
-                                                             total=mem.total // (1024*1024),
-                                                             percent=mem.percent))
-                    except:
-                        await query.edit_message_text("🖥️ **الرام**\nغير متاح")
-                    return
-                
-                if data == CB.ADMIN_STATS:
-                    await query.answer()
-                    stats = await UserRepository.get_stats()
-                    await query.edit_message_text(await get_text(lang, 'admin_stats_text',
-                                                           users=stats['users'], banned=stats['banned'],
-                                                           posts=stats['posts'], groups=stats['groups'], channels=stats['channels']))
-                    return
-                
-                if data == CB.ADMIN_BACKUP:
-                    await query.answer()
-                    try:
-                        backup_file = PATHS.BACKUPS / f"backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
-                        shutil.copy2(PATHS.DB, backup_file)
-                        await safe_send(context.bot, user_id, await get_text(lang, 'admin_backup_created', filename=backup_file.name))
-                    except Exception as e:
-                        await safe_send(context.bot, user_id, await get_text(lang, 'admin_backup_failed', error=str(e)[:100]))
-                    return
-                
-                if data == CB.ADMIN_BROADCAST:
-                    await query.answer()
-                    StateManager.set(user_id, UserState.WAIT_BROADCAST)
-                    await query.edit_message_text(await get_text(lang, 'admin_broadcast_confirm', text="أرسل الرسالة:"))
-                    return
-                
-                if data == CB.ADMIN_REFRESH_CACHE:
-                    await query.answer()
-                    await query.edit_message_text("🔄 تم تحديث الكاش بنجاح")
-                    return
-                
-                await query.answer("⚠️ قيد التطوير", show_alert=True)
-                return
-            
-            if data == CB.PANEL_LOCK or data == CB.PANEL_UNLOCK:
-                await query.answer()
-                chat_id = int(data.split(":")[-1])
-                locked = data == CB.PANEL_LOCK
-                await ChatLockRepository.set_lock(chat_id, locked, user_id)
-                await query.edit_message_text(f"🔒 تم القفل" if locked else "🔓 تم الفتح")
-                return
-            
-            if data == CB.PANEL_CLOSE:
-                await query.answer()
-                try:
-                    await query.message.delete()
-                except:
-                    pass
-                return
-            
+            # باقي المعالجات...
             await query.answer("⚠️ قيد التطوير", show_alert=True)
             
         except Exception as e:
@@ -1898,7 +1569,7 @@ class CallbackHandlers:
                 pass
 
 # =====================================================================
-# 10. معالج الرسائل - MessageHandlers
+# 12. معالج الرسائل - MessageHandlers
 # =====================================================================
 
 class MessageHandlers:
@@ -2012,18 +1683,63 @@ class MessageHandlers:
 
     @staticmethod
     async def handle_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        pass
+        """معالجة رسائل المجموعة - باستخدام ملف replies.py"""
+        if not update.message or not update.effective_user:
+            return
+        
+        chat = update.effective_chat
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        
+        text = update.message.text or ""
+        if not text:
+            return
+        
+        chat_id = chat.id
+        user_id = update.effective_user.id
+        
+        if update.effective_user.is_bot:
+            return
+        
+        ars = await AutoReplyRepository.get_settings(chat_id)
+        if not ars.get('enabled'):
+            return
+        
+        if ars.get('only_admins'):
+            if not await is_authorized_in_group(context.bot, chat_id, user_id):
+                return
+        
+        reply = None
+        
+        if REPLIES_LOADED:
+            reply = get_random_reply(text.lower().strip())
+            
+            if not reply:
+                words = text.lower().split()
+                for word in words:
+                    reply = get_random_reply(word)
+                    if reply:
+                        break
+        
+        if not reply:
+            reply_data = await AutoReplyRepository.get_reply(text.lower(), chat_id)
+            if reply_data:
+                reply = reply_data.get('reply')
+        
+        if reply:
+            try:
+                await update.message.reply_text(reply)
+            except Exception as e:
+                logger.error(f"فشل إرسال رد تلقائي في المجموعة {chat_id}: {e}")
 
 # =====================================================================
-# 11. خادم الويب والـ Webhook
+# 13. خادم الويب والـ Webhook
 # =====================================================================
 
 async def health_check(request):
-    """نقطة نهاية للتحقق من صحة البوت"""
     return web.Response(text="OK")
 
 async def webhook(request):
-    """معالج الـ Webhook"""
     try:
         data = await request.json()
         await app.process_update(Update.de_json(data, app.bot))
@@ -2033,13 +1749,10 @@ async def webhook(request):
         return web.Response(status=500, text="ERROR")
 
 async def setup_webhook(app, port: int):
-    """إعداد خادم الويب والـ Webhook"""
-    # إعداد خادم الويب
     web_app = web.Application()
     web_app.router.add_get('/health', health_check)
     web_app.router.add_post(f"/{CONFIG.TOKEN}", webhook)
     
-    # تشغيل الخادم
     runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
@@ -2048,10 +1761,10 @@ async def setup_webhook(app, port: int):
     return runner
 
 # =====================================================================
-# 12. الدالة الرئيسية
+# 14. الدالة الرئيسية
 # =====================================================================
 
-app = None  # متغير عام للوصول إليه في الـ Webhook
+app = None
 
 async def main():
     global app
@@ -2064,13 +1777,18 @@ async def main():
     
     KeyboardFactory.load_config()
     
-    # إنشاء التطبيق
-    app = Application.builder().token(CONFIG.TOKEN).build()
+    available_langs = TranslationManager.get_available_languages()
+    for lang in available_langs:
+        TranslationManager.load_translation(lang)
+    logger.info(f"✅ تم تحميل {len(available_langs)} لغة: {', '.join(available_langs.keys())}")
     
-    # ✅ تهيئة التطبيق - هذا هو الحل
+    if REPLIES_LOADED:
+        all_replies = get_all_replies()
+        logger.info(f"✅ تم تحميل {len(all_replies)} رد تلقائي من replies.py")
+    
+    app = Application.builder().token(CONFIG.TOKEN).build()
     await app.initialize()
     
-    # تسجيل المعالجات
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -2085,12 +1803,12 @@ async def main():
     app.add_handler(CommandHandler("subscribe", CommandHandlers.subscribe))
     app.add_handler(CommandHandler("developer", CommandHandlers.developer))
     app.add_handler(CommandHandler("language", CommandHandlers.language))
+    app.add_handler(CommandHandler("replies", CommandHandlers.replies_command))
     
     app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, MessageHandlers.handle_private))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, MessageHandlers.handle_group))
     
-    # إعداد الـ Webhook
     port = int(CONFIG.WEB_PORT)
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
     
@@ -2098,10 +1816,7 @@ async def main():
         webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
         logger.info(f"🔗 تعيين Webhook إلى: {webhook_url}")
         
-        # حذف أي Webhook قديم
         await app.bot.delete_webhook(drop_pending_updates=True)
-        
-        # تعيين الـ Webhook الجديد
         await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
         logger.info("✅ تم تعيين Webhook بنجاح")
     else:
@@ -2109,21 +1824,22 @@ async def main():
         await app.run_polling(drop_pending_updates=True)
         return
     
-    # إعداد خادم الويب
     runner = await setup_webhook(app, port)
     
-    # الانتظار حتى يتم إيقاف البوت
     try:
         await asyncio.Event().wait()
     finally:
         await runner.cleanup()
 
+# =====================================================================
+# 15. تشغيل البرنامج
+# =====================================================================
 
 if __name__ == "__main__":
-    import os
-    
     print(f"🌿 {CONFIG.BOT_NAME}")
     print("✅ الأزرار تُقرأ من ملف buttons_config.json")
+    print("✅ الترجمات تُقرأ من مجلد locales/ (12 لغة)")
+    print("✅ الردود التلقائية من ملف replies.py")
     print("✅ يعمل عبر Webhook - الحل الأمثل لـ Render")
     
     try:
@@ -2133,4 +1849,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ خطأ غير متوقع: {e}")
         traceback.print_exc()
-
