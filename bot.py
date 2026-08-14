@@ -4338,121 +4338,150 @@ class CallbackHandlers:
             return
 
         # ============================================================
-        # الأمان (Security) - مع التصحيح
-        # ============================================================
-        if data.startswith("sec_"):
-            parts = data.split(":")
-            if len(parts) < 3:
-                return
-            action = parts[1]
-            try:
-                chat_id = int(parts[2])
-            except:
-                return
-            if not await is_authorized_in_group(context.bot, chat_id, user_id):
-                await query.answer(get_text(lang, 'not_authorized'), show_alert=True)
-                return
-            field_map = {
-                "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
-                "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
-                "service": "delete_service", "doc": "delete_documents", "sticker": "delete_stickers",
-                "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
-                "voice": "delete_voice", "videonote": "delete_video_note",
-                "welcome": "welcome_enabled", "goodbye": "goodbye_enabled",
-                "flood": "antiflood_enabled", "night": "night_mode_enabled"
-            }
-            if action in field_map:
-                col = field_map[action]
-                # قراءة الإعدادات الحالية
-                settings = await SecurityRepository.get(chat_id, force_refresh=True)
-                current = settings.get(col, 0)
-                new_val = 1 if current == 0 else 0
-                # تحديث قاعدة البيانات
-                success = await SecurityRepository.set(chat_id, **{col: new_val})
-                if not success:
-                    await query.answer("❌ فشل التحديث", show_alert=True)
-                    return
-                # مسح الكاش يدوياً
-                SecurityRepository._cache.pop(chat_id, None)
-                # قراءة الإعدادات المحدثة
-                settings = await SecurityRepository.get(chat_id, force_refresh=True)
-                # إعادة عرض الرسالة
-                await query.edit_message_text(
-                    get_text(lang, 'security_text',
-                        links='✅' if settings.get('delete_links') else '❌',
-                        mentions='✅' if settings.get('mentions') else '❌',
-                        slow='✅' if settings.get('slow_mode') else '❌',
-                        slow_sec=settings.get('slow_mode_seconds', 5),
-                        welcome='✅' if settings.get('welcome_enabled') else '❌',
-                        goodbye='✅' if settings.get('goodbye_enabled') else '❌',
-                        video='✅' if settings.get('delete_videos') else '❌',
-                        audio='✅' if settings.get('delete_audio') else '❌',
-                        animation='✅' if settings.get('delete_animation') else '❌',
-                        service='✅' if settings.get('delete_service') else '❌',
-                        documents='✅' if settings.get('delete_documents') else '❌',
-                        stickers='✅' if settings.get('delete_stickers') else '❌',
-                        forwarded='✅' if settings.get('delete_forwarded') else '❌',
-                        polls='✅' if settings.get('delete_polls') else '❌',
-                        games='✅' if settings.get('delete_games') else '❌',
-                        voice='✅' if settings.get('delete_voice') else '❌',
-                        video_note='✅' if settings.get('delete_video_note') else '❌',
-                        flood='✅' if settings.get('antiflood_enabled') else '❌',
-                        night='✅' if settings.get('night_mode_enabled') else '❌',
-                        max_len=settings.get('max_message_length', 0) or 'غير محدود',
-                        auto_penalty=settings.get('auto_penalty', 'none'),
-                        delete_penalty=settings.get('delete_penalty', 'none')
-                    ),
-                    reply_markup=KeyboardFactory.security(chat_id, settings, lang)
-                )
-                return
-            # باقي الإجراءات (maxlen, warn, etc.)
-            if action == "maxlen":
-                StateManager.set(user_id, UserState.WAIT_MAX_LEN)
-                context.user_data['sec_chat'] = chat_id
-                await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
-                return
-            if action == "warn":
-                settings = await SecurityRepository.get(chat_id)
-                text = get_text(lang, 'warning_settings',
-                                max_warnings=settings.get('max_warnings', 3),
-                                warn_penalty=settings.get('warn_penalty', 'ban'))
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📝 تغيير عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
-                     InlineKeyboardButton("⚖️ تغيير العقوبة", callback_data=f"warn_penalty:{chat_id}")],
-                    [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
-                ])
-                await query.edit_message_text(text, reply_markup=kb)
-                return
-            if action == "warn_count":
-                StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
-                context.user_data['sec_chat'] = chat_id
-                await query.edit_message_text("📝 أرسل الحد الأقصى للتحذيرات (1-10):")
-                return
-            if action == "warn_penalty":
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🛑 حظر", callback_data=f"set_warn_penalty:{chat_id}:ban"),
-                     InlineKeyboardButton("🔇 كتم", callback_data=f"set_warn_penalty:{chat_id}:mute")],
-                    [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"sec_warn:{chat_id}")]
-                ])
-                await query.edit_message_text("⚖️ اختر عقوبة تجاوز التحذيرات:", reply_markup=kb)
-                return
-            if action.startswith("set_warn_penalty:"):
-                _, chat_id_str, penalty = action.split(":")
-                chat_id = int(chat_id_str)
-                await SecurityRepository.set(chat_id, warn_penalty=penalty)
-                settings = await SecurityRepository.get(chat_id, force_refresh=True)
-                text = get_text(lang, 'warning_settings',
-                                max_warnings=settings.get('max_warnings', 3),
-                                warn_penalty=settings.get('warn_penalty', 'ban'))
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📝 تغيير عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
-                     InlineKeyboardButton("⚖️ تغيير العقوبة", callback_data=f"warn_penalty:{chat_id}")],
-                    [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
-                ])
-                await query.edit_message_text(text, reply_markup=kb)
-                return
-            await query.answer()
+if data.startswith("sec_"):
+    parts = data.split(":")
+    if len(parts) < 3:
+        return
+    action = parts[1]
+    try:
+        chat_id = int(parts[2])
+    except ValueError:
+        return
+
+    # 1. التحقق من الصلاحية
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer(get_text(lang, 'not_authorized'), show_alert=True)
+        return
+
+    # 2. خريطة الأعمدة
+    field_map = {
+        "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
+        "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
+        "service": "delete_service", "doc": "delete_documents", "sticker": "delete_stickers",
+        "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
+        "voice": "delete_voice", "videonote": "delete_video_note",
+        "welcome": "welcome_enabled", "goodbye": "goodbye_enabled",
+        "flood": "antiflood_enabled", "night": "night_mode_enabled"
+    }
+
+    # 3. معالجة تبديل الإعدادات (الأزرار التي تغير قيمة 0/1)
+    if action in field_map:
+        col = field_map[action]
+
+        # جلب الإعدادات الحالية (مع إجبار التحديث)
+        settings = await SecurityRepository.get(chat_id, force_refresh=True)
+        current = settings.get(col, 0)
+        new_val = 1 if current == 0 else 0
+
+        # تحديث قاعدة البيانات
+        success = await SecurityRepository.set(chat_id, **{col: new_val})
+
+        if not success:
+            await query.answer("❌ فشل التحديث، حاول مجدداً", show_alert=True)
             return
+
+        # **مسح الكاش بالقوة**
+        SecurityRepository._cache.pop(chat_id, None)
+
+        # جلب الإعدادات المحدثة (مرة أخرى للتأكد)
+        settings = await SecurityRepository.get(chat_id, force_refresh=True)
+
+        # إعادة بناء النص والأزرار
+        text = get_text(lang, 'security_text',
+            links='✅' if settings.get('delete_links') else '❌',
+            mentions='✅' if settings.get('mentions') else '❌',
+            slow='✅' if settings.get('slow_mode') else '❌',
+            slow_sec=settings.get('slow_mode_seconds', 5),
+            welcome='✅' if settings.get('welcome_enabled') else '❌',
+            goodbye='✅' if settings.get('goodbye_enabled') else '❌',
+            video='✅' if settings.get('delete_videos') else '❌',
+            audio='✅' if settings.get('delete_audio') else '❌',
+            animation='✅' if settings.get('delete_animation') else '❌',
+            service='✅' if settings.get('delete_service') else '❌',
+            documents='✅' if settings.get('delete_documents') else '❌',
+            stickers='✅' if settings.get('delete_stickers') else '❌',
+            forwarded='✅' if settings.get('delete_forwarded') else '❌',
+            polls='✅' if settings.get('delete_polls') else '❌',
+            games='✅' if settings.get('delete_games') else '❌',
+            voice='✅' if settings.get('delete_voice') else '❌',
+            video_note='✅' if settings.get('delete_video_note') else '❌',
+            flood='✅' if settings.get('antiflood_enabled') else '❌',
+            night='✅' if settings.get('night_mode_enabled') else '❌',
+            max_len=settings.get('max_message_length', 0) or 'غير محدود',
+            auto_penalty=settings.get('auto_penalty', 'none'),
+            delete_penalty=settings.get('delete_penalty', 'none')
+        )
+
+        # بناء الأزرار الجديدة
+        kb = KeyboardFactory.security(chat_id, settings, lang)
+
+        # **محاولة تعديل الرسالة، وإذا فشلت نرسل رسالة جديدة**
+        try:
+            await query.edit_message_text(text, reply_markup=kb)
+        except Exception as e:
+            # في حال فشل التحرير (مثلاً الرسالة محذوفة)
+            await safe_send(context.bot, user_id, text, reply_markup=kb)
+            try:
+                await query.message.delete()
+            except:
+                pass
+
+        return
+
+    # باقي الإجراءات (maxlen, warn, etc.) بنفس المنطق مع مسح الكاش بعد كل تحديث
+    if action == "maxlen":
+        StateManager.set(user_id, UserState.WAIT_MAX_LEN)
+        context.user_data['sec_chat'] = chat_id
+        await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
+        return
+
+    if action == "warn":
+        settings = await SecurityRepository.get(chat_id)
+        text = get_text(lang, 'warning_settings',
+                        max_warnings=settings.get('max_warnings', 3),
+                        warn_penalty=settings.get('warn_penalty', 'ban'))
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 تغيير عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
+             InlineKeyboardButton("⚖️ تغيير العقوبة", callback_data=f"warn_penalty:{chat_id}")],
+            [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
+        ])
+        await query.edit_message_text(text, reply_markup=kb)
+        return
+
+    if action == "warn_count":
+        StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
+        context.user_data['sec_chat'] = chat_id
+        await query.edit_message_text("📝 أرسل الحد الأقصى للتحذيرات (1-10):")
+        return
+
+    if action == "warn_penalty":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛑 حظر", callback_data=f"set_warn_penalty:{chat_id}:ban"),
+             InlineKeyboardButton("🔇 كتم", callback_data=f"set_warn_penalty:{chat_id}:mute")],
+            [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"sec_warn:{chat_id}")]
+        ])
+        await query.edit_message_text("⚖️ اختر عقوبة تجاوز التحذيرات:", reply_markup=kb)
+        return
+
+    if action.startswith("set_warn_penalty:"):
+        _, chat_id_str, penalty = action.split(":")
+        chat_id = int(chat_id_str)
+        await SecurityRepository.set(chat_id, warn_penalty=penalty)
+        SecurityRepository._cache.pop(chat_id, None)
+        settings = await SecurityRepository.get(chat_id, force_refresh=True)
+        text = get_text(lang, 'warning_settings',
+                        max_warnings=settings.get('max_warnings', 3),
+                        warn_penalty=settings.get('warn_penalty', 'ban'))
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 تغيير عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
+             InlineKeyboardButton("⚖️ تغيير العقوبة", callback_data=f"warn_penalty:{chat_id}")],
+            [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
+        ])
+        await query.edit_message_text(text, reply_markup=kb)
+        return
+
+    await query.answer()
+    return
 
         if data == CB.SEC_CLOSE:
             try:
