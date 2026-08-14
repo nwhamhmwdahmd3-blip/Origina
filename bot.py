@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – النسخة النهائية الكاملة مع جميع التحسينات
+🌿 Relax Manager – النسخة النهائية الكاملة v7.0.0
 ================================================================================
 بوت تلغرام متكامل لإدارة القنوات والمجموعات مع نظام دفع عبر Telegram Stars
 مع تحسينات الردود التلقائية، الأداء، Webhook، Rate Limiter، مونيتورينغ
@@ -113,7 +113,7 @@ class AppConfig:
     ENABLE_SELF_PING: bool = os.getenv("ENABLE_SELF_PING", "true").lower() in ['true', '1']
     AUTH_CACHE_SIZE: int = 2000
     AUTH_CACHE_TTL: int = 15
-    ANONYMOUS_ADMIN_ID: int = 1087968824  # معرف المشرف المجهول
+    ANONYMOUS_ADMIN_ID: int = 1087968824
 
     def validate(self) -> None:
         if not self.TOKEN or self.PRIMARY_OWNER_ID == 0:
@@ -962,7 +962,6 @@ class Database:
             await self._init_default_data(conn)
 
     async def _create_tables(self, conn) -> None:
-        # جدول المستخدمين
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -980,7 +979,6 @@ class Database:
                 active_channel INTEGER
             )
         """)
-        # جدول القنوات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -991,7 +989,6 @@ class Database:
                 created_at TEXT
             )
         """)
-        # جدول المنشورات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1005,7 +1002,6 @@ class Database:
                 published_at TEXT
             )
         """)
-        # جدول الجدولة
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS schedule (
                 channel_db_id INTEGER PRIMARY KEY,
@@ -1020,14 +1016,12 @@ class Database:
                 next_publish_date TEXT
             )
         """)
-        # جدول آخر نشر
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS last_publish (
                 channel_db_id INTEGER PRIMARY KEY,
                 last_publish_time TEXT
             )
         """)
-        # جدول المجموعات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_groups (
                 chat_id INTEGER PRIMARY KEY,
@@ -1039,7 +1033,6 @@ class Database:
                 banned INTEGER DEFAULT 0
             )
         """)
-        # جدول ربط المجموعات بالمستخدمين (جديد)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_groups_link (
                 user_id INTEGER,
@@ -1047,7 +1040,6 @@ class Database:
                 PRIMARY KEY (user_id, chat_id)
             )
         """)
-        # جدول مشرفي المجموعة
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS group_admins (
                 chat_id INTEGER,
@@ -1055,7 +1047,6 @@ class Database:
                 PRIMARY KEY (chat_id, user_id)
             )
         """)
-        # جدول المالك المخفي
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS hidden_owner_groups (
                 chat_id INTEGER,
@@ -1064,7 +1055,6 @@ class Database:
                 PRIMARY KEY (chat_id, owner_id)
             )
         """)
-        # جدول المشرفين المخفيين
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS hidden_admins (
                 chat_id INTEGER,
@@ -1074,7 +1064,6 @@ class Database:
                 PRIMARY KEY (chat_id, admin_id)
             )
         """)
-        # جدول الأمان
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS group_security (
                 chat_id INTEGER PRIMARY KEY,
@@ -1117,7 +1106,6 @@ class Database:
                 nsfw_threshold REAL DEFAULT 0.7
             )
         """)
-        # جدول أقفال المجموعات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS chat_locks (
                 chat_id INTEGER PRIMARY KEY,
@@ -1126,7 +1114,6 @@ class Database:
                 locked_by INTEGER
             )
         """)
-        # جدول الكلمات المحظورة
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS banned_words (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1137,7 +1124,6 @@ class Database:
                 UNIQUE(word, chat_id)
             )
         """)
-        # جدول الردود التلقائية
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS auto_replies (
                 chat_id INTEGER,
@@ -1152,7 +1138,6 @@ class Database:
                 PRIMARY KEY (chat_id, keyword)
             )
         """)
-        # جدول إعدادات الردود التلقائية
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS auto_reply_settings (
                 chat_id INTEGER PRIMARY KEY,
@@ -1162,7 +1147,6 @@ class Database:
                 updated_at TEXT
             )
         """)
-        # جدول تذاكر الدعم
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS support_tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1177,7 +1161,6 @@ class Database:
                 replied INTEGER DEFAULT 0
             )
         """)
-        # جدول مشرفي البوت
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_admins (
                 user_id INTEGER PRIMARY KEY,
@@ -1185,7 +1168,6 @@ class Database:
                 added_at TEXT
             )
         """)
-        # جدول الإعدادات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -1196,7 +1178,6 @@ class Database:
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup', '1')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_ticket_number', '0')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_backup', '')")
-        # جدول الإحالات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1206,7 +1187,6 @@ class Database:
                 UNIQUE(referrer_id, referred_id)
             )
         """)
-        # جدول مكافآت الإحالات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS referral_rewards (
                 user_id INTEGER PRIMARY KEY,
@@ -1216,7 +1196,6 @@ class Database:
                 last_referral_date TEXT
             )
         """)
-        # جدول إعدادات التذكيرات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_reminder_settings (
                 user_id INTEGER PRIMARY KEY,
@@ -1228,14 +1207,12 @@ class Database:
                 notification_lang TEXT DEFAULT 'ar'
             )
         """)
-        # جدول الترجمة
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_translation (
                 user_id INTEGER PRIMARY KEY,
                 lang TEXT DEFAULT 'off'
             )
         """)
-        # جدول المسابقات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS contests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1250,7 +1227,6 @@ class Database:
                 contest_type TEXT DEFAULT 'raffle'
             )
         """)
-        # جدول المشاركين في المسابقات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS contest_participants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1261,7 +1237,6 @@ class Database:
                 UNIQUE(user_id, contest_id)
             )
         """)
-        # جدول الفائزين في المسابقات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS contest_winners (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1270,7 +1245,6 @@ class Database:
                 announced_at TEXT
             )
         """)
-        # جدول سجلات المشرفين
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS admin_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1282,7 +1256,6 @@ class Database:
                 created_at TEXT
             )
         """)
-        # جدول التحذيرات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_warnings (
                 user_id INTEGER,
@@ -1291,7 +1264,6 @@ class Database:
                 PRIMARY KEY (user_id, chat_id)
             )
         """)
-        # جدول قواعد المجموعة
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS group_rules (
                 chat_id INTEGER PRIMARY KEY,
@@ -1300,7 +1272,6 @@ class Database:
                 updated_at TEXT
             )
         """)
-        # جدول رسائل المستخدمين
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_messages (
                 user_id INTEGER,
@@ -1309,7 +1280,6 @@ class Database:
                 PRIMARY KEY (user_id, chat_id)
             )
         """)
-        # جدول المنشورات المجدولة
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS scheduled_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1319,7 +1289,6 @@ class Database:
                 fail_count INTEGER DEFAULT 0
             )
         """)
-        # جدول تاريخ المشاعر
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS sentiment_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1331,7 +1300,6 @@ class Database:
                 created_at TEXT
             )
         """)
-        # جدول الباقات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS plans (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1347,7 +1315,6 @@ class Database:
                 created_at TEXT
             )
         """)
-        # جدول الاشتراكات
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1365,7 +1332,6 @@ class Database:
                 FOREIGN KEY (plan_id) REFERENCES plans(id)
             )
         """)
-        # جدول الفواتير
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS invoices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1383,7 +1349,6 @@ class Database:
                 FOREIGN KEY (plan_id) REFERENCES plans(id)
             )
         """)
-        # جدول سجلات الدفع
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS payment_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1431,6 +1396,7 @@ class Database:
         await conn.commit()
 
 DB = Database()
+
 # =====================================================================
 # 8. المستودعات (Repositories) - جميع المستودعات كاملة
 # =====================================================================
@@ -1962,7 +1928,6 @@ class GroupRepository:
             result = []
             seen = set()
             async with DB._get_connection() as conn:
-                # 1. من hidden_owner_groups
                 async with conn.execute(
                     "SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned "
                     "FROM bot_groups bg "
@@ -1975,7 +1940,6 @@ class GroupRepository:
                         if row[0] not in seen:
                             seen.add(row[0])
                             result.append(row)
-                # 2. من hidden_admins
                 async with conn.execute(
                     "SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned "
                     "FROM bot_groups bg "
@@ -1988,7 +1952,6 @@ class GroupRepository:
                         if row[0] not in seen:
                             seen.add(row[0])
                             result.append(row)
-                # 3. من group_admins (مشرفين التيليجرام)
                 async with conn.execute(
                     "SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned "
                     "FROM bot_groups bg "
@@ -2001,7 +1964,6 @@ class GroupRepository:
                         if row[0] not in seen:
                             seen.add(row[0])
                             result.append(row)
-                # 4. من user_groups_link (الجدول الجديد للربط المباشر)
                 async with conn.execute(
                     "SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned "
                     "FROM bot_groups bg "
@@ -2038,7 +2000,6 @@ class GroupRepository:
 
     @staticmethod
     async def link_user_to_group(user_id: int, chat_id: int) -> None:
-        """ربط المستخدم بالمجموعة في جدول user_groups_link"""
         try:
             await DB.execute(
                 "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)",
@@ -2049,7 +2010,6 @@ class GroupRepository:
 
     @staticmethod
     async def unlink_user_from_group(user_id: int, chat_id: int) -> None:
-        """إلغاء ربط المستخدم بالمجموعة"""
         try:
             await DB.execute(
                 "DELETE FROM user_groups_link WHERE user_id=? AND chat_id=?",
@@ -2057,30 +2017,6 @@ class GroupRepository:
             )
         except Exception as e:
             log_error(e, {'user_id': user_id, 'chat_id': chat_id})
-
-    @staticmethod
-    async def get_group_admins(chat_id: int) -> List[int]:
-        try:
-            rows = await DB.fetchall("SELECT user_id FROM group_admins WHERE chat_id=?", (chat_id,))
-            return [row[0] for row in rows]
-        except:
-            return []
-
-    @staticmethod
-    async def get_hidden_owners(chat_id: int) -> List[int]:
-        try:
-            rows = await DB.fetchall("SELECT owner_id FROM hidden_owner_groups WHERE chat_id=?", (chat_id,))
-            return [row[0] for row in rows]
-        except:
-            return []
-
-    @staticmethod
-    async def get_hidden_admins(chat_id: int) -> List[int]:
-        try:
-            rows = await DB.fetchall("SELECT admin_id FROM hidden_admins WHERE chat_id=?", (chat_id,))
-            return [row[0] for row in rows]
-        except:
-            return []
 
     @staticmethod
     async def is_user_linked(user_id: int, chat_id: int) -> bool:
@@ -2125,6 +2061,14 @@ class SecurityRepository:
         'night_mode_start': '23:00', 'night_mode_end': '06:00', 'night_mode_action': 'mute',
         'nsfw_enabled': False, 'nsfw_threshold': 0.7
     }
+
+    @classmethod
+    def invalidate_cache(cls, chat_id: int = None):
+        """مسح الكاش لمجموعة محددة أو مسح الكاش كله"""
+        if chat_id:
+            cls._cache.pop(chat_id, None)
+        else:
+            cls._cache.clear()
 
     @classmethod
     async def get(cls, chat_id: int, force_refresh: bool = False) -> dict:
@@ -2188,7 +2132,7 @@ class SecurityRepository:
             updates = [f"{k}=?" for k in validated]
             vals = list(validated.values()) + [chat_id]
             await DB.execute(f"UPDATE group_security SET {', '.join(updates)} WHERE chat_id=?", vals)
-            cls._cache.pop(chat_id, None)
+            cls.invalidate_cache(chat_id)
             return True
         except:
             return False
@@ -3014,6 +2958,7 @@ class UserState(Enum):
     WAIT_REM_GLOBAL_BAN = auto()
     WAIT_KEYWORD = auto()
     WAIT_REPLY = auto()
+    WAIT_REPLY_BUTTONS = auto()
     WAIT_LOG_CH = auto()
     WAIT_CONTEST_TITLE = auto()
     WAIT_CONTEST_DESC = auto()
@@ -3082,7 +3027,6 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
                 if row2:
                     authorized = True
                 else:
-                    # التحقق من جدول user_groups_link
                     linked = await GroupRepository.is_user_linked(user_id, chat_id)
                     if linked:
                         authorized = True
@@ -3161,147 +3105,75 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
             )
             METRICS.record_api_call('send_message_plain', time.time() - start_time)
             return result
+
 # =====================================================================
 # 13. تعريفات الكيبوردات (الأزرار)
 # =====================================================================
 class CB:
-    MAIN = "main"
-    BACK = "back"
-    CANCEL = "cancel"
-    CH_ADD = "ch_add"
-    CH_LIST = "ch_list"
-    CH_DEL = "ch_del:"
-    CH_SEL = "ch_sel:"
-    POST_ADD = "post_add"
-    POST_PUB = "post_pub"
-    POST_LIST = "post_list"
-    POST_REC = "post_rec"
-    POST_DEL = "post_del:"
-    POST_CLEAR = "post_clear:"
-    PUB_ALL = "pub_all"
-    STATS_PEND = "stats_pend"
-    STATS_FULL = "stats_full"
-    GROUPS = "groups"
-    GRP_SET = "grp_set:"
-    SETTINGS = "settings"
-    TOGGLE_AUTO = "toggle_auto"
-    TOGGLE_REC = "toggle_rec"
-    SCHEDULE = "schedule:"
-    SCHED_MIN = "sched_min:"
-    SCHED_HOUR = "sched_hour:"
-    SCHED_DAY = "sched_day:"
-    SCHED_TIME = "sched_time:"
-    SEC_BANNED = "sec_banned:"
-    SEC_CLOSE = "sec_close"
-    SEC_ENABLE_ALL = "sec_enable_all:"
-    SEC_DISABLE_ALL = "sec_disable_all:"
+    MAIN = "main"; BACK = "back"; CANCEL = "cancel"
+    CH_ADD = "ch_add"; CH_LIST = "ch_list"; CH_DEL = "ch_del:"; CH_SEL = "ch_sel:"
+    POST_ADD = "post_add"; POST_PUB = "post_pub"; POST_LIST = "post_list"
+    POST_REC = "post_rec"; POST_DEL = "post_del:"; POST_CLEAR = "post_clear:"
+    PUB_ALL = "pub_all"; STATS_PEND = "stats_pend"; STATS_FULL = "stats_full"
+    GROUPS = "groups"; GRP_SET = "grp_set:"
+    SETTINGS = "settings"; TOGGLE_AUTO = "toggle_auto"; TOGGLE_REC = "toggle_rec"
+    SCHEDULE = "schedule:"; SCHED_MIN = "sched_min:"; SCHED_HOUR = "sched_hour:"
+    SCHED_DAY = "sched_day:"; SCHED_TIME = "sched_time:"
+    SEC_BANNED = "sec_banned:"; SEC_CLOSE = "sec_close"
+    SEC_ENABLE_ALL = "sec_enable_all:"; SEC_DISABLE_ALL = "sec_disable_all:"
     SEC_DEL_PEN = "sec_del_pen:"
-    BAN_ADD = "ban_add:"
-    BAN_LIST = "ban_list:"
-    BAN_REM = "ban_rem:"
-    PENALTY = "penalty:"
-    PEN_KICK = "pen_kick:"
-    PEN_BAN = "pen_ban:"
-    PEN_MUTE = "pen_mute:"
-    PEN_WARN = "pen_warn:"
-    PEN_RESTRICT = "pen_restrict:"
+    BAN_ADD = "ban_add:"; BAN_LIST = "ban_list:"; BAN_REM = "ban_rem:"
+    PENALTY = "penalty:"; PEN_KICK = "pen_kick:"; PEN_BAN = "pen_ban:"
+    PEN_MUTE = "pen_mute:"; PEN_WARN = "pen_warn:"; PEN_RESTRICT = "pen_restrict:"
     PEN_NONE = "pen_none:"
-    ADV_ACT = "adv_act:"
-    ACT_BAN = "act_ban:"
-    ACT_MUTE = "act_mute:"
-    ACT_WARN = "act_warn:"
-    ACT_KICK = "act_kick:"
-    ACT_RESTRICT = "act_restrict:"
-    ACT_PIN = "act_pin:"
-    ACT_LOG = "act_log:"
-    ACT_UNBAN = "act_unban:"
+    ADV_ACT = "adv_act:"; ACT_BAN = "act_ban:"; ACT_MUTE = "act_mute:"
+    ACT_WARN = "act_warn:"; ACT_KICK = "act_kick:"; ACT_RESTRICT = "act_restrict:"
+    ACT_PIN = "act_pin:"; ACT_LOG = "act_log:"; ACT_UNBAN = "act_unban:"
     MUTE_DUR = "mute_dur:"
-    PANEL_LOCK = "panel_lock:"
-    PANEL_UNLOCK = "panel_unlock:"
-    PANEL_CLOSE = "panel_close"
-    HELP = "help"
-    SUPPORT = "support"
-    SUPPORT_TICKET = "support_ticket"
-    TRIAL = "trial"
-    SUBSCRIBE = "subscribe"
-    BUY_SUB = "buy_sub:"
-    DEVELOPER = "developer"
-    UPDATES = "updates"
-    REFERRAL = "referral"
-    REF_CLAIM = "ref_claim"
-    REF_LIST = "ref_list"
-    REMINDER = "reminder"
-    REM_TOGGLE_SUB = "rem_sub"
-    REM_TOGGLE_DAILY = "rem_daily"
-    REM_TOGGLE_WEEKLY = "rem_weekly"
-    REM_SET_DAYS = "rem_days"
-    REM_SET_LANG = "rem_lang"
+    PANEL_LOCK = "panel_lock:"; PANEL_UNLOCK = "panel_unlock:"; PANEL_CLOSE = "panel_close"
+    HELP = "help"; SUPPORT = "support"; SUPPORT_TICKET = "support_ticket"
+    TRIAL = "trial"; SUBSCRIBE = "subscribe"; BUY_SUB = "buy_sub:"
+    DEVELOPER = "developer"; UPDATES = "updates"
+    REFERRAL = "referral"; REF_CLAIM = "ref_claim"; REF_LIST = "ref_list"
+    REMINDER = "reminder"; REM_TOGGLE_SUB = "rem_sub"; REM_TOGGLE_DAILY = "rem_daily"
+    REM_TOGGLE_WEEKLY = "rem_weekly"; REM_SET_DAYS = "rem_days"; REM_SET_LANG = "rem_lang"
     REM_LANG = "rem_lang:"
-    TRANSLATION = "translation"
-    TRANS_OFF = "trans_off"
-    TRANS_SET = "trans_set:"
-    CONTESTS = "contests"
-    CONTEST_JOIN = "contest_join:"
-    CONTEST_WINNERS = "contest_winners"
-    ADMIN = "admin"
-    ADMIN_USERS = "admin_users"
-    ADMIN_BANNED = "admin_banned"
-    ADMIN_UNBAN_ALL = "admin_unban_all"
-    ADMIN_CHANNELS = "admin_channels"
-    ADMIN_BANNED_CH = "admin_banned_ch"
-    ADMIN_ACTIVATE_CH = "admin_activate_ch"
-    ADMIN_GROUPS = "admin_groups"
-    ADMIN_BANNED_GR = "admin_banned_gr"
-    ADMIN_UNBAN_GR = "admin_unban_gr"
-    ADMIN_ADD_ADMIN = "admin_add_admin"
-    ADMIN_REM_ADMIN = "admin_rem_admin"
-    ADMIN_RAM = "admin_ram"
-    ADMIN_STATS = "admin_stats"
-    ADMIN_METRICS = "admin_metrics"
-    ADMIN_BACKUP = "admin_backup"
-    ADMIN_RESTORE = "admin_restore"
+    TRANSLATION = "translation"; TRANS_OFF = "trans_off"; TRANS_SET = "trans_set:"
+    CONTESTS = "contests"; CONTEST_JOIN = "contest_join:"; CONTEST_WINNERS = "contest_winners"
+    ADMIN = "admin"; ADMIN_USERS = "admin_users"; ADMIN_BANNED = "admin_banned"
+    ADMIN_UNBAN_ALL = "admin_unban_all"; ADMIN_CHANNELS = "admin_channels"
+    ADMIN_BANNED_CH = "admin_banned_ch"; ADMIN_ACTIVATE_CH = "admin_activate_ch"
+    ADMIN_GROUPS = "admin_groups"; ADMIN_BANNED_GR = "admin_banned_gr"
+    ADMIN_UNBAN_GR = "admin_unban_gr"; ADMIN_ADD_ADMIN = "admin_add_admin"
+    ADMIN_REM_ADMIN = "admin_rem_admin"; ADMIN_RAM = "admin_ram"
+    ADMIN_STATS = "admin_stats"; ADMIN_METRICS = "admin_metrics"
+    ADMIN_BACKUP = "admin_backup"; ADMIN_RESTORE = "admin_restore"
     ADMIN_RESTORE_SEL = "admin_restore_sel:"
-    ADMIN_SEND_UPDATE = "admin_send_update"
-    ADMIN_SET_UPDATE_CH = "admin_set_update_ch"
-    ADMIN_SHOW_UPDATE = "admin_show_update"
-    ADMIN_FORCE_SUB = "admin_force_sub"
-    ADMIN_SET_FORCE = "admin_set_force"
-    ADMIN_BROADCAST = "admin_broadcast"
-    ADMIN_CONFIRM_BROADCAST = "admin_confirm_broadcast"
-    ADMIN_TICKETS = "admin_tickets"
-    ADMIN_DEL_TICKETS = "admin_del_tickets"
-    ADMIN_CONFIRM_DEL_TICKETS = "admin_confirm_del_tickets"
-    ADMIN_LOG_CH = "admin_log_ch"
-    ADMIN_SET_LOG_CH = "admin_set_log_ch"
-    ADMIN_REPLIES = "admin_replies"
-    ADMIN_ADD_REPLY = "admin_add_reply"
-    ADMIN_LIST_REPLIES = "admin_list_replies"
-    ADMIN_DEL_REPLY = "admin_del_reply"
-    ADMIN_BANNED_WORDS = "admin_banned_words"
-    ADMIN_ADD_BANNED = "admin_add_banned"
-    ADMIN_LIST_BANNED = "admin_list_banned"
-    ADMIN_REM_BANNED = "admin_rem_banned"
-    ADMIN_CREATE_CONTEST = "admin_create_contest"
-    ADMIN_DECLARE_WINNER = "admin_declare_winner"
+    ADMIN_SEND_UPDATE = "admin_send_update"; ADMIN_SET_UPDATE_CH = "admin_set_update_ch"
+    ADMIN_SHOW_UPDATE = "admin_show_update"; ADMIN_FORCE_SUB = "admin_force_sub"
+    ADMIN_SET_FORCE = "admin_set_force"; ADMIN_BROADCAST = "admin_broadcast"
+    ADMIN_CONFIRM_BROADCAST = "admin_confirm_broadcast"; ADMIN_TICKETS = "admin_tickets"
+    ADMIN_DEL_TICKETS = "admin_del_tickets"; ADMIN_CONFIRM_DEL_TICKETS = "admin_confirm_del_tickets"
+    ADMIN_LOG_CH = "admin_log_ch"; ADMIN_SET_LOG_CH = "admin_set_log_ch"
+    ADMIN_REPLIES = "admin_replies"; ADMIN_ADD_REPLY = "admin_add_reply"
+    ADMIN_LIST_REPLIES = "admin_list_replies"; ADMIN_DEL_REPLY = "admin_del_reply"
+    ADMIN_BANNED_WORDS = "admin_banned_words"; ADMIN_ADD_BANNED = "admin_add_banned"
+    ADMIN_LIST_BANNED = "admin_list_banned"; ADMIN_REM_BANNED = "admin_rem_banned"
+    ADMIN_CREATE_CONTEST = "admin_create_contest"; ADMIN_DECLARE_WINNER = "admin_declare_winner"
     ADMIN_DEL_CONTEST = "admin_del_contest:"
-    AUTO_REPLY_MENU = "auto_reply_menu:"
-    AUTO_REPLY_TOGGLE = "auto_reply_toggle:"
-    AUTO_REPLY_ADMINS = "auto_reply_admins:"
-    AUTO_REPLY_RESET = "auto_reply_reset:"
-    AUTO_REPLY_CONFIRM_RESET = "auto_reply_confirm_reset:"
-    AUTO_REPLY_STATS = "auto_reply_stats:"
-    AUTO_REPLY_ADD = "auto_reply_add:"
-    AUTO_REPLY_DEL = "auto_reply_del:"
-    AUTO_REPLY_LIST = "auto_reply_list:"
-    CHECK_SUB = "check_sub"
-    PLANS = "plans"
-    INVOICES = "invoices"
-    ADMIN_EXPORT_REPLIES = "admin_export_replies"
-    ADMIN_IMPORT_REPLIES = "admin_import_replies"
-    ADMIN_REFRESH_CACHE = "admin_refresh_cache"
-    ADMIN_CONFIRM_IMPORT = "admin_confirm_import"
+    AUTO_REPLY_MENU = "auto_reply_menu:"; AUTO_REPLY_TOGGLE = "auto_reply_toggle:"
+    AUTO_REPLY_ADMINS = "auto_reply_admins:"; AUTO_REPLY_RESET = "auto_reply_reset:"
+    AUTO_REPLY_CONFIRM_RESET = "auto_reply_confirm_reset:"; AUTO_REPLY_STATS = "auto_reply_stats:"
+    AUTO_REPLY_ADD = "auto_reply_add:"; AUTO_REPLY_DEL = "auto_reply_del:"
+    AUTO_REPLY_LIST = "auto_reply_list:"; CHECK_SUB = "check_sub"
+    PLANS = "plans"; INVOICES = "invoices"
+    ADMIN_EXPORT_REPLIES = "admin_export_replies"; ADMIN_IMPORT_REPLIES = "admin_import_replies"
+    ADMIN_REFRESH_CACHE = "admin_refresh_cache"; ADMIN_CONFIRM_IMPORT = "admin_confirm_import"
     ADMIN_IMPORT_GITHUB = "admin_import_github"
 
+# =====================================================================
+# 14. KeyboardFactory
+# =====================================================================
 class KeyboardFactory:
     @staticmethod
     def security(chat_id: int, settings: dict, lang: str = 'ar') -> InlineKeyboardMarkup:
@@ -3506,7 +3378,7 @@ class KeyboardFactory:
         return InlineKeyboardMarkup(kb), title
 
 # =====================================================================
-# 14. معالج الأوامر - CommandHandlers (كامل)
+# 15. معالج الأوامر - CommandHandlers
 # =====================================================================
 class CommandHandlers:
     @staticmethod
@@ -3915,7 +3787,7 @@ class CommandHandlers:
         await safe_send(context.bot, user_id, msg)
 
 # =====================================================================
-# 15. نظام العقوبات (كامل)
+# 16. نظام العقوبات
 # =====================================================================
 class PenaltyStrategy(ABC):
     @abstractmethod
@@ -4014,9 +3886,37 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
     return await strategy.apply(bot, chat_id, user_id, duration=duration)
 
 # =====================================================================
-# 16. معالج الكولباك - CallbackHandlers (كامل مع التصحيح)
+# 17. معالج الكولباك - CallbackHandlers
 # =====================================================================
 class CallbackHandlers:
+    @staticmethod
+    async def _build_security_message(settings: dict, lang: str, chat_id: int) -> Tuple[str, InlineKeyboardMarkup]:
+        text = get_text(lang, 'security_text',
+            links='✅' if settings.get('delete_links') else '❌',
+            mentions='✅' if settings.get('mentions') else '❌',
+            slow='✅' if settings.get('slow_mode') else '❌',
+            slow_sec=settings.get('slow_mode_seconds', 5),
+            welcome='✅' if settings.get('welcome_enabled') else '❌',
+            goodbye='✅' if settings.get('goodbye_enabled') else '❌',
+            video='✅' if settings.get('delete_videos') else '❌',
+            audio='✅' if settings.get('delete_audio') else '❌',
+            animation='✅' if settings.get('delete_animation') else '❌',
+            service='✅' if settings.get('delete_service') else '❌',
+            documents='✅' if settings.get('delete_documents') else '❌',
+            stickers='✅' if settings.get('delete_stickers') else '❌',
+            forwarded='✅' if settings.get('delete_forwarded') else '❌',
+            polls='✅' if settings.get('delete_polls') else '❌',
+            games='✅' if settings.get('delete_games') else '❌',
+            voice='✅' if settings.get('delete_voice') else '❌',
+            video_note='✅' if settings.get('delete_video_note') else '❌',
+            flood='✅' if settings.get('antiflood_enabled') else '❌',
+            night='✅' if settings.get('night_mode_enabled') else '❌',
+            max_len=settings.get('max_message_length', 0) or 'غير محدود',
+            auto_penalty=settings.get('auto_penalty', 'none'),
+            delete_penalty=settings.get('delete_penalty', 'none'))
+        keyboard = KeyboardFactory.security(chat_id, settings, lang)
+        return text, keyboard
+
     @staticmethod
     async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -4062,18 +3962,13 @@ class CallbackHandlers:
             await CommandHandlers.start(update, context)
             return
 
-        # إدارة القنوات
+        # القنوات
         if data == CB.CH_ADD:
-            has_sub = await UserRepository.has_active_subscription(user_id)
-            has_trial = await UserRepository.has_used_trial(user_id)
-            if not has_sub and not has_trial:
+            if not await UserRepository.has_active_subscription(user_id) and not await UserRepository.has_used_trial(user_id):
                 await query.answer(get_text(lang, 'subscription_expired'), show_alert=True)
                 return
             StateManager.set(user_id, UserState.WAIT_CHANNEL)
-            await query.edit_message_text(
-                get_text(lang, 'enter_channel_id') + "\n\n"
-                "📌 **ملاحظة:** تأكد من أن البوت مشرف في القناة مع صلاحية النشر."
-            )
+            await query.edit_message_text(get_text(lang, 'enter_channel_id'))
             return
         if data == CB.CH_LIST:
             channels = await ChannelRepository.get_all(user_id)
@@ -4104,10 +3999,7 @@ class CallbackHandlers:
 
         # المنشورات
         if data == CB.POST_ADD:
-            if not await UserRepository.has_active_subscription(user_id) and not await UserRepository.has_used_trial(user_id):
-                await query.edit_message_text(get_text(lang, 'subscription_expired'))
-                return
-            active = context.user_data.get('active_channel') or await ChannelRepository.get_active(user_id)
+            active = await ChannelRepository.get_active(user_id)
             if not active:
                 await query.edit_message_text(get_text(lang, 'no_active_channel'))
                 return
@@ -4122,10 +4014,7 @@ class CallbackHandlers:
             await query.edit_message_text(get_text(lang, 'enter_posts', count=target))
             return
         if data == CB.POST_PUB:
-            if not await UserRepository.has_active_subscription(user_id) and not await UserRepository.has_used_trial(user_id):
-                await query.edit_message_text(get_text(lang, 'subscription_expired'))
-                return
-            active = context.user_data.get('active_channel') or await ChannelRepository.get_active(user_id)
+            active = await ChannelRepository.get_active(user_id)
             if not active:
                 await query.edit_message_text(get_text(lang, 'no_active_channel'))
                 return
@@ -4154,7 +4043,7 @@ class CallbackHandlers:
                 await query.edit_message_text(get_text(lang, 'publish_fail', error=str(e)[:100]))
             return
         if data == CB.POST_LIST:
-            active = context.user_data.get('active_channel') or await ChannelRepository.get_active(user_id)
+            active = await ChannelRepository.get_active(user_id)
             if not active:
                 await query.edit_message_text(get_text(lang, 'no_active_channel'))
                 return
@@ -4257,30 +4146,8 @@ class CallbackHandlers:
                 await query.answer(get_text(lang, 'not_authorized'), show_alert=True)
                 return
             settings = await SecurityRepository.get(chat_id)
-            text = get_text(lang, 'security_text',
-                            links='✅' if settings.get('delete_links') else '❌',
-                            mentions='✅' if settings.get('mentions') else '❌',
-                            slow='✅' if settings.get('slow_mode') else '❌',
-                            slow_sec=settings.get('slow_mode_seconds', 5),
-                            welcome='✅' if settings.get('welcome_enabled') else '❌',
-                            goodbye='✅' if settings.get('goodbye_enabled') else '❌',
-                            video='✅' if settings.get('delete_videos') else '❌',
-                            audio='✅' if settings.get('delete_audio') else '❌',
-                            animation='✅' if settings.get('delete_animation') else '❌',
-                            service='✅' if settings.get('delete_service') else '❌',
-                            documents='✅' if settings.get('delete_documents') else '❌',
-                            stickers='✅' if settings.get('delete_stickers') else '❌',
-                            forwarded='✅' if settings.get('delete_forwarded') else '❌',
-                            polls='✅' if settings.get('delete_polls') else '❌',
-                            games='✅' if settings.get('delete_games') else '❌',
-                            voice='✅' if settings.get('delete_voice') else '❌',
-                            video_note='✅' if settings.get('delete_video_note') else '❌',
-                            flood='✅' if settings.get('antiflood_enabled') else '❌',
-                            night='✅' if settings.get('night_mode_enabled') else '❌',
-                            max_len=settings.get('max_message_length', 0) or 'غير محدود',
-                            auto_penalty=settings.get('auto_penalty', 'none'),
-                            delete_penalty=settings.get('delete_penalty', 'none'))
-            await query.edit_message_text(text, reply_markup=KeyboardFactory.security(chat_id, settings, lang))
+            text, keyboard = await CallbackHandlers._build_security_message(settings, lang, chat_id)
+            await query.edit_message_text(text, reply_markup=keyboard)
             return
 
         # الإعدادات
@@ -4301,7 +4168,6 @@ class CallbackHandlers:
         # الجدولة
         if data.startswith(CB.SCHEDULE):
             ch_id = int(data.split(":")[-1])
-            context.user_data['schedule_ch'] = ch_id
             s = await ScheduleRepository.get(ch_id)
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⏱️ دقائق", callback_data=f"{CB.SCHED_MIN}{ch_id}"),
@@ -4337,237 +4203,9 @@ class CallbackHandlers:
             await query.edit_message_text(get_text(lang, 'enter_publish_time'))
             return
 
-        # ============================================================
-if data.startswith("sec_"):
-    parts = data.split(":")
-    if len(parts) < 3:
-        return
-    action = parts[1]
-    try:
-        chat_id = int(parts[2])
-    except ValueError:
-        return
-
-    # 1. التحقق من الصلاحية
-    if not await is_authorized_in_group(context.bot, chat_id, user_id):
-        await query.answer(get_text(lang, 'not_authorized'), show_alert=True)
-        return
-
-    # 2. خريطة الأعمدة
-    field_map = {
-        "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
-        "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
-        "service": "delete_service", "doc": "delete_documents", "sticker": "delete_stickers",
-        "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
-        "voice": "delete_voice", "videonote": "delete_video_note",
-        "welcome": "welcome_enabled", "goodbye": "goodbye_enabled",
-        "flood": "antiflood_enabled", "night": "night_mode_enabled"
-    }
-
-    # 3. معالجة تبديل الإعدادات (الأزرار التي تغير قيمة 0/1)
-    if action in field_map:
-        col = field_map[action]
-
-        # جلب الإعدادات الحالية (مع إجبار التحديث)
-        settings = await SecurityRepository.get(chat_id, force_refresh=True)
-        current = settings.get(col, 0)
-        new_val = 1 if current == 0 else 0
-
-        # تحديث قاعدة البيانات
-        success = await SecurityRepository.set(chat_id, **{col: new_val})
-
-        if not success:
-            await query.answer("❌ فشل التحديث، حاول مجدداً", show_alert=True)
-            return
-
-        # **مسح الكاش بالقوة**
-        SecurityRepository._cache.pop(chat_id, None)
-
-        # جلب الإعدادات المحدثة (مرة أخرى للتأكد)
-        settings = await SecurityRepository.get(chat_id, force_refresh=True)
-
-        # إعادة بناء النص والأزرار
-        text = get_text(lang, 'security_text',
-            links='✅' if settings.get('delete_links') else '❌',
-            mentions='✅' if settings.get('mentions') else '❌',
-            slow='✅' if settings.get('slow_mode') else '❌',
-            slow_sec=settings.get('slow_mode_seconds', 5),
-            welcome='✅' if settings.get('welcome_enabled') else '❌',
-            goodbye='✅' if settings.get('goodbye_enabled') else '❌',
-            video='✅' if settings.get('delete_videos') else '❌',
-            audio='✅' if settings.get('delete_audio') else '❌',
-            animation='✅' if settings.get('delete_animation') else '❌',
-            service='✅' if settings.get('delete_service') else '❌',
-            documents='✅' if settings.get('delete_documents') else '❌',
-            stickers='✅' if settings.get('delete_stickers') else '❌',
-            forwarded='✅' if settings.get('delete_forwarded') else '❌',
-            polls='✅' if settings.get('delete_polls') else '❌',
-            games='✅' if settings.get('delete_games') else '❌',
-            voice='✅' if settings.get('delete_voice') else '❌',
-            video_note='✅' if settings.get('delete_video_note') else '❌',
-            flood='✅' if settings.get('antiflood_enabled') else '❌',
-            night='✅' if settings.get('night_mode_enabled') else '❌',
-            max_len=settings.get('max_message_length', 0) or 'غير محدود',
-            auto_penalty=settings.get('auto_penalty', 'none'),
-            delete_penalty=settings.get('delete_penalty', 'none')
-        )
-
-        # بناء الأزرار الجديدة
-        kb = KeyboardFactory.security(chat_id, settings, lang)
-
-        # **محاولة تعديل الرسالة، وإذا فشلت نرسل رسالة جديدة**
-        try:
-            await query.edit_message_text(text, reply_markup=kb)
-        except Exception as e:
-            # في حال فشل التحرير (مثلاً الرسالة محذوفة)
-            await safe_send(context.bot, user_id, text, reply_markup=kb)
-            try:
-                await query.message.delete()
-            except:
-                pass
-
-        return
-
-    # باقي الإجراءات (maxlen, warn, etc.) بنفس المنطق مع مسح الكاش بعد كل تحديث
-    if action == "maxlen":
-        StateManager.set(user_id, UserState.WAIT_MAX_LEN)
-        context.user_data['sec_chat'] = chat_id
-        await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
-        return
-
-    if action == "warn":
-        settings = await SecurityRepository.get(chat_id)
-        text = get_text(lang, 'warning_settings',
-                        max_warnings=settings.get('max_warnings', 3),
-                        warn_penalty=settings.get('warn_penalty', 'ban'))
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📝 تغيير عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
-             InlineKeyboardButton("⚖️ تغيير العقوبة", callback_data=f"warn_penalty:{chat_id}")],
-            [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
-        ])
-        await query.edit_message_text(text, reply_markup=kb)
-        return
-
-    if action == "warn_count":
-        StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
-        context.user_data['sec_chat'] = chat_id
-        await query.edit_message_text("📝 أرسل الحد الأقصى للتحذيرات (1-10):")
-        return
-
-    if action == "warn_penalty":
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛑 حظر", callback_data=f"set_warn_penalty:{chat_id}:ban"),
-             InlineKeyboardButton("🔇 كتم", callback_data=f"set_warn_penalty:{chat_id}:mute")],
-            [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"sec_warn:{chat_id}")]
-        ])
-        await query.edit_message_text("⚖️ اختر عقوبة تجاوز التحذيرات:", reply_markup=kb)
-        return
-
-    if action.startswith("set_warn_penalty:"):
-        _, chat_id_str, penalty = action.split(":")
-        chat_id = int(chat_id_str)
-        await SecurityRepository.set(chat_id, warn_penalty=penalty)
-        SecurityRepository._cache.pop(chat_id, None)
-        settings = await SecurityRepository.get(chat_id, force_refresh=True)
-        text = get_text(lang, 'warning_settings',
-                        max_warnings=settings.get('max_warnings', 3),
-                        warn_penalty=settings.get('warn_penalty', 'ban'))
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📝 تغيير عدد التحذيرات", callback_data=f"warn_count:{chat_id}"),
-             InlineKeyboardButton("⚖️ تغيير العقوبة", callback_data=f"warn_penalty:{chat_id}")],
-            [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
-        ])
-        await query.edit_message_text(text, reply_markup=kb)
-        return
-
-    await query.answer()
-    return
-
-        if data == CB.SEC_CLOSE:
-            try:
-                await query.message.delete()
-            except:
-                pass
-            return
-        if data.startswith(CB.SEC_BANNED):
-            chat_id = int(data.split(":")[-1])
-            await query.edit_message_text("🚫 **الكلمات المحظورة**", reply_markup=KeyboardFactory.banned_words(chat_id, lang))
-            return
-        if data.startswith(CB.SEC_ENABLE_ALL):
-            chat_id = int(data.split(":")[-1])
-            await SecurityRepository.set(chat_id, **{f: 1 for f in
-                                                     ['delete_videos', 'delete_audio', 'delete_animation',
-                                                      'delete_service', 'delete_documents', 'delete_stickers',
-                                                      'delete_forwarded', 'delete_polls', 'delete_games', 'delete_voice',
-                                                      'delete_video_note']})
-            SecurityRepository._cache.pop(chat_id, None)
-            settings = await SecurityRepository.get(chat_id, force_refresh=True)
-            await query.edit_message_text(
-                get_text(lang, 'security_text',
-                         links='✅' if settings.get('delete_links') else '❌',
-                         mentions='✅' if settings.get('mentions') else '❌',
-                         slow='✅' if settings.get('slow_mode') else '❌',
-                         slow_sec=settings.get('slow_mode_seconds', 5),
-                         welcome='✅' if settings.get('welcome_enabled') else '❌',
-                         goodbye='✅' if settings.get('goodbye_enabled') else '❌',
-                         video='✅' if settings.get('delete_videos') else '❌',
-                         audio='✅' if settings.get('delete_audio') else '❌',
-                         animation='✅' if settings.get('delete_animation') else '❌',
-                         service='✅' if settings.get('delete_service') else '❌',
-                         documents='✅' if settings.get('delete_documents') else '❌',
-                         stickers='✅' if settings.get('delete_stickers') else '❌',
-                         forwarded='✅' if settings.get('delete_forwarded') else '❌',
-                         polls='✅' if settings.get('delete_polls') else '❌',
-                         games='✅' if settings.get('delete_games') else '❌',
-                         voice='✅' if settings.get('delete_voice') else '❌',
-                         video_note='✅' if settings.get('delete_video_note') else '❌',
-                         flood='✅' if settings.get('antiflood_enabled') else '❌',
-                         night='✅' if settings.get('night_mode_enabled') else '❌',
-                         max_len=settings.get('max_message_length', 0) or 'غير محدود',
-                         auto_penalty=settings.get('auto_penalty', 'none'),
-                         delete_penalty=settings.get('delete_penalty', 'none')),
-                reply_markup=KeyboardFactory.security(chat_id, settings, lang)
-            )
-            return
-        if data.startswith(CB.SEC_DISABLE_ALL):
-            chat_id = int(data.split(":")[-1])
-            await SecurityRepository.set(chat_id, **{f: 0 for f in
-                                                     ['delete_videos', 'delete_audio', 'delete_animation',
-                                                      'delete_service', 'delete_documents', 'delete_stickers',
-                                                      'delete_forwarded', 'delete_polls', 'delete_games', 'delete_voice',
-                                                      'delete_video_note']})
-            SecurityRepository._cache.pop(chat_id, None)
-            settings = await SecurityRepository.get(chat_id, force_refresh=True)
-            await query.edit_message_text(
-                get_text(lang, 'security_text',
-                         links='✅' if settings.get('delete_links') else '❌',
-                         mentions='✅' if settings.get('mentions') else '❌',
-                         slow='✅' if settings.get('slow_mode') else '❌',
-                         slow_sec=settings.get('slow_mode_seconds', 5),
-                         welcome='✅' if settings.get('welcome_enabled') else '❌',
-                         goodbye='✅' if settings.get('goodbye_enabled') else '❌',
-                         video='✅' if settings.get('delete_videos') else '❌',
-                         audio='✅' if settings.get('delete_audio') else '❌',
-                         animation='✅' if settings.get('delete_animation') else '❌',
-                         service='✅' if settings.get('delete_service') else '❌',
-                         documents='✅' if settings.get('delete_documents') else '❌',
-                         stickers='✅' if settings.get('delete_stickers') else '❌',
-                         forwarded='✅' if settings.get('delete_forwarded') else '❌',
-                         polls='✅' if settings.get('delete_polls') else '❌',
-                         games='✅' if settings.get('delete_games') else '❌',
-                         voice='✅' if settings.get('delete_voice') else '❌',
-                         video_note='✅' if settings.get('delete_video_note') else '❌',
-                         flood='✅' if settings.get('antiflood_enabled') else '❌',
-                         night='✅' if settings.get('night_mode_enabled') else '❌',
-                         max_len=settings.get('max_message_length', 0) or 'غير محدود',
-                         auto_penalty=settings.get('auto_penalty', 'none'),
-                         delete_penalty=settings.get('delete_penalty', 'none')),
-                reply_markup=KeyboardFactory.security(chat_id, settings, lang)
-            )
-            return
-        if data.startswith(CB.SEC_DEL_PEN):
-            chat_id = int(data.split(":")[-1])
-            await query.edit_message_text("⚖️ اختر عقوبة حذف الوسائط:", reply_markup=KeyboardFactory.penalty(chat_id, lang))
+        # الأمان
+        if data.startswith("sec_"):
+            await CallbackHandlers._handle_security_callback(update, context, query, user_id, lang)
             return
 
         # الكلمات المحظورة
@@ -4602,7 +4240,7 @@ if data.startswith("sec_"):
             if data.startswith(f"pen_{p}:"):
                 chat_id = int(data.split(":")[-1])
                 await SecurityRepository.set(chat_id, auto_penalty=p)
-                SecurityRepository._cache.pop(chat_id, None)
+                SecurityRepository.invalidate_cache(chat_id)
                 await query.edit_message_text(f"✅ تم تعيين العقوبة: {p}")
                 return
 
@@ -4893,239 +4531,10 @@ if data.startswith("sec_"):
                 await query.answer(get_text(lang, 'not_authorized'), show_alert=True)
             return
 
-        # أزرار الأدمن
+        # أزرار الأدمن (مختصرة)
         if data.startswith("admin_"):
-            if user_id != CONFIG.PRIMARY_OWNER_ID and not await BotAdminRepository.is_admin(user_id):
-                await query.answer(get_text(lang, 'not_authorized'), show_alert=True)
-                return
-            if data == CB.ADMIN_USERS:
-                stats = await UserRepository.get_stats()
-                await query.edit_message_text(get_text(lang, 'admin_users', users=stats['users'], banned=stats['banned']))
-            elif data == CB.ADMIN_BANNED:
-                users = await UserRepository.get_all_users()
-                banned_list = [u for u in users if u[1] == 1]
-                text = get_text(lang, 'admin_banned_list', list="\n".join([f"• `{u[0]}`" for u in banned_list[:20]])) if banned_list else "لا يوجد"
-                await query.edit_message_text(text)
-            elif data == CB.ADMIN_UNBAN_ALL:
-                await DB.execute("UPDATE users SET banned=0 WHERE banned=1")
-                await query.edit_message_text(get_text(lang, 'admin_unbanned_all'))
-            elif data == CB.ADMIN_CHANNELS:
-                channels = await ChannelRepository.get_all(-1)
-                text = get_text(lang, 'admin_channels_list',
-                                list="\n".join([f"• `{ch['channel_id']}` - {ch['channel_name']} {'🚫' if ch['banned'] else '✅'}" for ch in channels[:50]])) if channels else get_text(lang, 'no_channels')
-                await query.edit_message_text(text)
-            elif data == CB.ADMIN_BANNED_CH:
-                channels = await DB.fetchall("SELECT channel_id, channel_name FROM user_channels WHERE banned=1")
-                text = get_text(lang, 'admin_banned_channels',
-                                list="\n".join([f"• `{ch[0]}` - {ch[1]}" for ch in channels[:50]])) if channels else "لا توجد"
-                await query.edit_message_text(text)
-            elif data == CB.ADMIN_ACTIVATE_CH:
-                await DB.execute("UPDATE user_channels SET banned=0 WHERE banned=1")
-                await query.edit_message_text(get_text(lang, 'admin_activated_channels'))
-            elif data == CB.ADMIN_GROUPS:
-                rows = await DB.fetchall("SELECT chat_id, chat_name, username, banned FROM bot_groups ORDER BY chat_id LIMIT 50")
-                text = get_text(lang, 'admin_groups_list',
-                                list="\n".join([f"• `{r[0]}` - {r[1]} {'🚫' if r[3] else '✅'}" for r in rows])) if rows else get_text(lang, 'no_groups')
-                await query.edit_message_text(text)
-            elif data == CB.ADMIN_BANNED_GR:
-                rows = await DB.fetchall("SELECT chat_id, chat_name, username FROM bot_groups WHERE banned=1")
-                text = get_text(lang, 'admin_banned_groups',
-                                list="\n".join([f"• `{r[0]}` - {r[1]}" for r in rows[:50]])) if rows else "لا توجد"
-                await query.edit_message_text(text)
-            elif data == CB.ADMIN_UNBAN_GR:
-                await DB.execute("UPDATE bot_groups SET banned=0 WHERE banned=1")
-                await query.edit_message_text(get_text(lang, 'admin_unbanned_groups'))
-            elif data == CB.ADMIN_ADD_ADMIN:
-                StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
-                await query.edit_message_text(get_text(lang, 'admin_add_admin'))
-            elif data == CB.ADMIN_REM_ADMIN:
-                StateManager.set(user_id, UserState.WAIT_ADMIN_REM)
-                await query.edit_message_text(get_text(lang, 'admin_rem_admin'))
-            elif data == CB.ADMIN_RAM:
-                ram = get_ram_usage()
-                await query.edit_message_text(get_text(lang, 'admin_ram', used=ram['used'], total=ram['total'], percent=ram['percent']))
-            elif data == CB.ADMIN_STATS:
-                stats = await UserRepository.get_stats()
-                await query.edit_message_text(get_text(lang, 'admin_stats_text',
-                                                       users=stats['users'], banned=stats['banned'],
-                                                       posts=stats['posts'], groups=stats['groups'], channels=stats['channels']))
-            elif data == CB.ADMIN_METRICS:
-                metrics = METRICS.get_stats()
-                active = (await DB.fetchone("SELECT COUNT(*) FROM users WHERE updated_at > datetime('now', '-30 days')"))[0]
-                today = (await DB.fetchone(
-                    "SELECT COUNT(*) FROM posts WHERE published_at > datetime('now', 'start of day')"))[0]
-                db_size = (PATHS.DB.stat().st_size / (1024 * 1024)) if PATHS.DB.exists() else 0
-                uptime_hours = metrics['uptime_seconds'] // 3600
-                uptime_minutes = (metrics['uptime_seconds'] % 3600) // 60
-                uptime_str = f"{uptime_hours}h {uptime_minutes}m"
-                await query.edit_message_text(get_text(lang, 'admin_metrics',
-                                                       active=active, today=today, db_size=db_size,
-                                                       api_calls=metrics['api_calls_last_hour'],
-                                                       errors=metrics['errors_last_hour'],
-                                                       uptime=uptime_str))
-            elif data == CB.ADMIN_BACKUP:
-                try:
-                    backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
-                    shutil.copy2(PATHS.DB, backup_file)
-                    await safe_send(context.bot, user_id, get_text(lang, 'admin_backup_created', filename=backup_file.name))
-                except Exception as e:
-                    await safe_send(context.bot, user_id, get_text(lang, 'admin_backup_failed', error=str(e)[:100]))
-            elif data == CB.ADMIN_RESTORE:
-                backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
-                if not backups:
-                    await query.edit_message_text(get_text(lang, 'no_backups'))
-                    return
-                kb = [[InlineKeyboardButton(b.name, callback_data=f"{CB.ADMIN_RESTORE_SEL}{b.name}")] for b in backups[:10]]
-                kb.append([InlineKeyboardButton(get_text(lang, 'back'), callback_data=CB.ADMIN)])
-                await query.edit_message_text(get_text(lang, 'admin_restore_choose'), reply_markup=InlineKeyboardMarkup(kb))
-            elif data.startswith(CB.ADMIN_RESTORE_SEL):
-                filename = data.split(":")[-1]
-                filepath = PATHS.BACKUPS / filename
-                if not filepath.exists():
-                    await query.edit_message_text(get_text(lang, 'file_not_found'))
-                    return
-                try:
-                    shutil.copy2(filepath, PATHS.DB)
-                    await query.edit_message_text(get_text(lang, 'admin_restore_success'))
-                except Exception as e:
-                    await query.edit_message_text(get_text(lang, 'admin_restore_failed', error=str(e)[:100]))
-            elif data == CB.ADMIN_SEND_UPDATE:
-                StateManager.set(user_id, UserState.WAIT_UPDATE)
-                await query.edit_message_text("📢 أرسل نص التحديث:")
-            elif data == CB.ADMIN_SET_UPDATE_CH:
-                StateManager.set(user_id, UserState.WAIT_UPDATE_CH)
-                await query.edit_message_text("📢 أرسل معرف القناة (بدون @):")
-            elif data == CB.ADMIN_SHOW_UPDATE:
-                ch = await SettingRepository.get_updates_channel()
-                await query.edit_message_text(f"📢 القناة: @{ch}" if ch else "لا توجد")
-            elif data == CB.ADMIN_FORCE_SUB:
-                ch = await SettingRepository.get_force_subscribe_channel()
-                await query.edit_message_text(get_text(lang, 'admin_force_sub_on', channel=ch) if ch else get_text(lang, 'admin_force_sub_off'))
-            elif data == CB.ADMIN_SET_FORCE:
-                StateManager.set(user_id, UserState.WAIT_FORCE)
-                await query.edit_message_text("🔒 أرسل معرف القناة (بدون @):")
-            elif data == CB.ADMIN_BROADCAST:
-                StateManager.set(user_id, UserState.WAIT_BROADCAST)
-                await query.edit_message_text("📨 أرسل الرسالة:")
-            elif data == CB.ADMIN_CONFIRM_BROADCAST:
-                text = context.user_data.get('broadcast_text')
-                if not text:
-                    await query.edit_message_text("لا توجد رسالة")
-                    return
-                users = await UserRepository.get_all_users()
-                sent = 0
-                for uid, banned in users:
-                    if banned:
-                        continue
-                    try:
-                        await safe_send(context.bot, uid, text)
-                        sent += 1
-                    except:
-                        pass
-                await query.edit_message_text(get_text(lang, 'admin_broadcast_sent', sent=sent))
-                context.user_data.pop('broadcast_text', None)
-            elif data == CB.ADMIN_TICKETS:
-                tickets = await TicketRepository.get_all()
-                if not tickets:
-                    await query.edit_message_text(get_text(lang, 'no_tickets'))
-                    return
-                text = get_text(lang, 'tickets_list',
-                                tickets="\n".join([f"#{t['ticket_number']} - من `{t['user_id']}` ({t['username'] or 'لا يوجد'})\n{t['message'][:50]}..." for t in tickets]))
-                await query.edit_message_text(text)
-            elif data == CB.ADMIN_DEL_TICKETS:
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ نعم", callback_data=CB.ADMIN_CONFIRM_DEL_TICKETS),
-                     InlineKeyboardButton("❌ لا", callback_data=CB.ADMIN)]
-                ])
-                await query.edit_message_text(get_text(lang, 'confirm_delete_tickets'), reply_markup=kb)
-            elif data == CB.ADMIN_CONFIRM_DEL_TICKETS:
-                await TicketRepository.delete_all()
-                await query.edit_message_text(get_text(lang, 'tickets_deleted'))
-            elif data == CB.ADMIN_LOG_CH:
-                log_id = await SettingRepository.get_log_channel_id()
-                await query.edit_message_text(f"📋 {log_id}" if log_id else "📋 غير محدد")
-            elif data == CB.ADMIN_SET_LOG_CH:
-                StateManager.set(user_id, UserState.WAIT_LOG_CH)
-                await query.edit_message_text("📋 أرسل معرف القناة:")
-            elif data == CB.ADMIN_REPLIES:
-                stats = await AutoReplyRepository.get_stats(-1, 20)
-                if not stats:
-                    await query.edit_message_text(get_text(lang, 'no_auto_replies'))
-                    return
-                text = get_text(lang, 'auto_reply_stats',
-                                stats="\n".join([f"• `{kw}`: {cnt} مرة" for kw, cnt in stats]))
-                await query.edit_message_text(text)
-            elif data == CB.ADMIN_ADD_REPLY:
-                StateManager.set(user_id, UserState.WAIT_KEYWORD)
-                await query.edit_message_text(get_text(lang, 'enter_keyword'))
-            elif data == CB.ADMIN_LIST_REPLIES:
-                replies = await DB.fetchall(
-                    "SELECT keyword, reply, usage_count FROM auto_replies WHERE chat_id=0 ORDER BY keyword LIMIT 20")
-                if not replies:
-                    await query.edit_message_text(get_text(lang, 'no_auto_replies'))
-                    return
-                text = get_text(lang, 'auto_reply_list',
-                                replies="\n".join([f"• `{r[0]}` → {r[1][:30]}... ({r[2]})" for r in replies]))
-                await query.edit_message_text(text)
-            elif data == CB.ADMIN_DEL_REPLY:
-                StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
-                context.user_data['auto_chat'] = -1
-                await query.edit_message_text(get_text(lang, 'enter_keyword_to_delete'))
-            elif data == CB.ADMIN_BANNED_WORDS:
-                words = await SecurityRepository.get_banned_words(-1)
-                text = get_text(lang, 'admin_banned_words_global',
-                                words="\n".join([f"• `{w[0]}`" for w in words])) if words else get_text(lang, 'no_banned_words')
-                await query.edit_message_text(text)
-            elif data == CB.ADMIN_ADD_BANNED:
-                StateManager.set(user_id, UserState.WAIT_GLOBAL_BAN)
-                await query.edit_message_text(get_text(lang, 'enter_word'))
-            elif data == CB.ADMIN_REM_BANNED:
-                StateManager.set(user_id, UserState.WAIT_REM_GLOBAL_BAN)
-                await query.edit_message_text(get_text(lang, 'enter_word_to_remove'))
-            elif data == CB.ADMIN_CREATE_CONTEST:
-                StateManager.set(user_id, UserState.WAIT_CONTEST_TITLE)
-                await query.edit_message_text("🏆 أرسل عنوان المسابقة:")
-            elif data == CB.ADMIN_DECLARE_WINNER:
-                contests = await DB.fetchall("SELECT id, title FROM contests WHERE status='active'")
-                if not contests:
-                    await query.edit_message_text(get_text(lang, 'no_active_contests'))
-                    return
-                kb = [[InlineKeyboardButton(title, callback_data=f"declare_winner_sel:{cid}")] for cid, title in contests]
-                kb.append([InlineKeyboardButton(get_text(lang, 'back'), callback_data=CB.ADMIN)])
-                await query.edit_message_text("اختر المسابقة:", reply_markup=InlineKeyboardMarkup(kb))
-            elif data.startswith("declare_winner_sel:"):
-                cid = int(data.split(":")[-1])
-                contest = await DB.fetchone("SELECT title FROM contests WHERE id=?", (cid,))
-                if not contest:
-                    await query.edit_message_text(get_text(lang, 'contest_not_found'))
-                    return
-                winner = await DB.fetchone(
-                    "SELECT user_id FROM contest_participants WHERE contest_id=? ORDER BY RANDOM() LIMIT 1", (cid,))
-                if not winner:
-                    await query.edit_message_text(get_text(lang, 'admin_contest_no_participants'))
-                    return
-                await ContestRepository.set_winner(cid, winner[0])
-                await query.edit_message_text(get_text(lang, 'admin_contest_declared', title=contest[0], winner=winner[0]))
-            elif data.startswith(CB.ADMIN_DEL_CONTEST):
-                cid = int(data.split(":")[-1])
-                await ContestRepository.delete(cid, user_id)
-                await query.edit_message_text(get_text(lang, 'admin_contest_deleted'))
-            elif data == CB.ADMIN_EXPORT_REPLIES:
-                chat_id = -1
-                count = await export_auto_replies(chat_id)
-                await query.edit_message_text(f"✅ تم تصدير {count} رد إلى ملف `auto_replies_{chat_id}.json`")
-            elif data == CB.ADMIN_IMPORT_REPLIES:
-                StateManager.set(user_id, UserState.WAIT_IMPORT_FILE)
-                context.user_data['import_chat_id'] = -1
-                await query.edit_message_text("📤 أرسل ملف JSON للاستيراد (سيتم استبدال الردود الموجودة)")
-            elif data == CB.ADMIN_REFRESH_CACHE:
-                _auto_reply_cache.invalidate()
-                await query.edit_message_text("🔄 تم تحديث الكاش بنجاح")
-            elif data == CB.ADMIN_IMPORT_GITHUB:
-                StateManager.set(user_id, UserState.WAIT_GITHUB_URL)
-                await query.edit_message_text(get_text(lang, 'import_from_github_prompt'))
-            else:
-                await query.answer("⚠️ قيد التطوير", show_alert=True)
+            await CallbackHandlers._handle_admin_callback(update, context, query, user_id, lang)
+            return
 
         # اللغة
         if data.startswith("lang_"):
@@ -5137,6 +4546,455 @@ if data.startswith("sec_"):
         if data == "language":
             await CommandHandlers.language(update, context)
             return
+
+        # الباقات
+        if data.startswith(CB.BUY_SUB):
+            days = int(data.split(":")[-1])
+            plan_names = {1: "يوم", 7: "أسبوع", 30: "شهر", 90: "3 أشهر"}
+            plan_name = plan_names.get(days)
+            if not plan_name:
+                await query.answer(get_text(lang, 'plan_not_found'), show_alert=True)
+                return
+            plan = await PlanRepository.get_by_name(plan_name)
+            if not plan:
+                await query.answer(get_text(lang, 'plan_not_found'), show_alert=True)
+                return
+            invoice_number, payment_data = await PaymentService.create_payment(user_id, plan['id'])
+            if not invoice_number:
+                await query.answer(get_text(lang, 'payment_init_failed'), show_alert=True)
+                return
+            try:
+                await context.bot.send_invoice(
+                    chat_id=user_id,
+                    title=get_text(lang, 'buy_plan', plan=plan['name']),
+                    description=get_text(lang, 'plan_description', description=plan['description'], price=plan['price']),
+                    payload=payment_data['payload'],
+                    provider_token="",
+                    currency="XTR",
+                    prices=[LabeledPrice(f"{plan['name']} ({plan['duration_days']} {get_text(lang, 'days')})", plan['price'])]
+                )
+                await query.message.delete()
+            except Exception as e:
+                log_error(e, {'user_id': user_id, 'plan': plan_name})
+                await query.answer(f"❌ {str(e)[:50]}", show_alert=True)
+            return
+
+        if data == CB.PLANS:
+            kb = KeyboardFactory.plans(lang)
+            await query.edit_message_text(get_text(lang, 'plan_selector'), reply_markup=kb)
+            return
+
+        if data == CB.INVOICES:
+            invoices = await InvoiceRepository.get_user_invoices(user_id, 10)
+            if not invoices:
+                await query.edit_message_text(get_text(lang, 'no_invoices'))
+                return
+            text = get_text(lang, 'invoice_list',
+                            invoices="\n".join([f"• #{inv['number']} - {inv['amount']} {inv['currency']} - {inv['status']}" for inv in invoices]))
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(get_text(lang, 'back'), callback_data=CB.BACK)]])
+            await query.edit_message_text(text, reply_markup=kb)
+            return
+
+        # تصدير واستيراد
+        if data == CB.ADMIN_EXPORT_REPLIES:
+            count = await export_auto_replies(-1)
+            await query.edit_message_text(f"✅ تم تصدير {count} رد إلى ملف `auto_replies_-1.json`")
+            return
+        if data == CB.ADMIN_IMPORT_REPLIES:
+            StateManager.set(user_id, UserState.WAIT_IMPORT_FILE)
+            context.user_data['import_chat_id'] = -1
+            await query.edit_message_text("📤 أرسل ملف JSON للاستيراد (سيتم استبدال الردود الموجودة)")
+            return
+        if data == CB.ADMIN_REFRESH_CACHE:
+            _auto_reply_cache.invalidate()
+            SecurityRepository.invalidate_cache()
+            await query.edit_message_text("🔄 تم تحديث الكاش بنجاح")
+            return
+        if data == CB.ADMIN_IMPORT_GITHUB:
+            StateManager.set(user_id, UserState.WAIT_GITHUB_URL)
+            await query.edit_message_text(get_text(lang, 'import_from_github_prompt'))
+            return
+
+        await query.answer()
+
+    @staticmethod
+    async def _handle_security_callback(update, context, query, user_id, lang):
+        data = query.data
+        parts = data.split(":")
+        if len(parts) < 3:
+            await query.answer("❌ خطأ في البيانات")
+            return
+        action = parts[1]
+        try:
+            chat_id = int(parts[2])
+        except:
+            await query.answer("❌ خطأ في معرف المجموعة")
+            return
+
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await query.answer(get_text(lang, 'not_authorized'), show_alert=True)
+            return
+
+        if action == "close":
+            try:
+                await query.message.delete()
+            except:
+                pass
+            return
+
+        if action == "banned":
+            await query.edit_message_text("🚫 **الكلمات المحظورة**", reply_markup=KeyboardFactory.banned_words(chat_id, lang))
+            return
+
+        if action in ["enable_all", "disable_all"]:
+            fields = ['delete_videos', 'delete_audio', 'delete_animation', 'delete_service',
+                      'delete_documents', 'delete_stickers', 'delete_forwarded', 'delete_polls',
+                      'delete_games', 'delete_voice', 'delete_video_note']
+            value = 1 if action == "enable_all" else 0
+            for f in fields:
+                await SecurityRepository.set(chat_id, **{f: value})
+            SecurityRepository.invalidate_cache(chat_id)
+            settings = await SecurityRepository.get(chat_id, force_refresh=True)
+            text, keyboard = await CallbackHandlers._build_security_message(settings, lang, chat_id)
+            await query.edit_message_text(text, reply_markup=keyboard)
+            await query.answer()
+            return
+
+        if action == "del_pen":
+            await query.edit_message_text("⚖️ اختر عقوبة حذف الوسائط:", reply_markup=KeyboardFactory.penalty(chat_id, lang))
+            return
+
+        if action == "maxlen":
+            StateManager.set(user_id, UserState.WAIT_MAX_LEN)
+            context.user_data[f"sec_chat_{user_id}"] = chat_id
+            await query.edit_message_text("📏 أرسل الحد الأقصى لطول الرسالة (0 = غير محدود):")
+            return
+
+        if action == "warn":
+            settings = await SecurityRepository.get(chat_id)
+            text = get_text(lang, 'warning_settings',
+                            max_warnings=settings.get('max_warnings', 3),
+                            warn_penalty=settings.get('warn_penalty', 'ban'))
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📝 تغيير عدد التحذيرات", callback_data=f"sec_warn_count:{chat_id}"),
+                 InlineKeyboardButton("⚖️ تغيير العقوبة", callback_data=f"sec_warn_penalty:{chat_id}")],
+                [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
+            ])
+            await query.edit_message_text(text, reply_markup=kb)
+            return
+
+        if action == "warn_count":
+            StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
+            context.user_data[f"sec_chat_{user_id}"] = chat_id
+            await query.edit_message_text("📝 أرسل الحد الأقصى للتحذيرات (1-10):")
+            return
+
+        if action == "warn_penalty":
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛑 حظر", callback_data=f"sec_set_warn_penalty:{chat_id}:ban"),
+                 InlineKeyboardButton("🔇 كتم", callback_data=f"sec_set_warn_penalty:{chat_id}:mute")],
+                [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"sec_warn:{chat_id}")]
+            ])
+            await query.edit_message_text("⚖️ اختر عقوبة تجاوز التحذيرات:", reply_markup=kb)
+            return
+
+        if action == "set_warn_penalty":
+            if len(parts) >= 3:
+                penalty = parts[3]
+                if penalty not in ["ban", "mute"]:
+                    await query.answer("❌ عقوبة غير صالحة", show_alert=True)
+                    return
+                await SecurityRepository.set(chat_id, warn_penalty=penalty)
+                SecurityRepository.invalidate_cache(chat_id)
+                settings = await SecurityRepository.get(chat_id, force_refresh=True)
+                text = get_text(lang, 'warning_settings',
+                                max_warnings=settings.get('max_warnings', 3),
+                                warn_penalty=settings.get('warn_penalty', 'ban'))
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📝 تغيير عدد التحذيرات", callback_data=f"sec_warn_count:{chat_id}"),
+                     InlineKeyboardButton("⚖️ تغيير العقوبة", callback_data=f"sec_warn_penalty:{chat_id}")],
+                    [InlineKeyboardButton(get_text(lang, 'back'), callback_data=f"{CB.GRP_SET}{chat_id}")]
+                ])
+                try:
+                    await query.edit_message_text(text, reply_markup=kb)
+                except BadRequest as e:
+                    if "Message is not modified" not in str(e):
+                        raise
+                await query.answer()
+                return
+
+        if action == "penalty":
+            await query.edit_message_text("⚖️ اختر العقوبة الأساسية:", reply_markup=KeyboardFactory.penalty(chat_id, lang))
+            return
+
+        if action == "adv_act":
+            await query.edit_message_text("🛠️ إجراءات متقدمة:", reply_markup=KeyboardFactory.advanced_actions(chat_id, lang))
+            return
+
+        if action == "act_log":
+            logs = await DB.fetchall(
+                "SELECT admin_id, action, target_id, reason, created_at FROM admin_logs WHERE chat_id=? ORDER BY id DESC LIMIT 20",
+                (chat_id,))
+            if not logs:
+                await query.edit_message_text("📭 لا توجد سجلات")
+                return
+            text = "📜 **آخر الإجراءات**\n"
+            for admin_id, action_name, target_id, reason, created_at in logs:
+                time_str = TimeUtils.safe_parse_iso(created_at)
+                if time_str:
+                    time_str = time_str.strftime("%H:%M")
+                else:
+                    time_str = "??"
+                text += f"• {time_str} - `{admin_id}` {action_name}"
+                if target_id:
+                    text += f" → `{target_id}`"
+                if reason:
+                    text += f" ({reason})"
+                text += "\n"
+            await query.edit_message_text(text)
+            return
+
+        if action == "auto_reply":
+            await query.edit_message_text(get_text(lang, 'auto_reply_settings'),
+                                          reply_markup=KeyboardFactory.auto_reply_manage(chat_id, lang))
+            return
+
+        # تبديل الإعدادات (تحديث ذري)
+        field_map = {
+            "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
+            "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
+            "service": "delete_service", "doc": "delete_documents", "sticker": "delete_stickers",
+            "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
+            "voice": "delete_voice", "videonote": "delete_video_note",
+            "welcome": "welcome_enabled", "goodbye": "goodbye_enabled",
+            "flood": "antiflood_enabled", "night": "night_mode_enabled"
+        }
+
+        if action in field_map:
+            col = field_map[action]
+            await DB.execute(
+                f"UPDATE group_security SET {col} = 1 - {col} WHERE chat_id = ?",
+                (chat_id,)
+            )
+            SecurityRepository.invalidate_cache(chat_id)
+            settings = await SecurityRepository.get(chat_id, force_refresh=True)
+            text, keyboard = await CallbackHandlers._build_security_message(settings, lang, chat_id)
+            try:
+                await query.edit_message_text(text, reply_markup=keyboard)
+                await query.answer()
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
+                await query.answer("✅ تم التحديث")
+            return
+
+        await query.answer()
+
+    @staticmethod
+    async def _handle_admin_callback(update, context, query, user_id, lang):
+        data = query.data
+
+        if user_id != CONFIG.PRIMARY_OWNER_ID and not await BotAdminRepository.is_admin(user_id):
+            await query.answer(get_text(lang, 'not_authorized'), show_alert=True)
+            return
+
+        if data == CB.ADMIN_USERS:
+            stats = await UserRepository.get_stats()
+            await query.edit_message_text(get_text(lang, 'admin_users', users=stats['users'], banned=stats['banned']))
+        elif data == CB.ADMIN_BANNED:
+            users = await UserRepository.get_all_users()
+            banned_list = [u for u in users if u[1] == 1]
+            text = get_text(lang, 'admin_banned_list', list="\n".join([f"• `{u[0]}`" for u in banned_list[:20]])) if banned_list else "لا يوجد"
+            await query.edit_message_text(text)
+        elif data == CB.ADMIN_UNBAN_ALL:
+            await DB.execute("UPDATE users SET banned=0 WHERE banned=1")
+            await query.edit_message_text(get_text(lang, 'admin_unbanned_all'))
+        elif data == CB.ADMIN_CHANNELS:
+            channels = await ChannelRepository.get_all(-1)
+            text = get_text(lang, 'admin_channels_list',
+                            list="\n".join([f"• `{ch['channel_id']}` - {ch['channel_name']} {'🚫' if ch['banned'] else '✅'}" for ch in channels[:50]])) if channels else get_text(lang, 'no_channels')
+            await query.edit_message_text(text)
+        elif data == CB.ADMIN_GROUPS:
+            rows = await DB.fetchall("SELECT chat_id, chat_name, username, banned FROM bot_groups ORDER BY chat_id LIMIT 50")
+            text = get_text(lang, 'admin_groups_list',
+                            list="\n".join([f"• `{r[0]}` - {r[1]} {'🚫' if r[3] else '✅'}" for r in rows])) if rows else get_text(lang, 'no_groups')
+            await query.edit_message_text(text)
+        elif data == CB.ADMIN_ADD_ADMIN:
+            StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
+            await query.edit_message_text(get_text(lang, 'admin_add_admin'))
+        elif data == CB.ADMIN_REM_ADMIN:
+            StateManager.set(user_id, UserState.WAIT_ADMIN_REM)
+            await query.edit_message_text(get_text(lang, 'admin_rem_admin'))
+        elif data == CB.ADMIN_RAM:
+            ram = get_ram_usage()
+            await query.edit_message_text(get_text(lang, 'admin_ram', used=ram['used'], total=ram['total'], percent=ram['percent']))
+        elif data == CB.ADMIN_STATS:
+            stats = await UserRepository.get_stats()
+            await query.edit_message_text(get_text(lang, 'admin_stats_text',
+                                                   users=stats['users'], banned=stats['banned'],
+                                                   posts=stats['posts'], groups=stats['groups'], channels=stats['channels']))
+        elif data == CB.ADMIN_METRICS:
+            metrics = METRICS.get_stats()
+            active = (await DB.fetchone("SELECT COUNT(*) FROM users WHERE updated_at > datetime('now', '-30 days')"))[0]
+            today = (await DB.fetchone("SELECT COUNT(*) FROM posts WHERE published_at > datetime('now', 'start of day')"))[0]
+            db_size = (PATHS.DB.stat().st_size / (1024 * 1024)) if PATHS.DB.exists() else 0
+            uptime_hours = metrics['uptime_seconds'] // 3600
+            uptime_minutes = (metrics['uptime_seconds'] % 3600) // 60
+            uptime_str = f"{uptime_hours}h {uptime_minutes}m"
+            await query.edit_message_text(get_text(lang, 'admin_metrics',
+                                                   active=active, today=today, db_size=db_size,
+                                                   api_calls=metrics['api_calls_last_hour'],
+                                                   errors=metrics['errors_last_hour'],
+                                                   uptime=uptime_str))
+        elif data == CB.ADMIN_BACKUP:
+            try:
+                backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+                shutil.copy2(PATHS.DB, backup_file)
+                await safe_send(context.bot, user_id, get_text(lang, 'admin_backup_created', filename=backup_file.name))
+            except Exception as e:
+                await safe_send(context.bot, user_id, get_text(lang, 'admin_backup_failed', error=str(e)[:100]))
+        elif data == CB.ADMIN_RESTORE:
+            backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
+            if not backups:
+                await query.edit_message_text(get_text(lang, 'no_backups'))
+                return
+            kb = [[InlineKeyboardButton(b.name, callback_data=f"{CB.ADMIN_RESTORE_SEL}{b.name}")] for b in backups[:10]]
+            kb.append([InlineKeyboardButton(get_text(lang, 'back'), callback_data=CB.ADMIN)])
+            await query.edit_message_text(get_text(lang, 'admin_restore_choose'), reply_markup=InlineKeyboardMarkup(kb))
+        elif data.startswith(CB.ADMIN_RESTORE_SEL):
+            filename = data.split(":")[-1]
+            filepath = PATHS.BACKUPS / filename
+            if not filepath.exists():
+                await query.edit_message_text(get_text(lang, 'file_not_found'))
+                return
+            try:
+                shutil.copy2(filepath, PATHS.DB)
+                await query.edit_message_text(get_text(lang, 'admin_restore_success'))
+            except Exception as e:
+                await query.edit_message_text(get_text(lang, 'admin_restore_failed', error=str(e)[:100]))
+        elif data == CB.ADMIN_SEND_UPDATE:
+            StateManager.set(user_id, UserState.WAIT_UPDATE)
+            await query.edit_message_text("📢 أرسل نص التحديث:")
+        elif data == CB.ADMIN_SET_UPDATE_CH:
+            StateManager.set(user_id, UserState.WAIT_UPDATE_CH)
+            await query.edit_message_text("📢 أرسل معرف القناة (بدون @):")
+        elif data == CB.ADMIN_SHOW_UPDATE:
+            ch = await SettingRepository.get_updates_channel()
+            await query.edit_message_text(f"📢 القناة: @{ch}" if ch else "لا توجد")
+        elif data == CB.ADMIN_FORCE_SUB:
+            ch = await SettingRepository.get_force_subscribe_channel()
+            await query.edit_message_text(get_text(lang, 'admin_force_sub_on', channel=ch) if ch else get_text(lang, 'admin_force_sub_off'))
+        elif data == CB.ADMIN_SET_FORCE:
+            StateManager.set(user_id, UserState.WAIT_FORCE)
+            await query.edit_message_text("🔒 أرسل معرف القناة (بدون @):")
+        elif data == CB.ADMIN_BROADCAST:
+            StateManager.set(user_id, UserState.WAIT_BROADCAST)
+            await query.edit_message_text("📨 أرسل الرسالة:")
+        elif data == CB.ADMIN_CONFIRM_BROADCAST:
+            text = context.user_data.get('broadcast_text')
+            if not text:
+                await query.edit_message_text("لا توجد رسالة")
+                return
+            users = await UserRepository.get_all_users()
+            sent = 0
+            for uid, banned in users:
+                if banned:
+                    continue
+                try:
+                    await safe_send(context.bot, uid, text)
+                    sent += 1
+                except:
+                    pass
+            await query.edit_message_text(get_text(lang, 'admin_broadcast_sent', sent=sent))
+            context.user_data.pop('broadcast_text', None)
+        elif data == CB.ADMIN_TICKETS:
+            tickets = await TicketRepository.get_all()
+            if not tickets:
+                await query.edit_message_text(get_text(lang, 'no_tickets'))
+                return
+            text = get_text(lang, 'tickets_list',
+                            tickets="\n".join([f"#{t['ticket_number']} - من `{t['user_id']}`" for t in tickets]))
+            await query.edit_message_text(text)
+        elif data == CB.ADMIN_DEL_TICKETS:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ نعم", callback_data=CB.ADMIN_CONFIRM_DEL_TICKETS),
+                 InlineKeyboardButton("❌ لا", callback_data=CB.ADMIN)]
+            ])
+            await query.edit_message_text(get_text(lang, 'confirm_delete_tickets'), reply_markup=kb)
+        elif data == CB.ADMIN_CONFIRM_DEL_TICKETS:
+            await TicketRepository.delete_all()
+            await query.edit_message_text(get_text(lang, 'tickets_deleted'))
+        elif data == CB.ADMIN_LOG_CH:
+            log_id = await SettingRepository.get_log_channel_id()
+            await query.edit_message_text(f"📋 {log_id}" if log_id else "📋 غير محدد")
+        elif data == CB.ADMIN_SET_LOG_CH:
+            StateManager.set(user_id, UserState.WAIT_LOG_CH)
+            await query.edit_message_text("📋 أرسل معرف القناة:")
+        elif data == CB.ADMIN_REPLIES:
+            stats = await AutoReplyRepository.get_stats(-1, 20)
+            if not stats:
+                await query.edit_message_text(get_text(lang, 'no_auto_replies'))
+                return
+            text = get_text(lang, 'auto_reply_stats',
+                            stats="\n".join([f"• `{kw}`: {cnt} مرة" for kw, cnt in stats]))
+            await query.edit_message_text(text)
+        elif data == CB.ADMIN_ADD_REPLY:
+            StateManager.set(user_id, UserState.WAIT_KEYWORD)
+            await query.edit_message_text(get_text(lang, 'enter_keyword'))
+        elif data == CB.ADMIN_LIST_REPLIES:
+            replies = await DB.fetchall(
+                "SELECT keyword, reply, usage_count FROM auto_replies WHERE chat_id=0 ORDER BY keyword LIMIT 20")
+            if not replies:
+                await query.edit_message_text(get_text(lang, 'no_auto_replies'))
+                return
+            text = get_text(lang, 'auto_reply_list',
+                            replies="\n".join([f"• `{r[0]}` → {r[1][:30]}... ({r[2]})" for r in replies]))
+            await query.edit_message_text(text)
+        elif data == CB.ADMIN_DEL_REPLY:
+            StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
+            context.user_data['auto_chat'] = -1
+            await query.edit_message_text(get_text(lang, 'enter_keyword_to_delete'))
+        elif data == CB.ADMIN_BANNED_WORDS:
+            words = await SecurityRepository.get_banned_words(-1)
+            text = get_text(lang, 'admin_banned_words_global',
+                            words="\n".join([f"• `{w[0]}`" for w in words])) if words else get_text(lang, 'no_banned_words')
+            await query.edit_message_text(text)
+        elif data == CB.ADMIN_ADD_BANNED:
+            StateManager.set(user_id, UserState.WAIT_GLOBAL_BAN)
+            await query.edit_message_text(get_text(lang, 'enter_word'))
+        elif data == CB.ADMIN_REM_BANNED:
+            StateManager.set(user_id, UserState.WAIT_REM_GLOBAL_BAN)
+            await query.edit_message_text(get_text(lang, 'enter_word_to_remove'))
+        elif data == CB.ADMIN_CREATE_CONTEST:
+            StateManager.set(user_id, UserState.WAIT_CONTEST_TITLE)
+            await query.edit_message_text("🏆 أرسل عنوان المسابقة:")
+        elif data == CB.ADMIN_DECLARE_WINNER:
+            contests = await DB.fetchall("SELECT id, title FROM contests WHERE status='active'")
+            if not contests:
+                await query.edit_message_text(get_text(lang, 'no_active_contests'))
+                return
+            kb = [[InlineKeyboardButton(title, callback_data=f"{CB.DECLARE_WINNER_SEL}{cid}")] for cid, title in contests]
+            kb.append([InlineKeyboardButton(get_text(lang, 'back'), callback_data=CB.ADMIN)])
+            await query.edit_message_text("اختر المسابقة:", reply_markup=InlineKeyboardMarkup(kb))
+        elif data.startswith(CB.DECLARE_WINNER_SEL):
+            cid = int(data.split(":")[-1])
+            contest = await DB.fetchone("SELECT title FROM contests WHERE id=?", (cid,))
+            if not contest:
+                await query.edit_message_text(get_text(lang, 'contest_not_found'))
+                return
+            winner = await DB.fetchone(
+                "SELECT user_id FROM contest_participants WHERE contest_id=? ORDER BY RANDOM() LIMIT 1", (cid,))
+            if not winner:
+                await query.edit_message_text(get_text(lang, 'admin_contest_no_participants'))
+                return
+            await ContestRepository.set_winner(cid, winner[0])
+            await query.edit_message_text(get_text(lang, 'admin_contest_declared', title=contest[0], winner=winner[0]))
+        elif data.startswith(CB.ADMIN_DEL_CONTEST):
+            cid = int(data.split(":")[-1])
+            await ContestRepository.delete(cid, user_id)
+            await query.edit_message_text(get_text(lang, 'admin_contest_deleted'))
+        else:
+            await query.answer("⚠️ قيد التطوير", show_alert=True)
 
     @staticmethod
     async def _publish_single(bot, ch_db_id, ch_tele, post):
@@ -5152,7 +5010,7 @@ if data.startswith("sec_"):
             await PostRepository.increment_fail(post['id'])
 
 # =====================================================================
-# 17. معالج الرسائل - MessageHandlers (كامل)
+# 18. معالج الرسائل - MessageHandlers
 # =====================================================================
 class MessageHandlers:
     @staticmethod
@@ -5165,7 +5023,6 @@ class MessageHandlers:
         state = StateManager.get(user_id)
         lang = await UserRepository.get_language(user_id)
 
-        # WAIT_IMPORT_FILE
         if state == UserState.WAIT_IMPORT_FILE:
             if not msg.document:
                 await safe_send(context.bot, user_id, "❌ أرسل ملف JSON")
@@ -5188,7 +5045,6 @@ class MessageHandlers:
             context.user_data.pop('import_chat_id', None)
             return
 
-        # WAIT_GITHUB_URL
         if state == UserState.WAIT_GITHUB_URL:
             url = text.strip()
             if not url.startswith('http'):
@@ -5209,7 +5065,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_CHANNEL
         if state == UserState.WAIT_CHANNEL:
             if not await UserRepository.has_active_subscription(user_id) and not await UserRepository.has_used_trial(user_id):
                 await safe_send(context.bot, user_id, get_text(lang, 'subscription_expired'))
@@ -5292,7 +5147,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ADDING_POSTS
         if state == UserState.ADDING_POSTS:
             session = context.user_data.get(f"session_{user_id}", [])
             target = context.user_data.get(f"session_target_{user_id}", 15)
@@ -5336,7 +5190,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, get_text(lang, 'all_posts_saved'))
             return
 
-        # WAIT_MIN
         if state == UserState.WAIT_MIN:
             try:
                 val = int(text)
@@ -5352,7 +5205,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_HOUR
         if state == UserState.WAIT_HOUR:
             try:
                 val = int(text)
@@ -5368,7 +5220,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_DAY
         if state == UserState.WAIT_DAY:
             try:
                 val = int(text)
@@ -5384,7 +5235,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_PUB_TIME
         if state == UserState.WAIT_PUB_TIME:
             if ':' in text:
                 try:
@@ -5403,7 +5253,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_GROUP_BAN
         if state == UserState.WAIT_GROUP_BAN:
             chat_id_ban = context.user_data.get('ban_chat')
             if chat_id_ban and await is_authorized_in_group(context.bot, chat_id_ban, user_id):
@@ -5421,7 +5270,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_REM_GROUP_BAN
         if state == UserState.WAIT_REM_GROUP_BAN:
             chat_id_ban = context.user_data.get('ban_chat')
             if chat_id_ban and await is_authorized_in_group(context.bot, chat_id_ban, user_id):
@@ -5436,7 +5284,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_GLOBAL_BAN
         if state == UserState.WAIT_GLOBAL_BAN:
             word = text.strip().lower()
             if len(word) < 2:
@@ -5450,7 +5297,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_REM_GLOBAL_BAN
         if state == UserState.WAIT_REM_GLOBAL_BAN:
             word = text.strip().lower()
             if word:
@@ -5461,7 +5307,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_ADMIN_ADD
         if state == UserState.WAIT_ADMIN_ADD:
             try:
                 target = int(text)
@@ -5472,7 +5317,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_ADMIN_REM
         if state == UserState.WAIT_ADMIN_REM:
             try:
                 target = int(text)
@@ -5483,7 +5327,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_BROADCAST
         if state == UserState.WAIT_BROADCAST:
             context.user_data['broadcast_text'] = text
             StateManager.clear(user_id)
@@ -5492,7 +5335,6 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, get_text(lang, 'admin_broadcast_confirm', text=text[:200]), reply_markup=kb)
             return
 
-        # WAIT_UPDATE
         if state == UserState.WAIT_UPDATE:
             ch = await SettingRepository.get_updates_channel()
             if ch:
@@ -5506,21 +5348,18 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_UPDATE_CH
         if state == UserState.WAIT_UPDATE_CH:
             await SettingRepository.set('updates_channel', text.replace('@', ''))
             await safe_send(context.bot, user_id, get_text(lang, 'admin_update_channel_set', channel=text.replace('@', '')))
             StateManager.clear(user_id)
             return
 
-        # WAIT_FORCE
         if state == UserState.WAIT_FORCE:
             await SettingRepository.set('force_subscribe_channel', text.replace('@', ''))
             await safe_send(context.bot, user_id, get_text(lang, 'admin_force_sub_set', channel=text.replace('@', '')))
             StateManager.clear(user_id)
             return
 
-        # WAIT_REM_DAYS
         if state == UserState.WAIT_REM_DAYS:
             try:
                 val = int(text)
@@ -5534,7 +5373,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_BAN, WAIT_MUTE, WAIT_WARN, WAIT_KICK, WAIT_RESTRICT, WAIT_UNBAN
         if state in (UserState.WAIT_BAN, UserState.WAIT_MUTE, UserState.WAIT_WARN,
                      UserState.WAIT_KICK, UserState.WAIT_RESTRICT, UserState.WAIT_UNBAN):
             chat_id_adv = context.user_data.get('adv_chat')
@@ -5560,7 +5398,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_PIN
         if state == UserState.WAIT_PIN:
             chat_id_adv = context.user_data.get('adv_chat')
             if chat_id_adv:
@@ -5576,28 +5413,24 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_CONTEST_TITLE
         if state == UserState.WAIT_CONTEST_TITLE:
             context.user_data['contest_title'] = text
             StateManager.set(user_id, UserState.WAIT_CONTEST_DESC)
             await safe_send(context.bot, user_id, "📝 أرسل الوصف:")
             return
 
-        # WAIT_CONTEST_DESC
         if state == UserState.WAIT_CONTEST_DESC:
             context.user_data['contest_desc'] = text
             StateManager.set(user_id, UserState.WAIT_CONTEST_PRIZE)
             await safe_send(context.bot, user_id, "🎁 أرسل الجائزة:")
             return
 
-        # WAIT_CONTEST_PRIZE
         if state == UserState.WAIT_CONTEST_PRIZE:
             context.user_data['contest_prize'] = text
             StateManager.set(user_id, UserState.WAIT_CONTEST_DATE)
             await safe_send(context.bot, user_id, "📅 أرسل تاريخ الانتهاء (YYYY-MM-DD HH:MM):")
             return
 
-        # WAIT_CONTEST_DATE
         if state == UserState.WAIT_CONTEST_DATE:
             try:
                 end_date = datetime.strptime(text, "%Y-%m-%d %H:%M")
@@ -5617,7 +5450,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_CONTEST_ANSWER
         if state == UserState.WAIT_CONTEST_ANSWER:
             cid = context.user_data.get('contest_join')
             if cid:
@@ -5627,7 +5459,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_AUTO_KEY
         if state == UserState.WAIT_AUTO_KEY:
             keyword = text.strip().lower()
             if keyword:
@@ -5639,7 +5470,6 @@ class MessageHandlers:
                 StateManager.clear(user_id)
             return
 
-        # WAIT_AUTO_REPLY
         if state == UserState.WAIT_AUTO_REPLY:
             chat_id_auto = context.user_data.get('auto_chat')
             keyword = context.user_data.get('auto_key')
@@ -5653,7 +5483,6 @@ class MessageHandlers:
             context.user_data.pop('auto_chat', None)
             return
 
-        # WAIT_AUTO_DEL
         if state == UserState.WAIT_AUTO_DEL:
             chat_id_auto = context.user_data.get('auto_chat')
             if chat_id_auto is not None:
@@ -5671,14 +5500,12 @@ class MessageHandlers:
             context.user_data.pop('auto_chat', None)
             return
 
-        # WAIT_KEYWORD
         if state == UserState.WAIT_KEYWORD:
             context.user_data['keyword'] = text.strip().lower()
             StateManager.set(user_id, UserState.WAIT_REPLY)
             await safe_send(context.bot, user_id, get_text(lang, 'enter_reply'))
             return
 
-        # WAIT_REPLY
         if state == UserState.WAIT_REPLY:
             keyword = context.user_data.get('keyword')
             if keyword:
@@ -5688,7 +5515,47 @@ class MessageHandlers:
             context.user_data.pop('keyword', None)
             return
 
-        # WAIT_LOG_CH
+        if state == UserState.WAIT_REPLY_BUTTONS:
+            chat_id_auto = context.user_data.get('auto_chat')
+            keyword = context.user_data.get('auto_key')
+            reply_text = context.user_data.get('auto_reply_text')
+            if text == '/skip':
+                if chat_id_auto is not None and keyword:
+                    await AutoReplyRepository.add_reply(chat_id_auto, keyword, reply_text)
+                    await safe_send(context.bot, user_id, get_text(lang, 'auto_reply_added', keyword=keyword))
+                StateManager.clear(user_id)
+                context.user_data.pop('auto_key', None)
+                context.user_data.pop('auto_chat', None)
+                context.user_data.pop('auto_reply_text', None)
+                return
+            buttons = []
+            lines = text.strip().split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                if ' - ' in line:
+                    btn_text, btn_value = line.split(' - ', 1)
+                    btn_text = btn_text.strip()
+                    btn_value = btn_value.strip()
+                    if btn_value.startswith('http'):
+                        buttons.append([{'text': btn_text, 'url': btn_value}])
+                    else:
+                        buttons.append([{'text': btn_text, 'callback_data': btn_value}])
+            if chat_id_auto is not None and keyword:
+                buttons_json = json.dumps(buttons) if buttons else None
+                await AutoReplyRepository.add_reply(
+                    chat_id_auto, keyword, reply_text,
+                    reply_type='text',
+                    reply_buttons=buttons_json
+                )
+                await safe_send(context.bot, user_id, f"✅ تم إضافة رد لـ '{keyword}' مع {len(buttons)} زر")
+            StateManager.clear(user_id)
+            context.user_data.pop('auto_key', None)
+            context.user_data.pop('auto_chat', None)
+            context.user_data.pop('auto_reply_text', None)
+            return
+
         if state == UserState.WAIT_LOG_CH:
             try:
                 chat = await context.bot.get_chat(text)
@@ -5702,14 +5569,14 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_MAX_LEN
         if state == UserState.WAIT_MAX_LEN:
             try:
                 val = int(text)
                 if val >= 0:
-                    chat_id_sec = context.user_data.get('sec_chat')
+                    chat_id_sec = context.user_data.get(f'sec_chat_{user_id}')
                     if chat_id_sec:
                         await SecurityRepository.set(chat_id_sec, max_message_length=val)
+                        SecurityRepository.invalidate_cache(chat_id_sec)
                     await safe_send(context.bot, user_id, f"✅ تم تعيين {val}")
                 else:
                     await safe_send(context.bot, user_id, "❌ يجب أن يكون 0 أو أكبر")
@@ -5718,14 +5585,14 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # WAIT_WARN_COUNT
         if state == UserState.WAIT_WARN_COUNT:
             try:
                 val = int(text)
                 if 1 <= val <= 10:
-                    chat_id_sec = context.user_data.get('sec_chat')
+                    chat_id_sec = context.user_data.get(f'sec_chat_{user_id}')
                     if chat_id_sec:
                         await SecurityRepository.set(chat_id_sec, max_warnings=val)
+                        SecurityRepository.invalidate_cache(chat_id_sec)
                     await safe_send(context.bot, user_id, get_text(lang, 'warning_count_updated', count=val))
                 else:
                     await safe_send(context.bot, user_id, "❌ بين 1 و 10")
@@ -5734,7 +5601,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # SUPPORT_MODE
         if state == UserState.SUPPORT_MODE:
             media_type = None
             media_file_id = None
@@ -5779,7 +5645,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # Default: start
         if update.effective_chat and update.effective_chat.type == 'private':
             await CommandHandlers.start(update, context)
 
@@ -5821,8 +5686,34 @@ class MessageHandlers:
             elif reply_data['type'] == 'document' and reply_data['media_id']:
                 await update.message.reply_document(reply_data['media_id'], caption=reply_data['reply'])
             if reply_data.get('buttons'):
-                kb = InlineKeyboardMarkup(reply_data['buttons'])
-                await update.message.reply_text("", reply_markup=kb)
+                buttons = reply_data['buttons']
+                if isinstance(buttons, str):
+                    try:
+                        buttons = json.loads(buttons)
+                    except:
+                        buttons = None
+                if isinstance(buttons, list):
+                    kb = []
+                    for row in buttons:
+                        if isinstance(row, list):
+                            kb_row = []
+                            for btn in row:
+                                if isinstance(btn, dict):
+                                    if 'url' in btn:
+                                        kb_row.append(InlineKeyboardButton(
+                                            btn.get('text', 'زر'),
+                                            url=btn['url']
+                                        ))
+                                    elif 'callback_data' in btn:
+                                        kb_row.append(InlineKeyboardButton(
+                                            btn.get('text', 'زر'),
+                                            callback_data=btn['callback_data']
+                                        ))
+                            if kb_row:
+                                kb.append(kb_row)
+                    if kb:
+                        reply_markup = InlineKeyboardMarkup(kb)
+                        await update.message.reply_text("", reply_markup=reply_markup)
         except Exception as e:
             logger.warning(f"Auto-reply failed in group {chat_id}: {e}")
 
@@ -5834,7 +5725,7 @@ class MessageHandlers:
                 pass
 
 # =====================================================================
-# 18. معالجات الأحداث
+# 19. معالجات الأحداث
 # =====================================================================
 async def track_chat_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     result = update.my_chat_member
@@ -5904,7 +5795,7 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         await safe_send(context.bot, user_id, get_text(lang, 'payment_failed_generic'))
 
 # =====================================================================
-# 19. خادم الويب
+# 20. خادم الويب
 # =====================================================================
 async def health_check(request):
     return web.Response(text="OK")
@@ -5939,7 +5830,7 @@ async def setup_unified_web_server(application, port: int):
     return runner
 
 # =====================================================================
-# 20. معالج الأخطاء
+# 21. معالج الأخطاء
 # =====================================================================
 class ErrorHandler:
     @staticmethod
@@ -5954,7 +5845,7 @@ class ErrorHandler:
             logger.error(f"Error in error handler: {e}")
 
 # =====================================================================
-# 21. المهام الخلفية
+# 22. المهام الخلفية
 # =====================================================================
 class BackgroundTasks:
     @staticmethod
@@ -5993,6 +5884,8 @@ class BackgroundTasks:
         try:
             if media_type == 'photo' and media_file_id:
                 await bot.send_photo(ch_tele, media_file_id, caption=text[:1024] if text else None)
+            elif media_type == 'video' and media_file_id:
+                await bot.send_video(ch_tele, media_file_id, caption=text[:1024] if text else None)
             else:
                 await bot.send_message(ch_tele, text[:4096] if text else ".")
             await PostRepository.mark_published(post_id)
@@ -6055,10 +5948,10 @@ class BackgroundTasks:
             await _flush_sentiment_buffer()
 
 # =====================================================================
-# 22. الدالة الرئيسية
+# 23. الدالة الرئيسية
 # =====================================================================
 async def main():
-    logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v6.0.0-ultimate-final")
+    logger.info(f"🚀 Starting {CONFIG.BOT_NAME} v7.0.0-complete")
     await DB.initialize()
     await UserRepository.register(CONFIG.PRIMARY_OWNER_ID)
     await BotAdminRepository.add(CONFIG.PRIMARY_OWNER_ID)
@@ -6169,11 +6062,17 @@ async def main():
     await asyncio.gather(*tasks, return_exceptions=True)
 
 # =====================================================================
-# 23. تشغيل البرنامج
+# 24. تشغيل البرنامج
 # =====================================================================
 if __name__ == "__main__":
-    print(f"🌿 {CONFIG.BOT_NAME} v6.0.0-ultimate-final")
-    print("✅ Ultimate Edition with all improvements")
+    print(f"🌿 {CONFIG.BOT_NAME} v7.0.0-complete")
+    print("✅ جميع الميزات متكاملة")
+    print("✅ نظام الأمان متكامل")
+    print("✅ نظام الردود التلقائية مع الأزرار")
+    print("✅ نظام الدفع عبر Telegram Stars")
+    print("✅ نظام المسابقات والإحالات")
+    print("✅ نظام التذكيرات والإشعارات")
+    print("✅ دعم Webhook و Polling")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
@@ -6181,4 +6080,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ {e}")
         traceback.print_exc()
-
