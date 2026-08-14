@@ -3644,7 +3644,6 @@ class CommandHandlers:
                 "INSERT OR REPLACE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,1)",
                 (chat_id, real_user_id)
             )
-            # ربط المستخدم بالمجموعة في جدول user_groups_link
             await GroupRepository.link_user_to_group(real_user_id, chat_id)
             invalidate_auth_cache(chat_id, real_user_id)
             admin_count = await GroupRepository.sync_admins(chat_id, context.bot)
@@ -3826,7 +3825,6 @@ class CommandHandlers:
             "INSERT INTO hidden_admins (chat_id, admin_id, added_by, added_at) VALUES (?,?,?,?)",
             (chat_id, target, user_id, TimeUtils.utc_iso())
         )
-        # ربط المستخدم بالمجموعة
         await GroupRepository.link_user_to_group(target, chat_id)
         invalidate_auth_cache(chat_id, target)
         await safe_send(context.bot, user_id, f"✅ تم إضافة المشرف المخفي `{target}`")
@@ -4016,7 +4014,7 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
     return await strategy.apply(bot, chat_id, user_id, duration=duration)
 
 # =====================================================================
-# 16. معالج الكولباك - CallbackHandlers (كامل)
+# 16. معالج الكولباك - CallbackHandlers (كامل مع التصحيح)
 # =====================================================================
 class CallbackHandlers:
     @staticmethod
@@ -4339,7 +4337,9 @@ class CallbackHandlers:
             await query.edit_message_text(get_text(lang, 'enter_publish_time'))
             return
 
-        # الأمان (Security)
+        # ============================================================
+        # الأمان (Security) - مع التصحيح
+        # ============================================================
         if data.startswith("sec_"):
             parts = data.split(":")
             if len(parts) < 3:
@@ -4363,36 +4363,49 @@ class CallbackHandlers:
             }
             if action in field_map:
                 col = field_map[action]
+                # قراءة الإعدادات الحالية
                 settings = await SecurityRepository.get(chat_id, force_refresh=True)
                 current = settings.get(col, 0)
                 new_val = 1 if current == 0 else 0
-                await SecurityRepository.set(chat_id, **{col: new_val})
+                # تحديث قاعدة البيانات
+                success = await SecurityRepository.set(chat_id, **{col: new_val})
+                if not success:
+                    await query.answer("❌ فشل التحديث", show_alert=True)
+                    return
+                # مسح الكاش يدوياً
+                SecurityRepository._cache.pop(chat_id, None)
+                # قراءة الإعدادات المحدثة
                 settings = await SecurityRepository.get(chat_id, force_refresh=True)
-                await query.edit_message_text(get_text(lang, 'security_text',
-                            links='✅' if settings.get('delete_links') else '❌',
-                            mentions='✅' if settings.get('mentions') else '❌',
-                            slow='✅' if settings.get('slow_mode') else '❌',
-                            slow_sec=settings.get('slow_mode_seconds', 5),
-                            welcome='✅' if settings.get('welcome_enabled') else '❌',
-                            goodbye='✅' if settings.get('goodbye_enabled') else '❌',
-                            video='✅' if settings.get('delete_videos') else '❌',
-                            audio='✅' if settings.get('delete_audio') else '❌',
-                            animation='✅' if settings.get('delete_animation') else '❌',
-                            service='✅' if settings.get('delete_service') else '❌',
-                            documents='✅' if settings.get('delete_documents') else '❌',
-                            stickers='✅' if settings.get('delete_stickers') else '❌',
-                            forwarded='✅' if settings.get('delete_forwarded') else '❌',
-                            polls='✅' if settings.get('delete_polls') else '❌',
-                            games='✅' if settings.get('delete_games') else '❌',
-                            voice='✅' if settings.get('delete_voice') else '❌',
-                            video_note='✅' if settings.get('delete_video_note') else '❌',
-                            flood='✅' if settings.get('antiflood_enabled') else '❌',
-                            night='✅' if settings.get('night_mode_enabled') else '❌',
-                            max_len=settings.get('max_message_length', 0) or 'غير محدود',
-                            auto_penalty=settings.get('auto_penalty', 'none'),
-                            delete_penalty=settings.get('delete_penalty', 'none')),
-                            reply_markup=KeyboardFactory.security(chat_id, settings, lang))
+                # إعادة عرض الرسالة
+                await query.edit_message_text(
+                    get_text(lang, 'security_text',
+                        links='✅' if settings.get('delete_links') else '❌',
+                        mentions='✅' if settings.get('mentions') else '❌',
+                        slow='✅' if settings.get('slow_mode') else '❌',
+                        slow_sec=settings.get('slow_mode_seconds', 5),
+                        welcome='✅' if settings.get('welcome_enabled') else '❌',
+                        goodbye='✅' if settings.get('goodbye_enabled') else '❌',
+                        video='✅' if settings.get('delete_videos') else '❌',
+                        audio='✅' if settings.get('delete_audio') else '❌',
+                        animation='✅' if settings.get('delete_animation') else '❌',
+                        service='✅' if settings.get('delete_service') else '❌',
+                        documents='✅' if settings.get('delete_documents') else '❌',
+                        stickers='✅' if settings.get('delete_stickers') else '❌',
+                        forwarded='✅' if settings.get('delete_forwarded') else '❌',
+                        polls='✅' if settings.get('delete_polls') else '❌',
+                        games='✅' if settings.get('delete_games') else '❌',
+                        voice='✅' if settings.get('delete_voice') else '❌',
+                        video_note='✅' if settings.get('delete_video_note') else '❌',
+                        flood='✅' if settings.get('antiflood_enabled') else '❌',
+                        night='✅' if settings.get('night_mode_enabled') else '❌',
+                        max_len=settings.get('max_message_length', 0) or 'غير محدود',
+                        auto_penalty=settings.get('auto_penalty', 'none'),
+                        delete_penalty=settings.get('delete_penalty', 'none')
+                    ),
+                    reply_markup=KeyboardFactory.security(chat_id, settings, lang)
+                )
                 return
+            # باقي الإجراءات (maxlen, warn, etc.)
             if action == "maxlen":
                 StateManager.set(user_id, UserState.WAIT_MAX_LEN)
                 context.user_data['sec_chat'] = chat_id
@@ -4439,6 +4452,8 @@ class CallbackHandlers:
                 await query.edit_message_text(text, reply_markup=kb)
                 return
             await query.answer()
+            return
+
         if data == CB.SEC_CLOSE:
             try:
                 await query.message.delete()
@@ -4456,8 +4471,10 @@ class CallbackHandlers:
                                                       'delete_service', 'delete_documents', 'delete_stickers',
                                                       'delete_forwarded', 'delete_polls', 'delete_games', 'delete_voice',
                                                       'delete_video_note']})
+            SecurityRepository._cache.pop(chat_id, None)
             settings = await SecurityRepository.get(chat_id, force_refresh=True)
-            await query.edit_message_text(get_text(lang, 'security_text',
+            await query.edit_message_text(
+                get_text(lang, 'security_text',
                          links='✅' if settings.get('delete_links') else '❌',
                          mentions='✅' if settings.get('mentions') else '❌',
                          slow='✅' if settings.get('slow_mode') else '❌',
@@ -4480,7 +4497,8 @@ class CallbackHandlers:
                          max_len=settings.get('max_message_length', 0) or 'غير محدود',
                          auto_penalty=settings.get('auto_penalty', 'none'),
                          delete_penalty=settings.get('delete_penalty', 'none')),
-                        reply_markup=KeyboardFactory.security(chat_id, settings, lang))
+                reply_markup=KeyboardFactory.security(chat_id, settings, lang)
+            )
             return
         if data.startswith(CB.SEC_DISABLE_ALL):
             chat_id = int(data.split(":")[-1])
@@ -4489,8 +4507,10 @@ class CallbackHandlers:
                                                       'delete_service', 'delete_documents', 'delete_stickers',
                                                       'delete_forwarded', 'delete_polls', 'delete_games', 'delete_voice',
                                                       'delete_video_note']})
+            SecurityRepository._cache.pop(chat_id, None)
             settings = await SecurityRepository.get(chat_id, force_refresh=True)
-            await query.edit_message_text(get_text(lang, 'security_text',
+            await query.edit_message_text(
+                get_text(lang, 'security_text',
                          links='✅' if settings.get('delete_links') else '❌',
                          mentions='✅' if settings.get('mentions') else '❌',
                          slow='✅' if settings.get('slow_mode') else '❌',
@@ -4513,7 +4533,8 @@ class CallbackHandlers:
                          max_len=settings.get('max_message_length', 0) or 'غير محدود',
                          auto_penalty=settings.get('auto_penalty', 'none'),
                          delete_penalty=settings.get('delete_penalty', 'none')),
-                        reply_markup=KeyboardFactory.security(chat_id, settings, lang))
+                reply_markup=KeyboardFactory.security(chat_id, settings, lang)
+            )
             return
         if data.startswith(CB.SEC_DEL_PEN):
             chat_id = int(data.split(":")[-1])
@@ -4552,6 +4573,7 @@ class CallbackHandlers:
             if data.startswith(f"pen_{p}:"):
                 chat_id = int(data.split(":")[-1])
                 await SecurityRepository.set(chat_id, auto_penalty=p)
+                SecurityRepository._cache.pop(chat_id, None)
                 await query.edit_message_text(f"✅ تم تعيين العقوبة: {p}")
                 return
 
