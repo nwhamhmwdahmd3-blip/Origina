@@ -22,7 +22,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any
 from enum import Enum, auto
 from collections import OrderedDict, deque
-
+from telegram import Update
+from telegram.ext import ContextTypes
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.error import BadRequest
 from cachetools import TTLCache
