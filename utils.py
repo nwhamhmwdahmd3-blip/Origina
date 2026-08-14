@@ -980,10 +980,16 @@ class BackgroundTasks:
                 logger.error(f"Expire subscriptions error: {e}")
 
 # =====================================================================
-# 14. خادم الويب
+# 14. خادم الويب (الإصلاح النهائي)
 # =====================================================================
 
+# متغير عام لتخزين مرجع التطبيق
+_webhook_app = None
+
 async def setup_webhook(app, port: int):
+    global _webhook_app
+    _webhook_app = app
+    
     web_app = web.Application()
     web_app.router.add_get('/health', lambda r: web.Response(text="OK"))
     web_app.router.add_post(f"/{CONFIG.TOKEN}", webhook_handler)
@@ -995,14 +1001,14 @@ async def setup_webhook(app, port: int):
     return runner
 
 async def webhook_handler(request):
+    global _webhook_app
     try:
         data = await request.json()
-        from bot import app
-        if app is None:
-            logger.error("❌ app is None in webhook_handler")
+        if _webhook_app is None:
+            logger.error("❌ Webhook app not initialized")
             return web.Response(status=500, text="App not initialized")
         from telegram import Update
-        await app.process_update(Update.de_json(data, app.bot))
+        await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
         return web.Response(status=200, text="OK")
     except Exception as e:
         logger.error(f"Webhook error: {e}")
@@ -1023,3 +1029,4 @@ class ErrorHandler:
                     await safe_send(context.bot, update.effective_user.id, f"⚠️ {str(error)[:200]}")
         except Exception as e:
             logger.error(f"Error in error handler: {e}")
+
