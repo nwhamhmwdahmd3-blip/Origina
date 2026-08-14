@@ -7,6 +7,7 @@ utils.py - الأدوات المساعدة للبوت
 تحتوي على: TimeUtils, TextUtils, RateLimiter, Metrics,
 TranslationManager, KeyboardFactory, StateManager,
 دوال مساعدة أخرى
+مع إضافة التحقق من الاشتراك قبل النشر التلقائي
 """
 
 import asyncio
@@ -877,12 +878,13 @@ async def fetch_json_from_url(url: str) -> Optional[list]:
         return None
 
 # =====================================================================
-# 13. المهام الخلفية
+# 13. المهام الخلفية (مع التحقق من الاشتراك قبل النشر)
 # =====================================================================
 
 class BackgroundTasks:
     @staticmethod
     async def auto_publish(bot) -> None:
+        """النشر التلقائي مع التحقق من الاشتراك"""
         await asyncio.sleep(10)
         while True:
             try:
@@ -891,6 +893,15 @@ class BackgroundTasks:
                     await asyncio.sleep(60)
                     continue
                 for ch in channels:
+                    # ✅ التحقق من الاشتراك قبل النشر
+                    has_sub = await DB.has_active_subscription(ch['user_id'])
+                    has_trial = await DB.has_used_trial(ch['user_id'])
+                    
+                    if not has_sub and not has_trial:
+                        # إذا انتهى الاشتراك، توقف النشر على هذه القناة
+                        logger.info(f"⏹️ توقف النشر للقناة {ch['channel_id']} - انتهى اشتراك المستخدم {ch['user_id']}")
+                        continue
+                    
                     post = await DB.get_next_post(ch['id'])
                     if not post:
                         continue
@@ -980,7 +991,7 @@ class BackgroundTasks:
                 logger.error(f"Expire subscriptions error: {e}")
 
 # =====================================================================
-# 14. خادم الويب (الإصلاح النهائي)
+# 14. خادم الويب
 # =====================================================================
 
 # متغير عام لتخزين مرجع التطبيق
@@ -1029,4 +1040,3 @@ class ErrorHandler:
                     await safe_send(context.bot, update.effective_user.id, f"⚠️ {str(error)[:200]}")
         except Exception as e:
             logger.error(f"Error in error handler: {e}")
-
