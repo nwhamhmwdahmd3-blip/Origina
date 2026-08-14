@@ -7,7 +7,9 @@ utils.py - الأدوات المساعدة للبوت
 تحتوي على: TimeUtils, TextUtils, RateLimiter, Metrics,
 TranslationManager, KeyboardFactory, StateManager,
 دوال مساعدة أخرى
-مع إضافة التحقق من الاشتراك قبل النشر التلقائي
+مع إضافة:
+- التحقق من الاشتراك قبل النشر التلقائي
+- إعادة التدوير التلقائي عند انتهاء المنشورات
 """
 
 import asyncio
@@ -878,13 +880,13 @@ async def fetch_json_from_url(url: str) -> Optional[list]:
         return None
 
 # =====================================================================
-# 13. المهام الخلفية (مع التحقق من الاشتراك قبل النشر)
+# 13. المهام الخلفية (مع التحقق من الاشتراك وإعادة التدوير التلقائي)
 # =====================================================================
 
 class BackgroundTasks:
     @staticmethod
     async def auto_publish(bot) -> None:
-        """النشر التلقائي مع التحقق من الاشتراك"""
+        """النشر التلقائي مع التحقق من الاشتراك وإعادة التدوير التلقائي"""
         await asyncio.sleep(10)
         while True:
             try:
@@ -898,13 +900,28 @@ class BackgroundTasks:
                     has_trial = await DB.has_used_trial(ch['user_id'])
                     
                     if not has_sub and not has_trial:
-                        # إذا انتهى الاشتراك، توقف النشر على هذه القناة
                         logger.info(f"⏹️ توقف النشر للقناة {ch['channel_id']} - انتهى اشتراك المستخدم {ch['user_id']}")
                         continue
                     
                     post = await DB.get_next_post(ch['id'])
+                    
+                    # ✅ إذا انتهت المنشورات والتدوير التلقائي مفعل
                     if not post:
-                        continue
+                        auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
+                        if auto_recycle:
+                            # إعادة تدوير جميع المنشورات
+                            count = await DB.reset_posts(ch['id'])
+                            logger.info(f"♻️ إعادة تدوير تلقائي للقناة {ch['channel_id']} - {count} منشور")
+                            # جلب المنشور الأول بعد إعادة التدوير
+                            post = await DB.get_next_post(ch['id'])
+                            if not post:
+                                continue
+                        else:
+                            # إعادة التدوير معطل، تخطي القناة
+                            logger.info(f"⏹️ انتهت منشورات القناة {ch['channel_id']} - إعادة التدوير معطل")
+                            continue
+                    
+                    # نشر المنشور
                     try:
                         if post['media_type'] == 'photo' and post['media_file_id']:
                             await bot.send_photo(ch['channel_id'], post['media_file_id'], caption=post['text'][:1024] if post['text'] else None)
