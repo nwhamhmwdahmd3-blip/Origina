@@ -15,7 +15,7 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 مع دعم الصيغة الأصلية للأزرار (buy_sub_, mute_dur_)
 مع دعم طلبات الانضمام (قبول/رفض تلقائي)
 مع دعم المشرفين المخفيين تلقائيًا
-مع تحديث رسالة المطور (شرح الخدمات المجانية والمدفوعة)
+مع تحسين عرض قنواتي
 """
 
 import asyncio
@@ -377,7 +377,6 @@ class CommandHandlers:
             is_admin = False
             is_anonymous = False
 
-        # ✅ إذا كان مشرفًا مخفيًا، نبحث عن المالك الحقيقي
         if is_anonymous:
             is_admin = True
             try:
@@ -411,7 +410,6 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, msg)
             return
 
-        # ✅ التسجيل في قاعدة البيانات
         await DB.execute(
             "INSERT OR REPLACE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,?)",
             (chat_id, real_user_id, 1 if is_anonymous else 0)
@@ -422,7 +420,6 @@ class CommandHandlers:
         )
         invalidate_auth_cache(chat_id, real_user_id)
 
-        # ✅ مزامنة جميع المشرفين (بما فيهم المخفيين)
         try:
             admins = await context.bot.get_chat_administrators(chat_id)
             admin_ids = []
@@ -777,9 +774,7 @@ class CallbackHandlers:
                     [InlineKeyboardButton(await get_text(lang, 'back'), callback_data=CB.REMINDER)]
                 ])
                 await query.edit_message_text("🌐 اختر لغة الإشعارات:", reply_markup=kb)
-                return
-
-            if data.startswith(CB.REM_LANG):
+                return            if data.startswith(CB.REM_LANG):
                 lang_set = data.split(":")[-1]
                 await DB.update_reminder_settings(user_id, notification_lang=lang_set)
                 await CallbackHandlers.handle(update, context)
@@ -866,15 +861,44 @@ class CallbackHandlers:
             if data == CB.CH_LIST:
                 await query.answer()
                 channels = await DB.get_user_channels(user_id)
+                
                 if not channels:
-                    await query.edit_message_text(await get_text(lang, 'channels_empty'))
+                    # ✅ لا توجد قنوات - عرض رسالة مع زر إضافة قناة
+                    kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("➕ إضافة قناة", callback_data=CB.CH_ADD)],
+                        [InlineKeyboardButton(await get_text(lang, 'back'), callback_data=CB.BACK)]
+                    ])
+                    await query.edit_message_text(
+                        "📡 **قنواتي**\n\n"
+                        "📭 لا توجد قنوات مضافة بعد.\n\n"
+                        "اضغط على زر '➕ إضافة قناة' لإضافة قناتك الأولى!",
+                        reply_markup=kb
+                    )
                     return
+                
+                # ✅ توجد قنوات - عرض القائمة مع أزرار الاختيار
                 text = "📡 **قنواتي**\n\n"
+                kb = []
                 for ch in channels:
                     st = "🚫" if ch['banned'] else "✅"
-                    text += f"{st} {ch['channel_name']} (Telegram ID: {ch['channel_id']})\n"
-                kb = KeyboardFactory.build("main_menu")
-                await query.edit_message_text(text, reply_markup=kb)
+                    status_text = "🚫 محظورة" if ch['banned'] else "✅ نشطة"
+                    text += f"{st} **{ch['channel_name']}**\n"
+                    text += f"   📌 المعرف: `{ch['channel_id']}`\n"
+                    text += f"   الحالة: {status_text}\n\n"
+                    if not ch['banned']:
+                        kb.append([InlineKeyboardButton(
+                            f"📌 اختيار: {ch['channel_name'][:20]}",
+                            callback_data=f"{CB.CH_SEL}{ch['id']}"
+                        )])
+                    kb.append([InlineKeyboardButton(
+                        f"🗑️ حذف: {ch['channel_name'][:20]}",
+                        callback_data=f"{CB.CH_DEL}{ch['id']}"
+                    )])
+                
+                kb.append([InlineKeyboardButton("➕ إضافة قناة أخرى", callback_data=CB.CH_ADD)])
+                kb.append([InlineKeyboardButton(await get_text(lang, 'back'), callback_data=CB.BACK)])
+                
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
                 return
 
             if data.startswith(CB.CH_DEL):
@@ -2740,7 +2764,6 @@ class MessageHandlers:
         if update.effective_user.is_bot:
             return
 
-        # التحقق من القفل
         locked = await DB.fetchone("SELECT locked FROM chat_locks WHERE chat_id=?", (chat_id,))
         if locked and locked[0] == 1:
             try:
@@ -2751,7 +2774,6 @@ class MessageHandlers:
 
         settings = await DB.get_security_settings(chat_id)
 
-        # حذف الروابط
         if settings.get('delete_links', False) and TextUtils.contains_link(text):
             try:
                 await update.message.delete()
@@ -2763,7 +2785,6 @@ class MessageHandlers:
             except:
                 pass
 
-        # حذف المعرفات
         if settings.get('mentions', False) and TextUtils.contains_mention(text):
             try:
                 await update.message.delete()
@@ -2775,7 +2796,6 @@ class MessageHandlers:
             except:
                 pass
 
-        # حذف الكلمات المحظورة
         if settings.get('delete_banned_words', False):
             banned_words = await DB.get_banned_words(chat_id)
             for word in banned_words:
@@ -2790,7 +2810,6 @@ class MessageHandlers:
                     except:
                         pass
 
-        # حذف الوسائط
         media_checks = {
             'delete_videos': 'video',
             'delete_audio': 'audio',
@@ -2816,7 +2835,6 @@ class MessageHandlers:
                     except:
                         pass
 
-        # الحد الأقصى للطول
         max_len = settings.get('max_message_length', 0)
         if max_len and len(text) > max_len:
             try:
@@ -2829,7 +2847,6 @@ class MessageHandlers:
             except:
                 pass
 
-        # الفيضان
         if settings.get('antiflood_enabled', False):
             now = TimeUtils.utc_iso()
             row = await DB.fetchone("SELECT message_time FROM user_messages WHERE user_id=? AND chat_id=?",
@@ -2850,7 +2867,6 @@ class MessageHandlers:
             await DB.execute("INSERT OR REPLACE INTO user_messages (user_id, chat_id, message_time) VALUES (?,?,?)",
                              (user_id, chat_id, now))
 
-        # الوضع الليلي
         if settings.get('night_mode_enabled', False):
             now = TimeUtils.mecca_now()
             start = datetime.strptime(settings.get('night_mode_start', '23:00'), '%H:%M').time()
@@ -2873,7 +2889,6 @@ class MessageHandlers:
                     except:
                         pass
 
-        # الردود التلقائية
         ars = await DB.get_auto_reply_settings(chat_id)
         if ars.get('enabled', False):
             if not ars.get('only_admins', False) or await is_authorized_in_group(context.bot, chat_id, user_id):
@@ -2893,7 +2908,6 @@ class MessageHandlers:
                     except Exception as e:
                         logger.error(f"فشل إرسال رد تلقائي: {e}")
 
-        # الوضع البطيء
         if settings.get('slow_mode', False):
             try:
                 await context.bot.set_chat_slow_mode(chat_id, settings.get('slow_mode_seconds', 5))
