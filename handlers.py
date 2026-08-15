@@ -316,8 +316,6 @@ class CommandHandlers:
             text += f"🛡️ `{a[0]}`\n"
         await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد")
 
-    # ========== الدالة القديمة syncgroup ==========
-
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
