@@ -10,6 +10,7 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 - MessageHandlers: معالجة الرسائل (خاصة ومجموعات)
 مع تفعيل زر التجربة المجانية (30 يوم) وإعادة التدوير التلقائي
 ومعالجة دقيقة لإضافة القناة مع رسائل خطأ واضحة
+وإصلاح مشكلة حفظ القناة في قاعدة البيانات
 """
 
 import asyncio
@@ -839,7 +840,7 @@ class CallbackHandlers:
                 return
 
             # ====================================================
-            # القنوات
+            # القنوات (مع إصلاح حفظ القناة)
             # ====================================================
             if data == CB.CH_ADD:
                 has_sub = await DB.has_active_subscription(user_id)
@@ -2085,7 +2086,7 @@ class MessageHandlers:
             return
 
         # ============================================================
-        # ✅ حالة: إضافة قناة (مع رسائل خطأ واضحة)
+        # ✅ حالة: إضافة قناة (مع رسائل خطأ واضحة وإصلاح حفظ القناة)
         # ============================================================
         if state == UserState.WAIT_CHANNEL:
             # 1️⃣ التحقق من الاشتراك
@@ -2226,11 +2227,15 @@ class MessageHandlers:
                 StateManager.clear(user_id)
                 return
 
-            # 7️⃣ إضافة القناة إلى قاعدة البيانات
+            # 7️⃣ إضافة القناة إلى قاعدة البيانات (مع معالجة الأخطاء)
             try:
-                channel_id = chat.id
+                channel_id = int(chat.id)
                 channel_name = chat.title or "بدون اسم"
+                
+                logger.info(f"📝 محاولة إضافة قناة: user_id={user_id}, channel_id={channel_id}, channel_name={channel_name}")
+                
                 result = await DB.add_channel(user_id, channel_id, channel_name)
+                logger.info(f"📝 نتيجة الإضافة: {result}")
                 
                 if result:
                     await DB.set_active_channel(user_id, result)
@@ -2265,6 +2270,7 @@ class MessageHandlers:
                             f"استخدم **'📡 قنواتي'** لعرض القنوات."
                         )
             except Exception as e:
+                logger.error(f"❌ فشل إضافة القناة: {e}", exc_info=True)
                 await safe_send(
                     context.bot, 
                     user_id, 
