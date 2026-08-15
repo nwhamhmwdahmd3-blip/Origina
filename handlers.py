@@ -14,6 +14,7 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 مع دعم استيراد الردود من ملف replies.py أولاً ثم قاعدة البيانات
 مع دعم الصيغة الأصلية للأزرار (buy_sub_, mute_dur_)
 مع دعم طلبات الانضمام (قبول/رفض تلقائي)
+مع دعم المشرفين المخفيين تلقائيًا
 مع تحديث رسالة المطور (شرح الخدمات المجانية والمدفوعة)
 """
 
@@ -363,12 +364,30 @@ class CommandHandlers:
             await safe_send(context.bot, chat_id, "❌ البوتات لا تستطيع استخدام هذا الأمر")
             return
 
-        # ✅ التحقق من صلاحية المستخدم أولاً
+        # ✅ التحقق من صلاحية المستخدم (بما في ذلك المشرفين المخفيين)
+        is_admin = False
+        is_anonymous = False
+        real_user_id = user_id
+
         try:
             member = await context.bot.get_chat_member(chat_id, user_id)
             is_admin = member.status in ['administrator', 'creator']
+            is_anonymous = getattr(member, 'is_anonymous', False)
         except:
             is_admin = False
+            is_anonymous = False
+
+        # ✅ إذا كان مشرفًا مخفيًا، نبحث عن المالك الحقيقي
+        if is_anonymous:
+            is_admin = True
+            try:
+                admins = await context.bot.get_chat_administrators(chat_id)
+                for admin in admins:
+                    if admin.status == 'creator' and not getattr(admin, 'is_anonymous', False):
+                        real_user_id = admin.user.id
+                        break
+            except:
+                pass
 
         if not is_admin:
             await safe_send(
@@ -380,7 +399,7 @@ class CommandHandlers:
             )
             return
 
-        await DB.register_group(chat_id, chat_name, user_id, update.effective_chat.username)
+        await DB.register_group(chat_id, chat_name, real_user_id, update.effective_chat.username)
         bot_perms = await check_bot_permissions(context.bot, chat_id)
 
         if not bot_perms.get('can_act', False):
@@ -392,24 +411,10 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, msg)
             return
 
-        real_user_id = user_id
-        is_hidden = (user_id == CONFIG.ANONYMOUS_ADMIN_ID)
-
-        if is_hidden:
-            try:
-                admins = await context.bot.get_chat_administrators(chat_id)
-                for admin in admins:
-                    if admin.status == 'creator':
-                        real_user_id = admin.user.id
-                        break
-                if not real_user_id and admins:
-                    real_user_id = admins[0].user.id
-            except:
-                pass
-
+        # ✅ التسجيل في قاعدة البيانات
         await DB.execute(
             "INSERT OR REPLACE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,?)",
-            (chat_id, real_user_id, 1 if is_hidden else 0)
+            (chat_id, real_user_id, 1 if is_anonymous else 0)
         )
         await DB.execute(
             "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)",
@@ -417,9 +422,13 @@ class CommandHandlers:
         )
         invalidate_auth_cache(chat_id, real_user_id)
 
+        # ✅ مزامنة جميع المشرفين (بما فيهم المخفيين)
         try:
             admins = await context.bot.get_chat_administrators(chat_id)
-            admin_ids = [a.user.id for a in admins]
+            admin_ids = []
+            for admin in admins:
+                if admin.user and not admin.user.is_bot:
+                    admin_ids.append(admin.user.id)
             admin_count = await DB.sync_group_admins(chat_id, admin_ids)
         except:
             admin_count = 0
@@ -427,21 +436,16 @@ class CommandHandlers:
         msg = f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
         msg += f"📌 اسم المجموعة: {chat_name}\n"
         msg += f"🆔 المعرف: {chat_id}\n"
-        msg += f"👤 تم تسجيل {'المالك' if not is_hidden else 'المشرف المخفي'} (المعرف: `{real_user_id}`)\n"
+        msg += f"👤 تم تسجيل {'مشرف مخفي' if is_anonymous else 'المشرف'} (المعرف: `{real_user_id}`)\n"
         msg += f"👥 تم مزامنة {admin_count} مشرف\n\n"
         msg += f"🔐 استخدم `/security` لإعدادات الأمان\n"
         msg += f"🛠️ استخدم `/panel` للوحة التحكم"
 
-        if is_hidden:
+        if is_anonymous:
+            await safe_send(context.bot, user_id, msg)
             await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت بواسطة مشرف مخفي!**")
-            await safe_send(context.bot, chat_id, msg)
-            if real_user_id and real_user_id > 0 and real_user_id != CONFIG.ANONYMOUS_ADMIN_ID:
-                try:
-                    await safe_send(context.bot, real_user_id, msg)
-                except:
-                    pass
         else:
-            await safe_send(context.bot, real_user_id, msg)
+            await safe_send(context.bot, user_id, msg)
             await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت في المجموعة!**")
 
     @staticmethod
@@ -2736,9 +2740,7 @@ class MessageHandlers:
         if update.effective_user.is_bot:
             return
 
-        # ============================================================
-        # 1. التحقق من القفل
-        # ============================================================
+        # التحقق من القفل
         locked = await DB.fetchone("SELECT locked FROM chat_locks WHERE chat_id=?", (chat_id,))
         if locked and locked[0] == 1:
             try:
@@ -2747,12 +2749,9 @@ class MessageHandlers:
                 pass
             return
 
-        # ============================================================
-        # 2. تطبيق إعدادات الأمان
-        # ============================================================
         settings = await DB.get_security_settings(chat_id)
 
-        # 2.1 حذف الروابط
+        # حذف الروابط
         if settings.get('delete_links', False) and TextUtils.contains_link(text):
             try:
                 await update.message.delete()
@@ -2764,7 +2763,7 @@ class MessageHandlers:
             except:
                 pass
 
-        # 2.2 حذف المعرفات
+        # حذف المعرفات
         if settings.get('mentions', False) and TextUtils.contains_mention(text):
             try:
                 await update.message.delete()
@@ -2776,7 +2775,7 @@ class MessageHandlers:
             except:
                 pass
 
-        # 2.3 حذف الكلمات المحظورة
+        # حذف الكلمات المحظورة
         if settings.get('delete_banned_words', False):
             banned_words = await DB.get_banned_words(chat_id)
             for word in banned_words:
@@ -2791,7 +2790,7 @@ class MessageHandlers:
                     except:
                         pass
 
-        # 2.4 حذف أنواع الوسائط الأخرى
+        # حذف الوسائط
         media_checks = {
             'delete_videos': 'video',
             'delete_audio': 'audio',
@@ -2817,7 +2816,7 @@ class MessageHandlers:
                     except:
                         pass
 
-        # 2.5 الحد الأقصى للطول
+        # الحد الأقصى للطول
         max_len = settings.get('max_message_length', 0)
         if max_len and len(text) > max_len:
             try:
@@ -2830,7 +2829,7 @@ class MessageHandlers:
             except:
                 pass
 
-        # 2.6 الفيضان
+        # الفيضان
         if settings.get('antiflood_enabled', False):
             now = TimeUtils.utc_iso()
             row = await DB.fetchone("SELECT message_time FROM user_messages WHERE user_id=? AND chat_id=?",
@@ -2851,7 +2850,7 @@ class MessageHandlers:
             await DB.execute("INSERT OR REPLACE INTO user_messages (user_id, chat_id, message_time) VALUES (?,?,?)",
                              (user_id, chat_id, now))
 
-        # 2.7 الوضع الليلي
+        # الوضع الليلي
         if settings.get('night_mode_enabled', False):
             now = TimeUtils.mecca_now()
             start = datetime.strptime(settings.get('night_mode_start', '23:00'), '%H:%M').time()
@@ -2874,9 +2873,7 @@ class MessageHandlers:
                     except:
                         pass
 
-        # ============================================================
-        # 3. الردود التلقائية (من ملف replies.py أولاً، ثم قاعدة البيانات)
-        # ============================================================
+        # الردود التلقائية
         ars = await DB.get_auto_reply_settings(chat_id)
         if ars.get('enabled', False):
             if not ars.get('only_admins', False) or await is_authorized_in_group(context.bot, chat_id, user_id):
@@ -2896,9 +2893,7 @@ class MessageHandlers:
                     except Exception as e:
                         logger.error(f"فشل إرسال رد تلقائي: {e}")
 
-        # ============================================================
-        # 4. الوضع البطيء (Slow Mode)
-        # ============================================================
+        # الوضع البطيء
         if settings.get('slow_mode', False):
             try:
                 await context.bot.set_chat_slow_mode(chat_id, settings.get('slow_mode_seconds', 5))
@@ -2917,14 +2912,12 @@ class MessageHandlers:
         chat_id = update.effective_chat.id
         settings = await DB.get_security_settings(chat_id)
 
-        # 1. حذف رسائل الخدمة إذا كان مفعلاً
         if settings.get('delete_service', False):
             try:
                 await update.message.delete()
             except:
                 pass
 
-        # 2. الترحيب بالأعضاء الجدد
         if settings.get('welcome_enabled', False) and update.message.new_chat_members:
             for member in update.message.new_chat_members:
                 if member.id == context.bot.id:
@@ -2939,7 +2932,6 @@ class MessageHandlers:
                 except Exception as e:
                     logger.error(f"فشل إرسال رسالة الترحيب: {e}")
 
-        # 3. الوداع عند مغادرة عضو
         if settings.get('goodbye_enabled', False) and update.message.left_chat_member:
             member = update.message.left_chat_member
             if member.id == context.bot.id:
@@ -2967,7 +2959,6 @@ class MessageHandlers:
         
         settings = await DB.get_security_settings(chat_id)
         
-        # ✅ القبول التلقائي (إذا مفعل)
         if settings.get('auto_approve_join', False):
             try:
                 await join_request.approve()
@@ -2984,7 +2975,6 @@ class MessageHandlers:
                 logger.error(f"❌ فشل قبول طلب الانضمام: {e}")
             return
         
-        # ❌ الرفض التلقائي (إذا مفعل)
         if settings.get('auto_reject_join', False):
             try:
                 await join_request.decline()
