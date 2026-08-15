@@ -119,3 +119,11 @@
   "error_user_admin": "❌ لا يمكن معاملة مشرف",
   "heartbeat_status": "💓 **حالة البوت**\n\n🕐 الوقت: {time}\n💾 الرام: {ram}%"
 }
+{
+  "main_menu": "🌿 **{bot_name}**\n\n👤 `{user_id}`\n👥 {groups} مجموعة\n💎 {sub}\n📡 {channel}\n⏳ {pending}\n⚙️ {auto}",
+  "help_text": "📚 **الأوامر:**\n\n/start - الرئيسية\n/trial - تجربة\n/subscribe - اشتراك\n/support - دعم",
+  "trial_used": "❌ استخدمت التجربة",
+  "trial_activated": "🎁 {days} يوم!",
+  "plan_selector": "💎 اختر الباقة:",
+  "send_support_message": "📞 أرسل رسالتك:"
+}

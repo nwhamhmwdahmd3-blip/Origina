@@ -120,3 +120,11 @@
   "heartbeat_status": "💓 **Bot Status**\n\n🕐 Time: {time}\n💾 RAM: {ram}%"
 }
 
+{
+  "main_menu": "🌿 **{bot_name}**\n\n👤 `{user_id}`\n👥 {groups} groups\n💎 {sub}\n📡 {channel}\n⏳ {pending}\n⚙️ {auto}",
+  "help_text": "📚 **Commands:**\n\n/start - Main\n/trial - Trial\n/subscribe - Subscribe\n/support - Support",
+  "trial_used": "❌ Trial used",
+  "trial_activated": "🎁 {days} days!",
+  "plan_selector": "💎 Choose plan:",
+  "send_support_message": "📞 Send your message:"
+}
