@@ -14,6 +14,7 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 مع دعم استيراد الردود من ملف replies.py أولاً ثم قاعدة البيانات
 مع دعم الصيغة الأصلية للأزرار (buy_sub_, mute_dur_)
 مع دعم طلبات الانضمام (قبول/رفض تلقائي)
+مع تحديث رسالة المطور (شرح الخدمات المجانية والمدفوعة)
 """
 
 import asyncio
@@ -189,7 +190,6 @@ class CommandHandlers:
 
     @staticmethod
     async def developer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        user_id = update.effective_user.id
         text = f"""
 👨‍💻 **معلومات المطور**
 
@@ -197,12 +197,45 @@ class CommandHandlers:
 👤 اسم البوت: {CONFIG.BOT_NAME}
 🔗 المعرف: @{CONFIG.BOT_USERNAME}
 
-🛠️ **المطورون المسجلون:**
+📞 **للتواصل مع المطور:**
+🛠️ **المطور:** @RelaxMgr
+
+━━━━━━━━━━━━━━━━━━━━
+
+📚 **شرح عمل البوت:**
+
+🆓 **الخدمات المجانية:**
+• حماية المجموعات
+• الردود التلقائية
+• المسابقات
+• الترحيب والوداع
+• الكلمات المحظورة
+
+💎 **الخدمات المدفوعة:**
+• إدارة القنوات
+• النشر التلقائي
+• إعادة التدوير
+• الجدولة المرنة
+
+📡 **إدارة القنوات (مدفوعة):**
+• اضغط "➕ إضافة قناة" وأرسل معرف القناة
+• اضغط "📥 إضافة منشورات" لإضافة محتوى
+• البوت ينشر تلقائيًا حسب الجدولة
+• يدعم الصور والفيديوهات والمستندات
+
+🛡️ **حماية المجموعات (مجانية):**
+• أضف البوت مشرفًا في مجموعتك
+• استخدم /syncgroup للتفعيل
+• اضغط "🔐 أمان" للتحكم في الحماية
+• حذف الروابط والمعرفات والكلمات المحظورة
+• قبول/رفض تلقائي لطلبات الانضمام
+
+💎 **الاشتراكات:**
+• تجربة مجانية 30 يوم
+• باقات مدفوعة بالنجوم
+• نظام إحالات ومكافآت
 """
-        for dev_id in CONFIG.DEVELOPER_IDS:
-            text += f"• `{dev_id}`\n"
-        text += f"\n🔐 هل أنت مطور؟ {'✅ نعم' if CONFIG.is_developer(user_id) else '❌ لا'}"
-        await safe_send(context.bot, user_id, text)
+        await safe_send(context.bot, update.effective_user.id, text)
 
     @staticmethod
     async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -818,7 +851,6 @@ class CallbackHandlers:
             # القنوات (مع إزالة has_used_trial)
             # ====================================================
             if data == CB.CH_ADD:
-                # ✅ التحقق من الاشتراك فقط (بدون has_used_trial)
                 if not await DB.has_active_subscription(user_id):
                     await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
                     return
@@ -869,7 +901,6 @@ class CallbackHandlers:
             # ====================================================
             if data == CB.POST_ADD:
                 await query.answer()
-                # ✅ التحقق من الاشتراك
                 if not await DB.has_active_subscription(user_id):
                     await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
                     return
@@ -890,7 +921,6 @@ class CallbackHandlers:
 
             if data == CB.POST_PUB:
                 await query.answer()
-                # ✅ التحقق من الاشتراك
                 if not await DB.has_active_subscription(user_id):
                     await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
                     return
@@ -971,7 +1001,6 @@ class CallbackHandlers:
 
             if data == CB.PUB_ALL:
                 await query.answer()
-                # ✅ التحقق من الاشتراك
                 if not await DB.has_active_subscription(user_id):
                     await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
                     return
@@ -1163,11 +1192,10 @@ class CallbackHandlers:
                                               reply_markup=KeyboardFactory.build("mute_duration", chat_id))
                 return
 
-            # ✅ معالجة mute_dur_* (الصيغة الأصلية)
             if data.startswith("mute_dur_"):
                 parts = data.split(":")
-                if len(parts) == 2:  # mute_dur_5:chat_id
-                    minutes_part = parts[0].split("_")[-1]  # "5" من "mute_dur_5"
+                if len(parts) == 2:
+                    minutes_part = parts[0].split("_")[-1]
                     chat_id = int(parts[1])
                     minutes = int(minutes_part) if minutes_part != "0" else None
                     context.user_data['mute_minutes'] = minutes if minutes else None
@@ -1509,7 +1537,6 @@ class CallbackHandlers:
     async def _handle_admin_callback(update, context, query, user_id, lang):
         data = query.data
 
-        # المستخدمون
         if data == CB.ADMIN_USERS:
             stats = await DB.get_user_stats()
             await query.edit_message_text(await get_text(lang, 'admin_users',
@@ -1528,7 +1555,6 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'admin_unbanned_all'))
             return
 
-        # القنوات
         if data == CB.ADMIN_CHANNELS:
             channels = await DB.fetchall("SELECT id, channel_id, channel_name, banned FROM user_channels LIMIT 50")
             if not channels:
@@ -1555,7 +1581,6 @@ class CallbackHandlers:
             await query.edit_message_text("✅ تم تفعيل جميع القنوات المحظورة")
             return
 
-        # المجموعات
         if data == CB.ADMIN_GROUPS:
             groups = await DB.fetchall("SELECT chat_id, chat_name, banned FROM bot_groups LIMIT 50")
             if not groups:
@@ -1582,7 +1607,6 @@ class CallbackHandlers:
             await query.edit_message_text("✅ تم إلغاء حظر جميع المجموعات")
             return
 
-        # المشرفين
         if data == CB.ADMIN_ADD_ADMIN:
             StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
             await query.edit_message_text(await get_text(lang, 'admin_add_admin'))
@@ -1593,7 +1617,6 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'admin_rem_admin'))
             return
 
-        # النظام
         if data == CB.ADMIN_RAM:
             ram = get_ram_usage()
             await query.edit_message_text(await get_text(lang, 'admin_ram',
@@ -1622,7 +1645,6 @@ class CallbackHandlers:
                                                          uptime=uptime_str))
             return
 
-        # النسخ الاحتياطي
         if data == CB.ADMIN_BACKUP:
             try:
                 backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
@@ -1656,7 +1678,6 @@ class CallbackHandlers:
                 await query.edit_message_text(await get_text(lang, 'admin_restore_failed', error=str(e)[:100]))
             return
 
-        # التحديثات والبث
         if data == CB.ADMIN_SEND_UPDATE:
             StateManager.set(user_id, UserState.WAIT_UPDATE)
             await query.edit_message_text("📢 أرسل نص التحديث:")
@@ -1707,7 +1728,6 @@ class CallbackHandlers:
             context.user_data.pop('broadcast_text', None)
             return
 
-        # التذاكر
         if data == CB.ADMIN_TICKETS:
             tickets = await DB.get_tickets()
             if not tickets:
@@ -1731,7 +1751,6 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'tickets_deleted'))
             return
 
-        # قناة السجلات
         if data == CB.ADMIN_LOG_CH:
             log_id = await DB.get_log_channel()
             await query.edit_message_text(f"📋 قناة السجلات: {log_id}" if log_id else "📋 غير محدد")
@@ -1742,7 +1761,6 @@ class CallbackHandlers:
             await query.edit_message_text("📋 أرسل معرف القناة:")
             return
 
-        # الردود التلقائية
         if data == CB.ADMIN_REPLIES:
             stats = await DB.get_auto_reply_stats(-1, 20)
             if not stats:
@@ -1774,7 +1792,6 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'enter_keyword_to_delete'))
             return
 
-        # الكلمات المحظورة
         if data == CB.ADMIN_BANNED_WORDS:
             words = await DB.get_banned_words(-1)
             text = await get_text(lang, 'admin_banned_words_global',
@@ -1803,7 +1820,6 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'enter_word_to_remove'))
             return
 
-        # المسابقات
         if data == CB.ADMIN_CREATE_CONTEST:
             StateManager.set(user_id, UserState.WAIT_CONTEST_TITLE)
             await query.edit_message_text("🏆 أرسل عنوان المسابقة:")
@@ -1839,7 +1855,6 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'admin_contest_deleted'))
             return
 
-        # تصدير/استيراد
         if data == CB.ADMIN_EXPORT_REPLIES:
             count = await export_auto_replies(-1)
             await query.edit_message_text(f"✅ تم تصدير {count} رد إلى ملف `auto_replies_-1.json`")
@@ -2032,9 +2047,8 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ✅ إضافة قناة (مع إزالة has_used_trial)
+        # إضافة قناة
         if state == UserState.WAIT_CHANNEL:
-            # التحقق من الاشتراك فقط (بدون has_used_trial)
             if not await DB.has_active_subscription(user_id):
                 await safe_send(
                     context.bot,
@@ -2777,7 +2791,7 @@ class MessageHandlers:
                     except:
                         pass
 
-        # 2.4 حذف أنواع الوسائط الأخرى (وليس رسائل الخدمة، لأنها تذهب إلى handle_service)
+        # 2.4 حذف أنواع الوسائط الأخرى
         media_checks = {
             'delete_videos': 'video',
             'delete_audio': 'audio',
@@ -2868,16 +2882,13 @@ class MessageHandlers:
             if not ars.get('only_admins', False) or await is_authorized_in_group(context.bot, chat_id, user_id):
                 reply = None
 
-                # ✅ أولاً: البحث في ملف replies.py
                 reply = get_reply_from_file(text.lower().strip())
 
-                # ✅ ثانياً: البحث في قاعدة البيانات
                 if not reply:
                     reply_data = await DB.get_auto_reply(text.lower(), chat_id)
                     if reply_data:
                         reply = reply_data.get('reply')
 
-                # ✅ إرسال الرد
                 if reply:
                     try:
                         await update.message.reply_text(reply)
@@ -2962,7 +2973,6 @@ class MessageHandlers:
                 await join_request.approve()
                 logger.info(f"✅ تم قبول {user_id} تلقائيًا في {chat_id}")
                 
-                # إرسال ترحيب
                 if settings.get('welcome_enabled', False):
                     welcome_text = settings.get('welcome_text', "مرحباً {user} في {chat} 🤍")
                     text = welcome_text.format(
@@ -2983,6 +2993,4 @@ class MessageHandlers:
                 logger.error(f"❌ فشل رفض طلب الانضمام: {e}")
             return
         
-        # ⏳ إذا لم يكن هناك قبول/رفض تلقائي، لا نفعل شيئًا
         logger.info(f"⏳ طلب انضمام من {user_id} في {chat_id} - بانتظار الموافقة اليدوية")
-
