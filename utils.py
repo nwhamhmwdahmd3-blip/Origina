@@ -12,6 +12,9 @@ TranslationManager, KeyboardFactory, StateManager,
 - إعادة التدوير التلقائي عند انتهاء المنشورات
 - تحميل الردود من ملف replies.py
 - دعم استيراد الردود من ملف أو قائمة (لـ GitHub)
+- إصلاح 404: معالجات المسارات
+- تحسينات: استيراد random، بحث جزئي، تنظيف الكود
+- مزامنة تلقائية للمشرفين كل ساعة
 """
 
 import asyncio
@@ -22,6 +25,7 @@ import time
 import html
 import shutil
 import logging
+import random
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any, Union
@@ -849,11 +853,6 @@ async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
     return len(data)
 
 async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[Dict]], overwrite: bool = False) -> int:
-    """
-    استيراد الردود التلقائية من ملف JSON أو قائمة بيانات.
-    - إذا كان file_path_or_data مسار ملف، يتم فتحه وقراءته.
-    - إذا كان قائمة dict، يتم استخدامها مباشرة.
-    """
     try:
         if isinstance(file_path_or_data, str):
             with open(file_path_or_data, "r", encoding="utf-8") as f:
@@ -908,7 +907,6 @@ async def fetch_json_from_url(url: str) -> Optional[list]:
 # =====================================================================
 
 def load_replies_from_file() -> dict:
-    """محاولة تحميل الردود من ملف replies.py"""
     try:
         from replies import REPLIES
         logger.info("✅ تم تحميل الردود من ملف replies.py")
@@ -920,24 +918,22 @@ def load_replies_from_file() -> dict:
         logger.error(f"❌ خطأ في تحميل replies.py: {e}")
         return {}
 
-# تحميل الردود عند بدء التشغيل
 _REPLIES_FROM_FILE = load_replies_from_file()
 
 def get_reply_from_file(keyword: str) -> Optional[str]:
-    """
-    البحث عن رد في ملف replies.py (مع تطابق جزئي)
-    """
     if not _REPLIES_FROM_FILE or not keyword:
         return None
     keyword = keyword.lower().strip()
+    
+    if keyword in _REPLIES_FROM_FILE:
+        return random.choice(_REPLIES_FROM_FILE[keyword])
+    
     for key, replies in _REPLIES_FROM_FILE.items():
-        if key in keyword:
-            import random
+        if key in keyword or keyword in key:
             return random.choice(replies)
     return None
 
 def reload_replies_from_file() -> dict:
-    """إعادة تحميل الردود من الملف (للاستخدام الديناميكي)"""
     global _REPLIES_FROM_FILE
     _REPLIES_FROM_FILE = load_replies_from_file()
     return _REPLIES_FROM_FILE
@@ -949,7 +945,6 @@ def reload_replies_from_file() -> dict:
 class BackgroundTasks:
     @staticmethod
     async def auto_publish(bot) -> None:
-        """النشر التلقائي مع التحقق من الاشتراك (بدون has_used_trial) وإعادة التدوير التلقائي"""
         await asyncio.sleep(10)
         while True:
             try:
@@ -958,14 +953,12 @@ class BackgroundTasks:
                     await asyncio.sleep(60)
                     continue
                 for ch in channels:
-                    # ✅ التحقق من الاشتراك فقط (بدون has_used_trial)
                     if not await DB.has_active_subscription(ch['user_id']):
                         logger.info(f"⏹️ توقف النشر للقناة {ch['channel_id']} - انتهى اشتراك المستخدم {ch['user_id']}")
                         continue
 
                     post = await DB.get_next_post(ch['id'])
 
-                    # إذا انتهت المنشورات والتدوير التلقائي مفعل
                     if not post:
                         auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
                         if auto_recycle:
@@ -978,7 +971,6 @@ class BackgroundTasks:
                             logger.info(f"⏹️ انتهت منشورات القناة {ch['channel_id']} - إعادة التدوير معطل")
                             continue
 
-                    # نشر المنشور
                     try:
                         if post['media_type'] == 'photo' and post['media_file_id']:
                             await bot.send_photo(ch['channel_id'], post['media_file_id'], caption=post['text'][:1024] if post['text'] else None)
@@ -1063,6 +1055,32 @@ class BackgroundTasks:
             except Exception as e:
                 logger.error(f"Expire subscriptions error: {e}")
 
+    @staticmethod
+    async def sync_admins_periodically(bot) -> None:
+        """مزامنة مشرفي المجموعات تلقائيًا كل ساعة"""
+        await asyncio.sleep(60)
+        while True:
+            try:
+                groups = await DB.fetchall("SELECT chat_id FROM bot_groups WHERE banned=0")
+                synced = 0
+                for group in groups:
+                    chat_id = group['chat_id'] if isinstance(group, dict) else group[0]
+                    try:
+                        admins = await bot.get_chat_administrators(chat_id)
+                        admin_ids = [a.user.id for a in admins if not a.user.is_bot]
+                        count = await DB.sync_group_admins(chat_id, admin_ids)
+                        if count > 0:
+                            synced += 1
+                        logger.info(f"✅ تم تحديث {count} مشرف للمجموعة {chat_id}")
+                    except Exception as e:
+                        logger.error(f"❌ فشل تحديث مشرفي {chat_id}: {str(e)[:100]}")
+                
+                logger.info(f"🔄 اكتملت مزامنة المشرفين: {synced} مجموعة")
+                await asyncio.sleep(3600)
+            except Exception as e:
+                logger.error(f"Sync admins error: {e}")
+                await asyncio.sleep(3600)
+
 # =====================================================================
 # 15. خادم الويب
 # =====================================================================
@@ -1074,8 +1092,14 @@ async def setup_webhook(app, port: int):
     _webhook_app = app
 
     web_app = web.Application()
+    
     web_app.router.add_get('/health', lambda r: web.Response(text="OK"))
+    web_app.router.add_get('/', lambda r: web.Response(text="🌿 Relax Manager Bot is running!"))
     web_app.router.add_post(f"/{CONFIG.TOKEN}", webhook_handler)
+    
+    web_app.router.add_get('/{tail:.*}', lambda r: web.Response(text="OK", status=200))
+    web_app.router.add_post('/{tail:.*}', lambda r: web.Response(text="OK", status=200))
+    
     runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
@@ -1090,7 +1114,6 @@ async def webhook_handler(request):
         if _webhook_app is None:
             logger.error("❌ Webhook app not initialized")
             return web.Response(status=500, text="App not initialized")
-        from telegram import Update
         await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
         return web.Response(status=200, text="OK")
     except Exception as e:

@@ -116,6 +116,7 @@ async def main():
         asyncio.create_task(BackgroundTasks.flush_usage_periodically()),
         asyncio.create_task(BackgroundTasks.flush_sentiment_periodically()),
         asyncio.create_task(BackgroundTasks.expire_subscriptions()),
+        asyncio.create_task(BackgroundTasks.sync_admins_periodically(app.bot)),
     ]
 
     # ========== تشغيل Webhook أو Polling ==========
