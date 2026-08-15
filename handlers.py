@@ -1929,7 +1929,7 @@ class MessageHandlers:
                     context.user_data.pop('contest_title', ''),
                     context.user_data.pop('contest_desc', ''),
                     context.user_data.pop('contest_prize', ''),
-                    TimeUtils.mecca_to_utc(end_date).isoformat()
+                    TimeUtils.mecca_to_utc(end_date).strftime('%Y-%m-%d %H:%M:%S')
                 )
                 await safe_send(context.bot, user_id, f"✅ مسابقة #{cid}")
             except Exception as e:
