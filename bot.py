@@ -14,7 +14,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 
 from config import CONFIG, PATHS
 from database import DB, initialize_db
-from handlers import CommandHandlers, CallbackHandlers, MessageHandlers
+from handlers import CommandHandlers, MessageHandlers
+from callback_handlers import CallbackHandlers
 from utils import TranslationManager, KeyboardFactory, BackgroundTasks, ErrorHandler, setup_webhook
 
 logging.basicConfig(
@@ -31,13 +32,11 @@ async def main():
     print(f"🌿 {CONFIG.BOT_NAME}")
     print(f"👨‍💼 المالك: {CONFIG.PRIMARY_OWNER_ID}")
 
-    # ✅ تهيئة قاعدة البيانات
     await initialize_db()
 
     for dev_id in CONFIG.DEVELOPER_IDS:
         await DB.register_user(dev_id)
 
-    # ✅ تحميل الإعدادات
     KeyboardFactory.load_config()
     available_langs = TranslationManager.get_available_languages()
     for lang in available_langs:
@@ -46,7 +45,6 @@ async def main():
     port = int(CONFIG.WEB_PORT)
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
 
-    # ✅ إنشاء التطبيق
     app = Application.builder().token(CONFIG.TOKEN).build()
     await app.initialize()
 
@@ -84,7 +82,7 @@ async def main():
     app.add_handler(CommandHandler("remove_hidden_admin", CommandHandlers.remove_hidden_admin))
     app.add_handler(CommandHandler("list_hidden_admins", CommandHandlers.list_hidden_admins))
 
-    # ========== الكولباك ==========
+    # ========== الكولباك (من ملف منفصل) ==========
     app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
 
     # ========== الرسائل الخاصة ==========
@@ -129,21 +127,22 @@ async def main():
     # ========== تشغيل Webhook ==========
     if hostname:
         webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
-        print("🔗 Setting Webhook...")
-        
+        print(f"🔗 Setting Webhook...")
+
         await app.bot.delete_webhook(drop_pending_updates=True)
         await app.bot.set_webhook(
             url=webhook_url,
             allowed_updates=["message", "callback_query", "chat_join_request", "chat_member"],
             drop_pending_updates=True
         )
-        
+
         webhook_info = await app.bot.get_webhook_info()
-        print(f"✅ Webhook: {webhook_info.url}")
-        
+        print(f"✅ Webhook URL: {webhook_info.url}")
+        print(f"✅ Pending: {webhook_info.pending_update_count}")
+
         runner = await setup_webhook(app, port)
         print(f"✅ Server on port {port}")
-        
+
         try:
             await asyncio.Event().wait()
         finally:
@@ -152,7 +151,6 @@ async def main():
         print("⚠️ Polling")
         await app.run_polling(drop_pending_updates=True)
 
-    # ✅ إلغاء المهام
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
