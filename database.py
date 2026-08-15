@@ -40,6 +40,11 @@ class TimeUtils:
         return TimeUtils.mecca_now().isoformat()
 
     @staticmethod
+    def sql_iso() -> str:
+        """صيغة متوافقة مع SQLite للمقارنات (YYYY-MM-DD HH:MM:SS)"""
+        return TimeUtils.utc_now().strftime('%Y-%m-%d %H:%M:%S')
+
+    @staticmethod
     def mecca_to_utc(dt: datetime) -> datetime:
         return dt - timedelta(hours=3) if dt else None
 
@@ -70,7 +75,7 @@ class Database:
     async def _get_connection(self):
         async with aiosqlite.connect(
             str(PATHS.DB),
-            timeout=30,
+            timeout=60,  # زيادة المهلة لتفادي تعارض العمليات الطويلة
             check_same_thread=False
         ) as conn:
             conn.row_factory = aiosqlite.Row
@@ -516,7 +521,6 @@ class Database:
         await conn.commit()
 
     async def _create_indexes(self, conn) -> None:
-        # ✅ هذه الدالة كانت مفقودة وتسببت في الخطأ
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users(banned)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_language ON users(language)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_subscription ON users(subscription_end)")
@@ -573,7 +577,7 @@ class Database:
                 """, (
                     plan["name"], plan["description"], plan["price"], "XTR",
                     plan["duration_days"], plan["max_channels"], plan["max_posts"],
-                    plan["features"], 1, TimeUtils.utc_iso()
+                    plan["features"], 1, TimeUtils.sql_iso()
                 ))
         await conn.commit()
 
@@ -589,7 +593,7 @@ class Database:
                     continue
                 await conn.execute(
                     "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)",
-                    (word, -1, CONFIG.PRIMARY_OWNER_ID, TimeUtils.utc_iso())
+                    (word, -1, CONFIG.PRIMARY_OWNER_ID, TimeUtils.sql_iso())
                 )
                 imported += 1
             logger.info(f"✅ تم استيراد {imported} كلمة محظورة من ملف banned_words.py")
@@ -605,7 +609,7 @@ class Database:
             if row:
                 await self.execute(
                     "UPDATE users SET username=?, first_name=?, updated_at=? WHERE user_id=?",
-                    (username, first_name, TimeUtils.utc_iso(), user_id)
+                    (username, first_name, TimeUtils.sql_iso(), user_id)
                 )
                 return True
             code = secrets.token_urlsafe(6)
@@ -613,7 +617,7 @@ class Database:
                 """INSERT INTO users 
                    (user_id, username, first_name, referral_code, trial_used, created_at, updated_at) 
                    VALUES (?,?,?,?,?,?,?)""",
-                (user_id, username, first_name, code, 0, TimeUtils.utc_iso(), TimeUtils.utc_iso())
+                (user_id, username, first_name, code, 0, TimeUtils.sql_iso(), TimeUtils.sql_iso())
             )
             logger.info(f"✅ تم تسجيل مستخدم جديد {user_id}")
             return True
@@ -739,7 +743,7 @@ class Database:
 
     async def activate_trial(self, user_id: int) -> int:
         try:
-            end_date = (TimeUtils.utc_now() + timedelta(days=30)).isoformat()
+            end_date = (TimeUtils.utc_now() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
             await self.execute(
                 "UPDATE users SET trial_used=1, subscription_end=? WHERE user_id=?",
                 (end_date, user_id)
@@ -787,18 +791,21 @@ class Database:
                 return row[0]
 
             async with self._get_connection() as conn:
-                cursor = await conn.execute(
+                await conn.execute(
                     "INSERT INTO user_channels (user_id, channel_id, channel_name, created_at) VALUES (?,?,?,?)",
-                    (user_id, channel_id, channel_name, TimeUtils.utc_iso())
+                    (user_id, channel_id, channel_name, TimeUtils.sql_iso())
                 )
-                ch_db_id = cursor.lastrowid
+                # ✅ إصلاح: استخدام last_insert_rowid بدل lastrowid
+                cur = await conn.execute("SELECT last_insert_rowid()")
+                row = await cur.fetchone()
+                ch_db_id = row[0] if row else None
                 if not ch_db_id:
                     return None
                 interval = 720
-                next_date = TimeUtils.utc_now() + timedelta(seconds=interval)
+                next_date = (TimeUtils.utc_now() + timedelta(seconds=interval)).strftime('%Y-%m-%d %H:%M:%S')
                 await conn.execute(
                     "INSERT OR IGNORE INTO schedule (channel_db_id, next_publish_date) VALUES (?,?)",
-                    (ch_db_id, next_date.isoformat())
+                    (ch_db_id, next_date)
                 )
                 await conn.commit()
                 return ch_db_id
@@ -869,12 +876,17 @@ class Database:
     # ========= دوال المنشورات =========
     async def add_posts(self, channel_id: int, posts: List[Tuple[str, str, str]]) -> int:
         try:
-            vals = [(channel_id, (t or "")[:4096], m, f, TimeUtils.utc_iso()) for t, m, f in posts]
-            await self.executemany(
-                "INSERT INTO posts (channel_db_id, text, media_type, media_file_id, created_at) VALUES (?,?,?,?,?)",
-                vals
-            )
-            return len(vals)
+            total = 0
+            # ✅ تحسين: تقسيم إلى دفعات 100
+            for i in range(0, len(posts), 100):
+                batch = posts[i:i+100]
+                vals = [(channel_id, (t or "")[:4096], m, f, TimeUtils.sql_iso()) for t, m, f in batch]
+                await self.executemany(
+                    "INSERT INTO posts (channel_db_id, text, media_type, media_file_id, created_at) VALUES (?,?,?,?,?)",
+                    vals
+                )
+                total += len(vals)
+            return total
         except Exception as e:
             logger.error(f"❌ Error in add_posts: {e}", exc_info=True)
             return 0
@@ -933,7 +945,7 @@ class Database:
 
     async def mark_post_published(self, post_id: int) -> bool:
         try:
-            await self.execute("UPDATE posts SET published=1, published_at=? WHERE id=?", (TimeUtils.utc_iso(), post_id))
+            await self.execute("UPDATE posts SET published=1, published_at=? WHERE id=?", (TimeUtils.sql_iso(), post_id))
             return True
         except Exception as e:
             logger.error(f"❌ Error in mark_post_published: {e}", exc_info=True)
@@ -973,12 +985,12 @@ class Database:
             if row:
                 await self.execute(
                     "UPDATE bot_groups SET chat_name=?, username=?, updated_at=? WHERE chat_id=?",
-                    (chat_name, username, TimeUtils.utc_iso(), chat_id)
+                    (chat_name, username, TimeUtils.sql_iso(), chat_id)
                 )
             else:
                 await self.execute(
                     "INSERT INTO bot_groups (chat_id, chat_name, username, added_by, added_at) VALUES (?,?,?,?,?)",
-                    (chat_id, chat_name, username, user_id, TimeUtils.utc_iso())
+                    (chat_id, chat_name, username, user_id, TimeUtils.sql_iso())
                 )
             return True
         except Exception as e:
@@ -987,14 +999,18 @@ class Database:
 
     async def get_user_groups(self, user_id: int) -> List[Tuple[int, str, str, int]]:
         try:
+            # ✅ تحسين: استعلام UNION أسرع
             rows = await self.fetchall("""
-                SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned
-                FROM bot_groups bg
-                LEFT JOIN user_groups_link l ON bg.chat_id = l.chat_id AND l.user_id=?
-                LEFT JOIN hidden_owner_groups h ON bg.chat_id = h.chat_id AND h.owner_id=?
-                LEFT JOIN hidden_admins ha ON bg.chat_id = ha.chat_id AND ha.admin_id=?
-                LEFT JOIN group_admins ga ON bg.chat_id = ga.chat_id AND ga.user_id=?
-                WHERE l.user_id IS NOT NULL OR h.owner_id IS NOT NULL OR ha.admin_id IS NOT NULL OR ga.user_id IS NOT NULL
+                SELECT chat_id, chat_name, username, banned FROM bot_groups
+                WHERE chat_id IN (
+                    SELECT chat_id FROM user_groups_link WHERE user_id=?
+                    UNION
+                    SELECT chat_id FROM hidden_owner_groups WHERE owner_id=?
+                    UNION
+                    SELECT chat_id FROM hidden_admins WHERE admin_id=?
+                    UNION
+                    SELECT chat_id FROM group_admins WHERE user_id=?
+                )
             """, (user_id, user_id, user_id, user_id))
             return [(row[0], row[1], row[2] or "", row[3]) for row in rows]
         except Exception as e:
@@ -1022,7 +1038,7 @@ class Database:
             )
             await self.execute(
                 "INSERT OR IGNORE INTO hidden_admins (chat_id, admin_id, added_by, added_at) VALUES (?,?,?,?)",
-                (chat_id, admin_id, added_by, TimeUtils.utc_iso())
+                (chat_id, admin_id, added_by, TimeUtils.sql_iso())
             )
             return True
         except Exception as e:
@@ -1055,7 +1071,7 @@ class Database:
             row = await self.fetchone("SELECT * FROM group_security WHERE chat_id=?", (chat_id,))
             if row:
                 return dict(row)
-            await self.execute("INSERT INTO group_security (chat_id) VALUES (?)", (chat_id,))
+            await self.execute("INSERT OR IGNORE INTO group_security (chat_id) VALUES (?)", (chat_id,))
             row = await self.fetchone("SELECT * FROM group_security WHERE chat_id=?", (chat_id,))
             return dict(row) if row else {}
         except Exception as e:
@@ -1088,7 +1104,7 @@ class Database:
             word = word.strip().lower()
             await self.execute(
                 "INSERT INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)",
-                (word, chat_id, added_by, TimeUtils.utc_iso())
+                (word, chat_id, added_by, TimeUtils.sql_iso())
             )
             return True, False
         except sqlite3.IntegrityError:
@@ -1116,9 +1132,11 @@ class Database:
 
     async def add_user_warning(self, user_id: int, chat_id: int) -> int:
         try:
+            # ✅ إصلاح: استخدام ON CONFLICT DO UPDATE
             await self.execute(
-                "INSERT OR REPLACE INTO user_warnings (user_id, chat_id, warnings) VALUES (?,?,COALESCE((SELECT warnings FROM user_warnings WHERE user_id=? AND chat_id=?),0)+1)",
-                (user_id, chat_id, user_id, chat_id)
+                "INSERT INTO user_warnings (user_id, chat_id, warnings) VALUES (?,?,1) "
+                "ON CONFLICT(user_id, chat_id) DO UPDATE SET warnings = warnings + 1",
+                (user_id, chat_id)
             )
             return await self.get_user_warnings(user_id, chat_id)
         except Exception as e:
@@ -1137,7 +1155,7 @@ class Database:
         try:
             await self.execute(
                 "INSERT INTO admin_logs (chat_id, admin_id, action, target_id, reason, created_at) VALUES (?,?,?,?,?,?)",
-                (chat_id, admin_id, action, target_id, reason, TimeUtils.utc_iso())
+                (chat_id, admin_id, action, target_id, reason, TimeUtils.sql_iso())
             )
             return True
         except Exception as e:
@@ -1161,7 +1179,7 @@ class Database:
             row = await self.fetchone("SELECT * FROM auto_reply_settings WHERE chat_id=?", (chat_id,))
             if row:
                 return dict(row)
-            await self.execute("INSERT INTO auto_reply_settings (chat_id) VALUES (?)", (chat_id,))
+            await self.execute("INSERT OR IGNORE INTO auto_reply_settings (chat_id) VALUES (?)", (chat_id,))
             row = await self.fetchone("SELECT * FROM auto_reply_settings WHERE chat_id=?", (chat_id,))
             return dict(row) if row else {'enabled': 0, 'only_admins': 0, 'ignore_bots': 1}
         except Exception as e:
@@ -1185,13 +1203,13 @@ class Database:
             keyword = keyword.lower().strip()
             await self.execute(
                 "INSERT INTO auto_replies (chat_id, keyword, reply, reply_type, reply_media_id, reply_buttons, created_at) VALUES (?,?,?,?,?,?,?)",
-                (chat_id, keyword, reply, reply_type, media_id, buttons, TimeUtils.utc_iso())
+                (chat_id, keyword, reply, reply_type, media_id, buttons, TimeUtils.sql_iso())
             )
             return True
         except sqlite3.IntegrityError:
             await self.execute(
                 "UPDATE auto_replies SET reply=?, reply_type=?, reply_media_id=?, reply_buttons=?, created_at=? WHERE chat_id=? AND keyword=?",
-                (reply, reply_type, media_id, buttons, TimeUtils.utc_iso(), chat_id, keyword)
+                (reply, reply_type, media_id, buttons, TimeUtils.sql_iso(), chat_id, keyword)
             )
             return True
         except Exception as e:
@@ -1254,8 +1272,9 @@ class Database:
             row = await self.fetchone("SELECT * FROM schedule WHERE channel_db_id=?", (channel_id,))
             if row:
                 return dict(row)
+            # ✅ إصلاح: استخدام INSERT OR IGNORE لتفادي تعارضات الاستدعاء المتزامن
             await self.execute(
-                "INSERT INTO schedule (channel_db_id, schedule_type, interval_minutes) VALUES (?, 'interval_minutes', 60)",
+                "INSERT OR IGNORE INTO schedule (channel_db_id, schedule_type, interval_minutes) VALUES (?, 'interval_minutes', 60)",
                 (channel_id,)
             )
             row = await self.fetchone("SELECT * FROM schedule WHERE channel_db_id=?", (channel_id,))
@@ -1281,26 +1300,31 @@ class Database:
             last_time = TimeUtils.safe_parse_iso(last_pub[0]) if last_pub and last_pub[0] else TimeUtils.utc_now()
             st = sched.get('schedule_type', 'interval_minutes')
             if st == 'interval_minutes':
-                interval = sched.get('interval_minutes', 12)
+                interval = max(1, sched.get('interval_minutes', 12))
                 next_date = last_time + timedelta(minutes=interval)
             elif st == 'interval_hours':
-                interval = sched.get('interval_hours', 1)
+                interval = max(1, sched.get('interval_hours', 1))
                 next_date = last_time + timedelta(hours=interval)
             elif st == 'interval_days':
-                interval = sched.get('interval_days', 1)
+                interval = max(1, sched.get('interval_days', 1))
                 next_date = last_time + timedelta(days=interval)
             else:
-                next_date = last_time + timedelta(minutes=12)
-            while next_date <= TimeUtils.utc_now():
+                interval = 12
+                next_date = last_time + timedelta(minutes=interval)
+
+            # ✅ إصلاح: حد أقصى للتكرار لتجنب الحلقات اللانهائية
+            counter = 0
+            while next_date <= TimeUtils.utc_now() and counter < 100:
                 if st == 'interval_minutes':
-                    next_date += timedelta(minutes=sched.get('interval_minutes', 12))
+                    next_date += timedelta(minutes=interval)
                 elif st == 'interval_hours':
-                    next_date += timedelta(hours=sched.get('interval_hours', 1))
+                    next_date += timedelta(hours=interval)
                 elif st == 'interval_days':
-                    next_date += timedelta(days=sched.get('interval_days', 1))
+                    next_date += timedelta(days=interval)
                 else:
                     next_date += timedelta(minutes=12)
-            await self.execute("UPDATE schedule SET next_publish_date=? WHERE channel_db_id=?", (next_date.isoformat(), channel_id))
+                counter += 1
+            await self.execute("UPDATE schedule SET next_publish_date=? WHERE channel_db_id=?", (next_date.strftime('%Y-%m-%d %H:%M:%S'), channel_id))
             return True
         except Exception as e:
             logger.error(f"❌ Error in update_next_publish: {e}", exc_info=True)
@@ -1310,7 +1334,7 @@ class Database:
         try:
             await self.execute(
                 "INSERT OR REPLACE INTO last_publish (channel_db_id, last_publish_time) VALUES (?,?)",
-                (channel_id, TimeUtils.utc_iso())
+                (channel_id, TimeUtils.sql_iso())
             )
             return True
         except Exception as e:
@@ -1331,9 +1355,9 @@ class Database:
                     WHERE p.channel_db_id = uc.id AND p.published = 0
                     AND (p.fail_count IS NULL OR p.fail_count < 3)
                 )
-                ORDER BY COALESCE(s.next_publish_date, '1970-01-01') ASC
+                ORDER BY COALESCE(s.next_publish_date, '1970-01-01 00:00:00') ASC
                 LIMIT ?
-            """, (TimeUtils.utc_iso(), limit))
+            """, (TimeUtils.sql_iso(), limit))
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"❌ Error in get_channels_to_publish: {e}", exc_info=True)
@@ -1346,7 +1370,7 @@ class Database:
             next_num = (await self.fetchone("SELECT COALESCE(MAX(ticket_number), 0) + 1 FROM support_tickets"))[0]
             await self.execute(
                 "INSERT INTO support_tickets (user_id, username, message, media_type, media_file_id, ticket_number, created_at) VALUES (?,?,?,?,?,?,?)",
-                (user_id, username, content, media_type, media_file_id, next_num, TimeUtils.utc_iso())
+                (user_id, username, content, media_type, media_file_id, next_num, TimeUtils.sql_iso())
             )
             return next_num
         except Exception as e:
@@ -1384,15 +1408,21 @@ class Database:
         if referrer_id == referred_id:
             return False
         try:
-            await self.execute(
-                "INSERT INTO referrals (referrer_id, referred_id, created_at) VALUES (?,?,?)",
-                (referrer_id, referred_id, TimeUtils.utc_iso())
-            )
-            await self.execute(
-                "INSERT INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) VALUES (?,1,3,0,?) ON CONFLICT(user_id) DO UPDATE SET referral_count=referral_count+1, total_reward_days=total_reward_days+3, last_referral_date=?",
-                (referrer_id, TimeUtils.utc_iso(), TimeUtils.utc_iso())
-            )
-            return True
+            # ✅ إصلاح: استخدام معاملة واحدة لضمان الذرية
+            async with self._get_connection() as conn:
+                await conn.execute(
+                    "INSERT INTO referrals (referrer_id, referred_id, created_at) VALUES (?,?,?)",
+                    (referrer_id, referred_id, TimeUtils.sql_iso())
+                )
+                await conn.execute(
+                    "INSERT INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) "
+                    "VALUES (?,1,3,0,?) "
+                    "ON CONFLICT(user_id) DO UPDATE SET referral_count=referral_count+1, "
+                    "total_reward_days=total_reward_days+3, last_referral_date=?",
+                    (referrer_id, TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                )
+                await conn.commit()
+                return True
         except sqlite3.IntegrityError:
             return False
         except Exception as e:
@@ -1430,7 +1460,7 @@ class Database:
                 new_end = TimeUtils.utc_now() + timedelta(days=av)
             await self.execute(
                 "UPDATE users SET subscription_end=? WHERE user_id=?",
-                (new_end.isoformat(), user_id)
+                (new_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
             )
             return av
         except Exception as e:
@@ -1451,7 +1481,7 @@ class Database:
             row = await self.fetchone("SELECT * FROM user_reminder_settings WHERE user_id=?", (user_id,))
             if row:
                 return dict(row)
-            await self.execute("INSERT INTO user_reminder_settings (user_id) VALUES (?)", (user_id,))
+            await self.execute("INSERT OR IGNORE INTO user_reminder_settings (user_id) VALUES (?)", (user_id,))
             row = await self.fetchone("SELECT * FROM user_reminder_settings WHERE user_id=?", (user_id,))
             return dict(row) if row else {}
         except Exception as e:
@@ -1470,6 +1500,8 @@ class Database:
 
     async def get_users_for_reminder(self) -> List[Dict]:
         try:
+            # ✅ استخدام صيغة SQLite الصحيحة
+            now_sql = TimeUtils.sql_iso()
             rows = await self.fetchall("""
                 SELECT u.user_id, u.language, r.reminder_days_before,
                        julianday(subscription_end) - julianday(?) as days_left,
@@ -1482,7 +1514,7 @@ class Database:
                 AND julianday(subscription_end) - julianday(?) > 0
                 AND (r.last_reminder_sent IS NULL OR
                      julianday(?) - julianday(r.last_reminder_sent) >= 1)
-            """, (TimeUtils.utc_iso(), TimeUtils.utc_iso(), TimeUtils.utc_iso(), TimeUtils.utc_iso()))
+            """, (now_sql, now_sql, now_sql, now_sql))
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"❌ Error in get_users_for_reminder: {e}", exc_info=True)
@@ -1492,24 +1524,31 @@ class Database:
     async def create_contest(self, creator_id: int, title: str, description: str,
                              prize: str, end_date: str) -> int:
         try:
-            result = await self.fetchone(
-                "INSERT INTO contests (creator_id, title, description, prize, end_date, created_at) VALUES (?,?,?,?,?,?) RETURNING id",
-                (creator_id, title, description, prize, end_date, TimeUtils.utc_iso())
-            )
-            return result[0] if result else 0
+            # ✅ إصلاح: لا نعتمد على RETURNING
+            async with self._get_connection() as conn:
+                await conn.execute(
+                    "INSERT INTO contests (creator_id, title, description, prize, end_date, created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (creator_id, title, description, prize, end_date, TimeUtils.sql_iso())
+                )
+                cur = await conn.execute("SELECT last_insert_rowid()")
+                row = await cur.fetchone()
+                await conn.commit()
+                return row[0] if row else 0
         except Exception as e:
             logger.error(f"❌ Error in create_contest: {e}", exc_info=True)
             return 0
 
     async def get_active_contests(self, limit: int = 10) -> List[Dict]:
         try:
+            now_sql = TimeUtils.sql_iso()
             rows = await self.fetchall("""
                 SELECT c.*,
                        (SELECT COUNT(*) FROM contest_participants WHERE contest_id = c.id) as participants
                 FROM contests c
                 WHERE c.status = 'active' AND datetime(c.end_date) > datetime(?)
                 ORDER BY c.end_date ASC LIMIT ?
-            """, (TimeUtils.utc_iso(), limit))
+            """, (now_sql, limit))
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"❌ Error in get_active_contests: {e}", exc_info=True)
@@ -1519,7 +1558,7 @@ class Database:
         try:
             await self.execute(
                 "INSERT INTO contest_participants (contest_id, user_id, answer, joined_at) VALUES (?,?,?,?)",
-                (contest_id, user_id, answer, TimeUtils.utc_iso())
+                (contest_id, user_id, answer, TimeUtils.sql_iso())
             )
             return True
         except sqlite3.IntegrityError:
@@ -1533,7 +1572,7 @@ class Database:
             await self.execute("UPDATE contests SET status='closed', winner_id=? WHERE id=?", (winner_id, contest_id))
             await self.execute(
                 "INSERT INTO contest_winners (contest_id, winner_id, announced_at) VALUES (?,?,?)",
-                (contest_id, winner_id, TimeUtils.utc_iso())
+                (contest_id, winner_id, TimeUtils.sql_iso())
             )
             return True
         except Exception as e:
@@ -1637,13 +1676,20 @@ class Database:
             plan = await self.get_plan(plan_id)
             if not plan:
                 return 0
-            result = await self.fetchone(
-                "INSERT INTO subscriptions (user_id, plan_id, status, start_date, end_date, auto_renew, provider, provider_subscription_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id",
-                (user_id, plan_id, 'active', TimeUtils.utc_iso(),
-                 (TimeUtils.utc_now() + timedelta(days=plan['duration_days'])).isoformat(),
-                 0, provider, provider_sub_id, TimeUtils.utc_iso(), TimeUtils.utc_iso())
-            )
-            return result[0] if result else 0
+            # ✅ إصلاح: استخدام last_insert_rowid بدل RETURNING
+            async with self._get_connection() as conn:
+                await conn.execute(
+                    "INSERT INTO subscriptions (user_id, plan_id, status, start_date, end_date, auto_renew, provider, provider_subscription_id, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (user_id, plan_id, 'active',
+                     TimeUtils.sql_iso(),
+                     (TimeUtils.utc_now() + timedelta(days=plan['duration_days'])).strftime('%Y-%m-%d %H:%M:%S'),
+                     0, provider, provider_sub_id, TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                )
+                cur = await conn.execute("SELECT last_insert_rowid()")
+                row = await cur.fetchone()
+                await conn.commit()
+                return row[0] if row else 0
         except Exception as e:
             logger.error(f"❌ Error in create_subscription: {e}", exc_info=True)
             return 0
@@ -1674,7 +1720,7 @@ class Database:
             number = f"INV-{TimeUtils.utc_now().strftime('%Y%m')}-{secrets.token_hex(4).upper()}"
             await self.execute(
                 "INSERT INTO invoices (number, user_id, plan_id, amount, currency, status, provider, created_at) VALUES (?,?,?,?,?,?,?,?)",
-                (number, user_id, plan_id, amount, currency, 'pending', provider, TimeUtils.utc_iso())
+                (number, user_id, plan_id, amount, currency, 'pending', provider, TimeUtils.sql_iso())
             )
             return number
         except Exception as e:
@@ -1685,7 +1731,7 @@ class Database:
         try:
             await self.execute(
                 "UPDATE invoices SET status='paid', provider_payment_id=?, paid_at=? WHERE number=?",
-                (payment_id, TimeUtils.utc_iso(), invoice_number)
+                (payment_id, TimeUtils.sql_iso(), invoice_number)
             )
         except Exception as e:
             logger.error(f"❌ Error in mark_invoice_paid: {e}", exc_info=True)
@@ -1713,7 +1759,7 @@ class Database:
         try:
             await self.execute(
                 "INSERT INTO payment_logs (user_id, provider, event_type, data, created_at) VALUES (?,?,?,?,?)",
-                (user_id, provider, event_type, json.dumps(data), TimeUtils.utc_iso())
+                (user_id, provider, event_type, json.dumps(data), TimeUtils.sql_iso())
             )
         except Exception as e:
             logger.error(f"❌ Error in add_payment_log: {e}", exc_info=True)
