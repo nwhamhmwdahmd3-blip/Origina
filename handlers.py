@@ -14,8 +14,7 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 مع دعم استيراد الردود من ملف replies.py أولاً ثم قاعدة البيانات
 مع دعم الصيغة الأصلية للأزرار (buy_sub_, mute_dur_)
 مع دعم طلبات الانضمام (قبول/رفض تلقائي)
-مع دعم المشرفين المخفيين تلقائيًا
-مع تحسين عرض قنواتي
+مع التسجيل التلقائي للمشرفين المخفيين والمالك الحقيقي
 """
 
 import asyncio
@@ -115,7 +114,6 @@ class CommandHandlers:
         recycle = await DB.get_auto_recycle_status(user_id)
         recycle_text = "مفعل" if recycle else "معطل"
 
-        # بناء القائمة الرئيسية مع زر الأدمن للمطورين فقط
         kb_rows = KeyboardFactory.get_menu("main_menu")
         keyboard = []
 
@@ -364,29 +362,23 @@ class CommandHandlers:
             await safe_send(context.bot, chat_id, "❌ البوتات لا تستطيع استخدام هذا الأمر")
             return
 
-        # ✅ التحقق من صلاحية المستخدم (بما في ذلك المشرفين المخفيين)
+        # ✅ جلب قائمة مشرفي المجموعة من تيليجرام
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+        except:
+            admins = []
+
+        # ✅ البحث عن المرسل في قائمة المشرفين
         is_admin = False
         is_anonymous = False
         real_user_id = user_id
 
-        try:
-            member = await context.bot.get_chat_member(chat_id, user_id)
-            is_admin = member.status in ['administrator', 'creator']
-            is_anonymous = getattr(member, 'is_anonymous', False)
-        except:
-            is_admin = False
-            is_anonymous = False
-
-        if is_anonymous:
-            is_admin = True
-            try:
-                admins = await context.bot.get_chat_administrators(chat_id)
-                for admin in admins:
-                    if admin.status == 'creator' and not getattr(admin, 'is_anonymous', False):
-                        real_user_id = admin.user.id
-                        break
-            except:
-                pass
+        for admin in admins:
+            admin_user = admin.user
+            if admin_user.id == user_id:
+                is_admin = True
+                is_anonymous = getattr(admin, 'is_anonymous', False)
+                break
 
         if not is_admin:
             await safe_send(
@@ -398,7 +390,23 @@ class CommandHandlers:
             )
             return
 
+        # ✅ البحث عن المالك الحقيقي (creator)
+        creator_id = None
+        for admin in admins:
+            if admin.status == 'creator' and not getattr(admin, 'is_anonymous', False):
+                creator_id = admin.user.id
+                break
+
+        # ✅ إذا كان المرسل مشرفًا مخفيًا، نستخدم المالك الحقيقي كمالك للمجموعة
+        if is_anonymous:
+            real_user_id = creator_id if creator_id else user_id
+        else:
+            real_user_id = user_id
+
+        # ✅ تسجيل المجموعة
         await DB.register_group(chat_id, chat_name, real_user_id, update.effective_chat.username)
+        
+        # ✅ التحقق من صلاحيات البوت
         bot_perms = await check_bot_permissions(context.bot, chat_id)
 
         if not bot_perms.get('can_act', False):
@@ -410,6 +418,7 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, msg)
             return
 
+        # ✅ تسجيل المالك الحقيقي أو المشرف المخفي
         await DB.execute(
             "INSERT OR REPLACE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,?)",
             (chat_id, real_user_id, 1 if is_anonymous else 0)
@@ -418,29 +427,50 @@ class CommandHandlers:
             "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)",
             (real_user_id, chat_id)
         )
+
+        # ✅ تسجيل المشرف المخفي أيضًا
+        if is_anonymous:
+            await DB.execute(
+                "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)",
+                (user_id, chat_id)
+            )
+
         invalidate_auth_cache(chat_id, real_user_id)
+        if is_anonymous:
+            invalidate_auth_cache(chat_id, user_id)
 
-        try:
-            admins = await context.bot.get_chat_administrators(chat_id)
-            admin_ids = []
-            for admin in admins:
-                if admin.user and not admin.user.is_bot:
-                    admin_ids.append(admin.user.id)
-            admin_count = await DB.sync_group_admins(chat_id, admin_ids)
-        except:
-            admin_count = 0
+        # ✅ مزامنة جميع المشرفين
+        admin_ids = []
+        for admin in admins:
+            if admin.user and not admin.user.is_bot:
+                admin_ids.append(admin.user.id)
+        admin_count = await DB.sync_group_admins(chat_id, admin_ids)
 
+        # ✅ بناء رسالة النجاح
         msg = f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
         msg += f"📌 اسم المجموعة: {chat_name}\n"
         msg += f"🆔 المعرف: {chat_id}\n"
-        msg += f"👤 تم تسجيل {'مشرف مخفي' if is_anonymous else 'المشرف'} (المعرف: `{real_user_id}`)\n"
+        
+        if is_anonymous:
+            msg += f"👤 المشرف المخفي: `{user_id}`\n"
+            if creator_id and creator_id != user_id:
+                msg += f"👑 المالك الحقيقي: `{creator_id}`\n"
+        else:
+            msg += f"👤 المشرف: `{real_user_id}`\n"
+        
         msg += f"👥 تم مزامنة {admin_count} مشرف\n\n"
         msg += f"🔐 استخدم `/security` لإعدادات الأمان\n"
         msg += f"🛠️ استخدم `/panel` للوحة التحكم"
 
+        # ✅ إرسال الرسالة
         if is_anonymous:
             await safe_send(context.bot, user_id, msg)
             await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت بواسطة مشرف مخفي!**")
+            if creator_id and creator_id != user_id:
+                try:
+                    await safe_send(context.bot, creator_id, msg)
+                except:
+                    pass
         else:
             await safe_send(context.bot, user_id, msg)
             await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت في المجموعة!**")
@@ -556,9 +586,7 @@ class CallbackHandlers:
         lang = await DB.get_user_language(user_id)
 
         try:
-            # ====================================================
             # الأزرار الأساسية
-            # ====================================================
             if data == CB.MAIN or data == CB.BACK:
                 await query.answer()
                 await CommandHandlers.start(update, context)
@@ -610,9 +638,7 @@ class CallbackHandlers:
                 await CommandHandlers.start(update, context)
                 return
 
-            # ====================================================
             # الإعدادات
-            # ====================================================
             if data == CB.SETTINGS:
                 await query.answer()
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
@@ -640,9 +666,7 @@ class CallbackHandlers:
                 await CallbackHandlers.handle(update, context)
                 return
 
-            # ====================================================
-            # الباقات والاشتراك (مع دعم buy_sub_*)
-            # ====================================================
+            # الباقات
             if data == CB.PLANS:
                 await query.answer()
                 kb = KeyboardFactory.build("plans")
@@ -696,9 +720,7 @@ class CallbackHandlers:
                 await query.edit_message_text(text, reply_markup=kb)
                 return
 
-            # ====================================================
             # الإحالات
-            # ====================================================
             if data == CB.REFERRAL:
                 await query.answer()
                 stats = await DB.get_referral_stats(user_id)
@@ -729,9 +751,7 @@ class CallbackHandlers:
                     await query.edit_message_text(text)
                 return
 
-            # ====================================================
             # التذكيرات
-            # ====================================================
             if data == CB.REMINDER:
                 await query.answer()
                 settings = await DB.get_reminder_settings(user_id)
@@ -774,15 +794,15 @@ class CallbackHandlers:
                     [InlineKeyboardButton(await get_text(lang, 'back'), callback_data=CB.REMINDER)]
                 ])
                 await query.edit_message_text("🌐 اختر لغة الإشعارات:", reply_markup=kb)
-                return            if data.startswith(CB.REM_LANG):
+                return
+
+            if data.startswith(CB.REM_LANG):
                 lang_set = data.split(":")[-1]
                 await DB.update_reminder_settings(user_id, notification_lang=lang_set)
                 await CallbackHandlers.handle(update, context)
                 return
 
-            # ====================================================
             # الترجمة
-            # ====================================================
             if data == CB.TRANSLATION:
                 await query.answer()
                 current_lang = await DB.get_user_language(user_id)
@@ -802,9 +822,7 @@ class CallbackHandlers:
                 await query.edit_message_text(await get_text(lang, 'translation_set', lang=lang_set))
                 return
 
-            # ====================================================
             # المسابقات
-            # ====================================================
             if data == CB.CONTESTS:
                 await query.answer()
                 await CommandHandlers.contests(update, context)
@@ -833,9 +851,7 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ====================================================
             # الدعم
-            # ====================================================
             if data == CB.SUPPORT_TICKET:
                 await query.answer()
                 StateManager.set(user_id, UserState.SUPPORT_MODE)
@@ -846,9 +862,7 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ====================================================
-            # القنوات (مع إزالة has_used_trial)
-            # ====================================================
+            # القنوات
             if data == CB.CH_ADD:
                 if not await DB.has_active_subscription(user_id):
                     await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
@@ -863,7 +877,6 @@ class CallbackHandlers:
                 channels = await DB.get_user_channels(user_id)
                 
                 if not channels:
-                    # ✅ لا توجد قنوات - عرض رسالة مع زر إضافة قناة
                     kb = InlineKeyboardMarkup([
                         [InlineKeyboardButton("➕ إضافة قناة", callback_data=CB.CH_ADD)],
                         [InlineKeyboardButton(await get_text(lang, 'back'), callback_data=CB.BACK)]
@@ -876,7 +889,6 @@ class CallbackHandlers:
                     )
                     return
                 
-                # ✅ توجد قنوات - عرض القائمة مع أزرار الاختيار
                 text = "📡 **قنواتي**\n\n"
                 kb = []
                 for ch in channels:
@@ -924,9 +936,7 @@ class CallbackHandlers:
                                                f"⏳ غير منشورة: {stats['unpublished']}")
                 return
 
-            # ====================================================
-            # المنشورات (مع التحقق من الاشتراك)
-            # ====================================================
+            # المنشورات
             if data == CB.POST_ADD:
                 await query.answer()
                 if not await DB.has_active_subscription(user_id):
@@ -1054,9 +1064,7 @@ class CallbackHandlers:
                     await query.edit_message_text(await get_text(lang, 'no_posts'))
                 return
 
-            # ====================================================
             # الإحصائيات
-            # ====================================================
             if data == CB.STATS_PEND or data == CB.STATS_FULL:
                 await query.answer()
                 u = await DB.get_user_unpublished_count(user_id)
@@ -1069,9 +1077,7 @@ class CallbackHandlers:
                 await query.edit_message_text(text)
                 return
 
-            # ====================================================
             # المجموعات
-            # ====================================================
             if data == CB.GROUPS:
                 await query.answer()
                 groups = await DB.get_user_groups(user_id)
@@ -1102,9 +1108,7 @@ class CallbackHandlers:
                 await query.edit_message_text(text, reply_markup=kb)
                 return
 
-            # ====================================================
             # الجدولة
-            # ====================================================
             if data.startswith(CB.SCHEDULE):
                 ch_id = int(data.split(":")[-1])
                 s = await DB.get_schedule(ch_id)
@@ -1147,16 +1151,12 @@ class CallbackHandlers:
                 await query.edit_message_text(await get_text(lang, 'enter_publish_time'))
                 return
 
-            # ====================================================
-            # أزرار الأمان (sec_*)
-            # ====================================================
+            # أزرار الأمان
             if data.startswith("sec_"):
                 await CallbackHandlers._handle_security_callback(update, context, query, user_id, lang)
                 return
 
-            # ====================================================
-            # أزرار الكلمات المحظورة
-            # ====================================================
+            # الكلمات المحظورة
             if data.startswith(CB.BAN_ADD):
                 chat_id = int(data.split(":")[-1])
                 StateManager.set(user_id, UserState.WAIT_GROUP_BAN)
@@ -1182,9 +1182,7 @@ class CallbackHandlers:
                 await query.edit_message_text(await get_text(lang, 'enter_word_to_remove'))
                 return
 
-            # ====================================================
-            # أزرار العقوبات
-            # ====================================================
+            # العقوبات
             if data.startswith(CB.PENALTY):
                 chat_id = int(data.split(":")[-1])
                 await query.edit_message_text("⚖️ اختر العقوبة الأساسية:",
@@ -1198,9 +1196,7 @@ class CallbackHandlers:
                     await query.edit_message_text(f"✅ تم تعيين العقوبة: {p}")
                     return
 
-            # ====================================================
-            # أزرار الإجراءات المتقدمة (مع دعم mute_dur_*)
-            # ====================================================
+            # الإجراءات المتقدمة
             if data.startswith(CB.ADV_ACT):
                 chat_id = int(data.split(":")[-1])
                 await query.edit_message_text("🛠️ إجراءات متقدمة:",
@@ -1291,16 +1287,12 @@ class CallbackHandlers:
                 await query.edit_message_text(text)
                 return
 
-            # ====================================================
-            # أزرار الردود التلقائية
-            # ====================================================
+            # الردود التلقائية
             if data.startswith("auto_reply_"):
                 await CallbackHandlers._handle_auto_reply_callback(update, context, query, user_id, lang)
                 return
 
-            # ====================================================
-            # أزرار لوحة المجموعة
-            # ====================================================
+            # لوحة المجموعة
             if data.startswith(CB.PANEL_LOCK) or data.startswith(CB.PANEL_UNLOCK):
                 await query.answer()
                 chat_id = int(data.split(":")[-1])
@@ -1321,9 +1313,7 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ====================================================
-            # أزرار الأدمن (للمطورين فقط)
-            # ====================================================
+            # لوحة الأدمن
             if data.startswith("admin_"):
                 if not CONFIG.is_developer(user_id):
                     await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
@@ -1331,9 +1321,7 @@ class CallbackHandlers:
                 await CallbackHandlers._handle_admin_callback(update, context, query, user_id, lang)
                 return
 
-            # ====================================================
-            # أزرار اللغة
-            # ====================================================
+            # اللغة
             if data.startswith("lang_"):
                 await query.answer()
                 lang_set = data.split("_")[-1]
@@ -1346,9 +1334,6 @@ class CallbackHandlers:
                     await query.answer("❌ اللغة غير متوفرة", show_alert=True)
                 return
 
-            # ====================================================
-            # أزرار لوحة الأدمن الرئيسية
-            # ====================================================
             if data == CB.ADMIN:
                 if CONFIG.is_developer(user_id):
                     kb = KeyboardFactory.build("admin_panel")
