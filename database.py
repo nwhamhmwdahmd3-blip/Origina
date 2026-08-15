@@ -255,7 +255,9 @@ class Database:
                 night_mode_end TEXT DEFAULT '06:00',
                 night_mode_action TEXT DEFAULT 'mute',
                 nsfw_enabled INTEGER DEFAULT 0,
-                nsfw_threshold REAL DEFAULT 0.7
+                nsfw_threshold REAL DEFAULT 0.7,
+                auto_approve_join INTEGER DEFAULT 0,
+                auto_reject_join INTEGER DEFAULT 0
             )
         """)
         await conn.execute("""
@@ -776,8 +778,11 @@ class Database:
 
     # ========= دوال القنوات =========
     async def add_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
+        """إضافة قناة جديدة مع جدولة افتراضية"""
         try:
             channel_id = int(channel_id)
+            
+            # التحقق من عدم وجود القناة مسبقاً
             row = await self.fetchone(
                 "SELECT id FROM user_channels WHERE user_id=? AND channel_id=?",
                 (user_id, channel_id)
@@ -787,33 +792,38 @@ class Database:
                 return row[0]
 
             async with self._get_connection() as conn:
+                # إدراج القناة
                 cursor = await conn.execute(
                     "INSERT INTO user_channels (user_id, channel_id, channel_name, created_at) VALUES (?,?,?,?)",
                     (user_id, channel_id, channel_name, TimeUtils.utc_iso())
                 )
                 ch_db_id = cursor.lastrowid
-                await conn.commit()
-
+                
                 if not ch_db_id:
                     logger.error("❌ فشل في جلب lastrowid")
                     return None
 
-                logger.info(f"✅ تم إدراج القناة {channel_name} (ID: {ch_db_id})")
+                # إدراج الجدولة الافتراضية بنفس الاتصال
                 interval = 720
                 next_date = TimeUtils.utc_now() + timedelta(seconds=interval)
-                await self.execute(
+                await conn.execute(
                     "INSERT OR IGNORE INTO schedule (channel_db_id, next_publish_date) VALUES (?,?)",
                     (ch_db_id, next_date.isoformat())
                 )
+                
+                await conn.commit()
+                logger.info(f"✅ تم إدراج القناة {channel_name} (ID: {ch_db_id})")
                 return ch_db_id
+                
         except Exception as e:
             logger.error(f"❌ Error in add_channel: {e}", exc_info=True)
             return None
 
     async def get_user_channels(self, user_id: int) -> List[Dict]:
+        """الحصول على قنوات المستخدم مع معرف تيليجرام الحقيقي"""
         try:
             rows = await self.fetchall(
-                "SELECT id, channel_id, channel_name, banned FROM user_channels WHERE user_id=? ORDER BY created_at DESC",
+                "SELECT id, channel_id, channel_name, banned, created_at FROM user_channels WHERE user_id=? ORDER BY created_at DESC",
                 (user_id,)
             )
             return [dict(row) for row in rows]
@@ -872,8 +882,12 @@ class Database:
 
     # ========= دوال المنشورات =========
     async def add_posts(self, channel_id: int, posts: List[Tuple[str, str, str]]) -> int:
+        """إضافة منشورات متعددة"""
         try:
-            vals = [(channel_id, t[:4096], m, f, TimeUtils.utc_iso()) for t, m, f in posts]
+            vals = [
+                (channel_id, (t or "")[:4096], m, f, TimeUtils.utc_iso()) 
+                for t, m, f in posts
+            ]
             await self.executemany(
                 "INSERT INTO posts (channel_db_id, text, media_type, media_file_id, created_at) VALUES (?,?,?,?,?)",
                 vals
@@ -963,6 +977,7 @@ class Database:
             return False
 
     async def reset_posts(self, channel_id: int) -> int:
+        """إعادة تعيين المنشورات (جعلها غير منشورة) وإرجاع العدد"""
         try:
             await self.execute("UPDATE posts SET published=0 WHERE channel_db_id=?", (channel_id,))
             return await self.get_unpublished_posts_count(channel_id)
@@ -1414,18 +1429,31 @@ class Database:
             return {'total': 0, 'claimed': 0, 'available': 0}
 
     async def claim_referral_reward(self, user_id: int) -> int:
+        """صرف مكافأة الإحالات"""
         try:
             stats = await self.get_referral_stats(user_id)
             av = stats['available']
             if av <= 0:
                 return 0
+            
             await self.execute(
                 "UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?",
                 (av, user_id)
             )
+            
+            row = await self.fetchone("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
+            if row and row[0]:
+                current_end = TimeUtils.safe_parse_iso(row[0])
+                if current_end:
+                    new_end = current_end + timedelta(days=av)
+                else:
+                    new_end = TimeUtils.utc_now() + timedelta(days=av)
+            else:
+                new_end = TimeUtils.utc_now() + timedelta(days=av)
+            
             await self.execute(
-                "UPDATE users SET subscription_end = datetime(COALESCE(subscription_end, ?), '+' || ? || ' days') WHERE user_id=?",
-                (TimeUtils.utc_iso(), av, user_id)
+                "UPDATE users SET subscription_end=? WHERE user_id=?",
+                (new_end.isoformat(), user_id)
             )
             return av
         except Exception as e:
@@ -1753,4 +1781,3 @@ if __name__ == "__main__":
         print("✅ جميع الاختبارات اجتازت بنجاح!")
 
     asyncio.run(test())
-

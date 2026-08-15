@@ -10,7 +10,7 @@ import os
 import logging
 import traceback
 
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ChatJoinRequestHandler, filters
 from telegram.request import HTTPXRequest
 from aiohttp import web
 
@@ -101,6 +101,9 @@ async def main():
         MessageHandlers.handle_service
     ))
 
+    # ========== طلبات الانضمام ==========
+    app.add_handler(ChatJoinRequestHandler(MessageHandlers.handle_join_request))
+
     # ========== معالج الأخطاء ==========
     app.add_error_handler(ErrorHandler.handle_error)
 
@@ -144,4 +147,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ خطأ غير متوقع: {e}")
         traceback.print_exc()
-

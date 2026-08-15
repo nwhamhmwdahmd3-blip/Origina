@@ -13,6 +13,7 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 وإصلاح حذف جميع رسائل الخدمة في المجموعات
 مع دعم استيراد الردود من ملف replies.py أولاً ثم قاعدة البيانات
 مع دعم الصيغة الأصلية للأزرار (buy_sub_, mute_dur_)
+مع دعم طلبات الانضمام (قبول/رفض تلقائي)
 """
 
 import asyncio
@@ -329,6 +330,23 @@ class CommandHandlers:
             await safe_send(context.bot, chat_id, "❌ البوتات لا تستطيع استخدام هذا الأمر")
             return
 
+        # ✅ التحقق من صلاحية المستخدم أولاً
+        try:
+            member = await context.bot.get_chat_member(chat_id, user_id)
+            is_admin = member.status in ['administrator', 'creator']
+        except:
+            is_admin = False
+
+        if not is_admin:
+            await safe_send(
+                context.bot,
+                user_id,
+                "❌ **أنت لست مشرفاً في هذه المجموعة!**\n\n"
+                "فقط المشرفون يمكنهم تفعيل البوت.\n"
+                "اطلب من أحد المشرفين تنفيذ `/syncgroup`"
+            )
+            return
+
         await DB.register_group(chat_id, chat_name, user_id, update.effective_chat.username)
         bot_perms = await check_bot_permissions(context.bot, chat_id)
 
@@ -341,7 +359,6 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, msg)
             return
 
-        is_admin = False
         real_user_id = user_id
         is_hidden = (user_id == CONFIG.ANONYMOUS_ADMIN_ID)
 
@@ -351,66 +368,48 @@ class CommandHandlers:
                 for admin in admins:
                     if admin.status == 'creator':
                         real_user_id = admin.user.id
-                        is_admin = True
                         break
-                if not is_admin and admins:
+                if not real_user_id and admins:
                     real_user_id = admins[0].user.id
-                    is_admin = True
             except:
-                is_admin = False
+                pass
+
+        await DB.execute(
+            "INSERT OR REPLACE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,?)",
+            (chat_id, real_user_id, 1 if is_hidden else 0)
+        )
+        await DB.execute(
+            "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)",
+            (real_user_id, chat_id)
+        )
+        invalidate_auth_cache(chat_id, real_user_id)
+
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            admin_ids = [a.user.id for a in admins]
+            admin_count = await DB.sync_group_admins(chat_id, admin_ids)
+        except:
+            admin_count = 0
+
+        msg = f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
+        msg += f"📌 اسم المجموعة: {chat_name}\n"
+        msg += f"🆔 المعرف: {chat_id}\n"
+        msg += f"👤 تم تسجيل {'المالك' if not is_hidden else 'المشرف المخفي'} (المعرف: `{real_user_id}`)\n"
+        msg += f"👥 تم مزامنة {admin_count} مشرف\n\n"
+        msg += f"🔐 استخدم `/security` لإعدادات الأمان\n"
+        msg += f"🛠️ استخدم `/panel` للوحة التحكم"
+
+        if is_hidden:
+            await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت بواسطة مشرف مخفي!**")
+            await safe_send(context.bot, chat_id, msg)
+            if real_user_id and real_user_id > 0 and real_user_id != CONFIG.ANONYMOUS_ADMIN_ID:
+                try:
+                    await safe_send(context.bot, real_user_id, msg)
+                except:
+                    pass
         else:
-            try:
-                member = await context.bot.get_chat_member(chat_id, user_id)
-                is_admin = member.status in ['administrator', 'creator']
-                real_user_id = user_id
-            except:
-                is_admin = False
-
-        if is_admin:
-            await DB.execute(
-                "INSERT OR REPLACE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,?)",
-                (chat_id, real_user_id, 1 if is_hidden else 0)
-            )
-            await DB.execute(
-                "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)",
-                (real_user_id, chat_id)
-            )
-            invalidate_auth_cache(chat_id, real_user_id)
-
-            try:
-                admins = await context.bot.get_chat_administrators(chat_id)
-                admin_ids = [a.user.id for a in admins]
-                admin_count = await DB.sync_group_admins(chat_id, admin_ids)
-            except:
-                admin_count = 0
-
-            msg = f"✅ **تم تفعيل المجموعة بنجاح!**\n\n"
-            msg += f"📌 اسم المجموعة: {chat_name}\n"
-            msg += f"🆔 المعرف: {chat_id}\n"
-            msg += f"👤 تم تسجيل {'المالك' if not is_hidden else 'المشرف المخفي'} (المعرف: `{real_user_id}`)\n"
-            msg += f"👥 تم مزامنة {admin_count} مشرف\n\n"
-            msg += f"🔐 استخدم `/security` لإعدادات الأمان\n"
-            msg += f"🛠️ استخدم `/panel` للوحة التحكم"
-
-            if is_hidden:
-                await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت بواسطة مشرف مخفي!**")
-                await safe_send(context.bot, chat_id, msg)
-                if real_user_id and real_user_id > 0 and real_user_id != CONFIG.ANONYMOUS_ADMIN_ID:
-                    try:
-                        await safe_send(context.bot, real_user_id, msg)
-                    except:
-                        pass
-            else:
-                await safe_send(context.bot, real_user_id, msg)
-                await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت في المجموعة!**")
-        else:
-            msg = f"✅ **تم تسجيل المجموعة!**\n\n"
-            msg += f"📌 اسم المجموعة: {chat_name}\n"
-            msg += f"🆔 المعرف: {chat_id}\n\n"
-            msg += f"🔹 **لتفعيل الميزات المتقدمة:**\n"
-            msg += f"• تأكد من أن البوت مشرف في المجموعة\n"
-            msg += f"• يجب أن يقوم أحد المشرفين بتنفيذ الأمر"
-            await safe_send(context.bot, user_id, msg)
+            await safe_send(context.bot, real_user_id, msg)
+            await safe_send(context.bot, chat_id, f"🤖 **تم تفعيل البوت في المجموعة!**")
 
     @staticmethod
     async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -702,10 +701,10 @@ class CallbackHandlers:
             if data == CB.REMINDER:
                 await query.answer()
                 settings = await DB.get_reminder_settings(user_id)
-                sub = "✅" if settings.get('sub', False) else "❌"
-                daily = "✅" if settings.get('daily', False) else "❌"
-                weekly = "✅" if settings.get('weekly', False) else "❌"
-                days = settings.get('days', 3)
+                sub = "✅" if settings.get('subscription_reminder', False) else "❌"
+                daily = "✅" if settings.get('daily_stats_reminder', False) else "❌"
+                weekly = "✅" if settings.get('weekly_report', False) else "❌"
+                days = settings.get('reminder_days_before', 3)
                 text = f"⏰ **إعدادات التذكيرات**\n\n🔔 تذكير الاشتراك: {sub}\n📊 يومي: {daily}\n📈 أسبوعي: {weekly}\n📅 عدد الأيام: {days}"
                 kb = KeyboardFactory.build("reminder")
                 await query.edit_message_text(text, reply_markup=kb)
@@ -713,19 +712,19 @@ class CallbackHandlers:
 
             if data == CB.REM_TOGGLE_SUB:
                 settings = await DB.get_reminder_settings(user_id)
-                await DB.update_reminder_settings(user_id, subscription_reminder=not settings.get('sub', False))
+                await DB.update_reminder_settings(user_id, subscription_reminder=not settings.get('subscription_reminder', False))
                 await CallbackHandlers.handle(update, context)
                 return
 
             if data == CB.REM_TOGGLE_DAILY:
                 settings = await DB.get_reminder_settings(user_id)
-                await DB.update_reminder_settings(user_id, daily_stats_reminder=not settings.get('daily', False))
+                await DB.update_reminder_settings(user_id, daily_stats_reminder=not settings.get('daily_stats_reminder', False))
                 await CallbackHandlers.handle(update, context)
                 return
 
             if data == CB.REM_TOGGLE_WEEKLY:
                 settings = await DB.get_reminder_settings(user_id)
-                await DB.update_reminder_settings(user_id, weekly_report=not settings.get('weekly', False))
+                await DB.update_reminder_settings(user_id, weekly_report=not settings.get('weekly_report', False))
                 await CallbackHandlers.handle(update, context)
                 return
 
@@ -837,7 +836,7 @@ class CallbackHandlers:
                 text = "📡 **قنواتي**\n\n"
                 for ch in channels:
                     st = "🚫" if ch['banned'] else "✅"
-                    text += f"{st} {ch['channel_name']} (ID: {ch['id']})\n"
+                    text += f"{st} {ch['channel_name']} (Telegram ID: {ch['channel_id']})\n"
                 kb = KeyboardFactory.build("main_menu")
                 await query.edit_message_text(text, reply_markup=kb)
                 return
@@ -866,10 +865,14 @@ class CallbackHandlers:
                 return
 
             # ====================================================
-            # المنشورات
+            # المنشورات (مع التحقق من الاشتراك)
             # ====================================================
             if data == CB.POST_ADD:
                 await query.answer()
+                # ✅ التحقق من الاشتراك
+                if not await DB.has_active_subscription(user_id):
+                    await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
+                    return
                 active = await DB.get_active_channel(user_id)
                 if not active:
                     await query.edit_message_text(await get_text(lang, 'no_active_channel'))
@@ -887,6 +890,10 @@ class CallbackHandlers:
 
             if data == CB.POST_PUB:
                 await query.answer()
+                # ✅ التحقق من الاشتراك
+                if not await DB.has_active_subscription(user_id):
+                    await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
+                    return
                 active = await DB.get_active_channel(user_id)
                 if not active:
                     await query.edit_message_text(await get_text(lang, 'no_active_channel'))
@@ -964,6 +971,10 @@ class CallbackHandlers:
 
             if data == CB.PUB_ALL:
                 await query.answer()
+                # ✅ التحقق من الاشتراك
+                if not await DB.has_active_subscription(user_id):
+                    await query.answer(await get_text(lang, 'subscription_expired'), show_alert=True)
+                    return
                 channels = await DB.get_user_channels(user_id)
                 if not channels:
                     await query.edit_message_text("📭 لا توجد قنوات")
@@ -1047,7 +1058,7 @@ class CallbackHandlers:
                      InlineKeyboardButton("🕐 وقت النشر", callback_data=f"{CB.SCHED_TIME}{ch_id}")],
                     [InlineKeyboardButton(await get_text(lang, 'back'), callback_data=CB.BACK)]
                 ])
-                await query.edit_message_text(await get_text(lang, 'schedule_current', type=s.get('type', 'غير محدد')),
+                await query.edit_message_text(await get_text(lang, 'schedule_current', type=s.get('schedule_type', 'غير محدد')),
                                               reply_markup=kb)
                 return
 
@@ -1338,7 +1349,8 @@ class CallbackHandlers:
             "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
             "voice": "delete_voice", "videonote": "delete_video_note",
             "welcome": "welcome_enabled", "goodbye": "goodbye_enabled",
-            "flood": "antiflood_enabled", "night": "night_mode_enabled"
+            "flood": "antiflood_enabled", "night": "night_mode_enabled",
+            "auto_approve": "auto_approve_join", "auto_reject": "auto_reject_join"
         }
 
         if action in field_map:
@@ -2177,7 +2189,7 @@ class MessageHandlers:
                         text_msg += "📡 **قنواتك:**\n"
                         for ch in channels:
                             st = "✅" if ch['id'] == result else "⏳"
-                            text_msg += f"{st} {ch['channel_name']} (ID: {ch['id']})\n"
+                            text_msg += f"{st} {ch['channel_name']} (Telegram ID: {ch['channel_id']})\n"
                         text_msg += f"\n💡 اختر قناة من **'📡 قنواتي'** لتصبح نشطة."
                         await safe_send(context.bot, user_id, text_msg)
                     else:
@@ -2930,4 +2942,47 @@ class MessageHandlers:
                 await context.bot.send_message(chat_id, text)
             except Exception as e:
                 logger.error(f"فشل إرسال رسالة الوداع: {e}")
+
+    # ================================================================
+    # معالج طلبات الانضمام
+    # ================================================================
+
+    @staticmethod
+    async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """معالجة طلبات الانضمام للمجموعة"""
+        join_request = update.chat_join_request
+        chat_id = update.effective_chat.id
+        user_id = join_request.from_user.id
+        
+        settings = await DB.get_security_settings(chat_id)
+        
+        # ✅ القبول التلقائي (إذا مفعل)
+        if settings.get('auto_approve_join', False):
+            try:
+                await join_request.approve()
+                logger.info(f"✅ تم قبول {user_id} تلقائيًا في {chat_id}")
+                
+                # إرسال ترحيب
+                if settings.get('welcome_enabled', False):
+                    welcome_text = settings.get('welcome_text', "مرحباً {user} في {chat} 🤍")
+                    text = welcome_text.format(
+                        user=join_request.from_user.full_name or join_request.from_user.first_name or "العضو",
+                        chat=update.effective_chat.title or "المجموعة"
+                    )
+                    await context.bot.send_message(chat_id, text)
+            except Exception as e:
+                logger.error(f"❌ فشل قبول طلب الانضمام: {e}")
+            return
+        
+        # ❌ الرفض التلقائي (إذا مفعل)
+        if settings.get('auto_reject_join', False):
+            try:
+                await join_request.decline()
+                logger.info(f"❌ تم رفض {user_id} تلقائيًا في {chat_id}")
+            except Exception as e:
+                logger.error(f"❌ فشل رفض طلب الانضمام: {e}")
+            return
+        
+        # ⏳ إذا لم يكن هناك قبول/رفض تلقائي، لا نفعل شيئًا
+        logger.info(f"⏳ طلب انضمام من {user_id} في {chat_id} - بانتظار الموافقة اليدوية")
 
