@@ -7,6 +7,7 @@ handlers.py - جميع معالجات البوت (النسخة النهائية 
 - CommandHandlers: الأوامر (بما فيها أوامر المالكين والمشرفين المخفيين)
 - CallbackHandlers: الأزرار (مع دعم كامل للأمان والأدمن والردود)
 - MessageHandlers: الرسائل (خاصة ومجموعات وخدمة وانضمام)
+- إضافة القناة متاحة دائمًا، والنشر يتطلب اشتراك
 """
 
 import asyncio
@@ -432,6 +433,11 @@ class CommandHandlers:
                 is_anonymous = getattr(admin, 'is_anonymous', False)
                 break
 
+        # ✅ دعم المشرف المخفي (المعرف الوهمي)
+        if not is_admin and user_id == CONFIG.ANONYMOUS_ADMIN_ID:
+            is_admin = True
+            is_anonymous = True
+
         if not is_admin:
             await update.message.reply_text("❌ **أنت لست مشرفاً في هذه المجموعة!**")
             return
@@ -814,9 +820,7 @@ class CallbackHandlers:
 
             # ========== القنوات ==========
             if data == CB.CH_ADD:
-                if not await DB.has_active_subscription(user_id):
-                    await query.answer("❌ انتهى اشتراكك!", show_alert=True)
-                    return
+                # ✅ إضافة القناة متاحة دائمًا (بدون اشتراك)
                 StateManager.set(user_id, UserState.WAIT_CHANNEL)
                 await query.edit_message_text("📡 أرسل معرف القناة:")
                 return
@@ -929,6 +933,9 @@ class CallbackHandlers:
                 return
 
             if data == CB.PUB_ALL:
+                if not await DB.has_active_subscription(user_id):
+                    await query.answer("❌ انتهى اشتراكك!", show_alert=True)
+                    return
                 channels = await DB.get_user_channels(user_id)
                 tasks = []
                 for ch in channels:
@@ -1673,10 +1680,7 @@ class MessageHandlers:
 
         # ========== إضافة قناة ==========
         if state == UserState.WAIT_CHANNEL:
-            if not await DB.has_active_subscription(user_id):
-                await safe_send(context.bot, user_id, "❌ انتهى اشتراكك!")
-                StateManager.clear(user_id)
-                return
+            # ✅ لا نتحقق من الاشتراك هنا - إضافة القناة مسموحة دائمًا
             try:
                 chat = await context.bot.get_chat(text)
                 if chat.type != 'channel':
