@@ -129,7 +129,7 @@ async def main():
     # ========== تشغيل Webhook ==========
     if hostname:
         webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
-        print(f"🔗 Setting Webhook...")
+        print("🔗 Setting Webhook...")
         
         await app.bot.delete_webhook(drop_pending_updates=True)
         await app.bot.set_webhook(
@@ -139,8 +139,7 @@ async def main():
         )
         
         webhook_info = await app.bot.get_webhook_info()
-        print(f"✅ Webhook URL: {webhook_info.url}")
-        print(f"✅ Pending: {webhook_info.pending_update_count}")
+        print(f"✅ Webhook: {webhook_info.url}")
         
         runner = await setup_webhook(app, port)
         print(f"✅ Server on port {port}")
