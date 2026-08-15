@@ -610,7 +610,6 @@ class Database:
                 )
                 return True
             code = secrets.token_urlsafe(6)
-            # ✅ التجربة غير مفعلة تلقائيًا - المستخدم يضغط زر "تجربة" بنفسه
             await self.execute(
                 """INSERT INTO users 
                    (user_id, username, first_name, referral_code, trial_used, created_at, updated_at) 
@@ -884,7 +883,8 @@ class Database:
         try:
             vals = [
                 (channel_id, (t or "")[:4096], m, f, TimeUtils.utc_iso()) 
-                for t, m, f in posts            ]
+                for t, m, f in posts
+            ]
             await self.executemany(
                 "INSERT INTO posts (channel_db_id, text, media_type, media_file_id, created_at) VALUES (?,?,?,?,?)",
                 vals
@@ -1597,7 +1597,8 @@ class Database:
     async def set_setting(self, key: str, value: str) -> bool:
         try:
             await self.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, value))
-            return True        except Exception as e:
+            return True
+        except Exception as e:
             logger.error(f"❌ Error in set_setting: {e}", exc_info=True)
             return False
 
