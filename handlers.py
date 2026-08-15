@@ -2,19 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة النهائية 100% مع الإصلاحات)
-=====================================================================
-- CommandHandlers: الأوامر
+handlers.py - جميع معالجات البوت (النسخة النهائية 100%)
+============================================================
+- CommandHandlers: الأوامر (بما فيها أوامر المالكين والمشرفين المخفيين)
 - CallbackHandlers: الأزرار (مع دعم كامل للأمان والأدمن والردود)
 - MessageHandlers: الرسائل (خاصة ومجموعات وخدمة وانضمام)
-- جميع الإصلاحات المطلوبة مطبقة:
-  1. توحيد فاصل callback_data بـ ":"
-  2. إضافة الحقول المفقودة لـ field_map
-  3. تسجيل الأخطاء بدلاً من تجاهلها
-  4. تحديث الكاش تلقائياً
-  5. إرسال ملف النسخ الاحتياطي فعلياً
-  6. تحسين البث لتجنب Rate Limit
-  7. وغيرها من الإصلاحات
+- إصلاح تاريخ المسابقة: strftime بدلاً من isoformat
 """
 
 import asyncio
@@ -213,70 +206,6 @@ class CommandHandlers:
                         f"👥 المستخدمين: {stats['users']}\n⛔ المحظورين: {stats['banned']}")
 
     @staticmethod
-    async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_chat.type not in ['group', 'supergroup']:
-            return
-        chat_id = update.effective_chat.id
-        user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await safe_send(context.bot, user_id, "❌ ليس لديك صلاحية")
-            return
-        settings = await DB.get_security_settings(chat_id)
-        text = await KeyboardFactory._format_security_text(settings)
-        kb = KeyboardFactory.build("security", chat_id)
-        await safe_send(context.bot, user_id, text, reply_markup=kb)
-
-    @staticmethod
-    async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_chat.type not in ['group', 'supergroup']:
-            return
-        chat_id = update.effective_chat.id
-        user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await safe_send(context.bot, user_id, "❌ ليس لديك صلاحية")
-            return
-        kb = KeyboardFactory.build("panel", chat_id)
-        await safe_send(context.bot, user_id, "📋 لوحة تحكم المجموعة", reply_markup=kb)
-
-    @staticmethod
-    async def lock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_chat.type not in ['group', 'supergroup']:
-            return
-        chat_id = update.effective_chat.id
-        user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            return
-        await DB.execute("INSERT OR REPLACE INTO chat_locks (chat_id, locked, locked_at, locked_by) VALUES (?,1,?,?)",
-                         (chat_id, TimeUtils.utc_iso(), user_id))
-        await safe_send(context.bot, user_id, "🔒 تم القفل")
-
-    @staticmethod
-    async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_chat.type not in ['group', 'supergroup']:
-            return
-        chat_id = update.effective_chat.id
-        user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            return
-        await DB.execute("DELETE FROM chat_locks WHERE chat_id=?", (chat_id,))
-        await safe_send(context.bot, user_id, "🔓 تم الفتح")
-
-    @staticmethod
-    async def contests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        user_id = update.effective_user.id
-        contests = await DB.get_active_contests(10)
-        if not contests:
-            await safe_send(context.bot, user_id, "📭 لا توجد مسابقات نشطة")
-            return
-        text = "🏆 **المسابقات النشطة**\n\n"
-        for c in contests:
-            text += f"• **{c['title']}**\n"
-            text += f"  🎁 {c['prize']}\n"
-            text += f"  📅 {c['end_date'][:10]}\n\n"
-        kb = KeyboardFactory.build("contests")
-        await safe_send(context.bot, user_id, text, reply_markup=kb)
-
-    @staticmethod
     async def language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
@@ -352,7 +281,7 @@ class CommandHandlers:
             admin_id = int(context.args[0])
         except:
             return
-        await DB.execute("INSERT OR IGNORE INTO hidden_admins (chat_id, admin_id, added_by, added_at) VALUES (?,?,?,?)", (chat_id, admin_id, user_id, TimeUtils.utc_iso()))
+        await DB.execute("INSERT OR IGNORE INTO hidden_admins (chat_id, admin_id, added_by, added_at) VALUES (?,?,?,?)", (chat_id, admin_id, user_id, TimeUtils.sql_iso()))
         invalidate_auth_cache(chat_id, admin_id)
         await safe_send(context.bot, user_id, f"✅ تم إضافة `{admin_id}` كمشرف مخفي")
 
@@ -671,7 +600,6 @@ class CallbackHandlers:
                     return
 
                 try:
-                    # ملاحظة: يتطلب Stars للعمل
                     await context.bot.send_invoice(
                         chat_id=user_id,
                         title=f"💎 {plan['name']}",
@@ -827,7 +755,6 @@ class CallbackHandlers:
                 for ch in channels:
                     st = "✅" if not ch['banned'] else "🚫"
                     text += f"{st} {ch['channel_name']} (`{ch['channel_id']}`)\n"
-                    # ✅ استخدام ":" كفاصل
                     kb.append([InlineKeyboardButton(
                         f"📌 {ch['channel_name'][:20]}",
                         callback_data=f"{CB.CH_SEL}:{ch['id']}"
@@ -1048,7 +975,6 @@ class CallbackHandlers:
             await query.answer("❌ لا صلاحية", show_alert=True)
             return
 
-        # ✅ خريطة الحقول المحدثة
         field_map = {
             "links": "delete_links",
             "mentions": "mentions",
@@ -1068,7 +994,6 @@ class CallbackHandlers:
             "goodbye": "goodbye_enabled",
             "flood": "antiflood_enabled",
             "night": "night_mode_enabled",
-            # ✅ الحقول المضافة
             "banned_words": "delete_banned_words",
             "approve_join": "auto_approve_join",
             "reject_join": "auto_reject_join"
@@ -1258,7 +1183,6 @@ class CallbackHandlers:
             try:
                 backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
                 shutil.copy2(PATHS.DB, backup_file)
-                # ✅ إرسال الملف الفعلي
                 with open(backup_file, 'rb') as f:
                     await context.bot.send_document(chat_id=user_id, document=f, filename=backup_file.name)
                 await query.answer()
@@ -1639,7 +1563,7 @@ class MessageHandlers:
                 await file_obj.download_to_drive(temp_path)
                 import_chat_id = context.user_data.get('import_chat_id', -1)
                 count = await import_auto_replies(import_chat_id, temp_path, overwrite=True)
-                _auto_reply_cache.invalidate()  # ✅ تحديث الكاش
+                _auto_reply_cache.invalidate()
                 await safe_send(context.bot, user_id, f"✅ تم استيراد {count} رد")
                 Path(temp_path).unlink(missing_ok=True)
             except Exception as e:
@@ -1743,7 +1667,7 @@ class MessageHandlers:
                     try:
                         await safe_send(context.bot, uid, text)
                         sent += 1
-                        await asyncio.sleep(0.05)  # ✅ تجنب الـ Rate Limit
+                        await asyncio.sleep(0.05)
                     except Exception as e:
                         logger.error(f"❌ فشل إرسال إلى {uid}: {e}")
             await safe_send(context.bot, user_id, f"✅ أُرسل إلى {sent}")
@@ -1929,7 +1853,7 @@ class MessageHandlers:
                     context.user_data.pop('contest_title', ''),
                     context.user_data.pop('contest_desc', ''),
                     context.user_data.pop('contest_prize', ''),
-                    TimeUtils.mecca_to_utc(end_date).strftime('%Y-%m-%d %H:%M:%S')
+                    TimeUtils.mecca_to_utc(end_date).strftime('%Y-%m-%d %H:%M:%S')  # ✅ الإصلاح
                 )
                 await safe_send(context.bot, user_id, f"✅ مسابقة #{cid}")
             except Exception as e:
@@ -1950,7 +1874,7 @@ class MessageHandlers:
             try:
                 target = int(text)
                 await DB.execute("INSERT OR IGNORE INTO bot_admins (user_id, added_by, added_at) VALUES (?,?,?)",
-                                 (target, user_id, TimeUtils.utc_iso()))
+                                 (target, user_id, TimeUtils.sql_iso()))
                 await safe_send(context.bot, user_id, "✅ تمت الإضافة")
             except:
                 pass
@@ -2160,4 +2084,3 @@ class MessageHandlers:
                 await join_request.decline()
             except:
                 pass
-
