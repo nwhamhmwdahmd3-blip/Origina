@@ -2,12 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (كامل 100%)
-===========================================
-- CommandHandlers: جميع الأوامر
-- CallbackHandlers: جميع الأزرار
-- MessageHandlers: جميع الرسائل
-- دوال المخفيين
+handlers.py - جميع معالجات البوت (النسخة النهائية الذكية)
 """
 
 import asyncio
@@ -44,11 +39,9 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 
-# =====================================================================
-# CommandHandlers
-# =====================================================================
-
 class CommandHandlers:
+    """جميع معالجات الأوامر"""
+
     @staticmethod
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
@@ -290,57 +283,103 @@ class CommandHandlers:
             text += f"🛡️ `{a[0]}`\n"
         await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد")
 
+    # ========== تفعيل المجموعة (الحل الذكي) ==========
+
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_chat.type not in ['group', 'supergroup']:
+        if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
             return
+
         chat_id = update.effective_chat.id
         chat_name = update.effective_chat.title or "بدون اسم"
         user_id = update.effective_user.id
 
+        # ✅ 1. جلب جميع مشرفي المجموعة
         try:
             all_admins = await context.bot.get_chat_administrators(chat_id)
         except:
             all_admins = []
 
+        # ✅ 2. البحث عن المالك الحقيقي
         creator_id = None
         for admin in all_admins:
             if admin.status == 'creator' and not admin.user.is_bot:
                 creator_id = admin.user.id
                 break
 
+        # ✅ 3. التحقق من صلاحية المرسل (3 طبقات)
         is_admin = False
+        is_anonymous = False
+
+        # الطبقة 1: من قائمة المشرفين
         for admin in all_admins:
             if admin.user.id == user_id:
                 is_admin = True
+                is_anonymous = getattr(admin, 'is_anonymous', False)
                 break
 
+        # الطبقة 2: من قاعدة البيانات
         if not is_admin:
-            row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
-            if row:
+            hidden_owner = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
+            if hidden_owner:
                 is_admin = True
+                is_anonymous = True
             else:
-                row2 = await DB.fetchone("SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, user_id))
-                if row2:
+                hidden_admin = await DB.fetchone("SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, user_id))
+                if hidden_admin:
                     is_admin = True
+                    is_anonymous = True
+
+        # الطبقة 3: المالك الأساسي
+        if user_id == CONFIG.PRIMARY_OWNER_ID:
+            is_admin = True
 
         if not is_admin:
-            await safe_send(context.bot, user_id, "❌ لست مشرفاً!")
+            msg = "❌ **لم يتم التعرف عليك!**\n\n"
+            msg += "إذا كنت مشرفًا مخفيًا:\n"
+            msg += "1. أرسل /start في الخاص\n"
+            msg += "2. اطلب من المالك إضافتك\n"
+            msg += "3. ثم أعد /syncgroup"
+            await safe_send(context.bot, user_id, msg)
             return
 
-        await DB.register_group(chat_id, chat_name, creator_id or user_id)
+        # ✅ 4. تسجيل المجموعة
+        await DB.register_group(chat_id, chat_name, creator_id or user_id, update.effective_chat.username)
 
+        # ✅ 5. تسجيل المالك الحقيقي
         if creator_id:
-            await DB.execute("INSERT OR IGNORE INTO hidden_owner_groups VALUES (?,?,0)", (chat_id, creator_id))
-            await DB.execute("INSERT OR IGNORE INTO user_groups_link VALUES (?,?)", (creator_id, chat_id))
+            await DB.execute("INSERT OR REPLACE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,0)", (chat_id, creator_id))
+            await DB.execute("INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)", (creator_id, chat_id))
+            invalidate_auth_cache(chat_id, creator_id)
 
-        await DB.execute("INSERT OR IGNORE INTO user_groups_link VALUES (?,?)", (user_id, chat_id))
+        # ✅ 6. تسجيل المستخدم الحالي
+        await DB.execute("INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)", (user_id, chat_id))
+        invalidate_auth_cache(chat_id, user_id)
 
+        # ✅ 7. مزامنة جميع المشرفين
         admin_ids = [a.user.id for a in all_admins if a.user and not a.user.is_bot]
-        await DB.sync_group_admins(chat_id, admin_ids)
+        admin_count = await DB.sync_group_admins(chat_id, admin_ids)
 
-        await safe_send(context.bot, user_id, f"✅ **{chat_name}**!")
-        await safe_send(context.bot, chat_id, "🤖 تم التفعيل!")
+        # ✅ 8. رسالة النجاح
+        msg = f"✅ **تم تفعيل المجموعة!**\n\n"
+        msg += f"📌 {chat_name}\n"
+        msg += f"🆔 `{chat_id}`\n"
+        if creator_id:
+            msg += f"👑 المالك: `{creator_id}`\n"
+        msg += f"{'👻 مخفي' if is_anonymous else '👤 مشرف'}: `{user_id}`\n"
+        msg += f"👥 {admin_count} مشرف\n\n"
+        msg += "🔐 /security | 🛠️ /panel"
+
+        await safe_send(context.bot, user_id, msg)
+        await safe_send(context.bot, chat_id, "🤖 **تم التفعيل!**")
+
+        if creator_id and creator_id != user_id:
+            try:
+                await safe_send(context.bot, creator_id, msg)
+            except:
+                pass
+
+    # ========== الإشراف ==========
 
     @staticmethod
     async def ban(update, context): await CommandHandlers._moderation_command(update, context, "ban")
@@ -391,11 +430,9 @@ class CommandHandlers:
         await safe_send(context.bot, user_id, msg)
 
 
-# =====================================================================
-# CallbackHandlers
-# =====================================================================
-
 class CallbackHandlers:
+    """معالجات الأزرار"""
+
     @staticmethod
     async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -524,18 +561,17 @@ class CallbackHandlers:
 
             if data == CB.POST_PUB:
                 active = await DB.get_active_channel(user_id)
-                if not active:
-                    return
-                post = await DB.get_next_post(active)
-                if post:
-                    ch_info = await DB.get_channel_info(active)
-                    if ch_info:
-                        try:
-                            await context.bot.send_message(ch_info['channel_id'], post['text'] or ".")
-                            await DB.mark_post_published(post['id'])
-                            await query.edit_message_text("✅ تم!")
-                        except:
-                            pass
+                if active:
+                    post = await DB.get_next_post(active)
+                    if post:
+                        ch_info = await DB.get_channel_info(active)
+                        if ch_info:
+                            try:
+                                await context.bot.send_message(ch_info['channel_id'], post['text'] or ".")
+                                await DB.mark_post_published(post['id'])
+                                await query.edit_message_text("✅ تم!")
+                            except:
+                                pass
                 return
 
             if data == CB.POST_LIST:
@@ -648,11 +684,9 @@ class CallbackHandlers:
             return
 
 
-# =====================================================================
-# MessageHandlers
-# =====================================================================
-
 class MessageHandlers:
+    """معالجات الرسائل"""
+
     @staticmethod
     async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message or not update.effective_user:
