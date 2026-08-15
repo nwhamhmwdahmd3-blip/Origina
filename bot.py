@@ -31,13 +31,11 @@ async def main():
     print(f"🌿 {CONFIG.BOT_NAME}")
     print(f"👨‍💼 المالك: {CONFIG.PRIMARY_OWNER_ID}")
 
-    # ✅ تهيئة قاعدة البيانات
     await initialize_db()
 
     for dev_id in CONFIG.DEVELOPER_IDS:
         await DB.register_user(dev_id)
 
-    # ✅ تحميل الإعدادات
     KeyboardFactory.load_config()
     available_langs = TranslationManager.get_available_languages()
     for lang in available_langs:
@@ -46,7 +44,6 @@ async def main():
     port = int(CONFIG.WEB_PORT)
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
 
-    # ✅ إنشاء التطبيق
     app = Application.builder().token(CONFIG.TOKEN).build()
     await app.initialize()
 
@@ -126,30 +123,13 @@ async def main():
         asyncio.create_task(BackgroundTasks.sync_admins_periodically(app.bot)),
     ]
 
-    # ========== تشغيل Webhook ==========
+    # ========== تشغيل ==========
     if hostname:
         webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
-        print(f"🔗 Setting Webhook...")
-        
-        # ✅ حذف Webhook القديم
+        print("🔗 Webhook set")
         await app.bot.delete_webhook(drop_pending_updates=True)
-        
-        # ✅ تعيين Webhook جديد
-        await app.bot.set_webhook(
-            url=webhook_url,
-            allowed_updates=["message", "callback_query", "chat_join_request", "chat_member"],
-            drop_pending_updates=True
-        )
-        
-        # ✅ التحقق
-        webhook_info = await app.bot.get_webhook_info()
-        print(f"✅ Webhook URL: {webhook_info.url}")
-        print(f"✅ Pending: {webhook_info.pending_update_count}")
-        
-        # ✅ تشغيل الخادم
+        await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
         runner = await setup_webhook(app, port)
-        print(f"✅ Server on port {port}")
-        
         try:
             await asyncio.Event().wait()
         finally:
@@ -158,7 +138,6 @@ async def main():
         print("⚠️ Polling")
         await app.run_polling(drop_pending_updates=True)
 
-    # ✅ إلغاء المهام
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
