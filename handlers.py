@@ -10,7 +10,8 @@ handlers.py - جميع معالجات البوت (الأوامر، الكولب�
 - MessageHandlers: معالجة الرسائل (خاصة ومجموعات)
 مع تفعيل زر التجربة المجانية (30 يوم) وإعادة التدوير التلقائي
 ومعالجة دقيقة لإضافة القناة مع رسائل خطأ واضحة
-وإصلاح مشكلة حفظ القناة في قاعدة البيانات
+وإصلاح حذف جميع رسائل الخدمة في المجموعات
+مع دعم استيراد الردود من ملف replies.py أولاً ثم قاعدة البيانات
 """
 
 import asyncio
@@ -40,7 +41,8 @@ from utils import (
     RATE_LIMITER, METRICS, get_text, StateManager, UserState,
     KeyboardFactory, TranslationManager, CB,
     _auto_reply_cache, export_auto_replies, import_auto_replies,
-    fetch_json_from_url, _increment_usage_async, get_ram_usage
+    fetch_json_from_url, _increment_usage_async, get_ram_usage,
+    get_reply_from_file  # <---- استيراد دالة الردود من الملف
 )
 
 logger = logging.getLogger(__name__)
@@ -110,11 +112,9 @@ class CommandHandlers:
         kb_rows = KeyboardFactory.get_menu("main_menu")
         keyboard = []
         
-        # الأزرار العادية
         for row in kb_rows:
             btn_row = []
             for item in row:
-                # إذا كان زر الأدمن، نتحكم في ظهوره
                 if item == "admin_panel_btn":
                     if CONFIG.is_developer(user_id):
                         text_btn = KeyboardFactory.get_text("admin_panel_btn")
@@ -129,7 +129,6 @@ class CommandHandlers:
             if btn_row:
                 keyboard.append(btn_row)
         
-        # إضافة زر الأدمن للمطورين فقط (إذا لم يتم إضافته من القائمة)
         if CONFIG.is_developer(user_id):
             has_admin_btn = False
             for row in keyboard:
@@ -149,35 +148,28 @@ class CommandHandlers:
                                sub=sub_text, channel=ch_display,
                                pending=cnt, auto=auto_text,
                                bot_name=CONFIG.BOT_NAME)
-        
-        # إضافة حالة إعادة التدوير للقائمة
         title += f"\n♻️ إعادة التدوير: {recycle_text}"
 
         await safe_send(context.bot, user_id, title, reply_markup=kb)
 
     @staticmethod
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض المساعدة"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
         await safe_send(context.bot, user_id, await get_text(lang, 'help_text'))
 
     @staticmethod
     async def trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تفعيل النسخة التجريبية (30 يوم)"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
-        
         if await DB.has_used_trial(user_id):
             await safe_send(context.bot, user_id, await get_text(lang, 'trial_used'))
             return
-        
         days = await DB.activate_trial(user_id)
         await safe_send(context.bot, user_id, await get_text(lang, 'trial_activated', days=days))
 
     @staticmethod
     async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض باقات الاشتراك"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
         kb = KeyboardFactory.build("plans")
@@ -185,7 +177,6 @@ class CommandHandlers:
 
     @staticmethod
     async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """فتح تذكرة دعم"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
         kb = KeyboardFactory.build("support")
@@ -193,7 +184,6 @@ class CommandHandlers:
 
     @staticmethod
     async def developer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض معلومات المطور"""
         user_id = update.effective_user.id
         text = f"""
 👨‍💻 **معلومات المطور**
@@ -211,7 +201,6 @@ class CommandHandlers:
 
     @staticmethod
     async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض إحصائيات البوت (للمطورين فقط)"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             await safe_send(context.bot, user_id, "❌ هذا الأمر للمطورين فقط")
@@ -226,7 +215,6 @@ class CommandHandlers:
 
     @staticmethod
     async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض إعدادات الأمان للمجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -243,7 +231,6 @@ class CommandHandlers:
 
     @staticmethod
     async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض لوحة تحكم المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -257,7 +244,6 @@ class CommandHandlers:
 
     @staticmethod
     async def lock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """قفل المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -272,7 +258,6 @@ class CommandHandlers:
 
     @staticmethod
     async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """فتح المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -286,7 +271,6 @@ class CommandHandlers:
 
     @staticmethod
     async def contests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض المسابقات"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
         contests = await DB.get_active_contests(10)
@@ -304,7 +288,6 @@ class CommandHandlers:
 
     @staticmethod
     async def language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض قائمة اللغات"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
         available = TranslationManager.get_available_languages()
@@ -324,13 +307,11 @@ class CommandHandlers:
 
     @staticmethod
     async def replies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض معلومات الردود التلقائية"""
         user_id = update.effective_user.id
-        await safe_send(context.bot, user_id, "📚 **الردود التلقائية**\n\n✅ يتم تحميل الردود من قاعدة البيانات")
+        await safe_send(context.bot, user_id, "📚 **الردود التلقائية**\n\n✅ يتم تحميل الردود من ملف replies.py وقاعدة البيانات")
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تفعيل المجموعة ومزامنة المشرفين"""
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
             await safe_send(context.bot, update.effective_user.id, "❌ هذا الأمر يستخدم فقط في المجموعات")
             return
@@ -429,37 +410,30 @@ class CommandHandlers:
 
     @staticmethod
     async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """حظر مستخدم في المجموعة"""
         await CommandHandlers._moderation_command(update, context, "ban")
 
     @staticmethod
     async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """كتم مستخدم في المجموعة"""
         await CommandHandlers._moderation_command(update, context, "mute")
 
     @staticmethod
     async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تحذير مستخدم في المجموعة"""
         await CommandHandlers._moderation_command(update, context, "warn")
 
     @staticmethod
     async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """طرد مستخدم من المجموعة"""
         await CommandHandlers._moderation_command(update, context, "kick")
 
     @staticmethod
     async def restrict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تقييد مستخدم في المجموعة"""
         await CommandHandlers._moderation_command(update, context, "restrict")
 
     @staticmethod
     async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """إلغاء حظر مستخدم في المجموعة"""
         await CommandHandlers._moderation_command(update, context, "unban")
 
     @staticmethod
     async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تثبيت رسالة في المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -479,7 +453,6 @@ class CommandHandlers:
 
     @staticmethod
     async def _moderation_command(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
-        """تنفيذ أوامر الإدارة (حظر، كتم، تحذير، ...)"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -529,7 +502,7 @@ class CommandHandlers:
 
 
 # =====================================================================
-# 2. معالج الكولباك - CallbackHandlers (كامل)
+# 2. معالج الكولباك - CallbackHandlers (مكتمل)
 # =====================================================================
 
 class CallbackHandlers:
@@ -537,7 +510,6 @@ class CallbackHandlers:
 
     @staticmethod
     async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """المعالج الرئيسي للكولباك"""
         query = update.callback_query
         data = query.data
         if not data:
@@ -547,9 +519,7 @@ class CallbackHandlers:
         lang = await DB.get_user_language(user_id)
 
         try:
-            # ====================================================
             # الأزرار الأساسية
-            # ====================================================
             if data == CB.MAIN or data == CB.BACK:
                 await query.answer()
                 await CommandHandlers.start(update, context)
@@ -601,9 +571,7 @@ class CallbackHandlers:
                 await CommandHandlers.start(update, context)
                 return
 
-            # ====================================================
             # الإعدادات
-            # ====================================================
             if data == CB.SETTINGS:
                 await query.answer()
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
@@ -631,9 +599,7 @@ class CallbackHandlers:
                 await CallbackHandlers.handle(update, context)
                 return
 
-            # ====================================================
             # الباقات والاشتراك
-            # ====================================================
             if data == CB.PLANS:
                 await query.answer()
                 kb = KeyboardFactory.build("plans")
@@ -687,9 +653,7 @@ class CallbackHandlers:
                 await query.edit_message_text(text, reply_markup=kb)
                 return
 
-            # ====================================================
             # الإحالات
-            # ====================================================
             if data == CB.REFERRAL:
                 await query.answer()
                 stats = await DB.get_referral_stats(user_id)
@@ -720,9 +684,7 @@ class CallbackHandlers:
                     await query.edit_message_text(text)
                 return
 
-            # ====================================================
             # التذكيرات
-            # ====================================================
             if data == CB.REMINDER:
                 await query.answer()
                 settings = await DB.get_reminder_settings(user_id)
@@ -773,9 +735,7 @@ class CallbackHandlers:
                 await CallbackHandlers.handle(update, context)
                 return
 
-            # ====================================================
             # الترجمة
-            # ====================================================
             if data == CB.TRANSLATION:
                 await query.answer()
                 current_lang = await DB.get_user_language(user_id)
@@ -795,9 +755,7 @@ class CallbackHandlers:
                 await query.edit_message_text(await get_text(lang, 'translation_set', lang=lang_set))
                 return
 
-            # ====================================================
             # المسابقات
-            # ====================================================
             if data == CB.CONTESTS:
                 await query.answer()
                 await CommandHandlers.contests(update, context)
@@ -826,9 +784,7 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ====================================================
             # الدعم
-            # ====================================================
             if data == CB.SUPPORT_TICKET:
                 await query.answer()
                 StateManager.set(user_id, UserState.SUPPORT_MODE)
@@ -839,9 +795,7 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ====================================================
-            # القنوات (مع إصلاح حفظ القناة)
-            # ====================================================
+            # القنوات
             if data == CB.CH_ADD:
                 has_sub = await DB.has_active_subscription(user_id)
                 has_trial = await DB.has_used_trial(user_id)
@@ -890,9 +844,7 @@ class CallbackHandlers:
                                                f"⏳ غير منشورة: {stats['unpublished']}")
                 return
 
-            # ====================================================
             # المنشورات
-            # ====================================================
             if data == CB.POST_ADD:
                 await query.answer()
                 active = await DB.get_active_channel(user_id)
@@ -1011,9 +963,7 @@ class CallbackHandlers:
                     await query.edit_message_text(await get_text(lang, 'no_posts'))
                 return
 
-            # ====================================================
             # الإحصائيات
-            # ====================================================
             if data == CB.STATS_PEND or data == CB.STATS_FULL:
                 await query.answer()
                 u = await DB.get_user_unpublished_count(user_id)
@@ -1026,9 +976,7 @@ class CallbackHandlers:
                 await query.edit_message_text(text)
                 return
 
-            # ====================================================
             # المجموعات
-            # ====================================================
             if data == CB.GROUPS:
                 await query.answer()
                 groups = await DB.get_user_groups(user_id)
@@ -1059,9 +1007,7 @@ class CallbackHandlers:
                 await query.edit_message_text(text, reply_markup=kb)
                 return
 
-            # ====================================================
             # الجدولة
-            # ====================================================
             if data.startswith(CB.SCHEDULE):
                 ch_id = int(data.split(":")[-1])
                 s = await DB.get_schedule(ch_id)
@@ -1104,16 +1050,12 @@ class CallbackHandlers:
                 await query.edit_message_text(await get_text(lang, 'enter_publish_time'))
                 return
 
-            # ====================================================
-            # أزرار الأمان (sec_*)
-            # ====================================================
+            # أزرار الأمان
             if data.startswith("sec_"):
                 await CallbackHandlers._handle_security_callback(update, context, query, user_id, lang)
                 return
 
-            # ====================================================
-            # أزرار الكلمات المحظورة
-            # ====================================================
+            # الكلمات المحظورة
             if data.startswith(CB.BAN_ADD):
                 chat_id = int(data.split(":")[-1])
                 StateManager.set(user_id, UserState.WAIT_GROUP_BAN)
@@ -1139,9 +1081,7 @@ class CallbackHandlers:
                 await query.edit_message_text(await get_text(lang, 'enter_word_to_remove'))
                 return
 
-            # ====================================================
-            # أزرار العقوبات
-            # ====================================================
+            # العقوبات
             if data.startswith(CB.PENALTY):
                 chat_id = int(data.split(":")[-1])
                 await query.edit_message_text("⚖️ اختر العقوبة الأساسية:",
@@ -1155,9 +1095,7 @@ class CallbackHandlers:
                     await query.edit_message_text(f"✅ تم تعيين العقوبة: {p}")
                     return
 
-            # ====================================================
-            # أزرار الإجراءات المتقدمة
-            # ====================================================
+            # الإجراءات المتقدمة
             if data.startswith(CB.ADV_ACT):
                 chat_id = int(data.split(":")[-1])
                 await query.edit_message_text("🛠️ إجراءات متقدمة:",
@@ -1244,16 +1182,12 @@ class CallbackHandlers:
                 await query.edit_message_text(text)
                 return
 
-            # ====================================================
-            # أزرار الردود التلقائية
-            # ====================================================
+            # الردود التلقائية
             if data.startswith("auto_reply_"):
                 await CallbackHandlers._handle_auto_reply_callback(update, context, query, user_id, lang)
                 return
 
-            # ====================================================
-            # أزرار لوحة المجموعة
-            # ====================================================
+            # لوحة المجموعة
             if data.startswith(CB.PANEL_LOCK) or data.startswith(CB.PANEL_UNLOCK):
                 await query.answer()
                 chat_id = int(data.split(":")[-1])
@@ -1274,9 +1208,7 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ====================================================
-            # أزرار الأدمن (للمطورين فقط) - كاملة
-            # ====================================================
+            # لوحة الأدمن
             if data.startswith("admin_"):
                 if not CONFIG.is_developer(user_id):
                     await query.answer(await get_text(lang, 'not_authorized'), show_alert=True)
@@ -1284,9 +1216,7 @@ class CallbackHandlers:
                 await CallbackHandlers._handle_admin_callback(update, context, query, user_id, lang)
                 return
 
-            # ====================================================
-            # أزرار اللغة
-            # ====================================================
+            # اللغة
             if data.startswith("lang_"):
                 await query.answer()
                 lang_set = data.split("_")[-1]
@@ -1299,9 +1229,6 @@ class CallbackHandlers:
                     await query.answer("❌ اللغة غير متوفرة", show_alert=True)
                 return
 
-            # ====================================================
-            # أزرار لوحة الأدمن الرئيسية
-            # ====================================================
             if data == CB.ADMIN:
                 if CONFIG.is_developer(user_id):
                     kb = KeyboardFactory.build("admin_panel")
@@ -1320,13 +1247,8 @@ class CallbackHandlers:
             except:
                 pass
 
-    # ================================================================
-    # دوال مساعدة للمعالجات
-    # ================================================================
-
     @staticmethod
     async def _handle_security_callback(update, context, query, user_id, lang):
-        """معالجة أزرار الأمان"""
         data = query.data
         parts = data.split(":")
         if len(parts) < 2:
@@ -1352,7 +1274,6 @@ class CallbackHandlers:
                 pass
             return
 
-        # تبديل الإعدادات
         field_map = {
             "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
             "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
@@ -1517,12 +1438,9 @@ class CallbackHandlers:
 
     @staticmethod
     async def _handle_admin_callback(update, context, query, user_id, lang):
-        """معالجة أزرار لوحة الأدمن - كاملة"""
         data = query.data
 
-        # ============================================================
         # المستخدمون
-        # ============================================================
         if data == CB.ADMIN_USERS:
             stats = await DB.get_user_stats()
             await query.edit_message_text(await get_text(lang, 'admin_users',
@@ -1541,9 +1459,7 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'admin_unbanned_all'))
             return
 
-        # ============================================================
-        # القنوات - كاملة
-        # ============================================================
+        # القنوات
         if data == CB.ADMIN_CHANNELS:
             channels = await DB.fetchall("SELECT id, channel_id, channel_name, banned FROM user_channels LIMIT 50")
             if not channels:
@@ -1554,7 +1470,6 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
-        # ✅ ADMIN_BANNED_CH - عرض القنوات المحظورة
         if data == CB.ADMIN_BANNED_CH:
             channels = await DB.fetchall("SELECT id, channel_id, channel_name FROM user_channels WHERE banned=1 LIMIT 50")
             if not channels:
@@ -1566,15 +1481,12 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
-        # ✅ ADMIN_ACTIVATE_CH - تفعيل جميع القنوات المحظورة
         if data == CB.ADMIN_ACTIVATE_CH:
             await DB.execute("UPDATE user_channels SET banned=0 WHERE banned=1")
             await query.edit_message_text("✅ تم تفعيل جميع القنوات المحظورة")
             return
 
-        # ============================================================
-        # المجموعات - كاملة
-        # ============================================================
+        # المجموعات
         if data == CB.ADMIN_GROUPS:
             groups = await DB.fetchall("SELECT chat_id, chat_name, banned FROM bot_groups LIMIT 50")
             if not groups:
@@ -1585,7 +1497,6 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
-        # ✅ ADMIN_BANNED_GR - عرض المجموعات المحظورة
         if data == CB.ADMIN_BANNED_GR:
             groups = await DB.fetchall("SELECT chat_id, chat_name FROM bot_groups WHERE banned=1 LIMIT 50")
             if not groups:
@@ -1597,15 +1508,12 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
-        # ✅ ADMIN_UNBAN_GR - إلغاء حظر جميع المجموعات المحظورة
         if data == CB.ADMIN_UNBAN_GR:
             await DB.execute("UPDATE bot_groups SET banned=0 WHERE banned=1")
             await query.edit_message_text("✅ تم إلغاء حظر جميع المجموعات")
             return
 
-        # ============================================================
-        # إدارة المشرفين
-        # ============================================================
+        # المشرفين
         if data == CB.ADMIN_ADD_ADMIN:
             StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
             await query.edit_message_text(await get_text(lang, 'admin_add_admin'))
@@ -1616,9 +1524,7 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'admin_rem_admin'))
             return
 
-        # ============================================================
         # النظام
-        # ============================================================
         if data == CB.ADMIN_RAM:
             ram = get_ram_usage()
             await query.edit_message_text(await get_text(lang, 'admin_ram',
@@ -1647,9 +1553,7 @@ class CallbackHandlers:
                                                          uptime=uptime_str))
             return
 
-        # ============================================================
         # النسخ الاحتياطي
-        # ============================================================
         if data == CB.ADMIN_BACKUP:
             try:
                 backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
@@ -1683,9 +1587,7 @@ class CallbackHandlers:
                 await query.edit_message_text(await get_text(lang, 'admin_restore_failed', error=str(e)[:100]))
             return
 
-        # ============================================================
         # التحديثات والبث
-        # ============================================================
         if data == CB.ADMIN_SEND_UPDATE:
             StateManager.set(user_id, UserState.WAIT_UPDATE)
             await query.edit_message_text("📢 أرسل نص التحديث:")
@@ -1696,7 +1598,6 @@ class CallbackHandlers:
             await query.edit_message_text("📢 أرسل معرف القناة (بدون @):")
             return
 
-        # ✅ ADMIN_SHOW_UPDATE - عرض قناة التحديثات
         if data == CB.ADMIN_SHOW_UPDATE:
             ch = await DB.get_updates_channel()
             await query.edit_message_text(f"📢 قناة التحديثات: @{ch}" if ch else "📢 لا توجد قناة تحديثات")
@@ -1737,9 +1638,7 @@ class CallbackHandlers:
             context.user_data.pop('broadcast_text', None)
             return
 
-        # ============================================================
         # التذاكر
-        # ============================================================
         if data == CB.ADMIN_TICKETS:
             tickets = await DB.get_tickets()
             if not tickets:
@@ -1763,9 +1662,7 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'tickets_deleted'))
             return
 
-        # ============================================================
         # قناة السجلات
-        # ============================================================
         if data == CB.ADMIN_LOG_CH:
             log_id = await DB.get_log_channel()
             await query.edit_message_text(f"📋 قناة السجلات: {log_id}" if log_id else "📋 غير محدد")
@@ -1776,9 +1673,7 @@ class CallbackHandlers:
             await query.edit_message_text("📋 أرسل معرف القناة:")
             return
 
-        # ============================================================
-        # الردود التلقائية (إدارة عامة)
-        # ============================================================
+        # الردود التلقائية
         if data == CB.ADMIN_REPLIES:
             stats = await DB.get_auto_reply_stats(-1, 20)
             if not stats:
@@ -1810,9 +1705,7 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'enter_keyword_to_delete'))
             return
 
-        # ============================================================
-        # الكلمات المحظورة (عامة) - كاملة
-        # ============================================================
+        # الكلمات المحظورة
         if data == CB.ADMIN_BANNED_WORDS:
             words = await DB.get_banned_words(-1)
             text = await get_text(lang, 'admin_banned_words_global',
@@ -1825,7 +1718,6 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'enter_word'))
             return
 
-        # ✅ ADMIN_LIST_BANNED - عرض الكلمات المحظورة
         if data == CB.ADMIN_LIST_BANNED:
             words = await DB.get_banned_words(-1)
             if not words:
@@ -1842,9 +1734,7 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'enter_word_to_remove'))
             return
 
-        # ============================================================
-        # المسابقات (إدارة)
-        # ============================================================
+        # المسابقات
         if data == CB.ADMIN_CREATE_CONTEST:
             StateManager.set(user_id, UserState.WAIT_CONTEST_TITLE)
             await query.edit_message_text("🏆 أرسل عنوان المسابقة:")
@@ -1880,9 +1770,7 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'admin_contest_deleted'))
             return
 
-        # ============================================================
-        # تصدير/استيراد الردود
-        # ============================================================
+        # تصدير/استيراد
         if data == CB.ADMIN_EXPORT_REPLIES:
             count = await export_auto_replies(-1)
             await query.edit_message_text(f"✅ تم تصدير {count} رد إلى ملف `auto_replies_-1.json`")
@@ -1899,9 +1787,6 @@ class CallbackHandlers:
             await query.edit_message_text(await get_text(lang, 'import_from_github_prompt'))
             return
 
-        # ============================================================
-        # تحديث الكاش
-        # ============================================================
         if data == CB.ADMIN_REFRESH_CACHE:
             _auto_reply_cache.invalidate()
             await query.edit_message_text("🔄 تم تحديث الكاش بنجاح")
@@ -1911,7 +1796,6 @@ class CallbackHandlers:
 
     @staticmethod
     async def _handle_auto_reply_callback(update, context, query, user_id, lang):
-        """معالجة أزرار الردود التلقائية"""
         data = query.data
         parts = data.split(":")
         if len(parts) < 2:
@@ -2001,7 +1885,6 @@ class CallbackHandlers:
 
     @staticmethod
     async def _publish_single(bot, ch_db_id, ch_tele, post):
-        """نشر منشور واحد (مستخدم في PUB_ALL)"""
         try:
             if post['media_type'] == 'photo' and post['media_file_id']:
                 await bot.send_photo(ch_tele, post['media_file_id'],
@@ -2027,7 +1910,6 @@ class MessageHandlers:
 
     @staticmethod
     async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """معالجة الرسائل الخاصة"""
         if not update.message or not update.effective_user:
             return
 
@@ -2037,9 +1919,7 @@ class MessageHandlers:
         state = StateManager.get(user_id)
         lang = await DB.get_user_language(user_id)
 
-        # ============================================================
-        # حالة: استيراد ملف JSON
-        # ============================================================
+        # استيراد ملف JSON
         if state == UserState.WAIT_IMPORT_FILE:
             if not msg.document:
                 await safe_send(context.bot, user_id, "❌ أرسل ملف JSON")
@@ -2062,9 +1942,7 @@ class MessageHandlers:
             context.user_data.pop('import_chat_id', None)
             return
 
-        # ============================================================
-        # حالة: استيراد من GitHub
-        # ============================================================
+        # استيراد من GitHub
         if state == UserState.WAIT_GITHUB_URL:
             url = text.strip()
             if not url.startswith('http'):
@@ -2085,14 +1963,10 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # ✅ حالة: إضافة قناة (مع رسائل خطأ واضحة وإصلاح حفظ القناة)
-        # ============================================================
+        # إضافة قناة
         if state == UserState.WAIT_CHANNEL:
-            # 1️⃣ التحقق من الاشتراك
             has_sub = await DB.has_active_subscription(user_id)
             has_trial = await DB.has_used_trial(user_id)
-            
             if not has_sub and not has_trial:
                 await safe_send(
                     context.bot, 
@@ -2107,7 +1981,6 @@ class MessageHandlers:
                 return
 
             channel_input = text.strip()
-            
             if not channel_input:
                 await safe_send(
                     context.bot, 
@@ -2120,7 +1993,6 @@ class MessageHandlers:
                 StateManager.clear(user_id)
                 return
 
-            # 2️⃣ جلب القناة من Telegram
             try:
                 chat = await context.bot.get_chat(channel_input)
             except BadRequest as e:
@@ -2154,7 +2026,6 @@ class MessageHandlers:
                 StateManager.clear(user_id)
                 return
 
-            # 3️⃣ التأكد من أن الكائن هو قناة وليس مجموعة
             if chat.type != 'channel':
                 await safe_send(
                     context.bot, 
@@ -2166,7 +2037,6 @@ class MessageHandlers:
                 StateManager.clear(user_id)
                 return
 
-            # 4️⃣ التحقق من صلاحيات البوت في القناة
             try:
                 bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
             except BadRequest as e:
@@ -2199,7 +2069,6 @@ class MessageHandlers:
                 StateManager.clear(user_id)
                 return
 
-            # 5️⃣ التحقق من أن البوت مشرف
             if bot_member.status != 'administrator':
                 await safe_send(
                     context.bot, 
@@ -2214,7 +2083,6 @@ class MessageHandlers:
                 StateManager.clear(user_id)
                 return
 
-            # 6️⃣ التحقق من صلاحية النشر
             if not bot_member.can_post_messages:
                 await safe_send(
                     context.bot, 
@@ -2227,16 +2095,12 @@ class MessageHandlers:
                 StateManager.clear(user_id)
                 return
 
-            # 7️⃣ إضافة القناة إلى قاعدة البيانات (مع معالجة الأخطاء)
             try:
                 channel_id = int(chat.id)
                 channel_name = chat.title or "بدون اسم"
-                
                 logger.info(f"📝 محاولة إضافة قناة: user_id={user_id}, channel_id={channel_id}, channel_name={channel_name}")
-                
                 result = await DB.add_channel(user_id, channel_id, channel_name)
                 logger.info(f"📝 نتيجة الإضافة: {result}")
-                
                 if result:
                     await DB.set_active_channel(user_id, result)
                     await safe_send(
@@ -2250,7 +2114,6 @@ class MessageHandlers:
                         f"أو **'📤 نشر واحد'** لنشر منشور فوري."
                     )
                 else:
-                    # القناة موجودة مسبقاً
                     channels = await DB.get_user_channels(user_id)
                     if channels:
                         text_msg = f"⚠️ **القناة مضافتة مسبقاً!**\n\n"
@@ -2282,9 +2145,7 @@ class MessageHandlers:
             await CommandHandlers.start(update, context)
             return
 
-        # ============================================================
-        # باقي الحالات (إضافة منشورات، جدولة، كلمات محظورة، إلخ)
-        # ============================================================
+        # إضافة منشورات
         if state == UserState.ADDING_POSTS:
             session = context.user_data.get(f"session_{user_id}", [])
             target = context.user_data.get(f"session_target_{user_id}", 15)
@@ -2332,9 +2193,7 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, await get_text(lang, 'all_posts_saved'))
             return
 
-        # ============================================================
         # الجدولة
-        # ============================================================
         if state == UserState.WAIT_MIN:
             try:
                 val = int(text)
@@ -2398,9 +2257,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # الكلمات المحظورة (مجموعة)
-        # ============================================================
+        # الكلمات المحظورة
         if state == UserState.WAIT_GROUP_BAN:
             chat_id_ban = context.user_data.get('ban_chat')
             if chat_id_ban and await is_authorized_in_group(context.bot, chat_id_ban, user_id):
@@ -2432,9 +2289,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # الكلمات المحظورة (عامة)
-        # ============================================================
         if state == UserState.WAIT_GLOBAL_BAN:
             word = text.strip().lower()
             if len(word) < 2:
@@ -2458,9 +2312,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # إدارة المشرفين (إضافة/حذف)
-        # ============================================================
+        # المشرفين
         if state == UserState.WAIT_ADMIN_ADD:
             try:
                 target = int(text)
@@ -2482,9 +2334,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
         # البث
-        # ============================================================
         if state == UserState.WAIT_BROADCAST:
             context.user_data['broadcast_text'] = text
             StateManager.clear(user_id)
@@ -2496,9 +2346,7 @@ class MessageHandlers:
                             reply_markup=kb)
             return
 
-        # ============================================================
         # التحديثات
-        # ============================================================
         if state == UserState.WAIT_UPDATE:
             ch = await DB.get_updates_channel()
             if ch:
@@ -2518,18 +2366,14 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
         # الاشتراك الإجباري
-        # ============================================================
         if state == UserState.WAIT_FORCE:
             await DB.set_setting('force_subscribe_channel', text.replace('@', ''))
             await safe_send(context.bot, user_id, await get_text(lang, 'admin_force_sub_set', channel=text.replace('@', '')))
             StateManager.clear(user_id)
             return
 
-        # ============================================================
         # التذكيرات
-        # ============================================================
         if state == UserState.WAIT_REM_DAYS:
             try:
                 val = int(text)
@@ -2543,9 +2387,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # الإجراءات المتقدمة (حظر، كتم، تحذير، ...)
-        # ============================================================
+        # الإجراءات المتقدمة
         if state in (UserState.WAIT_BAN, UserState.WAIT_MUTE, UserState.WAIT_WARN,
                      UserState.WAIT_KICK, UserState.WAIT_RESTRICT, UserState.WAIT_UNBAN):
             chat_id_adv = context.user_data.get('adv_chat')
@@ -2578,9 +2420,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # تثبيت رسالة
-        # ============================================================
+        # تثبيت
         if state == UserState.WAIT_PIN:
             chat_id_adv = context.user_data.get('adv_chat')
             if chat_id_adv:
@@ -2596,9 +2436,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # المسابقات (إنشاء)
-        # ============================================================
+        # المسابقات
         if state == UserState.WAIT_CONTEST_TITLE:
             context.user_data['contest_title'] = text
             StateManager.set(user_id, UserState.WAIT_CONTEST_DESC)
@@ -2636,9 +2474,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # المشاركة في مسابقة
-        # ============================================================
         if state == UserState.WAIT_CONTEST_ANSWER:
             cid = context.user_data.get('contest_join')
             if cid:
@@ -2648,9 +2483,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # إضافة رد تلقائي
-        # ============================================================
+        # الردود التلقائية
         if state == UserState.WAIT_AUTO_KEY:
             keyword = text.strip().lower()
             if keyword:
@@ -2675,9 +2508,6 @@ class MessageHandlers:
             context.user_data.pop('auto_chat', None)
             return
 
-        # ============================================================
-        # حذف رد تلقائي
-        # ============================================================
         if state == UserState.WAIT_AUTO_DEL:
             chat_id_auto = context.user_data.get('auto_chat')
             if chat_id_auto is not None:
@@ -2695,9 +2525,6 @@ class MessageHandlers:
             context.user_data.pop('auto_chat', None)
             return
 
-        # ============================================================
-        # إضافة رد (عام)
-        # ============================================================
         if state == UserState.WAIT_KEYWORD:
             context.user_data['keyword'] = text.strip().lower()
             StateManager.set(user_id, UserState.WAIT_REPLY)
@@ -2713,9 +2540,7 @@ class MessageHandlers:
             context.user_data.pop('keyword', None)
             return
 
-        # ============================================================
         # قناة السجلات
-        # ============================================================
         if state == UserState.WAIT_LOG_CH:
             try:
                 chat = await context.bot.get_chat(text)
@@ -2729,9 +2554,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
         # الحد الأقصى للطول
-        # ============================================================
         if state == UserState.WAIT_MAX_LEN:
             try:
                 val = int(text)
@@ -2750,9 +2573,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
         # عدد التحذيرات
-        # ============================================================
         if state == UserState.WAIT_WARN_COUNT:
             try:
                 val = int(text)
@@ -2771,9 +2592,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
         # الدعم
-        # ============================================================
         if state == UserState.SUPPORT_MODE:
             media_type = None
             media_file_id = None
@@ -2812,9 +2631,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # ============================================================
-        # افتراضي: عرض القائمة الرئيسية
-        # ============================================================
         await CommandHandlers.start(update, context)
 
     @staticmethod
@@ -2834,9 +2650,7 @@ class MessageHandlers:
         if update.effective_user.is_bot:
             return
 
-        # ============================================================
-        # 1. التحقق من القفل
-        # ============================================================
+        # التحقق من القفل
         locked = await DB.fetchone("SELECT locked FROM chat_locks WHERE chat_id=?", (chat_id,))
         if locked and locked[0] == 1:
             try:
@@ -2845,9 +2659,7 @@ class MessageHandlers:
                 pass
             return
 
-        # ============================================================
-        # 2. تطبيق إعدادات الأمان
-        # ============================================================
+        # تطبيق إعدادات الأمان
         settings = await DB.get_security_settings(chat_id)
 
         # 2.1 حذف الروابط
@@ -2889,7 +2701,38 @@ class MessageHandlers:
                     except:
                         pass
 
-        # 2.4 حذف أنواع الوسائط المحددة (كاملة)
+        # ============================================================
+        # ✅ 2.4 حذف جميع رسائل الخدمة (معدل)
+        # ============================================================
+        if settings.get('delete_service', False):
+            is_service = False
+            service_attrs = [
+                'new_chat_members', 'left_chat_member', 'new_chat_title',
+                'new_chat_photo', 'delete_chat_photo', 'group_chat_created',
+                'supergroup_chat_created', 'channel_chat_created',
+                'pinned_message', 'message_auto_delete_timer_changed',
+                'voice_chat_started', 'video_chat_started',
+                'voice_chat_ended', 'video_chat_ended',
+                'voice_chat_participants_invited', 'video_chat_participants_invited'
+            ]
+            for attr in service_attrs:
+                if hasattr(update.message, attr):
+                    val = getattr(update.message, attr)
+                    if val is not None and not (isinstance(val, list) and len(val) == 0):
+                        is_service = True
+                        break
+            if is_service:
+                try:
+                    await update.message.delete()
+                    penalty = settings.get('delete_penalty', 'none')
+                    if penalty != 'none':
+                        await apply_penalty(context.bot, chat_id, user_id, penalty,
+                                            settings.get('delete_penalty_duration', 0))
+                    return
+                except:
+                    pass
+
+        # 2.5 حذف أنواع الوسائط الأخرى
         media_checks = {
             'delete_videos': 'video',
             'delete_audio': 'audio',
@@ -2900,10 +2743,8 @@ class MessageHandlers:
             'delete_documents': 'document',
             'delete_forwarded': 'forward_from',
             'delete_polls': 'poll',
-            'delete_games': 'game',
-            'delete_service': 'new_chat_members'
+            'delete_games': 'game'
         }
-
         for setting, media_type in media_checks.items():
             if settings.get(setting, False):
                 if hasattr(update.message, media_type) and getattr(update.message, media_type) is not None:
@@ -2917,7 +2758,7 @@ class MessageHandlers:
                     except:
                         pass
 
-        # 2.5 التحقق من الطول
+        # 2.6 الحد الأقصى للطول
         max_len = settings.get('max_message_length', 0)
         if max_len and len(text) > max_len:
             try:
@@ -2930,7 +2771,7 @@ class MessageHandlers:
             except:
                 pass
 
-        # 2.6 الفيضان (Antiflood)
+        # 2.7 الفيضان
         if settings.get('antiflood_enabled', False):
             now = TimeUtils.utc_iso()
             row = await DB.fetchone("SELECT message_time FROM user_messages WHERE user_id=? AND chat_id=?",
@@ -2951,7 +2792,7 @@ class MessageHandlers:
             await DB.execute("INSERT OR REPLACE INTO user_messages (user_id, chat_id, message_time) VALUES (?,?,?)",
                              (user_id, chat_id, now))
 
-        # 2.7 الوضع الليلي
+        # 2.8 الوضع الليلي
         if settings.get('night_mode_enabled', False):
             now = TimeUtils.mecca_now()
             start = datetime.strptime(settings.get('night_mode_start', '23:00'), '%H:%M').time()
@@ -2975,22 +2816,27 @@ class MessageHandlers:
                         pass
 
         # ============================================================
-        # 3. الردود التلقائية
+        # 3. الردود التلقائية (من ملف replies.py أولاً، ثم قاعدة البيانات)
         # ============================================================
         ars = await DB.get_auto_reply_settings(chat_id)
         if ars.get('enabled', False):
             if not ars.get('only_admins', False) or await is_authorized_in_group(context.bot, chat_id, user_id):
-                reply_data = await DB.get_auto_reply(text.lower(), chat_id)
-                if reply_data:
+                reply = None
+                
+                # ✅ أولاً: البحث في ملف replies.py
+                reply = get_reply_from_file(text.lower().strip())
+                
+                # ✅ ثانياً: البحث في قاعدة البيانات (إذا لم يوجد في الملف)
+                if not reply:
+                    reply_data = await DB.get_auto_reply(text.lower(), chat_id)
+                    if reply_data:
+                        reply = reply_data.get('reply')
+                
+                # ✅ إرسال الرد
+                if reply:
                     try:
-                        if reply_data.get('reply_type') == 'text':
-                            await update.message.reply_text(reply_data['reply'])
-                        elif reply_data.get('reply_type') == 'photo' and reply_data.get('reply_media_id'):
-                            await update.message.reply_photo(reply_data['reply_media_id'],
-                                                             caption=reply_data['reply'])
-                        elif reply_data.get('reply_type') == 'video' and reply_data.get('reply_media_id'):
-                            await update.message.reply_video(reply_data['reply_media_id'],
-                                                             caption=reply_data['reply'])
+                        await update.message.reply_text(reply)
                         await _increment_usage_async(chat_id, text.lower())
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.error(f"فشل إرسال رد تلقائي: {e}")
+
