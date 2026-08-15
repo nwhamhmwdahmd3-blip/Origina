@@ -4,7 +4,7 @@
 """
 handlers.py - جميع معالجات البوت
 ================================
-النسخة النهائية الكاملة مع جميع الصلاحيات والتحققات
+النسخة النهائية الكاملة
 """
 
 import asyncio
@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 class CommandHandlers:
+    """جميع معالجات الأوامر"""
 
     # ========== الأوامر الأساسية ==========
 
@@ -270,7 +271,6 @@ class CommandHandlers:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
 
-        # ✅ التحقق: المالك الأساسي أو المالك المخفي فقط
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
         if not is_owner:
             row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
@@ -294,7 +294,6 @@ class CommandHandlers:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
 
-        # ✅ التحقق: المالك الأساسي أو المالك المخفي فقط
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
         if not is_owner:
             row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
@@ -342,20 +341,17 @@ class CommandHandlers:
         chat_name = update.effective_chat.title or "بدون اسم"
         user_id = update.effective_user.id
 
-        # ✅ 1. جلب المشرفين
         try:
             all_admins = await context.bot.get_chat_administrators(chat_id)
         except:
             all_admins = []
 
-        # ✅ 2. البحث عن المالك
         creator_id = None
         for admin in all_admins:
             if admin.status == 'creator' and not admin.user.is_bot:
                 creator_id = admin.user.id
                 break
 
-        # ✅ 3. التحقق (3 طبقات)
         is_admin = False
         is_anonymous = False
 
@@ -383,24 +379,19 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ **لست مشرفاً!**")
             return
 
-        # ✅ 4. تسجيل المجموعة
         await DB.register_group(chat_id, chat_name, creator_id or user_id, update.effective_chat.username)
 
-        # ✅ 5. تسجيل المالك
         if creator_id:
             await DB.execute("INSERT OR REPLACE INTO hidden_owner_groups VALUES (?,?,0)", (chat_id, creator_id))
             await DB.execute("INSERT OR IGNORE INTO user_groups_link VALUES (?,?)", (creator_id, chat_id))
             invalidate_auth_cache(chat_id, creator_id)
 
-        # ✅ 6. تسجيل المستخدم
         await DB.execute("INSERT OR IGNORE INTO user_groups_link VALUES (?,?)", (user_id, chat_id))
         invalidate_auth_cache(chat_id, user_id)
 
-        # ✅ 7. مزامنة
         admin_ids = [a.user.id for a in all_admins if a.user and not a.user.is_bot]
         admin_count = await DB.sync_group_admins(chat_id, admin_ids)
 
-        # ✅ 8. رسالة
         msg = f"✅ **تم التفعيل!**\n\n📌 {chat_name}\n"
         if creator_id:
             msg += f"👑 المالك: `{creator_id}`\n"
@@ -472,6 +463,8 @@ class CommandHandlers:
 # =====================================================================
 
 class CallbackHandlers:
+    """معالجات الأزرار"""
+
     @staticmethod
     async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -728,6 +721,8 @@ class CallbackHandlers:
 # =====================================================================
 
 class MessageHandlers:
+    """معالجات الرسائل"""
+
     @staticmethod
     async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message or not update.effective_user:
