@@ -11,23 +11,16 @@ import logging
 import traceback
 
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ChatJoinRequestHandler,
-    filters,
+    Application, CommandHandler, CallbackQueryHandler,
+    MessageHandler, ChatJoinRequestHandler, filters
 )
 
 from config import CONFIG, PATHS
 from database import DB, initialize_db
 from handlers import CommandHandlers, CallbackHandlers, MessageHandlers
 from utils import (
-    TranslationManager,
-    KeyboardFactory,
-    BackgroundTasks,
-    ErrorHandler,
-    setup_webhook,
+    TranslationManager, KeyboardFactory, BackgroundTasks,
+    ErrorHandler, setup_webhook
 )
 
 logging.basicConfig(
@@ -45,27 +38,28 @@ async def main():
     print(f"🌿 {CONFIG.BOT_NAME}")
     print(f"👨‍💼 المالك: {CONFIG.PRIMARY_OWNER_ID}")
 
-    # تهيئة قاعدة البيانات
     await initialize_db()
 
     # تسجيل المطورين
     for dev_id in CONFIG.DEVELOPER_IDS:
         await DB.register_user(dev_id)
+    await DB.register_user(CONFIG.PRIMARY_OWNER_ID)
 
     # تحميل الإعدادات
     KeyboardFactory.load_config()
     available_langs = TranslationManager.get_available_languages()
     for lang in available_langs:
         TranslationManager.load_translation(lang)
+    print(f"✅ تم تحميل {len(available_langs)} لغة")
 
     port = int(CONFIG.WEB_PORT)
     hostname = (
-        os.getenv("RENDER_EXTERNAL_HOSTNAME")
-        or os.getenv("RAILWAY_PUBLIC_DOMAIN")
-        or os.getenv("HEROKU_APP_NAME")
+        os.getenv("RENDER_EXTERNAL_HOSTNAME") or
+        os.getenv("RAILWAY_PUBLIC_DOMAIN") or
+        os.getenv("HEROKU_APP_NAME")
     )
 
-    # إنشاء التطبيق
+    # بناء التطبيق
     app = Application.builder().token(CONFIG.TOKEN).build()
     await app.initialize()
 
@@ -79,6 +73,7 @@ async def main():
     app.add_handler(CommandHandler("stats", CommandHandlers.stats))
     app.add_handler(CommandHandler("language", CommandHandlers.language))
     app.add_handler(CommandHandler("contests", CommandHandlers.contests))
+    app.add_handler(CommandHandler("replies", CommandHandlers.replies_command))
 
     # ========== أوامر المجموعة ==========
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -96,7 +91,7 @@ async def main():
     app.add_handler(CommandHandler("unban", CommandHandlers.unban))
     app.add_handler(CommandHandler("pin", CommandHandlers.pin))
 
-    # ========== أوامر المخفيين ==========
+    # ========== أوامر المالكين والمشرفين المخفيين ==========
     app.add_handler(CommandHandler("register_hidden_owner", CommandHandlers.register_hidden_owner))
     app.add_handler(CommandHandler("remove_hidden_owner", CommandHandlers.remove_hidden_owner))
     app.add_handler(CommandHandler("add_hidden_admin", CommandHandlers.add_hidden_admin))
@@ -107,49 +102,26 @@ async def main():
     app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
 
     # ========== الرسائل الخاصة ==========
-    app.add_handler(
-        MessageHandler(
-            (
-                filters.TEXT
-                | filters.PHOTO
-                | filters.VIDEO
-                | filters.Document.ALL
-                | filters.AUDIO
-                | filters.VOICE
-                | filters.ANIMATION
-            )
-            & filters.ChatType.PRIVATE
-            & ~filters.COMMAND,
-            MessageHandlers.handle_private,
-        )
-    )
+    app.add_handler(MessageHandler(
+        (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
+         filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL) &
+        filters.ChatType.PRIVATE & ~filters.COMMAND,
+        MessageHandlers.handle_private
+    ))
 
     # ========== رسائل المجموعات ==========
-    app.add_handler(
-        MessageHandler(
-            (
-                filters.TEXT
-                | filters.PHOTO
-                | filters.VIDEO
-                | filters.Document.ALL
-                | filters.AUDIO
-                | filters.VOICE
-                | filters.ANIMATION
-                | filters.Sticker.ALL
-            )
-            & filters.ChatType.GROUPS
-            & ~filters.COMMAND,
-            MessageHandlers.handle_group,
-        )
-    )
+    app.add_handler(MessageHandler(
+        (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
+         filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL) &
+        filters.ChatType.GROUPS & ~filters.COMMAND,
+        MessageHandlers.handle_group
+    ))
 
     # ========== رسائل الخدمة ==========
-    app.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.ALL & filters.ChatType.GROUPS,
-            MessageHandlers.handle_service,
-        )
-    )
+    app.add_handler(MessageHandler(
+        filters.StatusUpdate.ALL & filters.ChatType.GROUPS,
+        MessageHandlers.handle_service
+    ))
 
     # ========== طلبات الانضمام ==========
     app.add_handler(ChatJoinRequestHandler(MessageHandlers.handle_join_request))
@@ -172,27 +144,16 @@ async def main():
     if hostname:
         webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
         print(f"🔗 Webhook: {webhook_url}")
-
         await app.bot.delete_webhook(drop_pending_updates=True)
-        await app.bot.set_webhook(
-            url=webhook_url,
-            allowed_updates=["message", "callback_query", "chat_join_request", "chat_member"],
-            drop_pending_updates=True,
-        )
-
-        webhook_info = await app.bot.get_webhook_info()
-        print(f"✅ Webhook URL: {webhook_info.url}")
-        print(f"✅ Pending: {webhook_info.pending_update_count}")
-
+        await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+        print("✅ Webhook تم التعيين")
         runner = await setup_webhook(app, port)
-        print(f"✅ Server on port {port}")
-
         try:
             await asyncio.Event().wait()
         finally:
             await runner.cleanup()
     else:
-        print("⚠️ Polling mode")
+        print("⚠️ Polling")
         await app.run_polling(drop_pending_updates=True)
 
     # إلغاء المهام
@@ -207,5 +168,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n👋 تم الإيقاف")
     except Exception as e:
-        print(f"❌ {e}")
+        print(f"❌ خطأ: {e}")
         traceback.print_exc()
