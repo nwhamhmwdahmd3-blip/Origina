@@ -2,9 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت
-================================
-النسخة النهائية الكاملة
+handlers.py - جميع معالجات البوت (النسخة النهائية مع إصلاح syncgroup)
 """
 
 import asyncio
@@ -41,14 +39,7 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 
-# =====================================================================
-# CommandHandlers
-# =====================================================================
-
 class CommandHandlers:
-    """جميع معالجات الأوامر"""
-
-    # ========== الأوامر الأساسية ==========
 
     @staticmethod
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -171,8 +162,6 @@ class CommandHandlers:
         buttons.append([InlineKeyboardButton("🔙", callback_data=CB.BACK)])
         await safe_send(context.bot, update.effective_user.id, "🌐 اختر:", reply_markup=InlineKeyboardMarkup(buttons))
 
-    # ========== أوامر المجموعة ==========
-
     @staticmethod
     async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_chat.type not in ['group', 'supergroup']:
@@ -246,7 +235,7 @@ class CommandHandlers:
         except:
             return
         chat_id = update.effective_chat.id
-        await DB.execute("INSERT OR IGNORE INTO hidden_owner_groups VALUES (?,?,1)", (chat_id, owner_id))
+        await DB.add_hidden_owner(chat_id, owner_id)
         invalidate_auth_cache(chat_id, owner_id)
         await safe_send(context.bot, user_id, f"✅ {owner_id}")
 
@@ -262,7 +251,7 @@ class CommandHandlers:
         except:
             return
         chat_id = update.effective_chat.id
-        await DB.execute("DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, owner_id))
+        await DB.remove_hidden_owner(chat_id, owner_id)
         invalidate_auth_cache(chat_id, owner_id)
         await safe_send(context.bot, user_id, f"✅ {owner_id}")
 
@@ -270,12 +259,9 @@ class CommandHandlers:
     async def add_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
-
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
         if not is_owner:
-            row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
-            is_owner = row is not None
-
+            is_owner = await DB.is_hidden_owner(chat_id, user_id)
         if not is_owner:
             await safe_send(context.bot, user_id, "❌ غير مصرح")
             return
@@ -285,7 +271,7 @@ class CommandHandlers:
             admin_id = int(context.args[0])
         except:
             return
-        await DB.execute("INSERT OR IGNORE INTO hidden_admins VALUES (?,?,?,?)", (chat_id, admin_id, user_id, TimeUtils.utc_iso()))
+        await DB.add_hidden_admin(chat_id, admin_id, user_id)
         invalidate_auth_cache(chat_id, admin_id)
         await safe_send(context.bot, user_id, f"✅ {admin_id}")
 
@@ -293,12 +279,9 @@ class CommandHandlers:
     async def remove_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
-
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
         if not is_owner:
-            row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
-            is_owner = row is not None
-
+            is_owner = await DB.is_hidden_owner(chat_id, user_id)
         if not is_owner:
             return
         if not context.args:
@@ -307,7 +290,7 @@ class CommandHandlers:
             admin_id = int(context.args[0])
         except:
             return
-        await DB.execute("DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, admin_id))
+        await DB.remove_hidden_admin(chat_id, admin_id)
         invalidate_auth_cache(chat_id, admin_id)
         await safe_send(context.bot, user_id, f"✅ {admin_id}")
 
@@ -317,95 +300,77 @@ class CommandHandlers:
         chat_id = update.effective_chat.id
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
         if not is_owner:
-            row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
-            is_owner = row is not None
+            is_owner = await DB.is_hidden_owner(chat_id, user_id)
         if not is_owner:
             return
-        owners = await DB.fetchall("SELECT owner_id FROM hidden_owner_groups WHERE chat_id=?", (chat_id,))
-        admins = await DB.fetchall("SELECT admin_id FROM hidden_admins WHERE chat_id=?", (chat_id,))
+        owners = await DB.get_hidden_owners(chat_id)
+        admins = await DB.get_hidden_admins(chat_id)
         text = "👤 **المخفيون**\n"
         for o in owners:
-            text += f"👑 `{o[0]}`\n"
+            text += f"👑 `{o}`\n"
         for a in admins:
-            text += f"🛡️ `{a[0]}`\n"
+            text += f"🛡️ `{a['admin_id']}`\n"
         await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد")
 
-    # ========== تفعيل المجموعة ==========
+    # ========== تفعيل المجموعة (مبسط ويعمل) ==========
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        """تفعيل المجموعة - نسخة مبسطة تعمل"""
+        
+        chat = update.effective_chat
+        if not chat or chat.type not in ['group', 'supergroup']:
+            await safe_send(context.bot, update.effective_user.id, "❌ استخدم هذا الأمر في المجموعة فقط!")
             return
 
-        chat_id = update.effective_chat.id
-        chat_name = update.effective_chat.title or "بدون اسم"
+        chat_id = chat.id
+        chat_name = chat.title or "بدون اسم"
         user_id = update.effective_user.id
 
+        # ✅ التحقق من أن المرسل مشرف
         try:
-            all_admins = await context.bot.get_chat_administrators(chat_id)
+            member = await context.bot.get_chat_member(chat_id, user_id)
+            if member.status not in ['administrator', 'creator']:
+                await safe_send(context.bot, user_id, "❌ **أنت لست مشرفاً في هذه المجموعة!**")
+                return
         except:
-            all_admins = []
-
-        creator_id = None
-        for admin in all_admins:
-            if admin.status == 'creator' and not admin.user.is_bot:
-                creator_id = admin.user.id
-                break
-
-        is_admin = False
-        is_anonymous = False
-
-        for admin in all_admins:
-            if admin.user.id == user_id:
-                is_admin = True
-                is_anonymous = getattr(admin, 'is_anonymous', False)
-                break
-
-        if not is_admin:
-            row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
-            if row:
-                is_admin = True
-                is_anonymous = True
-            else:
-                row2 = await DB.fetchone("SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, user_id))
-                if row2:
-                    is_admin = True
-                    is_anonymous = True
-
-        if user_id == CONFIG.PRIMARY_OWNER_ID:
-            is_admin = True
-
-        if not is_admin:
-            await safe_send(context.bot, user_id, "❌ **لست مشرفاً!**")
+            await safe_send(context.bot, user_id, "❌ لا يمكن التحقق من صلاحياتك")
             return
 
-        await DB.register_group(chat_id, chat_name, creator_id or user_id, update.effective_chat.username)
+        # ✅ التحقق من أن البوت مشرف
+        try:
+            bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+            if bot_member.status not in ['administrator', 'creator']:
+                await safe_send(context.bot, user_id, "❌ **البوت ليس مشرفاً!**\n\nاجعل البوت مشرفاً ثم أعد المحاولة")
+                return
+        except:
+            await safe_send(context.bot, user_id, "❌ البوت ليس في المجموعة!")
+            return
 
-        if creator_id:
-            await DB.execute("INSERT OR REPLACE INTO hidden_owner_groups VALUES (?,?,0)", (chat_id, creator_id))
-            await DB.execute("INSERT OR IGNORE INTO user_groups_link VALUES (?,?)", (creator_id, chat_id))
-            invalidate_auth_cache(chat_id, creator_id)
+        # ✅ تسجيل المجموعة
+        try:
+            await DB.register_group(chat_id, chat_name, user_id, chat.username)
+            logger.info(f"✅ تم تسجيل المجموعة: {chat_id}")
+        except Exception as e:
+            logger.error(f"❌ فشل التسجيل: {e}")
+            await safe_send(context.bot, user_id, f"❌ فشل: {str(e)[:100]}")
+            return
 
-        await DB.execute("INSERT OR IGNORE INTO user_groups_link VALUES (?,?)", (user_id, chat_id))
-        invalidate_auth_cache(chat_id, user_id)
+        # ✅ تسجيل المستخدم
+        try:
+            await DB.execute("INSERT OR IGNORE INTO user_groups_link VALUES (?,?)", (user_id, chat_id))
+        except:
+            pass
 
-        admin_ids = [a.user.id for a in all_admins if a.user and not a.user.is_bot]
-        admin_count = await DB.sync_group_admins(chat_id, admin_ids)
+        # ✅ تسجيل كمالك
+        try:
+            await DB.execute("INSERT OR REPLACE INTO hidden_owner_groups VALUES (?,?,0)", (chat_id, user_id))
+        except:
+            pass
 
-        msg = f"✅ **تم التفعيل!**\n\n📌 {chat_name}\n"
-        if creator_id:
-            msg += f"👑 المالك: `{creator_id}`\n"
-        msg += f"{'👻 مخفي' if is_anonymous else '👤 مشرف'}: `{user_id}`\n"
-        msg += f"👥 {admin_count} مشرف"
-
+        msg = f"✅ **تم تفعيل المجموعة!**\n\n📌 {chat_name}\n🆔 `{chat_id}`\n👤 `{user_id}`\n\n🔐 /security | 🛠️ /panel"
         await safe_send(context.bot, user_id, msg)
-        await safe_send(context.bot, chat_id, "🤖 تم التفعيل!")
-
-        if creator_id and creator_id != user_id:
-            try:
-                await safe_send(context.bot, creator_id, msg)
-            except:
-                pass
+        await safe_send(context.bot, chat_id, "🤖 **تم التفعيل!**")
 
     # ========== الإشراف ==========
 
@@ -458,13 +423,7 @@ class CommandHandlers:
         await safe_send(context.bot, user_id, msg)
 
 
-# =====================================================================
-# CallbackHandlers
-# =====================================================================
-
 class CallbackHandlers:
-    """معالجات الأزرار"""
-
     @staticmethod
     async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -716,13 +675,7 @@ class CallbackHandlers:
             return
 
 
-# =====================================================================
-# MessageHandlers
-# =====================================================================
-
 class MessageHandlers:
-    """معالجات الرسائل"""
-
     @staticmethod
     async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message or not update.effective_user:
