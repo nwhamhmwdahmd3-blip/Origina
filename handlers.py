@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة الكاملة النهائية)
+handlers.py - جميع معالجات البوت (النسخة النهائية الكاملة)
 ============================================================
 - CommandHandlers: الأوامر (بما فيها أوامر المالكين والمشرفين المخفيين)
 - CallbackHandlers: الأزرار (مع دعم كامل للأمان والأدمن والردود)
@@ -57,6 +57,7 @@ class CommandHandlers:
         first_name = update.effective_user.first_name or ""
         await DB.register_user(user_id, username, first_name)
 
+        # معالجة روابط الإحالة
         args = context.args or []
         if args and args[0].startswith('ref_'):
             ref_code = args[0][4:]
@@ -69,6 +70,7 @@ class CommandHandlers:
                         await safe_send(update.effective_chat.bot, referrer,
                                         f"🎁 تمت إحالة `{user_id}` (+{reward} يوم)")
 
+        # التحقق من الاشتراك الإجباري
         force_ch = await DB.get_force_subscribe_channel()
         if force_ch and user_id != CONFIG.PRIMARY_OWNER_ID:
             try:
@@ -97,11 +99,10 @@ class CommandHandlers:
         groups = len(await DB.get_user_groups(user_id))
         has_sub = await DB.has_active_subscription(user_id)
         sub_text = "✅ مفعل" if has_sub else "❌ غير مفعل"
-        auto = await DB.get_auto_publish_status(user_id)
-        auto_text = "مفعل" if auto else "معطل"
-        recycle = await DB.get_auto_recycle_status(user_id)
-        recycle_text = "مفعل" if recycle else "معطل"
+        auto = "✅ مفعل" if await DB.get_auto_publish_status(user_id) else "❌ معطل"
+        recycle = "✅ مفعل" if await DB.get_auto_recycle_status(user_id) else "❌ معطل"
 
+        # بناء لوحة المفاتيح
         kb_rows = KeyboardFactory.get_menu("main_menu")
         keyboard = []
 
@@ -127,12 +128,19 @@ class CommandHandlers:
 
         kb = InlineKeyboardMarkup(keyboard)
 
-        title = await get_text(lang, 'main_menu',
-                               user_id=user_id, groups=groups,
-                               sub=sub_text, channel=ch_display,
-                               pending=cnt, auto=auto_text,
-                               bot_name=CONFIG.BOT_NAME)
-        title += f"\n♻️ إعادة التدوير: {recycle_text}"
+        # ✅ الواجهة الجميلة
+        title = (
+            f"🌿 **{CONFIG.BOT_NAME}**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 **المعرف:** `{user_id}`\n"
+            f"👥 **المجموعات:** {groups}\n"
+            f"📡 **القناة:** {ch_display}\n"
+            f"⏳ **غير منشورة:** {cnt}\n\n"
+            f"💎 **الاشتراك:** {sub_text}\n"
+            f"⚙️ **النشر التلقائي:** {auto}\n"
+            f"♻️ **إعادة التدوير:** {recycle}\n"
+            "━━━━━━━━━━━━━━━━━━━━"
+        )
 
         await safe_send(context.bot, user_id, title, reply_markup=kb)
 
@@ -226,7 +234,6 @@ class CommandHandlers:
     async def replies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await safe_send(context.bot, update.effective_user.id, "📚 الردود التلقائية تعمل!")
 
-    # ✅ دالة المسابقات - كانت مفقودة في بعض النسخ
     @staticmethod
     async def contests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
@@ -241,6 +248,8 @@ class CommandHandlers:
             text += f"  📅 {c['end_date'][:10]}\n\n"
         kb = KeyboardFactory.build("contests")
         await safe_send(context.bot, user_id, text, reply_markup=kb)
+
+    # ========== أوامر المجموعة ==========
 
     @staticmethod
     async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -390,7 +399,6 @@ class CommandHandlers:
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تفعيل المجموعة - التعرف المباشر على المشرفين المخفيين"""
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
             await safe_send(context.bot, update.effective_user.id, "❌ هذا الأمر للمجموعات فقط")
             return
@@ -412,13 +420,12 @@ class CommandHandlers:
 
         creator_id = None
         for admin in all_admins:
-            if admin.status == 'creator' and not admin.user.is_bot:
+            if admin.status == 'creator' and not getattr(admin, 'is_anonymous', False) and not admin.user.is_bot:
                 creator_id = admin.user.id
                 break
 
         is_admin = False
         is_anonymous = False
-
         for admin in all_admins:
             if admin.user.id == user_id:
                 is_admin = True
@@ -426,14 +433,17 @@ class CommandHandlers:
                 break
 
         if not is_admin:
-            await safe_send(context.bot, user_id, "❌ **أنت لست مشرفاً في هذه المجموعة!**")
+            await update.message.reply_text("❌ **أنت لست مشرفاً في هذه المجموعة!**")
             return
 
         await DB.register_group(chat_id, chat_name, creator_id or user_id, update.effective_chat.username)
         bot_perms = await check_bot_permissions(context.bot, chat_id)
 
         if not bot_perms.get('can_act', False):
-            await safe_send(context.bot, user_id, "⚠️ **البوت ليس مشرفاً!**")
+            if is_anonymous:
+                await update.message.reply_text("⚠️ **البوت ليس مشرفاً!**")
+            else:
+                await safe_send(context.bot, user_id, "⚠️ **البوت ليس مشرفاً!**")
             return
 
         if creator_id:
@@ -451,6 +461,11 @@ class CommandHandlers:
             "INSERT OR IGNORE INTO user_groups_link (user_id, chat_id) VALUES (?,?)",
             (user_id, chat_id)
         )
+        if is_anonymous:
+            await DB.execute(
+                "INSERT OR IGNORE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,1)",
+                (chat_id, user_id)
+            )
         invalidate_auth_cache(chat_id, user_id)
 
         admin_ids = [a.user.id for a in all_admins if a.user and not a.user.is_bot]
@@ -461,10 +476,13 @@ class CommandHandlers:
         msg += f"🆔 `{chat_id}`\n"
         if creator_id:
             msg += f"👑 المالك: `{creator_id}`\n"
-        msg += f"{'👻 مخفي' if is_anonymous else '👤 مشرف'}: `{user_id}`\n"
+        msg += f"{'👻 مشرف مخفي' if is_anonymous else '👤 مشرف'}: `{user_id}`\n"
         msg += f"👥 {admin_count} مشرف"
 
-        await safe_send(context.bot, user_id, msg)
+        if is_anonymous:
+            await update.message.reply_text(msg)
+        else:
+            await safe_send(context.bot, user_id, msg)
         await safe_send(context.bot, chat_id, "🤖 **تم تفعيل البوت!**")
 
     # ========== أوامر الإشراف ==========
@@ -1916,7 +1934,7 @@ class MessageHandlers:
                     context.user_data.pop('contest_title', ''),
                     context.user_data.pop('contest_desc', ''),
                     context.user_data.pop('contest_prize', ''),
-                    TimeUtils.mecca_to_utc(end_date).strftime('%Y-%m-%d %H:%M:%S')  # ✅ الإصلاح
+                    TimeUtils.mecca_to_utc(end_date).strftime('%Y-%m-%d %H:%M:%S')
                 )
                 await safe_send(context.bot, user_id, f"✅ مسابقة #{cid}")
             except Exception as e:
