@@ -7,14 +7,7 @@ utils.py - الأدوات المساعدة للبوت
 تحتوي على: TimeUtils, TextUtils, RateLimiter, Metrics,
 TranslationManager, KeyboardFactory, StateManager,
 دوال مساعدة أخرى
-مع إضافة:
-- التحقق من الاشتراك قبل النشر التلقائي (بدون has_used_trial)
-- إعادة التدوير التلقائي عند انتهاء المنشورات
-- تحميل الردود من ملف replies.py
-- دعم استيراد الردود من ملف أو قائمة (لـ GitHub)
-- إصلاح 404: معالجات المسارات
-- تحسينات: استيراد random، بحث جزئي، تنظيف الكود
-- مزامنة تلقائية للمشرفين كل ساعة
+مع دعم المالكين والمشرفين المخفيين
 """
 
 import asyncio
@@ -65,14 +58,6 @@ class TimeUtils:
     @staticmethod
     def mecca_iso() -> str:
         return TimeUtils.mecca_now().isoformat()
-
-    @staticmethod
-    def mecca_to_utc(dt: datetime) -> datetime:
-        return dt - timedelta(hours=3) if dt else None
-
-    @staticmethod
-    def utc_to_mecca(dt: datetime) -> datetime:
-        return dt + timedelta(hours=3) if dt else None
 
     @staticmethod
     def safe_parse_iso(date_str: Optional[str]) -> Optional[datetime]:
@@ -159,13 +144,10 @@ class MetricsCollector:
 
     def get_stats(self) -> dict:
         now = time.time()
-        calls_in_last_hour = sum(1 for t, _, _ in self.api_calls if now - t < 3600)
-        errors_in_last_hour = sum(1 for t, _, _ in self.errors if now - t < 3600)
-        uptime = now - self.start_time
         return {
-            'api_calls_last_hour': calls_in_last_hour,
-            'errors_last_hour': errors_in_last_hour,
-            'uptime_seconds': int(uptime),
+            'api_calls_last_hour': sum(1 for t, _, _ in self.api_calls if now - t < 3600),
+            'errors_last_hour': sum(1 for t, _, _ in self.errors if now - t < 3600),
+            'uptime_seconds': int(now - self.start_time),
             'messages_processed': self.messages_processed,
             'total_api_calls': len(self.api_calls),
             'total_errors': len(self.errors)
@@ -177,7 +159,7 @@ class MetricsCollector:
 METRICS = MetricsCollector()
 
 # =====================================================================
-# 5. كاش الردود التلقائية
+# 5. كاش الردود
 # =====================================================================
 
 class AutoReplyCache:
@@ -192,8 +174,6 @@ class AutoReplyCache:
         return None
 
     def set(self, key: str, value: dict):
-        if key in self.cache:
-            self.cache.move_to_end(key)
         self.cache[key] = value
         if len(self.cache) > self.maxsize:
             self.cache.popitem(last=False)
@@ -222,9 +202,8 @@ class TranslationManager:
         file_path = Path(cls._locales_dir) / f"{lang}.json"
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                cls._translations[lang] = data
-                return data
+                cls._translations[lang] = json.load(f)
+                return cls._translations[lang]
         except:
             if lang != cls._default_lang:
                 return cls.load_translation(cls._default_lang)
@@ -235,30 +214,21 @@ class TranslationManager:
         translations = cls.load_translation(lang)
         template = translations.get(key)
         if template is None and lang != cls._default_lang:
-            translations = cls.load_translation(cls._default_lang)
-            template = translations.get(key)
+            template = cls.load_translation(cls._default_lang).get(key)
         if template is None:
             template = key
         try:
             return template.format(**kwargs)
-        except KeyError:
+        except:
             return template
 
     @classmethod
     def get_available_languages(cls) -> Dict[str, str]:
         languages = {
-            "ar": "العربية 🇸🇦",
-            "en": "English 🇬🇧",
-            "fr": "Français 🇫🇷",
-            "tr": "Türkçe 🇹🇷",
-            "zh": "中文 🇨🇳",
-            "ru": "Русский 🇷🇺",
-            "de": "Deutsch 🇩🇪",
-            "es": "Español 🇪🇸",
-            "it": "Italiano 🇮🇹",
-            "pt": "Português 🇵🇹",
-            "ja": "日本語 🇯🇵",
-            "ko": "한국어 🇰🇷"
+            "ar": "العربية 🇸🇦", "en": "English 🇬🇧", "fr": "Français 🇫🇷",
+            "tr": "Türkçe 🇹🇷", "zh": "中文 🇨🇳", "ru": "Русский 🇷🇺",
+            "de": "Deutsch 🇩🇪", "es": "Español 🇪🇸", "it": "Italiano 🇮🇹",
+            "pt": "Português 🇵🇹", "ja": "日本語 🇯🇵", "ko": "한국어 🇰🇷"
         }
         available = {}
         for code, name in languages.items():
@@ -303,7 +273,6 @@ class UserState(Enum):
     WAIT_REM_GLOBAL_BAN = auto()
     WAIT_KEYWORD = auto()
     WAIT_REPLY = auto()
-    WAIT_REPLY_BUTTONS = auto()
     WAIT_LOG_CH = auto()
     WAIT_CONTEST_TITLE = auto()
     WAIT_CONTEST_DESC = auto()
@@ -342,7 +311,7 @@ class StateManager:
         cls._timestamps.pop(user_id, None)
 
 # =====================================================================
-# 8. تعريفات الأزرار (CB)
+# 8. تعريفات الأزرار
 # =====================================================================
 
 class CB:
@@ -353,13 +322,11 @@ class CB:
     SETTINGS = "settings"
     LANGUAGE = "language"
     CHECK_SUB = "check_sub"
-
     CH_ADD = "ch_add"
     CH_LIST = "ch_list"
     CH_DEL = "ch_del:"
     CH_SEL = "ch_sel:"
     CH_STATS = "ch_stats:"
-
     POST_ADD = "post_add"
     POST_PUB = "post_pub"
     POST_LIST = "post_list"
@@ -367,40 +334,19 @@ class CB:
     POST_DEL = "post_del:"
     POST_CLEAR = "post_clear:"
     PUB_ALL = "pub_all"
-
     STATS_PEND = "stats_pend"
     STATS_FULL = "stats_full"
-
     GROUPS = "groups"
     GRP_SET = "grp_set:"
-
     TOGGLE_AUTO = "toggle_auto"
     TOGGLE_REC = "toggle_rec"
-
-    SCHEDULE = "schedule:"
-    SCHED_MIN = "sched_min:"
-    SCHED_HOUR = "sched_hour:"
-    SCHED_DAY = "sched_day:"
-    SCHED_TIME = "sched_time:"
-
-    SEC_BANNED = "sec_banned:"
     SEC_CLOSE = "sec_close"
     SEC_ENABLE_ALL = "sec_enable_all:"
     SEC_DISABLE_ALL = "sec_disable_all:"
-    SEC_DEL_PEN = "sec_del_pen:"
-
     BAN_ADD = "ban_add:"
     BAN_LIST = "ban_list:"
     BAN_REM = "ban_rem:"
-
     PENALTY = "penalty:"
-    PEN_KICK = "pen_kick:"
-    PEN_BAN = "pen_ban:"
-    PEN_MUTE = "pen_mute:"
-    PEN_WARN = "pen_warn:"
-    PEN_RESTRICT = "pen_restrict:"
-    PEN_NONE = "pen_none:"
-
     ADV_ACT = "adv_act:"
     ACT_BAN = "act_ban:"
     ACT_MUTE = "act_mute:"
@@ -410,25 +356,19 @@ class CB:
     ACT_PIN = "act_pin:"
     ACT_LOG = "act_log:"
     ACT_UNBAN = "act_unban:"
-
     PANEL_LOCK = "panel_lock:"
     PANEL_UNLOCK = "panel_unlock:"
     PANEL_CLOSE = "panel_close"
-
     SUPPORT = "support"
     SUPPORT_TICKET = "support_ticket"
-
     TRIAL = "trial"
     SUBSCRIBE = "subscribe"
     PLANS = "plans"
     INVOICES = "invoices"
-
     DEVELOPER = "developer"
-
     REFERRAL = "referral"
     REF_CLAIM = "ref_claim"
     REF_LIST = "ref_list"
-
     REMINDER = "reminder"
     REM_TOGGLE_SUB = "rem_sub"
     REM_TOGGLE_DAILY = "rem_daily"
@@ -436,16 +376,13 @@ class CB:
     REM_SET_DAYS = "rem_days"
     REM_SET_LANG = "rem_lang"
     REM_LANG = "rem_lang:"
-
     TRANSLATION = "translation"
     TRANS_OFF = "trans_off"
     TRANS_SET = "trans_set:"
-
     CONTESTS = "contests"
     CONTEST_JOIN = "contest_join:"
     CONTEST_WINNERS = "contest_winners"
     DECLARE_WINNER_SEL = "declare_winner_sel:"
-
     ADMIN = "admin"
     ADMIN_USERS = "admin_users"
     ADMIN_BANNED = "admin_banned"
@@ -470,10 +407,8 @@ class CB:
     ADMIN_FORCE_SUB = "admin_force_sub"
     ADMIN_SET_FORCE = "admin_set_force"
     ADMIN_BROADCAST = "admin_broadcast"
-    ADMIN_CONFIRM_BROADCAST = "admin_confirm_broadcast"
     ADMIN_TICKETS = "admin_tickets"
     ADMIN_DEL_TICKETS = "admin_del_tickets"
-    ADMIN_CONFIRM_DEL_TICKETS = "admin_confirm_del_tickets"
     ADMIN_LOG_CH = "admin_log_ch"
     ADMIN_SET_LOG_CH = "admin_set_log_ch"
     ADMIN_REPLIES = "admin_replies"
@@ -486,17 +421,14 @@ class CB:
     ADMIN_REM_BANNED = "admin_rem_banned"
     ADMIN_CREATE_CONTEST = "admin_create_contest"
     ADMIN_DECLARE_WINNER = "admin_declare_winner"
-    ADMIN_DEL_CONTEST = "admin_del_contest:"
     ADMIN_EXPORT_REPLIES = "admin_export_replies"
     ADMIN_IMPORT_REPLIES = "admin_import_replies"
     ADMIN_REFRESH_CACHE = "admin_refresh_cache"
     ADMIN_IMPORT_GITHUB = "admin_import_github"
-
     AUTO_REPLY_MENU = "auto_reply_menu:"
     AUTO_REPLY_TOGGLE = "auto_reply_toggle:"
     AUTO_REPLY_ADMINS = "auto_reply_admins:"
     AUTO_REPLY_RESET = "auto_reply_reset:"
-    AUTO_REPLY_CONFIRM_RESET = "auto_reply_confirm_reset:"
     AUTO_REPLY_STATS = "auto_reply_stats:"
     AUTO_REPLY_ADD = "auto_reply_add:"
     AUTO_REPLY_DEL = "auto_reply_del:"
@@ -528,8 +460,7 @@ class KeyboardFactory:
     @classmethod
     def get_menu(cls, menu_name: str) -> List[List[str]]:
         config = cls.load_config()
-        menu = config.get("menus", {}).get(menu_name, {})
-        return menu.get("rows", [])
+        return config.get("menus", {}).get(menu_name, {}).get("rows", [])
 
     @classmethod
     def build(cls, menu_name: str, chat_id: int = None, extra_data: Dict = None) -> InlineKeyboardMarkup:
@@ -542,8 +473,6 @@ class KeyboardFactory:
                     key = item.replace("_url", "")
                     text = cls.get_text(key)
                     url = f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup"
-                    if extra_data and "url" in extra_data:
-                        url = extra_data["url"]
                     btn_row.append(InlineKeyboardButton(text, url=url))
                 else:
                     text = cls.get_text(item)
@@ -577,59 +506,57 @@ class KeyboardFactory:
             f"🎵 موسيقى: {st(settings.get('delete_audio', False))}",
             f"🎞️ متحرك: {st(settings.get('delete_animation', False))}",
             f"🎤 صوتي: {st(settings.get('delete_voice', False))}",
-            f"🎥 فيديو نوت: {st(settings.get('delete_video_note', False))}",
             f"🖼️ ملصقات: {st(settings.get('delete_stickers', False))}",
             f"📄 ملفات: {st(settings.get('delete_documents', False))}",
             f"📨 مُعاد: {st(settings.get('delete_forwarded', False))}",
-            f"📊 استطلاع: {st(settings.get('delete_polls', False))}",
-            f"🎮 ألعاب: {st(settings.get('delete_games', False))}",
             f"🛠️ خدمة: {st(settings.get('delete_service', False))}\n",
             "👋 **الترحيب**",
             f"🎯 ترحيب: {st(settings.get('welcome_enabled', False))}",
-            f"👋 وداع: {st(settings.get('goodbye_enabled', False))}\n",
-            "⚙️ **القيود**",
-            f"⏱️ بطيء: {st(settings.get('slow_mode', False))} ({settings.get('slow_mode_seconds', 5)}ث)",
-            f"📏 طول: {settings.get('max_message_length', 0) or 'غير محدود'}",
-            f"🌙 ليلي: {st(settings.get('night_mode_enabled', False))}",
-            f"⚠️ تحذيرات: {settings.get('max_warnings', 3)}\n",
-            "⚖️ **العقوبات**",
-            f"🗑️ حذف: {settings.get('delete_penalty', 'none')}",
-            f"⚖️ أساسية: {settings.get('auto_penalty', 'none')}",
+            f"👋 وداع: {st(settings.get('goodbye_enabled', False))}",
             "━━━━━━━━━━━━━━━━━━━━"
         ]
         return "\n".join(lines)
 
 # =====================================================================
-# 10. دوال مساعدة أخرى
+# 10. دوال الصلاحيات (مع دعم المخفيين)
 # =====================================================================
 
 _auth_cache = TTLCache(maxsize=CONFIG.AUTH_CACHE_SIZE, ttl=CONFIG.AUTH_CACHE_TTL)
 
 async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
+    """التحقق من الصلاحية (مشرف حقيقي + مالك مخفي + مشرف مخفي)"""
     if user_id == CONFIG.PRIMARY_OWNER_ID:
         return True
+
     cache_key = f"auth_{chat_id}_{user_id}"
     if cache_key in _auth_cache:
         return _auth_cache[cache_key]
+
     authorized = False
     try:
+        # 1. مشرف تيليجرام حقيقي
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
             authorized = True
+    except:
+        pass
+
+    if not authorized:
+        # 2. مالك مخفي
+        row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
+        if row:
+            authorized = True
         else:
-            row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
-            if row:
+            # 3. مشرف مخفي
+            row2 = await DB.fetchone("SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, user_id))
+            if row2:
                 authorized = True
             else:
-                row2 = await DB.fetchone("SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, user_id))
-                if row2:
+                # 4. مرتبط بالمجموعة
+                linked = await DB.fetchone("SELECT 1 FROM user_groups_link WHERE user_id=? AND chat_id=?", (user_id, chat_id))
+                if linked:
                     authorized = True
-                else:
-                    linked = await DB.fetchone("SELECT 1 FROM user_groups_link WHERE user_id=? AND chat_id=?", (user_id, chat_id))
-                    if linked:
-                        authorized = True
-    except:
-        authorized = False
+
     _auth_cache[cache_key] = authorized
     return authorized
 
@@ -654,67 +581,48 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
         can_delete = getattr(me, 'can_delete_messages', False)
         can_ban = getattr(me, 'can_restrict_members', False)
         if not can_delete or not can_ban:
-            return {'can_act': False, 'reason': 'صلاحيات ناقصة (حذف/تقييد)'}
-        return {'can_act': True, 'reason': '', 'permissions': {'can_delete': can_delete, 'can_ban': can_ban}}
+            return {'can_act': False, 'reason': 'صلاحيات ناقصة'}
+        return {'can_act': True, 'reason': ''}
     except Exception as e:
-        return {'can_act': False, 'reason': f'خطأ في التحقق: {str(e)[:50]}'}
+        return {'can_act': False, 'reason': str(e)[:50]}
+
+# =====================================================================
+# 11. إرسال آمن
+# =====================================================================
 
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
     if not text:
         return
     await RATE_LIMITER.acquire()
-    start_time = time.time()
     try:
         escaped = TextUtils.escape_markdown_v2(text)
         if len(escaped) > 4096:
             escaped = escaped[:4093] + "..."
-        result = await bot.send_message(
-            chat_id=chat_id,
-            text=escaped,
-            parse_mode='MarkdownV2',
-            reply_markup=reply_markup,
-            **kwargs
-        )
-        METRICS.record_api_call('send_message', time.time() - start_time)
-        return result
+        return await bot.send_message(chat_id=chat_id, text=escaped,
+                                      parse_mode='MarkdownV2', reply_markup=reply_markup, **kwargs)
     except:
         try:
             html_text = html.escape(text)
             if len(html_text) > 4096:
                 html_text = html_text[:4093] + "..."
-            result = await bot.send_message(
-                chat_id=chat_id,
-                text=html_text,
-                parse_mode='HTML',
-                reply_markup=reply_markup,
-                **kwargs
-            )
-            METRICS.record_api_call('send_message_html', time.time() - start_time)
-            return result
+            return await bot.send_message(chat_id=chat_id, text=html_text,
+                                          parse_mode='HTML', reply_markup=reply_markup, **kwargs)
         except:
             plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', text)
             if len(plain) > 4096:
                 plain = plain[:4093] + "..."
-            result = await bot.send_message(
-                chat_id=chat_id,
-                text=plain,
-                reply_markup=reply_markup,
-                **kwargs
-            )
-            METRICS.record_api_call('send_message_plain', time.time() - start_time)
-            return result
+            return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
 
 def get_ram_usage() -> dict:
     try:
         import psutil
         mem = psutil.virtual_memory()
-        return {'total': round(mem.total / (1024 ** 3), 1), 'used': round(mem.used / (1024 ** 3), 1),
-                'percent': mem.percent}
+        return {'total': round(mem.total / (1024**3), 1), 'used': round(mem.used / (1024**3), 1), 'percent': mem.percent}
     except:
         return {'total': 0, 'used': 0, 'percent': 0}
 
 # =====================================================================
-# 11. نظام العقوبات
+# 12. نظام العقوبات
 # =====================================================================
 
 class PenaltyStrategy(ABC):
@@ -788,19 +696,11 @@ class UnbanPenalty(PenaltyStrategy):
 class PenaltyFactory:
     @staticmethod
     def get_strategy(penalty_type: str):
-        if penalty_type == 'ban':
-            return BanPenalty()
-        elif penalty_type == 'mute':
-            return MutePenalty()
-        elif penalty_type == 'kick':
-            return KickPenalty()
-        elif penalty_type == 'warn':
-            return WarnPenalty()
-        elif penalty_type == 'restrict':
-            return RestrictPenalty()
-        elif penalty_type == 'unban':
-            return UnbanPenalty()
-        return WarnPenalty()
+        strategies = {
+            'ban': BanPenalty(), 'mute': MutePenalty(), 'kick': KickPenalty(),
+            'warn': WarnPenalty(), 'restrict': RestrictPenalty(), 'unban': UnbanPenalty()
+        }
+        return strategies.get(penalty_type, WarnPenalty())
 
 async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration: int = 0, reason: str = "", moderator: int = None) -> Tuple[bool, str]:
     if user_id == CONFIG.PRIMARY_OWNER_ID:
@@ -816,7 +716,7 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
     return await strategy.apply(bot, chat_id, user_id, duration=duration)
 
 # =====================================================================
-# 12. دوال الردود التلقائية والاستيراد
+# 13. الردود التلقائية
 # =====================================================================
 
 _usage_updates: Dict[Tuple[int, str], int] = {}
@@ -824,7 +724,6 @@ _USAGE_FLUSH_LIMIT = 50
 _USAGE_FLUSH_INTERVAL = 60
 
 async def _increment_usage_async(chat_id: int, keyword: str):
-    global _usage_updates
     key = (chat_id, keyword.lower())
     _usage_updates[key] = _usage_updates.get(key, 0) + 1
     if len(_usage_updates) >= _USAGE_FLUSH_LIMIT:
@@ -842,7 +741,7 @@ async def _flush_usage_updates():
         await conn.commit()
 
 async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
-    rows = await DB.fetchall("SELECT keyword, reply, reply_type, reply_media_id, reply_buttons FROM auto_replies WHERE chat_id=? AND is_active=1", (chat_id,))
+    rows = await DB.fetchall("SELECT keyword, reply FROM auto_replies WHERE chat_id=? AND is_active=1", (chat_id,))
     if not rows:
         return 0
     data = [dict(row) for row in rows]
@@ -859,34 +758,18 @@ async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[D
                 data = json.load(f)
         else:
             data = file_path_or_data
-
-        if not isinstance(data, list):
-            logger.error("بيانات الاستيراد ليست قائمة")
-            return 0
-
         count = 0
         for item in data:
             keyword = item.get('keyword', '').strip().lower()
-            if not keyword:
-                continue
             reply = item.get('reply', '').strip()
-            if not reply:
+            if not keyword or not reply:
                 continue
             if overwrite:
                 await DB.execute("DELETE FROM auto_replies WHERE chat_id=? AND keyword=?", (chat_id, keyword))
-            await DB.add_auto_reply(
-                chat_id,
-                keyword,
-                reply,
-                item.get('reply_type', 'text'),
-                item.get('reply_media_id'),
-                item.get('reply_buttons')
-            )
+            await DB.add_auto_reply(chat_id, keyword, reply)
             count += 1
-        _auto_reply_cache.invalidate()
         return count
-    except Exception as e:
-        logger.error(f"❌ Error in import_auto_replies: {e}", exc_info=True)
+    except:
         return 0
 
 async def fetch_json_from_url(url: str) -> Optional[list]:
@@ -898,24 +781,24 @@ async def fetch_json_from_url(url: str) -> Optional[list]:
                     data = await response.json()
                     if isinstance(data, list):
                         return data
-                return None
+        return None
     except:
         return None
 
 # =====================================================================
-# 13. تحميل الردود من ملف replies.py
+# 14. الردود من ملف
 # =====================================================================
 
 def load_replies_from_file() -> dict:
     try:
         from replies import REPLIES
-        logger.info("✅ تم تحميل الردود من ملف replies.py")
+        logger.info("✅ تم تحميل الردود من replies.py")
         return REPLIES
     except ImportError:
-        logger.warning("⚠️ ملف replies.py غير موجود، سيتم استخدام قاعدة البيانات فقط")
+        logger.info("ℹ️ لا يوجد replies.py")
         return {}
     except Exception as e:
-        logger.error(f"❌ خطأ في تحميل replies.py: {e}")
+        logger.error(f"❌ {e}")
         return {}
 
 _REPLIES_FROM_FILE = load_replies_from_file()
@@ -924,10 +807,8 @@ def get_reply_from_file(keyword: str) -> Optional[str]:
     if not _REPLIES_FROM_FILE or not keyword:
         return None
     keyword = keyword.lower().strip()
-    
     if keyword in _REPLIES_FROM_FILE:
         return random.choice(_REPLIES_FROM_FILE[keyword])
-    
     for key, replies in _REPLIES_FROM_FILE.items():
         if key in keyword or keyword in key:
             return random.choice(replies)
@@ -939,7 +820,7 @@ def reload_replies_from_file() -> dict:
     return _REPLIES_FROM_FILE
 
 # =====================================================================
-# 14. المهام الخلفية
+# 15. المهام الخلفية
 # =====================================================================
 
 class BackgroundTasks:
@@ -954,23 +835,17 @@ class BackgroundTasks:
                     continue
                 for ch in channels:
                     if not await DB.has_active_subscription(ch['user_id']):
-                        logger.info(f"⏹️ توقف النشر للقناة {ch['channel_id']} - انتهى اشتراك المستخدم {ch['user_id']}")
                         continue
-
                     post = await DB.get_next_post(ch['id'])
-
                     if not post:
                         auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
                         if auto_recycle:
-                            count = await DB.reset_posts(ch['id'])
-                            logger.info(f"♻️ إعادة تدوير تلقائي للقناة {ch['channel_id']} - {count} منشور")
+                            await DB.reset_posts(ch['id'])
                             post = await DB.get_next_post(ch['id'])
                             if not post:
                                 continue
                         else:
-                            logger.info(f"⏹️ انتهت منشورات القناة {ch['channel_id']} - إعادة التدوير معطل")
                             continue
-
                     try:
                         if post['media_type'] == 'photo' and post['media_file_id']:
                             await bot.send_photo(ch['channel_id'], post['media_file_id'], caption=post['text'][:1024] if post['text'] else None)
@@ -979,13 +854,11 @@ class BackgroundTasks:
                         else:
                             await bot.send_message(ch['channel_id'], post['text'][:4096] if post['text'] else ".")
                         await DB.mark_post_published(post['id'])
-                        await DB.update_last_publish(ch['id'])
-                        await DB.update_next_publish(ch['id'])
-                    except Exception as e:
+                    except:
                         await DB.increment_post_fail(post['id'])
-                await asyncio.sleep(max(60, await DB.get_publish_interval()))
+                await asyncio.sleep(60)
             except Exception as e:
-                logger.error(f"Auto publish error: {e}")
+                logger.error(f"Auto publish: {e}")
                 await asyncio.sleep(60)
 
     @staticmethod
@@ -993,15 +866,10 @@ class BackgroundTasks:
         while True:
             await asyncio.sleep(86400)
             try:
-                if await DB.get_auto_backup():
-                    backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
-                    shutil.copy2(PATHS.DB, backup_file)
-                    await DB.set_setting('last_backup', TimeUtils.utc_iso())
-                    backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
-                    for old in backups[CONFIG.MAX_BACKUPS:]:
-                        old.unlink()
-            except Exception as e:
-                logger.error(f"Auto backup error: {e}")
+                backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+                shutil.copy2(PATHS.DB, backup_file)
+            except:
+                pass
 
     @staticmethod
     async def reminders(bot) -> None:
@@ -1011,34 +879,21 @@ class BackgroundTasks:
                 users = await DB.get_users_for_reminder()
                 for u in users:
                     try:
-                        lang = u.get('language', 'ar')
-                        days = int(u['days_left'])
-                        text = await get_text(lang, 'reminder_subscription_expires', days=days)
-                        await bot.send_message(u['user_id'], text)
+                        await bot.send_message(u['user_id'], f"⚠️ اشتراكك ينتهي خلال {int(u['days_left'])} يوم")
                     except:
                         pass
-            except Exception as e:
-                logger.error(f"Reminders error: {e}")
+            except:
+                pass
 
     @staticmethod
     async def heartbeat(bot) -> None:
         while True:
             await asyncio.sleep(CONFIG.HEARTBEAT_INTERVAL)
             try:
-                log_channel = await DB.get_log_channel()
                 ram = get_ram_usage()
-                msg = await get_text('ar', 'heartbeat_status', time=TimeUtils.mecca_iso(), ram=ram['percent'])
-                if log_channel:
-                    await bot.send_message(log_channel, msg)
-                else:
-                    await bot.send_message(CONFIG.PRIMARY_OWNER_ID, msg)
-            except Exception as e:
-                logger.error(f"Heartbeat error: {e}")
-
-    @staticmethod
-    async def flush_sentiment_periodically() -> None:
-        while True:
-            await asyncio.sleep(60)
+                await bot.send_message(CONFIG.PRIMARY_OWNER_ID, f"💓 {ram['percent']}%")
+            except:
+                pass
 
     @staticmethod
     async def flush_usage_periodically() -> None:
@@ -1052,37 +907,30 @@ class BackgroundTasks:
             await asyncio.sleep(3600)
             try:
                 await DB.expire_expired_subscriptions()
-            except Exception as e:
-                logger.error(f"Expire subscriptions error: {e}")
+            except:
+                pass
 
     @staticmethod
     async def sync_admins_periodically(bot) -> None:
-        """مزامنة مشرفي المجموعات تلقائيًا كل ساعة"""
+        """مزامنة المشرفين تلقائياً كل ساعة"""
         await asyncio.sleep(60)
         while True:
             try:
                 groups = await DB.fetchall("SELECT chat_id FROM bot_groups WHERE banned=0")
-                synced = 0
                 for group in groups:
-                    chat_id = group['chat_id'] if isinstance(group, dict) else group[0]
+                    chat_id = group[0] if isinstance(group, tuple) else group['chat_id']
                     try:
                         admins = await bot.get_chat_administrators(chat_id)
-                        admin_ids = [a.user.id for a in admins if not a.user.is_bot]
-                        count = await DB.sync_group_admins(chat_id, admin_ids)
-                        if count > 0:
-                            synced += 1
-                        logger.info(f"✅ تم تحديث {count} مشرف للمجموعة {chat_id}")
-                    except Exception as e:
-                        logger.error(f"❌ فشل تحديث مشرفي {chat_id}: {str(e)[:100]}")
-                
-                logger.info(f"🔄 اكتملت مزامنة المشرفين: {synced} مجموعة")
-                await asyncio.sleep(3600)
-            except Exception as e:
-                logger.error(f"Sync admins error: {e}")
-                await asyncio.sleep(3600)
+                        admin_ids = [a.user.id for a in admins if a.user and not a.user.is_bot]
+                        await DB.sync_group_admins(chat_id, admin_ids)
+                    except:
+                        pass
+            except:
+                pass
+            await asyncio.sleep(3600)
 
 # =====================================================================
-# 15. خادم الويب
+# 16. خادم الويب
 # =====================================================================
 
 _webhook_app = None
@@ -1092,19 +940,17 @@ async def setup_webhook(app, port: int):
     _webhook_app = app
 
     web_app = web.Application()
-    
     web_app.router.add_get('/health', lambda r: web.Response(text="OK"))
-    web_app.router.add_get('/', lambda r: web.Response(text="🌿 Relax Manager Bot is running!"))
+    web_app.router.add_get('/', lambda r: web.Response(text="🌿 Relax Manager"))
     web_app.router.add_post(f"/{CONFIG.TOKEN}", webhook_handler)
-    
     web_app.router.add_get('/{tail:.*}', lambda r: web.Response(text="OK", status=200))
     web_app.router.add_post('/{tail:.*}', lambda r: web.Response(text="OK", status=200))
-    
+
     runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logger.info(f"✅ Webhook server running on port {port}")
+    logger.info(f"✅ Webhook on port {port}")
     return runner
 
 async def webhook_handler(request):
@@ -1112,27 +958,20 @@ async def webhook_handler(request):
     try:
         data = await request.json()
         if _webhook_app is None:
-            logger.error("❌ Webhook app not initialized")
-            return web.Response(status=500, text="App not initialized")
+            return web.Response(status=500, text="Error")
         await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
         return web.Response(status=200, text="OK")
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
         return web.Response(status=500, text="ERROR")
 
 # =====================================================================
-# 16. معالج الأخطاء
+# 17. معالج الأخطاء
 # =====================================================================
 
 class ErrorHandler:
     @staticmethod
     async def handle_error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
-            error = context.error
-            logger.error(f"Error: {error}", exc_info=True)
-            if isinstance(error, BadRequest):
-                if update and update.effective_user:
-                    await safe_send(context.bot, update.effective_user.id, f"⚠️ {str(error)[:200]}")
-        except Exception as e:
-            logger.error(f"Error in error handler: {e}")
-
+            logger.error(f"Error: {context.error}", exc_info=True)
+        except:
+            pass
