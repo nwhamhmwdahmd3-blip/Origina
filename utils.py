@@ -4,6 +4,14 @@
 """
 utils.py - الأدوات المساعدة للبوت
 ==================================
+تحتوي على: TimeUtils, TextUtils, RateLimiter, Metrics,
+TranslationManager, KeyboardFactory, StateManager,
+دوال مساعدة أخرى
+مع إضافة:
+- التحقق من الاشتراك قبل النشر التلقائي (بدون has_used_trial)
+- إعادة التدوير التلقائي عند انتهاء المنشورات
+- تحميل الردود من ملف replies.py
+- دعم استيراد الردود من ملف أو قائمة (لـ GitHub)
 """
 
 import asyncio
@@ -16,7 +24,7 @@ import shutil
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Tuple, Any
+from typing import Optional, List, Dict, Tuple, Any, Union
 from enum import Enum, auto
 from collections import OrderedDict, deque
 from abc import ABC, abstractmethod
@@ -398,7 +406,6 @@ class CB:
     ACT_PIN = "act_pin:"
     ACT_LOG = "act_log:"
     ACT_UNBAN = "act_unban:"
-    MUTE_DUR = "mute_dur:"
 
     PANEL_LOCK = "panel_lock:"
     PANEL_UNLOCK = "panel_unlock:"
@@ -409,7 +416,6 @@ class CB:
 
     TRIAL = "trial"
     SUBSCRIBE = "subscribe"
-    BUY_SUB = "buy_sub:"
     PLANS = "plans"
     INVOICES = "invoices"
 
@@ -842,23 +848,47 @@ async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return len(data)
 
-async def import_auto_replies(chat_id: int, file_path: str, overwrite: bool = False) -> int:
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    count = 0
-    for item in data:
-        keyword = item.get('keyword', '').strip().lower()
-        if not keyword:
-            continue
-        reply = item.get('reply', '').strip()
-        if not reply:
-            continue
-        if overwrite:
-            await DB.execute("DELETE FROM auto_replies WHERE chat_id=? AND keyword=?", (chat_id, keyword))
-        await DB.add_auto_reply(chat_id, keyword, reply, item.get('reply_type', 'text'), item.get('reply_media_id'), item.get('reply_buttons'))
-        count += 1
-    _auto_reply_cache.invalidate()
-    return count
+async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[Dict]], overwrite: bool = False) -> int:
+    """
+    استيراد الردود التلقائية من ملف JSON أو قائمة بيانات.
+    - إذا كان file_path_or_data مسار ملف، يتم فتحه وقراءته.
+    - إذا كان قائمة dict، يتم استخدامها مباشرة.
+    """
+    try:
+        if isinstance(file_path_or_data, str):
+            with open(file_path_or_data, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = file_path_or_data
+
+        if not isinstance(data, list):
+            logger.error("بيانات الاستيراد ليست قائمة")
+            return 0
+
+        count = 0
+        for item in data:
+            keyword = item.get('keyword', '').strip().lower()
+            if not keyword:
+                continue
+            reply = item.get('reply', '').strip()
+            if not reply:
+                continue
+            if overwrite:
+                await DB.execute("DELETE FROM auto_replies WHERE chat_id=? AND keyword=?", (chat_id, keyword))
+            await DB.add_auto_reply(
+                chat_id,
+                keyword,
+                reply,
+                item.get('reply_type', 'text'),
+                item.get('reply_media_id'),
+                item.get('reply_buttons')
+            )
+            count += 1
+        _auto_reply_cache.invalidate()
+        return count
+    except Exception as e:
+        logger.error(f"❌ Error in import_auto_replies: {e}", exc_info=True)
+        return 0
 
 async def fetch_json_from_url(url: str) -> Optional[list]:
     try:
@@ -874,13 +904,52 @@ async def fetch_json_from_url(url: str) -> Optional[list]:
         return None
 
 # =====================================================================
-# 13. المهام الخلفية
+# 13. تحميل الردود من ملف replies.py
+# =====================================================================
+
+def load_replies_from_file() -> dict:
+    """محاولة تحميل الردود من ملف replies.py"""
+    try:
+        from replies import REPLIES
+        logger.info("✅ تم تحميل الردود من ملف replies.py")
+        return REPLIES
+    except ImportError:
+        logger.warning("⚠️ ملف replies.py غير موجود، سيتم استخدام قاعدة البيانات فقط")
+        return {}
+    except Exception as e:
+        logger.error(f"❌ خطأ في تحميل replies.py: {e}")
+        return {}
+
+# تحميل الردود عند بدء التشغيل
+_REPLIES_FROM_FILE = load_replies_from_file()
+
+def get_reply_from_file(keyword: str) -> Optional[str]:
+    """
+    البحث عن رد في ملف replies.py (مع تطابق جزئي)
+    """
+    if not _REPLIES_FROM_FILE or not keyword:
+        return None
+    keyword = keyword.lower().strip()
+    for key, replies in _REPLIES_FROM_FILE.items():
+        if key in keyword:
+            import random
+            return random.choice(replies)
+    return None
+
+def reload_replies_from_file() -> dict:
+    """إعادة تحميل الردود من الملف (للاستخدام الديناميكي)"""
+    global _REPLIES_FROM_FILE
+    _REPLIES_FROM_FILE = load_replies_from_file()
+    return _REPLIES_FROM_FILE
+
+# =====================================================================
+# 14. المهام الخلفية
 # =====================================================================
 
 class BackgroundTasks:
     @staticmethod
     async def auto_publish(bot) -> None:
-        """النشر التلقائي مع التحقق من الاشتراك وإعادة التدوير التلقائي"""
+        """النشر التلقائي مع التحقق من الاشتراك (بدون has_used_trial) وإعادة التدوير التلقائي"""
         await asyncio.sleep(10)
         while True:
             try:
@@ -889,16 +958,13 @@ class BackgroundTasks:
                     await asyncio.sleep(60)
                     continue
                 for ch in channels:
-                    # التحقق من الاشتراك
-                    has_sub = await DB.has_active_subscription(ch['user_id'])
-                    has_trial = await DB.has_used_trial(ch['user_id'])
-                    
-                    if not has_sub and not has_trial:
+                    # ✅ التحقق من الاشتراك فقط (بدون has_used_trial)
+                    if not await DB.has_active_subscription(ch['user_id']):
                         logger.info(f"⏹️ توقف النشر للقناة {ch['channel_id']} - انتهى اشتراك المستخدم {ch['user_id']}")
                         continue
-                    
+
                     post = await DB.get_next_post(ch['id'])
-                    
+
                     # إذا انتهت المنشورات والتدوير التلقائي مفعل
                     if not post:
                         auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
@@ -911,7 +977,7 @@ class BackgroundTasks:
                         else:
                             logger.info(f"⏹️ انتهت منشورات القناة {ch['channel_id']} - إعادة التدوير معطل")
                             continue
-                    
+
                     # نشر المنشور
                     try:
                         if post['media_type'] == 'photo' and post['media_file_id']:
@@ -998,7 +1064,7 @@ class BackgroundTasks:
                 logger.error(f"Expire subscriptions error: {e}")
 
 # =====================================================================
-# 14. خادم الويب
+# 15. خادم الويب
 # =====================================================================
 
 _webhook_app = None
@@ -1006,7 +1072,7 @@ _webhook_app = None
 async def setup_webhook(app, port: int):
     global _webhook_app
     _webhook_app = app
-    
+
     web_app = web.Application()
     web_app.router.add_get('/health', lambda r: web.Response(text="OK"))
     web_app.router.add_post(f"/{CONFIG.TOKEN}", webhook_handler)
@@ -1032,7 +1098,7 @@ async def webhook_handler(request):
         return web.Response(status=500, text="ERROR")
 
 # =====================================================================
-# 15. معالج الأخطاء
+# 16. معالج الأخطاء
 # =====================================================================
 
 class ErrorHandler:
