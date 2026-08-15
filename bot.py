@@ -10,13 +10,25 @@ import os
 import logging
 import traceback
 
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ChatJoinRequestHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ChatJoinRequestHandler,
+    filters,
+)
 
 from config import CONFIG, PATHS
 from database import DB, initialize_db
-from handlers import CommandHandlers, MessageHandlers
-from callback_handlers import CallbackHandlers
-from utils import TranslationManager, KeyboardFactory, BackgroundTasks, ErrorHandler, setup_webhook
+from handlers import CommandHandlers, CallbackHandlers, MessageHandlers
+from utils import (
+    TranslationManager,
+    KeyboardFactory,
+    BackgroundTasks,
+    ErrorHandler,
+    setup_webhook,
+)
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -26,25 +38,34 @@ logger = logging.getLogger(__name__)
 
 app = None
 
+
 async def main():
     global app
 
     print(f"🌿 {CONFIG.BOT_NAME}")
     print(f"👨‍💼 المالك: {CONFIG.PRIMARY_OWNER_ID}")
 
+    # تهيئة قاعدة البيانات
     await initialize_db()
 
+    # تسجيل المطورين
     for dev_id in CONFIG.DEVELOPER_IDS:
         await DB.register_user(dev_id)
 
+    # تحميل الإعدادات
     KeyboardFactory.load_config()
     available_langs = TranslationManager.get_available_languages()
     for lang in available_langs:
         TranslationManager.load_translation(lang)
 
     port = int(CONFIG.WEB_PORT)
-    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("HEROKU_APP_NAME")
+    hostname = (
+        os.getenv("RENDER_EXTERNAL_HOSTNAME")
+        or os.getenv("RAILWAY_PUBLIC_DOMAIN")
+        or os.getenv("HEROKU_APP_NAME")
+    )
 
+    # إنشاء التطبيق
     app = Application.builder().token(CONFIG.TOKEN).build()
     await app.initialize()
 
@@ -82,30 +103,53 @@ async def main():
     app.add_handler(CommandHandler("remove_hidden_admin", CommandHandlers.remove_hidden_admin))
     app.add_handler(CommandHandler("list_hidden_admins", CommandHandlers.list_hidden_admins))
 
-    # ========== الكولباك (من ملف منفصل) ==========
+    # ========== الكولباك ==========
     app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
 
     # ========== الرسائل الخاصة ==========
-    app.add_handler(MessageHandler(
-        (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
-         filters.AUDIO | filters.VOICE | filters.ANIMATION) &
-        filters.ChatType.PRIVATE & ~filters.COMMAND,
-        MessageHandlers.handle_private
-    ))
+    app.add_handler(
+        MessageHandler(
+            (
+                filters.TEXT
+                | filters.PHOTO
+                | filters.VIDEO
+                | filters.Document.ALL
+                | filters.AUDIO
+                | filters.VOICE
+                | filters.ANIMATION
+            )
+            & filters.ChatType.PRIVATE
+            & ~filters.COMMAND,
+            MessageHandlers.handle_private,
+        )
+    )
 
     # ========== رسائل المجموعات ==========
-    app.add_handler(MessageHandler(
-        (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
-         filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL) &
-        filters.ChatType.GROUPS & ~filters.COMMAND,
-        MessageHandlers.handle_group
-    ))
+    app.add_handler(
+        MessageHandler(
+            (
+                filters.TEXT
+                | filters.PHOTO
+                | filters.VIDEO
+                | filters.Document.ALL
+                | filters.AUDIO
+                | filters.VOICE
+                | filters.ANIMATION
+                | filters.Sticker.ALL
+            )
+            & filters.ChatType.GROUPS
+            & ~filters.COMMAND,
+            MessageHandlers.handle_group,
+        )
+    )
 
     # ========== رسائل الخدمة ==========
-    app.add_handler(MessageHandler(
-        filters.StatusUpdate.ALL & filters.ChatType.GROUPS,
-        MessageHandlers.handle_service
-    ))
+    app.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.ALL & filters.ChatType.GROUPS,
+            MessageHandlers.handle_service,
+        )
+    )
 
     # ========== طلبات الانضمام ==========
     app.add_handler(ChatJoinRequestHandler(MessageHandlers.handle_join_request))
@@ -124,16 +168,16 @@ async def main():
         asyncio.create_task(BackgroundTasks.sync_admins_periodically(app.bot)),
     ]
 
-    # ========== تشغيل Webhook ==========
+    # ========== تشغيل Webhook أو Polling ==========
     if hostname:
         webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
-        print(f"🔗 Setting Webhook...")
+        print(f"🔗 Webhook: {webhook_url}")
 
         await app.bot.delete_webhook(drop_pending_updates=True)
         await app.bot.set_webhook(
             url=webhook_url,
             allowed_updates=["message", "callback_query", "chat_join_request", "chat_member"],
-            drop_pending_updates=True
+            drop_pending_updates=True,
         )
 
         webhook_info = await app.bot.get_webhook_info()
@@ -148,12 +192,14 @@ async def main():
         finally:
             await runner.cleanup()
     else:
-        print("⚠️ Polling")
+        print("⚠️ Polling mode")
         await app.run_polling(drop_pending_updates=True)
 
+    # إلغاء المهام
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+
 
 if __name__ == "__main__":
     try:
