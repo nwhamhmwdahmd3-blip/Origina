@@ -600,6 +600,7 @@ class Database:
 
     # ========= دوال المستخدمين =========
     async def register_user(self, user_id: int, username: str = "", first_name: str = "") -> bool:
+        """تسجيل مستخدم جديد أو تحديثه (بدون تفعيل تجربة تلقائية)"""
         try:
             row = await self.fetchone("SELECT user_id FROM users WHERE user_id=?", (user_id,))
             if row:
@@ -609,14 +610,14 @@ class Database:
                 )
                 return True
             code = secrets.token_urlsafe(6)
-            trial_end = (TimeUtils.utc_now() + timedelta(days=30)).isoformat()
+            # ✅ التجربة غير مفعلة تلقائيًا - المستخدم يضغط زر "تجربة" بنفسه
             await self.execute(
                 """INSERT INTO users 
-                   (user_id, username, first_name, referral_code, subscription_end, trial_used, created_at, updated_at) 
-                   VALUES (?,?,?,?,?,?,?,?)""",
-                (user_id, username, first_name, code, trial_end, 1, TimeUtils.utc_iso(), TimeUtils.utc_iso())
+                   (user_id, username, first_name, referral_code, trial_used, created_at, updated_at) 
+                   VALUES (?,?,?,?,?,?,?)""",
+                (user_id, username, first_name, code, 0, TimeUtils.utc_iso(), TimeUtils.utc_iso())
             )
-            logger.info(f"✅ تم تسجيل مستخدم جديد {user_id} مع تجربة 30 يوم")
+            logger.info(f"✅ تم تسجيل مستخدم جديد {user_id} (بدون تجربة تلقائية)")
             return True
         except Exception as e:
             logger.error(f"❌ Error in register_user: {e}", exc_info=True)
@@ -782,7 +783,6 @@ class Database:
         try:
             channel_id = int(channel_id)
             
-            # التحقق من عدم وجود القناة مسبقاً
             row = await self.fetchone(
                 "SELECT id FROM user_channels WHERE user_id=? AND channel_id=?",
                 (user_id, channel_id)
@@ -792,7 +792,6 @@ class Database:
                 return row[0]
 
             async with self._get_connection() as conn:
-                # إدراج القناة
                 cursor = await conn.execute(
                     "INSERT INTO user_channels (user_id, channel_id, channel_name, created_at) VALUES (?,?,?,?)",
                     (user_id, channel_id, channel_name, TimeUtils.utc_iso())
@@ -803,7 +802,6 @@ class Database:
                     logger.error("❌ فشل في جلب lastrowid")
                     return None
 
-                # إدراج الجدولة الافتراضية بنفس الاتصال
                 interval = 720
                 next_date = TimeUtils.utc_now() + timedelta(seconds=interval)
                 await conn.execute(
@@ -886,8 +884,7 @@ class Database:
         try:
             vals = [
                 (channel_id, (t or "")[:4096], m, f, TimeUtils.utc_iso()) 
-                for t, m, f in posts
-            ]
+                for t, m, f in posts            ]
             await self.executemany(
                 "INSERT INTO posts (channel_db_id, text, media_type, media_file_id, created_at) VALUES (?,?,?,?,?)",
                 vals
@@ -1429,7 +1426,6 @@ class Database:
             return {'total': 0, 'claimed': 0, 'available': 0}
 
     async def claim_referral_reward(self, user_id: int) -> int:
-        """صرف مكافأة الإحالات"""
         try:
             stats = await self.get_referral_stats(user_id)
             av = stats['available']
@@ -1601,8 +1597,7 @@ class Database:
     async def set_setting(self, key: str, value: str) -> bool:
         try:
             await self.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, value))
-            return True
-        except Exception as e:
+            return True        except Exception as e:
             logger.error(f"❌ Error in set_setting: {e}", exc_info=True)
             return False
 
@@ -1766,18 +1761,10 @@ if __name__ == "__main__":
         print("🚀 اختبار قاعدة البيانات...")
         await DB.initialize()
         await DB.register_user(123456789, "test_user", "Test")
-        print("✅ تم إضافة مستخدم مع تجربة 30 يوم")
+        print("✅ تم إضافة مستخدم بدون تجربة تلقائية")
         user = await DB.get_user(123456789)
         print(f"✅ معلومات المستخدم: {user}")
-        await DB.set_auto_recycle(123456789, True)
-        status = await DB.get_auto_recycle_status(123456789)
-        print(f"✅ حالة إعادة التدوير: {status}")
-        plans = await DB.fetchall("SELECT * FROM plans")
-        print(f"✅ عدد الباقات: {len(plans)}")
-        for p in plans:
-            print(f"   - {p['name']}: {p['price']} نجوم")
-        banned = await DB.get_banned_words(-1)
-        print(f"✅ عدد الكلمات المحظورة المستوردة: {len(banned)}")
+        print(f"✅ trial_used: {user['trial_used']}")
         print("✅ جميع الاختبارات اجتازت بنجاح!")
 
     asyncio.run(test())
