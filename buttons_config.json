@@ -78,11 +78,21 @@
     "act_pin": "📌 تثبيت",
     "act_log": "📜 سجل",
     "act_unban": "🔓 إلغاء حظر",
+    "mute_dur_5": "⏱️ 5 دقائق",
+    "mute_dur_30": "⏱️ 30 دقيقة",
+    "mute_dur_60": "⏱️ 1 ساعة",
+    "mute_dur_720": "⏱️ 12 ساعة",
+    "mute_dur_1440": "📆 يوم",
+    "mute_dur_10080": "📆 أسبوع",
+    "mute_dur_0": "🔇 كتم دائم",
     "panel_lock": "🔒 قفل",
     "panel_unlock": "🔓 فتح",
     "panel_close": "🔙 إغلاق",
     "support_ticket": "📞 تذكرة",
-    "buy_sub": "💎 شراء",
+    "buy_sub_1": "💎 1 يوم - 5 نجوم",
+    "buy_sub_7": "💎 7 أيام - 25 نجوم",
+    "buy_sub_30": "💎 30 يوم - 75 نجوم",
+    "buy_sub_90": "💎 90 يوم - 200 نجوم",
     "ref_claim": "🎁 صرف المكافأة",
     "ref_list": "📋 قائمة المُحالين",
     "rem_sub": "🔔 تذكير الاشتراك",
@@ -140,7 +150,6 @@
     "admin_export_replies": "📤 تصدير الردود",
     "admin_import_replies": "📥 استيراد ردود",
     "admin_refresh_cache": "🔄 تحديث الكاش",
-    "admin_confirm_import": "✅ تأكيد الاستيراد",
     "admin_import_github": "📥 استيراد من GitHub",
     "auto_reply_menu": "📝 إدارة الردود",
     "auto_reply_toggle": "📝 تفعيل/تعطيل",
@@ -153,18 +162,7 @@
     "auto_reply_list": "📋 قائمة الردود",
     "ban_add": "➕ إضافة كلمة",
     "ban_list": "📋 عرض الكلمات",
-    "ban_rem": "🗑️ حذف كلمة",
-    "buy_sub_1": "💎 1 يوم - 5 نجوم",
-    "buy_sub_7": "💎 7 أيام - 25 نجوم",
-    "buy_sub_30": "💎 30 يوم - 75 نجوم",
-    "buy_sub_90": "💎 90 يوم - 200 نجوم",
-    "mute_dur_5": "⏱️ 5 دقائق",
-    "mute_dur_30": "⏱️ 30 دقيقة",
-    "mute_dur_60": "⏱️ 1 ساعة",
-    "mute_dur_720": "⏱️ 12 ساعة",
-    "mute_dur_1440": "📆 يوم",
-    "mute_dur_10080": "📆 أسبوع",
-    "mute_dur_0": "🔇 كتم دائم"
+    "ban_rem": "🗑️ حذف كلمة"
   },
   "menus": {
     "main_menu": {
@@ -197,12 +195,40 @@
         ["back"]
       ]
     },
-    "mute_duration": {
+    "support": {
       "rows": [
-        ["mute_dur_5", "mute_dur_30"],
-        ["mute_dur_60", "mute_dur_720"],
-        ["mute_dur_1440", "mute_dur_10080"],
-        ["mute_dur_0", "back"]
+        ["support_ticket"],
+        ["back"]
+      ]
+    },
+    "referral": {
+      "rows": [
+        ["ref_claim"],
+        ["ref_list"],
+        ["back"]
+      ]
+    },
+    "reminder": {
+      "rows": [
+        ["rem_sub"],
+        ["rem_daily"],
+        ["rem_weekly"],
+        ["rem_days"],
+        ["rem_lang"],
+        ["back"]
+      ]
+    },
+    "translation": {
+      "rows": [
+        ["trans_set_ar", "trans_set_en"],
+        ["trans_off"],
+        ["back"]
+      ]
+    },
+    "contests": {
+      "rows": [
+        ["contest_winners"],
+        ["back"]
       ]
     },
     "security": {
@@ -243,46 +269,18 @@
         ["back"]
       ]
     },
+    "mute_duration": {
+      "rows": [
+        ["mute_dur_5", "mute_dur_30"],
+        ["mute_dur_60", "mute_dur_720"],
+        ["mute_dur_1440", "mute_dur_10080"],
+        ["mute_dur_0", "back"]
+      ]
+    },
     "panel": {
       "rows": [
         ["panel_lock", "panel_unlock"],
         ["panel_close"]
-      ]
-    },
-    "support": {
-      "rows": [
-        ["support_ticket"],
-        ["back"]
-      ]
-    },
-    "referral": {
-      "rows": [
-        ["ref_claim"],
-        ["ref_list"],
-        ["back"]
-      ]
-    },
-    "reminder": {
-      "rows": [
-        ["rem_sub"],
-        ["rem_daily"],
-        ["rem_weekly"],
-        ["rem_days"],
-        ["rem_lang"],
-        ["back"]
-      ]
-    },
-    "translation": {
-      "rows": [
-        ["trans_set_ar", "trans_set_en"],
-        ["trans_off"],
-        ["back"]
-      ]
-    },
-    "contests": {
-      "rows": [
-        ["contest_winners"],
-        ["back"]
       ]
     },
     "admin_panel": {
@@ -328,3 +326,4 @@
     }
   }
 }
+
