@@ -838,3 +838,20 @@ class MessageHandlers:
                 await join_request.decline()
             except:
                 pass
+
+@staticmethod
+async def remove_hidden_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if user_id != CONFIG.PRIMARY_OWNER_ID:
+        return
+    if not context.args:
+        return
+    try:
+        owner_id = int(context.args[0])
+    except:
+        return
+    chat_id = update.effective_chat.id
+    await DB.execute("DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, owner_id))
+    invalidate_auth_cache(chat_id, owner_id)
+    await safe_send(context.bot, user_id, f"✅ {owner_id}")
+
