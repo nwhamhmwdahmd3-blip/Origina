@@ -2,12 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة النهائية 100%)
+handlers.py - جميع معالجات البوت (النسخة الكاملة النهائية)
 ============================================================
 - CommandHandlers: الأوامر (بما فيها أوامر المالكين والمشرفين المخفيين)
 - CallbackHandlers: الأزرار (مع دعم كامل للأمان والأدمن والردود)
 - MessageHandlers: الرسائل (خاصة ومجموعات وخدمة وانضمام)
-- إصلاح تاريخ المسابقة: strftime بدلاً من isoformat
 """
 
 import asyncio
@@ -227,7 +226,72 @@ class CommandHandlers:
     async def replies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await safe_send(context.bot, update.effective_user.id, "📚 الردود التلقائية تعمل!")
 
-    # ========== دوال المخفيين ==========
+    # ✅ دالة المسابقات - كانت مفقودة في بعض النسخ
+    @staticmethod
+    async def contests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        contests = await DB.get_active_contests(10)
+        if not contests:
+            await safe_send(context.bot, user_id, "📭 لا توجد مسابقات نشطة")
+            return
+        text = "🏆 **المسابقات النشطة**\n\n"
+        for c in contests:
+            text += f"• **{c['title']}**\n"
+            text += f"  🎁 {c['prize']}\n"
+            text += f"  📅 {c['end_date'][:10]}\n\n"
+        kb = KeyboardFactory.build("contests")
+        await safe_send(context.bot, user_id, text, reply_markup=kb)
+
+    @staticmethod
+    async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, "❌ ليس لديك صلاحية")
+            return
+        settings = await DB.get_security_settings(chat_id)
+        text = await KeyboardFactory._format_security_text(settings)
+        kb = KeyboardFactory.build("security", chat_id)
+        await safe_send(context.bot, user_id, text, reply_markup=kb)
+
+    @staticmethod
+    async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, "❌ ليس لديك صلاحية")
+            return
+        kb = KeyboardFactory.build("panel", chat_id)
+        await safe_send(context.bot, user_id, "📋 لوحة تحكم المجموعة", reply_markup=kb)
+
+    @staticmethod
+    async def lock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            return
+        await DB.execute("INSERT OR REPLACE INTO chat_locks (chat_id, locked, locked_at, locked_by) VALUES (?,1,?,?)",
+                         (chat_id, TimeUtils.sql_iso(), user_id))
+        await safe_send(context.bot, user_id, "🔒 تم القفل")
+
+    @staticmethod
+    async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            return
+        await DB.execute("DELETE FROM chat_locks WHERE chat_id=?", (chat_id,))
+        await safe_send(context.bot, user_id, "🔓 تم الفتح")
+
+    # ========== أوامر المالكين والمشرفين المخفيين ==========
 
     @staticmethod
     async def register_hidden_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -324,10 +388,9 @@ class CommandHandlers:
             text += f"🛡️ `{a[0]}`\n"
         await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد")
 
-    # ========== تفعيل المجموعة ==========
-
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """تفعيل المجموعة - التعرف المباشر على المشرفين المخفيين"""
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
             await safe_send(context.bot, update.effective_user.id, "❌ هذا الأمر للمجموعات فقط")
             return
