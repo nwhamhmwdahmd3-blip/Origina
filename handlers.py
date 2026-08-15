@@ -3,6 +3,11 @@
 
 """
 handlers.py - جميع معالجات البوت (كامل 100%)
+===========================================
+- CommandHandlers: جميع الأوامر
+- CallbackHandlers: جميع الأزرار
+- MessageHandlers: جميع الرسائل
+- دوال المخفيين
 """
 
 import asyncio
@@ -38,6 +43,10 @@ from utils import (
 
 logger = logging.getLogger(__name__)
 
+
+# =====================================================================
+# CommandHandlers
+# =====================================================================
 
 class CommandHandlers:
     @staticmethod
@@ -112,7 +121,8 @@ class CommandHandlers:
 
     @staticmethod
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await safe_send(context.bot, update.effective_user.id, "📚 /start للبدء")
+        text = "📚 **الأوامر:**\n\n/start - الرئيسية\n/trial - تجربة\n/subscribe - اشتراك\n/support - دعم\n/developer - المطور"
+        await safe_send(context.bot, update.effective_user.id, text)
 
     @staticmethod
     async def trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -135,17 +145,7 @@ class CommandHandlers:
 
     @staticmethod
     async def developer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        text = f"""
-👨‍💻 **المطور**
-
-📌 `{CONFIG.PRIMARY_OWNER_ID}`
-👤 {CONFIG.BOT_NAME}
-🔗 @{CONFIG.BOT_USERNAME}
-📞 @RelaxMgr
-
-🆓 مجاني: حماية المجموعات
-💎 مدفوع: إدارة القنوات
-"""
+        text = f"👨‍💻 **المطور**\n\n📌 `{CONFIG.PRIMARY_OWNER_ID}`\n👤 {CONFIG.BOT_NAME}\n🔗 @{CONFIG.BOT_USERNAME}\n📞 @RelaxMgr\n\n🆓 مجاني: حماية المجموعات\n💎 مدفوع: إدارة القنوات"
         await safe_send(context.bot, update.effective_user.id, text)
 
     @staticmethod
@@ -343,28 +343,17 @@ class CommandHandlers:
         await safe_send(context.bot, chat_id, "🤖 تم التفعيل!")
 
     @staticmethod
-    async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "ban")
-
+    async def ban(update, context): await CommandHandlers._moderation_command(update, context, "ban")
     @staticmethod
-    async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "mute")
-
+    async def mute(update, context): await CommandHandlers._moderation_command(update, context, "mute")
     @staticmethod
-    async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "warn")
-
+    async def warn(update, context): await CommandHandlers._moderation_command(update, context, "warn")
     @staticmethod
-    async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "kick")
-
+    async def kick(update, context): await CommandHandlers._moderation_command(update, context, "kick")
     @staticmethod
-    async def restrict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "restrict")
-
+    async def restrict(update, context): await CommandHandlers._moderation_command(update, context, "restrict")
     @staticmethod
-    async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "unban")
+    async def unban(update, context): await CommandHandlers._moderation_command(update, context, "unban")
 
     @staticmethod
     async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -401,6 +390,10 @@ class CommandHandlers:
         success, msg = await apply_penalty(context.bot, chat_id, target, action, 60)
         await safe_send(context.bot, user_id, msg)
 
+
+# =====================================================================
+# CallbackHandlers
+# =====================================================================
 
 class CallbackHandlers:
     @staticmethod
@@ -654,6 +647,10 @@ class CallbackHandlers:
             await query.edit_message_text(text, reply_markup=kb)
             return
 
+
+# =====================================================================
+# MessageHandlers
+# =====================================================================
 
 class MessageHandlers:
     @staticmethod
