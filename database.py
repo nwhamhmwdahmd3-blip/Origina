@@ -423,350 +423,426 @@ class Database:
         """)
         await conn.commit()
 
-    async def _create_indexes(self, conn) -> None:
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users(banned)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_groups_banned ON bot_groups(banned)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_banned_words_chat ON banned_words(chat_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_chat ON auto_replies(chat_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_user ON invoices(user_id)")
-        await conn.commit()
+async def _create_indexes(self, conn) -> None:
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users(banned)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_groups_banned ON bot_groups(banned)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_banned_words_chat ON banned_words(chat_id)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_chat ON auto_replies(chat_id)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_user ON invoices(user_id)")
+    await conn.commit()
 
-    async def _init_default_data(self, conn) -> None:
-        default_plans = [
-            ("يوم", "باقة يوم واحد", 5, 1, 1, 50),
-            ("أسبوع", "باقة 7 أيام", 25, 7, 3, 300),
-            ("شهر", "باقة 30 يوم", 75, 30, 10, 1500),
-            ("3 أشهر", "باقة 90 يوم", 200, 90, 999, 99999),
-        ]
-        for name, desc, price, days, max_ch, max_p in default_plans:
+async def _init_default_data(self, conn) -> None:
+    default_plans = [
+        ("يوم", "باقة يوم واحد", 5, 1, 1, 50),
+        ("أسبوع", "باقة 7 أيام", 25, 7, 3, 300),
+        ("شهر", "باقة 30 يوم", 75, 30, 10, 1500),
+        ("3 أشهر", "باقة 90 يوم", 200, 90, 999, 99999),
+    ]
+    for name, desc, price, days, max_ch, max_p in default_plans:
+        await conn.execute(
+            "INSERT OR IGNORE INTO plans (name, description, price, duration_days, max_channels, max_posts) VALUES (?,?,?,?,?,?)",
+            (name, desc, price, days, max_ch, max_p)
+        )
+    await conn.commit()
+
+async def _import_banned_words(self, conn) -> None:
+    try:
+        from banned_words import BANNED_WORDS
+        for word in BANNED_WORDS:
             await conn.execute(
-                "INSERT OR IGNORE INTO plans (name, description, price, duration_days, max_channels, max_posts) VALUES (?,?,?,?,?,?)",
-                (name, desc, price, days, max_ch, max_p)
+                "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)",
+                (word.strip().lower(), -1, CONFIG.PRIMARY_OWNER_ID, TimeUtils.utc_iso())
             )
-        await conn.commit()
+        logger.info(f"✅ تم استيراد {len(BANNED_WORDS)} كلمة محظورة")
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.error(f"❌ استيراد الكلمات: {e}")
 
-    async def _import_banned_words(self, conn) -> None:
-        try:
-            from banned_words import BANNED_WORDS
-            for word in BANNED_WORDS:
-                await conn.execute(
-                    "INSERT OR IGNORE INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)",
-                    (word.strip().lower(), -1, CONFIG.PRIMARY_OWNER_ID, TimeUtils.utc_iso())
-                )
-            logger.info(f"✅ {len(BANNED_WORDS)} كلمة محظورة")
-        except:
-            pass
+# ========== دوال المستخدمين ==========
 
-    # ========== دوال المستخدمين ==========
-
-    async def register_user(self, user_id: int, username: str = "", first_name: str = "") -> bool:
-        row = await self.fetchone("SELECT user_id FROM users WHERE user_id=?", (user_id,))
-        if row:
-            await self.execute("UPDATE users SET username=?, first_name=?, updated_at=? WHERE user_id=?",
-                               (username, first_name, TimeUtils.utc_iso(), user_id))
-            return True
-        code = secrets.token_urlsafe(6)
+async def register_user(self, user_id: int, username: str = "", first_name: str = "") -> bool:
+    row = await self.fetchone("SELECT user_id FROM users WHERE user_id=?", (user_id,))
+    if row:
         await self.execute(
-            "INSERT INTO users (user_id, username, first_name, referral_code, trial_used, created_at, updated_at) VALUES (?,?,?,?,0,?,?)",
-            (user_id, username, first_name, code, TimeUtils.utc_iso(), TimeUtils.utc_iso())
+            "UPDATE users SET username=?, first_name=?, updated_at=? WHERE user_id=?",
+            (username, first_name, TimeUtils.utc_iso(), user_id)
         )
         return True
+    code = secrets.token_urlsafe(6)
+    await self.execute(
+        "INSERT INTO users (user_id, username, first_name, referral_code, trial_used, created_at, updated_at) VALUES (?,?,?,?,0,?,?)",
+        (user_id, username, first_name, code, TimeUtils.utc_iso(), TimeUtils.utc_iso())
+    )
+    return True
 
-    async def get_user(self, user_id: int) -> Optional[Dict]:
-        row = await self.fetchone("SELECT * FROM users WHERE user_id=?", (user_id,))
-        return dict(row) if row else None
+async def get_user(self, user_id: int) -> Optional[Dict]:
+    row = await self.fetchone("SELECT * FROM users WHERE user_id=?", (user_id,))
+    return dict(row) if row else None
 
-    async def get_user_language(self, user_id: int) -> str:
-        row = await self.fetchone("SELECT language FROM users WHERE user_id=?", (user_id,))
-        return row[0] if row else 'ar'
+async def get_user_language(self, user_id: int) -> str:
+    row = await self.fetchone("SELECT language FROM users WHERE user_id=?", (user_id,))
+    return row[0] if row else 'ar'
 
-    async def set_user_language(self, user_id: int, lang: str) -> None:
-        await self.execute("UPDATE users SET language=? WHERE user_id=?", (lang, user_id))
+async def set_user_language(self, user_id: int, lang: str) -> None:
+    await self.execute("UPDATE users SET language=? WHERE user_id=?", (lang, user_id))
 
-    async def get_auto_publish_status(self, user_id: int) -> bool:
-        row = await self.fetchone("SELECT auto_publish FROM users WHERE user_id=?", (user_id,))
-        return row[0] == 1 if row else True
+async def get_auto_publish_status(self, user_id: int) -> bool:
+    row = await self.fetchone("SELECT auto_publish FROM users WHERE user_id=?", (user_id,))
+    return row[0] == 1 if row else True
 
-    async def set_auto_publish(self, user_id: int, status: bool) -> None:
-        await self.execute("UPDATE users SET auto_publish=? WHERE user_id=?", (1 if status else 0, user_id))
+async def set_auto_publish(self, user_id: int, status: bool) -> None:
+    await self.execute("UPDATE users SET auto_publish=? WHERE user_id=?", (1 if status else 0, user_id))
 
-    async def get_auto_recycle_status(self, user_id: int) -> bool:
-        row = await self.fetchone("SELECT auto_recycle FROM users WHERE user_id=?", (user_id,))
-        return row[0] == 1 if row else True
+async def get_auto_recycle_status(self, user_id: int) -> bool:
+    row = await self.fetchone("SELECT auto_recycle FROM users WHERE user_id=?", (user_id,))
+    return row[0] == 1 if row else True
 
-    async def set_auto_recycle(self, user_id: int, status: bool) -> None:
-        await self.execute("UPDATE users SET auto_recycle=? WHERE user_id=?", (1 if status else 0, user_id))
+async def set_auto_recycle(self, user_id: int, status: bool) -> None:
+    await self.execute("UPDATE users SET auto_recycle=? WHERE user_id=?", (1 if status else 0, user_id))
 
-    async def is_user_banned(self, user_id: int) -> bool:
-        row = await self.fetchone("SELECT banned FROM users WHERE user_id=?", (user_id,))
-        return row[0] == 1 if row else False
+async def is_user_banned(self, user_id: int) -> bool:
+    row = await self.fetchone("SELECT banned FROM users WHERE user_id=?", (user_id,))
+    return row[0] == 1 if row else False
 
-    async def get_all_users(self) -> List[Tuple[int, int]]:
-        rows = await self.fetchall("SELECT user_id, banned FROM users")
-        return [(r[0], r[1]) for r in rows]
+async def get_all_users(self) -> List[Tuple[int, int]]:
+    rows = await self.fetchall("SELECT user_id, banned FROM users")
+    return [(r[0], r[1]) for r in rows]
 
-    async def get_user_stats(self) -> Dict:
-        total = await self.fetchval("SELECT COUNT(*) FROM users") or 0
-        banned = await self.fetchval("SELECT COUNT(*) FROM users WHERE banned=1") or 0
-        return {'users': total, 'banned': banned}
+async def get_user_stats(self) -> Dict:
+    total = await self.fetchval("SELECT COUNT(*) FROM users") or 0
+    banned = await self.fetchval("SELECT COUNT(*) FROM users WHERE banned=1") or 0
+    return {'users': total, 'banned': banned}
 
-    async def has_active_subscription(self, user_id: int) -> bool:
-        row = await self.fetchone("SELECT subscription_end FROM users WHERE user_id=? AND subscription_end > datetime('now')", (user_id,))
-        return row is not None
+async def has_active_subscription(self, user_id: int) -> bool:
+    """التحقق من وجود اشتراك نشط (يدعم صيغة ISO)"""
+    row = await self.fetchone(
+        "SELECT subscription_end FROM users WHERE user_id=?",
+        (user_id,)
+    )
+    if not row or not row[0]:
+        return False
+    try:
+        end_date = datetime.fromisoformat(row[0])
+        return end_date > datetime.now(timezone.utc).replace(tzinfo=None)
+    except:
+        # في حالة فشل الصيغة، نتحقق من أن التاريخ أكبر من الآن بصيغة SQLite
+        return row[0] > TimeUtils.utc_iso()
 
-    async def has_used_trial(self, user_id: int) -> bool:
-        row = await self.fetchone("SELECT trial_used FROM users WHERE user_id=?", (user_id,))
-        return row[0] == 1 if row else False
+async def has_used_trial(self, user_id: int) -> bool:
+    row = await self.fetchone("SELECT trial_used FROM users WHERE user_id=?", (user_id,))
+    return row[0] == 1 if row else False
 
-    async def activate_trial(self, user_id: int) -> int:
-        end_date = (TimeUtils.utc_now() + timedelta(days=30)).isoformat()
-        await self.execute("UPDATE users SET trial_used=1, subscription_end=? WHERE user_id=?", (end_date, user_id))
-        return 30
+async def activate_trial(self, user_id: int) -> int:
+    end_date = (TimeUtils.utc_now() + timedelta(days=30)).isoformat()
+    await self.execute(
+        "UPDATE users SET trial_used=1, subscription_end=? WHERE user_id=?",
+        (end_date, user_id)
+    )
+    return 30
 
-    async def get_referral_code(self, user_id: int) -> str:
-        row = await self.fetchone("SELECT referral_code FROM users WHERE user_id=?", (user_id,))
-        return row[0] if row else f"ref_{user_id}"
+async def get_referral_code(self, user_id: int) -> str:
+    row = await self.fetchone("SELECT referral_code FROM users WHERE user_id=?", (user_id,))
+    return row[0] if row else f"ref_{user_id}"
 
-    async def get_user_by_referral_code(self, code: str) -> Optional[int]:
-        row = await self.fetchone("SELECT user_id FROM users WHERE referral_code=?", (code,))
-        return row[0] if row else None
+async def get_user_by_referral_code(self, code: str) -> Optional[int]:
+    row = await self.fetchone("SELECT user_id FROM users WHERE referral_code=?", (code,))
+    return row[0] if row else None
 
-    # ========== دوال القنوات ==========
+# ========== دوال القنوات ==========
 
-    async def add_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
-        row = await self.fetchone("SELECT id FROM user_channels WHERE user_id=? AND channel_id=?", (user_id, channel_id))
-        if row:
-            return row[0]
-        async with self._get_connection() as conn:
-            cur = await conn.execute(
-                "INSERT INTO user_channels (user_id, channel_id, channel_name, created_at) VALUES (?,?,?,?)",
-                (user_id, channel_id, channel_name, TimeUtils.utc_iso())
-            )
-            ch_db_id = cur.lastrowid
-            await conn.execute(
-                "INSERT OR IGNORE INTO schedule (channel_db_id, next_publish_date) VALUES (?,?)",
-                (ch_db_id, (TimeUtils.utc_now() + timedelta(seconds=720)).isoformat())
-            )
-            await conn.commit()
-            return ch_db_id
+async def add_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
+    row = await self.fetchone(
+        "SELECT id FROM user_channels WHERE user_id=? AND channel_id=?",
+        (user_id, channel_id)
+    )
+    if row:
+        return row[0]
 
-    async def get_user_channels(self, user_id: int) -> List[Dict]:
-        rows = await self.fetchall("SELECT id, channel_id, channel_name, banned FROM user_channels WHERE user_id=? ORDER BY created_at DESC", (user_id,))
-        return [dict(r) for r in rows]
+    async with self._get_connection() as conn:
+        cur = await conn.execute(
+            "INSERT INTO user_channels (user_id, channel_id, channel_name, created_at) VALUES (?,?,?,?)",
+            (user_id, channel_id, channel_name, TimeUtils.utc_iso())
+        )
+        ch_db_id = cur.lastrowid
+        await conn.execute(
+            "INSERT OR IGNORE INTO schedule (channel_db_id, next_publish_date) VALUES (?,?)",
+            (ch_db_id, (TimeUtils.utc_now() + timedelta(seconds=720)).isoformat())
+        )
+        await conn.commit()
+        return ch_db_id
 
-    async def get_active_channel(self, user_id: int) -> Optional[int]:
-        row = await self.fetchone("SELECT active_channel FROM users WHERE user_id=?", (user_id,))
-        if row and row[0]:
-            return row[0]
-        row2 = await self.fetchone("SELECT id FROM user_channels WHERE user_id=? AND banned=0 ORDER BY id LIMIT 1", (user_id,))
-        return row2[0] if row2 else None
+async def get_user_channels(self, user_id: int) -> List[Dict]:
+    rows = await self.fetchall(
+        "SELECT id, channel_id, channel_name, banned FROM user_channels WHERE user_id=? ORDER BY created_at DESC",
+        (user_id,)
+    )
+    return [dict(r) for r in rows]
 
-    async def set_active_channel(self, user_id: int, channel_id: int) -> None:
-        await self.execute("UPDATE users SET active_channel=? WHERE user_id=?", (channel_id, user_id))
+async def get_active_channel(self, user_id: int) -> Optional[int]:
+    row = await self.fetchone("SELECT active_channel FROM users WHERE user_id=?", (user_id,))
+    if row and row[0]:
+        return row[0]
+    row2 = await self.fetchone(
+        "SELECT id FROM user_channels WHERE user_id=? AND banned=0 ORDER BY id LIMIT 1",
+        (user_id,)
+    )
+    return row2[0] if row2 else None
 
-    async def get_channel_info(self, channel_id: int) -> Optional[Dict]:
-        row = await self.fetchone("SELECT * FROM user_channels WHERE id=?", (channel_id,))
-        return dict(row) if row else None
+async def set_active_channel(self, user_id: int, channel_id: int) -> None:
+    await self.execute("UPDATE users SET active_channel=? WHERE user_id=?", (channel_id, user_id))
 
-    async def delete_channel(self, user_id: int, channel_id: int) -> None:
-        await self.execute("DELETE FROM user_channels WHERE id=? AND user_id=?", (channel_id, user_id))
+async def get_channel_info(self, channel_id: int) -> Optional[Dict]:
+    row = await self.fetchone("SELECT * FROM user_channels WHERE id=?", (channel_id,))
+    return dict(row) if row else None
 
-    # ========== دوال المنشورات ==========
+async def delete_channel(self, user_id: int, channel_id: int) -> None:
+    await self.execute("DELETE FROM user_channels WHERE id=? AND user_id=?", (channel_id, user_id))
 
-    async def add_posts(self, channel_id: int, posts: List[Tuple[str, str, str]]) -> int:
-        vals = [(channel_id, (t or "")[:4096], m, f, TimeUtils.utc_iso()) for t, m, f in posts]
-        await self.executemany("INSERT INTO posts (channel_db_id, text, media_type, media_file_id, created_at) VALUES (?,?,?,?,?)", vals)
-        return len(vals)
+# ========== دوال المنشورات ==========
 
-    async def get_unpublished_posts_count(self, channel_id: int) -> int:
-        return await self.fetchval("SELECT COUNT(*) FROM posts WHERE channel_db_id=? AND published=0", (channel_id,)) or 0
+async def add_posts(self, channel_id: int, posts: List[Tuple[str, str, str]]) -> int:
+    vals = [
+        (channel_id, (t or "")[:4096], m, f, TimeUtils.utc_iso())
+        for t, m, f in posts
+    ]
+    await self.executemany(
+        "INSERT INTO posts (channel_db_id, text, media_type, media_file_id, created_at) VALUES (?,?,?,?,?)",
+        vals
+    )
+    return len(vals)
 
-    async def get_next_post(self, channel_id: int) -> Optional[Dict]:
-        row = await self.fetchone("SELECT id, text, media_type, media_file_id FROM posts WHERE channel_db_id=? AND published=0 ORDER BY created_at ASC LIMIT 1", (channel_id,))
-        return dict(row) if row else None
+async def get_unpublished_posts_count(self, channel_id: int) -> int:
+    return await self.fetchval(
+        "SELECT COUNT(*) FROM posts WHERE channel_db_id=? AND published=0",
+        (channel_id,)
+    ) or 0
 
-    async def get_user_posts(self, channel_id: int, limit: int = 10) -> List[Dict]:
-        rows = await self.fetchall("SELECT id, text FROM posts WHERE channel_db_id=? AND published=0 LIMIT ?", (channel_id, limit))
-        return [dict(r) for r in rows]
+async def get_next_post(self, channel_id: int) -> Optional[Dict]:
+    row = await self.fetchone(
+        "SELECT id, text, media_type, media_file_id FROM posts WHERE channel_db_id=? AND published=0 AND (fail_count IS NULL OR fail_count < 3) ORDER BY created_at ASC LIMIT 1",
+        (channel_id,)
+    )
+    return dict(row) if row else None
 
-    async def mark_post_published(self, post_id: int) -> None:
-        await self.execute("UPDATE posts SET published=1, published_at=? WHERE id=?", (TimeUtils.utc_iso(), post_id))
+async def get_user_posts(self, channel_id: int, limit: int = 10) -> List[Dict]:
+    rows = await self.fetchall(
+        "SELECT id, text, media_type, media_file_id FROM posts WHERE channel_db_id=? AND published=0 ORDER BY created_at ASC LIMIT ?",
+        (channel_id, limit)
+    )
+    return [dict(r) for r in rows]
 
-    async def increment_post_fail(self, post_id: int) -> None:
-        await self.execute("UPDATE posts SET fail_count = fail_count + 1 WHERE id=?", (post_id,))
+async def mark_post_published(self, post_id: int) -> None:
+    await self.execute(
+        "UPDATE posts SET published=1, published_at=? WHERE id=?",
+        (TimeUtils.utc_iso(), post_id)
+    )
 
-    async def reset_posts(self, channel_id: int) -> int:
-        await self.execute("UPDATE posts SET published=0 WHERE channel_db_id=?", (channel_id,))
-        return await self.get_unpublished_posts_count(channel_id)
+async def increment_post_fail(self, post_id: int) -> None:
+    await self.execute("UPDATE posts SET fail_count = fail_count + 1 WHERE id=?", (post_id,))
 
-    # ========== دوال المجموعات ==========
+async def reset_posts(self, channel_id: int) -> int:
+    await self.execute("UPDATE posts SET published=0 WHERE channel_db_id=?", (channel_id,))
+    return await self.get_unpublished_posts_count(channel_id)
 
-    async def register_group(self, chat_id: int, chat_name: str, user_id: int, username: str = None) -> None:
-        row = await self.fetchone("SELECT chat_id FROM bot_groups WHERE chat_id=?", (chat_id,))
-        if row:
-            await self.execute(
-                "UPDATE bot_groups SET chat_name=?, username=?, updated_at=? WHERE chat_id=?",
-                (chat_name, username, TimeUtils.utc_iso(), chat_id)
-            )
-        else:
-            await self.execute(
-                "INSERT INTO bot_groups (chat_id, chat_name, username, added_by, added_at) VALUES (?,?,?,?,?)",
-                (chat_id, chat_name, username, user_id, TimeUtils.utc_iso())
-            )
+# ========== دوال المجموعات ==========
 
-    async def get_user_groups(self, user_id: int) -> List[Tuple[int, str, str, int]]:
-        rows = await self.fetchall("""
-            SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned
-            FROM bot_groups bg
-            LEFT JOIN user_groups_link l ON bg.chat_id = l.chat_id AND l.user_id=?
-            LEFT JOIN hidden_owner_groups h ON bg.chat_id = h.chat_id AND h.owner_id=?
-            LEFT JOIN hidden_admins ha ON bg.chat_id = ha.chat_id AND ha.admin_id=?
-            LEFT JOIN group_admins ga ON bg.chat_id = ga.chat_id AND ga.user_id=?
-            WHERE l.user_id IS NOT NULL OR h.owner_id IS NOT NULL OR ha.admin_id IS NOT NULL OR ga.user_id IS NOT NULL
-        """, (user_id, user_id, user_id, user_id))
-        return [(r[0], r[1], r[2] or "", r[3]) for r in rows]
-
-    async def sync_group_admins(self, chat_id: int, admin_ids: List[int]) -> int:
-        await self.execute("DELETE FROM group_admins WHERE chat_id=?", (chat_id,))
-        if admin_ids:
-            await self.executemany(
-                "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?,?)",
-                [(chat_id, aid) for aid in admin_ids]
-            )
-        return len(admin_ids)
-
-    # ========== دوال المخفيين ==========
-
-    async def add_hidden_owner(self, chat_id: int, owner_id: int) -> None:
+async def register_group(self, chat_id: int, chat_name: str, user_id: int, username: str = None) -> None:
+    """تسجيل مجموعة جديدة أو تحديثها"""
+    row = await self.fetchone("SELECT chat_id FROM bot_groups WHERE chat_id=?", (chat_id,))
+    if row:
         await self.execute(
-            "INSERT OR IGNORE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,1)",
-            (chat_id, owner_id)
+            "UPDATE bot_groups SET chat_name=?, username=?, updated_at=? WHERE chat_id=?",
+            (chat_name, username, TimeUtils.utc_iso(), chat_id)
         )
-
-    async def remove_hidden_owner(self, chat_id: int, owner_id: int) -> None:
+    else:
         await self.execute(
-            "DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?",
-            (chat_id, owner_id)
+            "INSERT INTO bot_groups (chat_id, chat_name, username, added_by, added_at) VALUES (?,?,?,?,?)",
+            (chat_id, chat_name, username, user_id, TimeUtils.utc_iso())
         )
 
-    async def get_hidden_owners(self, chat_id: int) -> List[int]:
-        rows = await self.fetchall(
-            "SELECT owner_id FROM hidden_owner_groups WHERE chat_id=?",
-            (chat_id,)
-        )
-        return [r[0] for r in rows]
+async def get_user_groups(self, user_id: int) -> List[Tuple[int, str, str, int]]:
+    """جلب جميع المجموعات المرتبطة بالمستخدم"""
+    rows = await self.fetchall("""
+        SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned
+        FROM bot_groups bg
+        LEFT JOIN user_groups_link l ON bg.chat_id = l.chat_id AND l.user_id=?
+        LEFT JOIN hidden_owner_groups h ON bg.chat_id = h.chat_id AND h.owner_id=?
+        LEFT JOIN hidden_admins ha ON bg.chat_id = ha.chat_id AND ha.admin_id=?
+        LEFT JOIN group_admins ga ON bg.chat_id = ga.chat_id AND ga.user_id=?
+        WHERE l.user_id IS NOT NULL OR h.owner_id IS NOT NULL OR ha.admin_id IS NOT NULL OR ga.user_id IS NOT NULL
+    """, (user_id, user_id, user_id, user_id))
+    return [(r[0], r[1], r[2] or "", r[3]) for r in rows]
 
-    async def is_hidden_owner(self, chat_id: int, user_id: int) -> bool:
-        row = await self.fetchone(
-            "SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?",
-            (chat_id, user_id)
+async def sync_group_admins(self, chat_id: int, admin_ids: List[int]) -> int:
+    """مزامنة مشرفي المجموعة"""
+    await self.execute("DELETE FROM group_admins WHERE chat_id=?", (chat_id,))
+    if admin_ids:
+        await self.executemany(
+            "INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?,?)",
+            [(chat_id, aid) for aid in admin_ids]
         )
-        return row is not None
+    return len(admin_ids)
 
-    async def add_hidden_admin(self, chat_id: int, admin_id: int, added_by: int) -> None:
+# ========== دوال المالك المخفي ==========
+
+async def add_hidden_owner(self, chat_id: int, owner_id: int) -> None:
+    """إضافة مالك مخفي"""
+    await self.execute(
+        "INSERT OR IGNORE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,1)",
+        (chat_id, owner_id)
+    )
+
+async def remove_hidden_owner(self, chat_id: int, owner_id: int) -> None:
+    """إزالة مالك مخفي"""
+    await self.execute(
+        "DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?",
+        (chat_id, owner_id)
+    )
+
+async def get_hidden_owners(self, chat_id: int) -> List[int]:
+    """جلب جميع المالكين المخفيين"""
+    rows = await self.fetchall(
+        "SELECT owner_id FROM hidden_owner_groups WHERE chat_id=?",
+        (chat_id,)
+    )
+    return [r[0] for r in rows]
+
+async def is_hidden_owner(self, chat_id: int, user_id: int) -> bool:
+    """التحقق من مالك مخفي"""
+    row = await self.fetchone(
+        "SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?",
+        (chat_id, user_id)
+    )
+    return row is not None
+
+# ========== دوال المشرف المخفي ==========
+
+async def add_hidden_admin(self, chat_id: int, admin_id: int, added_by: int) -> None:
+    """إضافة مشرف مخفي"""
+    await self.execute(
+        "INSERT OR IGNORE INTO hidden_admins (chat_id, admin_id, added_by, added_at) VALUES (?,?,?,?)",
+        (chat_id, admin_id, added_by, TimeUtils.utc_iso())
+    )
+
+async def remove_hidden_admin(self, chat_id: int, admin_id: int) -> None:
+    """إزالة مشرف مخفي"""
+    await self.execute(
+        "DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?",
+        (chat_id, admin_id)
+    )
+
+async def get_hidden_admins(self, chat_id: int) -> List[Dict]:
+    """جلب جميع المشرفين المخفيين"""
+    rows = await self.fetchall(
+        "SELECT admin_id, added_by, added_at FROM hidden_admins WHERE chat_id=?",
+        (chat_id,)
+    )
+    return [dict(r) for r in rows]
+
+async def is_hidden_admin(self, chat_id: int, user_id: int) -> bool:
+    """التحقق من مشرف مخفي"""
+    row = await self.fetchone(
+        "SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?",
+        (chat_id, user_id)
+    )
+    return row is not None
+
+# ========== دوال الأمان ==========
+
+async def get_security_settings(self, chat_id: int) -> Dict:
+    """جلب إعدادات الأمان (أو إنشائها افتراضياً)"""
+    row = await self.fetchone("SELECT * FROM group_security WHERE chat_id=?", (chat_id,))
+    if row:
+        return dict(row)
+    await self.execute("INSERT INTO group_security (chat_id) VALUES (?)", (chat_id,))
+    row = await self.fetchone("SELECT * FROM group_security WHERE chat_id=?", (chat_id,))
+    return dict(row) if row else {}
+
+async def update_security_settings(self, chat_id: int, **kwargs) -> None:
+    """تحديث إعدادات الأمان"""
+    updates = [f"{k}=?" for k in kwargs]
+    vals = list(kwargs.values()) + [chat_id]
+    await self.execute(
+        f"UPDATE group_security SET {', '.join(updates)} WHERE chat_id=?",
+        vals
+    )
+
+async def get_banned_words(self, chat_id: int) -> List[str]:
+    """جلب الكلمات المحظورة (محلية + عالمية)"""
+    rows = await self.fetchall(
+        "SELECT word FROM banned_words WHERE chat_id=? OR chat_id=-1",
+        (chat_id,)
+    )
+    return [r[0] for r in rows]
+
+async def add_banned_word(self, word: str, chat_id: int, added_by: int) -> Tuple[bool, bool]:
+    """إضافة كلمة محظورة. ترجع (added, exists)"""
+    try:
         await self.execute(
-            "INSERT OR IGNORE INTO hidden_admins (chat_id, admin_id, added_by, added_at) VALUES (?,?,?,?)",
-            (chat_id, admin_id, added_by, TimeUtils.utc_iso())
+            "INSERT INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)",
+            (word.strip().lower(), chat_id, added_by, TimeUtils.utc_iso())
         )
+        return True, False
+    except sqlite3.IntegrityError:
+        return False, True
+    except Exception as e:
+        logger.error(f"❌ add_banned_word: {e}")
+        return False, False
 
-    async def remove_hidden_admin(self, chat_id: int, admin_id: int) -> None:
-        await self.execute(
-            "DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?",
-            (chat_id, admin_id)
-        )
+async def remove_banned_word(self, word: str, chat_id: int) -> None:
+    """حذف كلمة محظورة"""
+    await self.execute(
+        "DELETE FROM banned_words WHERE word=? AND chat_id=?",
+        (word.strip().lower(), chat_id)
+    )
 
-    async def get_hidden_admins(self, chat_id: int) -> List[Dict]:
-        rows = await self.fetchall(
-            "SELECT admin_id, added_by, added_at FROM hidden_admins WHERE chat_id=?",
-            (chat_id,)
-        )
-        return [dict(r) for r in rows]
+async def add_admin_log(self, chat_id: int, admin_id: int, action: str, target_id: int = None, reason: str = "") -> None:
+    """إضافة سجل إداري"""
+    await self.execute(
+        "INSERT INTO admin_logs (chat_id, admin_id, action, target_id, reason, created_at) VALUES (?,?,?,?,?,?)",
+        (chat_id, admin_id, action, target_id, reason, TimeUtils.utc_iso())
+    )
 
-    async def is_hidden_admin(self, chat_id: int, user_id: int) -> bool:
-        row = await self.fetchone(
-            "SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?",
-            (chat_id, user_id)
-        )
-        return row is not None
+async def get_admin_logs(self, chat_id: int, limit: int = 20) -> List[Dict]:
+    """جلب السجلات الإدارية"""
+    rows = await self.fetchall(
+        "SELECT admin_id, action, target_id, reason, created_at FROM admin_logs WHERE chat_id=? ORDER BY id DESC LIMIT ?",
+        (chat_id, limit)
+    )
+    return [dict(r) for r in rows]
 
-    # ========== دوال الأمان ==========
+async def get_user_warnings(self, user_id: int, chat_id: int) -> int:
+    """جلب عدد تحذيرات المستخدم"""
+    row = await self.fetchone(
+        "SELECT warnings FROM user_warnings WHERE user_id=? AND chat_id=?",
+        (user_id, chat_id)
+    )
+    return row[0] if row else 0
 
-    async def get_security_settings(self, chat_id: int) -> Dict:
-        row = await self.fetchone("SELECT * FROM group_security WHERE chat_id=?", (chat_id,))
-        if row:
-            return dict(row)
-        await self.execute("INSERT INTO group_security (chat_id) VALUES (?)", (chat_id,))
-        row = await self.fetchone("SELECT * FROM group_security WHERE chat_id=?", (chat_id,))
-        return dict(row) if row else {}
+async def add_user_warning(self, user_id: int, chat_id: int) -> int:
+    """إضافة تحذير للمستخدم"""
+    await self.execute(
+        "INSERT OR REPLACE INTO user_warnings (user_id, chat_id, warnings) VALUES (?,?,COALESCE((SELECT warnings FROM user_warnings WHERE user_id=? AND chat_id=?),0)+1)",
+        (user_id, chat_id, user_id, chat_id)
+    )
+    return await self.get_user_warnings(user_id, chat_id)
 
-    async def update_security_settings(self, chat_id: int, **kwargs) -> None:
-        updates = [f"{k}=?" for k in kwargs]
-        vals = list(kwargs.values()) + [chat_id]
-        await self.execute(f"UPDATE group_security SET {', '.join(updates)} WHERE chat_id=?", vals)
-
-    async def get_banned_words(self, chat_id: int) -> List[str]:
-        rows = await self.fetchall(
-            "SELECT word FROM banned_words WHERE chat_id=? OR chat_id=-1",
-            (chat_id,)
-        )
-        return [r[0] for r in rows]
-
-    async def add_banned_word(self, word: str, chat_id: int, added_by: int) -> Tuple[bool, bool]:
-        try:
-            await self.execute(
-                "INSERT INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)",
-                (word.lower(), chat_id, added_by, TimeUtils.utc_iso())
-            )
-            return True, False
-        except sqlite3.IntegrityError:
-            return False, True
-
-    async def remove_banned_word(self, word: str, chat_id: int) -> None:
-        await self.execute(
-            "DELETE FROM banned_words WHERE word=? AND chat_id=?",
-            (word.lower(), chat_id)
-        )
-
-    async def add_admin_log(self, chat_id: int, admin_id: int, action: str, target_id: int = None, reason: str = "") -> None:
-        await self.execute(
-            "INSERT INTO admin_logs (chat_id, admin_id, action, target_id, reason, created_at) VALUES (?,?,?,?,?,?)",
-            (chat_id, admin_id, action, target_id, reason, TimeUtils.utc_iso())
-        )
-
-    async def get_admin_logs(self, chat_id: int, limit: int = 20) -> List[Dict]:
-        rows = await self.fetchall(
-            "SELECT admin_id, action, target_id, reason, created_at FROM admin_logs WHERE chat_id=? ORDER BY id DESC LIMIT ?",
-            (chat_id, limit)
-        )
-        return [dict(r) for r in rows]
-
-    async def get_user_warnings(self, user_id: int, chat_id: int) -> int:
-        row = await self.fetchone(
-            "SELECT warnings FROM user_warnings WHERE user_id=? AND chat_id=?",
-            (user_id, chat_id)
-        )
-        return row[0] if row else 0
-
-    async def add_user_warning(self, user_id: int, chat_id: int) -> int:
-        await self.execute(
-            "INSERT OR REPLACE INTO user_warnings (user_id, chat_id, warnings) VALUES (?,?,COALESCE((SELECT warnings FROM user_warnings WHERE user_id=? AND chat_id=?),0)+1)",
-            (user_id, chat_id, user_id, chat_id)
-        )
-        return await self.get_user_warnings(user_id, chat_id)
-
-    async def reset_user_warnings(self, user_id: int, chat_id: int) -> None:
-        await self.execute(
-            "UPDATE user_warnings SET warnings=0 WHERE user_id=? AND chat_id=?",
-            (user_id, chat_id)
-        )
+async def reset_user_warnings(self, user_id: int, chat_id: int) -> None:
+    """إعادة تعيين تحذيرات المستخدم"""
+    await self.execute(
+        "UPDATE user_warnings SET warnings=0 WHERE user_id=? AND chat_id=?",
+        (user_id, chat_id)
+    )
 
     # ========== دوال الردود التلقائية ==========
 
     async def get_auto_reply_settings(self, chat_id: int) -> Dict:
+        """جلب إعدادات الردود التلقائية (أو إنشائها)"""
         row = await self.fetchone("SELECT * FROM auto_reply_settings WHERE chat_id=?", (chat_id,))
         if row:
             return dict(row)
@@ -774,30 +850,49 @@ class Database:
         return {'enabled': 0, 'only_admins': 0, 'ignore_bots': 1}
 
     async def update_auto_reply_settings(self, chat_id: int, **kwargs) -> None:
+        """تحديث إعدادات الردود التلقائية"""
         updates = [f"{k}=?" for k in kwargs]
         vals = list(kwargs.values()) + [chat_id]
-        await self.execute(f"UPDATE auto_reply_settings SET {', '.join(updates)} WHERE chat_id=?", vals)
+        await self.execute(
+            f"UPDATE auto_reply_settings SET {', '.join(updates)} WHERE chat_id=?",
+            vals
+        )
 
     async def add_auto_reply(self, chat_id: int, keyword: str, reply: str) -> None:
+        """إضافة رد تلقائي"""
         await self.execute(
             "INSERT OR REPLACE INTO auto_replies (chat_id, keyword, reply, created_at) VALUES (?,?,?,?)",
-            (chat_id, keyword.lower(), reply, TimeUtils.utc_iso())
+            (chat_id, keyword.lower().strip(), reply, TimeUtils.utc_iso())
         )
 
     async def remove_auto_reply(self, chat_id: int, keyword: str) -> None:
+        """حذف رد تلقائي"""
         await self.execute(
             "DELETE FROM auto_replies WHERE chat_id=? AND keyword=?",
-            (chat_id, keyword.lower())
+            (chat_id, keyword.lower().strip())
         )
 
     async def get_auto_reply(self, keyword: str, chat_id: int) -> Optional[Dict]:
+        """جلب رد تلقائي محلي أو عالمي"""
+        keyword = keyword.lower().strip()
         row = await self.fetchone(
             "SELECT reply FROM auto_replies WHERE chat_id=? AND keyword=? AND is_active=1",
-            (chat_id, keyword.lower())
+            (chat_id, keyword)
+        )
+        if row:
+            await self.execute(
+                "UPDATE auto_replies SET usage_count = usage_count + 1 WHERE chat_id=? AND keyword=?",
+                (chat_id, keyword)
+            )
+            return dict(row)
+        row = await self.fetchone(
+            "SELECT reply FROM auto_replies WHERE chat_id=-1 AND keyword=? AND is_active=1",
+            (keyword,)
         )
         return dict(row) if row else None
 
     async def get_auto_reply_stats(self, chat_id: int, limit: int = 20) -> List[Tuple[str, int]]:
+        """جلب إحصائيات الردود"""
         rows = await self.fetchall(
             "SELECT keyword, usage_count FROM auto_replies WHERE chat_id=? ORDER BY usage_count DESC LIMIT ?",
             (chat_id, limit)
@@ -805,12 +900,16 @@ class Database:
         return [(r[0], r[1]) for r in rows]
 
     async def reset_auto_replies(self, chat_id: int) -> None:
+        """حذف جميع الردود التلقائية لمجموعة"""
         await self.execute("DELETE FROM auto_replies WHERE chat_id=?", (chat_id,))
 
     # ========== دوال التذاكر ==========
 
     async def create_ticket(self, user_id: int, username: str, message: str) -> int:
-        next_num = (await self.fetchval("SELECT COALESCE(MAX(ticket_number), 0) + 1 FROM support_tickets")) or 1
+        """إنشاء تذكرة دعم"""
+        next_num = (await self.fetchval(
+            "SELECT COALESCE(MAX(ticket_number), 0) + 1 FROM support_tickets"
+        )) or 1
         await self.execute(
             "INSERT INTO support_tickets (user_id, username, message, ticket_number, created_at) VALUES (?,?,?,?,?)",
             (user_id, username, message, next_num, TimeUtils.utc_iso())
@@ -818,17 +917,22 @@ class Database:
         return next_num
 
     async def get_tickets(self) -> List[Dict]:
+        """جلب التذاكر المفتوحة"""
         rows = await self.fetchall(
             "SELECT * FROM support_tickets WHERE status='pending' ORDER BY created_at DESC"
         )
         return [dict(r) for r in rows]
 
     async def delete_all_tickets(self) -> None:
+        """حذف جميع التذاكر"""
         await self.execute("DELETE FROM support_tickets")
 
     # ========== دوال الإحالات ==========
 
     async def add_referral(self, referrer_id: int, referred_id: int) -> bool:
+        """إضافة إحالة"""
+        if referrer_id == referred_id:
+            return False
         try:
             await self.execute(
                 "INSERT INTO referrals (referrer_id, referred_id, created_at) VALUES (?,?,?)",
@@ -843,12 +947,14 @@ class Database:
             return False
 
     async def get_referral_stats(self, user_id: int) -> Dict:
+        """جلب إحصائيات الإحالات"""
         total = await self.fetchval("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,)) or 0
         claimed = await self.fetchval("SELECT claimed_reward_days FROM referral_rewards WHERE user_id=?", (user_id,)) or 0
         available = await self.fetchval("SELECT total_reward_days - claimed_reward_days FROM referral_rewards WHERE user_id=?", (user_id,)) or 0
         return {'total': total, 'claimed': claimed, 'available': max(0, available)}
 
     async def claim_referral_reward(self, user_id: int) -> int:
+        """صرف مكافأة الإحالة"""
         stats = await self.get_referral_stats(user_id)
         av = stats['available']
         if av <= 0:
@@ -857,9 +963,22 @@ class Database:
             "UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?",
             (av, user_id)
         )
+        # إضافة أيام للاشتراك
+        row = await self.fetchone("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
+        if row and row[0]:
+            try:
+                cur_end = datetime.fromisoformat(row[0])
+                new_end = cur_end + timedelta(days=av)
+                await self.execute(
+                    "UPDATE users SET subscription_end=? WHERE user_id=?",
+                    (new_end.isoformat(), user_id)
+                )
+            except:
+                pass
         return av
 
     async def get_referrals_list(self, user_id: int) -> List[int]:
+        """جلب قائمة المُحالين"""
         rows = await self.fetchall(
             "SELECT referred_id FROM referrals WHERE referrer_id=? ORDER BY created_at DESC",
             (user_id,)
@@ -869,20 +988,31 @@ class Database:
     # ========== دوال التذكيرات ==========
 
     async def get_reminder_settings(self, user_id: int) -> Dict:
+        """جلب إعدادات التذكيرات"""
         row = await self.fetchone("SELECT * FROM user_reminder_settings WHERE user_id=?", (user_id,))
         if row:
             return dict(row)
         await self.execute("INSERT INTO user_reminder_settings (user_id) VALUES (?)", (user_id,))
-        return {'subscription_reminder': 1, 'daily_stats_reminder': 0, 'weekly_report': 1, 'reminder_days_before': 3}
+        return {
+            'subscription_reminder': 1,
+            'daily_stats_reminder': 0,
+            'weekly_report': 1,
+            'reminder_days_before': 3
+        }
 
     async def update_reminder_settings(self, user_id: int, **kwargs) -> None:
+        """تحديث إعدادات التذكيرات"""
         updates = [f"{k}=?" for k in kwargs]
         vals = list(kwargs.values()) + [user_id]
-        await self.execute(f"UPDATE user_reminder_settings SET {', '.join(updates)} WHERE user_id=?", vals)
+        await self.execute(
+            f"UPDATE user_reminder_settings SET {', '.join(updates)} WHERE user_id=?",
+            vals
+        )
 
     # ========== دوال المسابقات ==========
 
     async def create_contest(self, creator_id: int, title: str, description: str, prize: str, end_date: str) -> int:
+        """إنشاء مسابقة"""
         async with self._get_connection() as conn:
             cur = await conn.execute(
                 "INSERT INTO contests (creator_id, title, description, prize, end_date, created_at) VALUES (?,?,?,?,?,?)",
@@ -892,13 +1022,15 @@ class Database:
             return cur.lastrowid
 
     async def get_active_contests(self, limit: int = 10) -> List[Dict]:
+        """جلب المسابقات النشطة"""
         rows = await self.fetchall(
-            "SELECT * FROM contests WHERE status='active' AND end_date > datetime('now') LIMIT ?",
+            "SELECT * FROM contests WHERE status='active' AND end_date > datetime('now') ORDER BY end_date ASC LIMIT ?",
             (limit,)
         )
         return [dict(r) for r in rows]
 
     async def join_contest(self, contest_id: int, user_id: int, answer: str = "") -> bool:
+        """المشاركة في مسابقة"""
         try:
             await self.execute(
                 "INSERT INTO contest_participants (contest_id, user_id, answer, joined_at) VALUES (?,?,?,?)",
@@ -909,6 +1041,7 @@ class Database:
             return False
 
     async def declare_winner(self, contest_id: int, winner_id: int) -> None:
+        """إعلان الفائز"""
         await self.execute(
             "UPDATE contests SET status='closed', winner_id=? WHERE id=?",
             (winner_id, contest_id)
@@ -919,6 +1052,7 @@ class Database:
         )
 
     async def get_contest_winners(self, limit: int = 10) -> List[Dict]:
+        """جلب الفائزين"""
         rows = await self.fetchall(
             "SELECT c.title, c.winner_id, cw.announced_at FROM contest_winners cw JOIN contests c ON cw.contest_id=c.id ORDER BY cw.announced_at DESC LIMIT ?",
             (limit,)
@@ -926,16 +1060,19 @@ class Database:
         return [dict(r) for r in rows]
 
     async def delete_contest(self, contest_id: int, user_id: int) -> None:
+        """حذف مسابقة"""
         await self.execute("DELETE FROM contest_participants WHERE contest_id=?", (contest_id,))
         await self.execute("DELETE FROM contests WHERE id=? AND creator_id=?", (contest_id, user_id))
 
-    # ========== دوال الإعدادات ==========
+    # ========== دوال الإعدادات العامة ==========
 
     async def get_setting(self, key: str, default: str = None) -> Optional[str]:
+        """جلب إعداد"""
         row = await self.fetchone("SELECT value FROM settings WHERE key=?", (key,))
         return row[0] if row else default
 
     async def set_setting(self, key: str, value: str) -> None:
+        """تعيين إعداد"""
         await self.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, value))
 
     async def get_force_subscribe_channel(self) -> Optional[str]:
@@ -949,7 +1086,10 @@ class Database:
 
     async def get_publish_interval(self) -> int:
         v = await self.get_setting('publish_interval', '720')
-        return int(v) if v else 720
+        try:
+            return int(v)
+        except:
+            return 720
 
     async def get_auto_backup(self) -> bool:
         v = await self.get_setting('auto_backup', '1')
@@ -970,6 +1110,7 @@ class Database:
         return [dict(r) for r in rows]
 
     async def create_subscription(self, user_id: int, plan_id: int) -> None:
+        """إنشاء اشتراك جديد"""
         plan = await self.get_plan_by_id(plan_id)
         if not plan:
             return
@@ -978,9 +1119,13 @@ class Database:
             "INSERT INTO subscriptions (user_id, plan_id, start_date, end_date, created_at) VALUES (?,?,?,?,?)",
             (user_id, plan_id, TimeUtils.utc_iso(), end, TimeUtils.utc_iso())
         )
-        await self.execute("UPDATE users SET subscription_end=? WHERE user_id=?", (end, user_id))
+        await self.execute(
+            "UPDATE users SET subscription_end=? WHERE user_id=?",
+            (end, user_id)
+        )
 
     async def get_active_subscription(self, user_id: int) -> Optional[Dict]:
+        """جلب الاشتراك النشط"""
         row = await self.fetchone(
             "SELECT * FROM subscriptions WHERE user_id=? AND status='active' AND end_date > datetime('now') ORDER BY end_date DESC LIMIT 1",
             (user_id,)
@@ -988,6 +1133,7 @@ class Database:
         return dict(row) if row else None
 
     async def expire_expired_subscriptions(self) -> None:
+        """تحديث الاشتراكات المنتهية"""
         await self.execute(
             "UPDATE subscriptions SET status='expired' WHERE status='active' AND end_date < datetime('now')"
         )
@@ -995,6 +1141,7 @@ class Database:
     # ========== دوال الفواتير ==========
 
     async def create_invoice(self, user_id: int, plan_id: int, amount: int) -> str:
+        """إنشاء فاتورة"""
         number = f"INV-{TimeUtils.utc_now().strftime('%Y%m')}-{secrets.token_hex(4).upper()}"
         await self.execute(
             "INSERT INTO invoices (number, user_id, plan_id, amount, created_at) VALUES (?,?,?,?,?)",
@@ -1003,6 +1150,7 @@ class Database:
         return number
 
     async def get_user_invoices(self, user_id: int, limit: int = 10) -> List[Dict]:
+        """جلب فواتير المستخدم"""
         rows = await self.fetchall(
             "SELECT * FROM invoices WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
             (user_id, limit)
