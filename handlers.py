@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة النهائية المُعدَّلة)
+handlers.py - جميع معالجات البوت (النسخة النهائية المُصحَّحة)
 ============================================================
-- CommandHandlers: جميع الأوامر
-- CallbackHandlers: جميع الأزرار (مُحسَّن باستخدام القاموس)
+- CommandHandlers: جميع الأوامر (مع دعم المشرف المخفي)
+- CallbackHandlers: جميع الأزرار (مع إصلاح كلمات محظورة وتشغيل/إيقاف الردود)
 - MessageHandlers: جميع الرسائل والحالات
 """
 
@@ -37,7 +37,7 @@ from utils import (
     KeyboardFactory, TranslationManager, CB,
     _auto_reply_cache, export_auto_replies, import_auto_replies,
     fetch_json_from_url, _increment_usage_async, get_ram_usage,
-    get_reply_from_file
+    get_reply_from_file, load_replies_from_file, reload_replies_from_file
 )
 
 logger = logging.getLogger(__name__)
@@ -399,6 +399,11 @@ class CommandHandlers:
         chat_name = update.effective_chat.title or "بدون اسم"
         user_id = update.effective_user.id
 
+        # ✅ منع البوتات من استخدام الأمر
+        if update.effective_user.is_bot:
+            await safe_send(context.bot, chat_id, "❌ البوتات لا تستطيع استخدام هذا الأمر")
+            return
+
         if user_id < 0:
             await safe_send(context.bot, chat_id, "❌ البوتات لا تستطيع")
             return
@@ -469,7 +474,15 @@ class CommandHandlers:
         msg += f"{'👻 مخفي' if is_anonymous else '👤 مشرف'}: `{user_id}`\n"
         msg += f"👥 {admin_count} مشرف"
 
-        await safe_send(context.bot, user_id, msg)
+        # ✅ إرسال الرسالة بشكل آمن (مع منع إرسال لبوت)
+        try:
+            await safe_send(context.bot, user_id, msg)
+        except BadRequest as e:
+            if "User_bot_to_bot_disabled" in str(e):
+                await safe_send(context.bot, chat_id, msg)
+            else:
+                raise
+
         await safe_send(context.bot, chat_id, "🤖 **تم تفعيل البوت!**")
 
     # ========== أوامر الإشراف ==========
@@ -1643,7 +1656,7 @@ class CallbackHandlers:
         else:
             await query.answer("⚠️ غير متوفر", show_alert=True)
 
-    # -------- معالج الردود التلقائية --------
+    # -------- معالج الردود التلقائية (مُحسَّن مع عرض الحالة) --------
 
     @staticmethod
     async def _handle_auto_reply(update, context, query, user_id):
@@ -1661,86 +1674,83 @@ class CallbackHandlers:
             await query.answer("❌ لا صلاحية", show_alert=True)
             return
 
+        settings = await DB.get_auto_reply_settings(chat_id)
+        current_enabled = settings.get('enabled', False)
+
+        # ✅ تبديل الحالة
         if action == "toggle":
-            s = await DB.get_auto_reply_settings(chat_id)
-            await DB.update_auto_reply_settings(chat_id, enabled=not s.get('enabled', False))
+            new_enabled = not current_enabled
+            await DB.update_auto_reply_settings(chat_id, enabled=new_enabled)
             _auto_reply_cache.invalidate()
-            await query.answer("✅ تم")
+
+            status_text = "✅ **تم تفعيل الردود التلقائية!**" if new_enabled else "❌ **تم تعطيل الردود التلقائية!**"
+            await query.edit_message_text(
+                status_text,
+                reply_markup=KeyboardFactory.build("auto_reply_manage", chat_id)
+            )
+            await query.answer()
             return
 
+        # ✅ عرض القائمة مع الحالة
+        if action == "menu":
+            status_icon = "🟢" if current_enabled else "🔴"
+            status_text = "مفعل" if current_enabled else "معطل"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"{status_icon} الحالة: {status_text}", callback_data="status_only")],
+                [InlineKeyboardButton(
+                    f"🔄 {'إيقاف' if current_enabled else 'تشغيل'} الردود",
+                    callback_data=f"auto_reply_toggle:{chat_id}"
+                )],
+                [InlineKeyboardButton("👤 للمشرفين فقط", callback_data=f"auto_reply_admins:{chat_id}")],
+                [InlineKeyboardButton("➕ إضافة رد", callback_data=f"auto_reply_add:{chat_id}"),
+                 InlineKeyboardButton("🗑️ حذف رد", callback_data=f"auto_reply_del:{chat_id}")],
+                [InlineKeyboardButton("📋 قائمة الردود", callback_data=f"auto_reply_list:{chat_id}"),
+                 InlineKeyboardButton("📊 إحصائيات", callback_data=f"auto_reply_stats:{chat_id}")],
+                [InlineKeyboardButton("🗑️ حذف الكل", callback_data=f"auto_reply_reset:{chat_id}")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data=f"sec_close")]
+            ])
+            await query.edit_message_text("📝 **إدارة الردود التلقائية**", reply_markup=kb)
+            return
+
+        # ✅ باقي الأزرار
         if action == "admins":
-            s = await DB.get_auto_reply_settings(chat_id)
-            await DB.update_auto_reply_settings(chat_id, only_admins=not s.get('only_admins', False))
+            await DB.update_auto_reply_settings(chat_id, only_admins=not settings.get('only_admins', False))
             await query.answer("✅ تم")
+            await CallbackHandlers._handle_auto_reply(update, context, query, user_id)
             return
 
         if action == "reset":
             await DB.reset_auto_replies(chat_id)
             _auto_reply_cache.invalidate()
-            await query.answer("✅ تم الحذف")
+            await query.answer("✅ تم حذف جميع الردود")
+            await CallbackHandlers._handle_auto_reply(update, context, query, user_id)
             return
 
         if action == "add":
             StateManager.set(user_id, UserState.WAIT_AUTO_KEY)
             context.user_data['auto_chat'] = chat_id
-            await query.edit_message_text("📝 أرسل الكلمة:")
+            await query.edit_message_text("📝 أرسل الكلمة المفتاحية:")
             return
 
         if action == "del":
             StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
             context.user_data['auto_chat'] = chat_id
-            await query.edit_message_text("🗑️ أرسل الكلمة:")
+            await query.edit_message_text("🗑️ أرسل الكلمة لحذفها:")
             return
 
         if action == "stats":
             rows = await DB.fetchall("SELECT keyword, usage_count FROM auto_replies WHERE chat_id=? LIMIT 10", (chat_id,))
-            text = "📊 **الإحصائيات**\n\n" + "\n".join(f"• {r[0]}: {r[1]}" for r in rows)
-            await query.edit_message_text(text if rows else "📭 لا يوجد")
+            text = "📊 **الإحصائيات**\n\n" + "\n".join(f"• {r[0]}: {r[1]}" for r in rows) if rows else "📭 لا يوجد"
+            await query.edit_message_text(text)
             return
 
         if action == "list":
             rows = await DB.fetchall("SELECT keyword FROM auto_replies WHERE chat_id=? LIMIT 20", (chat_id,))
-            text = "📋 **الردود**\n\n" + "\n".join(f"• {r[0]}" for r in rows)
-            await query.edit_message_text(text if rows else "📭 لا يوجد")
-            return
-
-        if action == "menu":
-            kb = KeyboardFactory.build("auto_reply_manage", chat_id)
-            await query.edit_message_text("📝 الردود:", reply_markup=kb)
+            text = "📋 **الردود**\n\n" + "\n".join(f"• {r[0]}" for r in rows) if rows else "📭 لا يوجد"
+            await query.edit_message_text(text)
             return
 
         await query.answer()
-
-    # -------- معالج الجدولة --------
-
-    @staticmethod
-    async def _handle_schedule(update, context, query, user_id):
-        data = query.data
-        parts = data.split(":")
-        if len(parts) < 2:
-            return
-        action = parts[0].replace("sched_", "")
-        try:
-            ch_id = int(parts[1])
-        except:
-            return
-
-        if action == "min":
-            StateManager.set(user_id, UserState.WAIT_MIN)
-            context.user_data['schedule_ch'] = ch_id
-            await query.edit_message_text("📅 أرسل عدد الدقائق (1-1440):")
-        elif action == "hour":
-            StateManager.set(user_id, UserState.WAIT_HOUR)
-            context.user_data['schedule_ch'] = ch_id
-            await query.edit_message_text("📅 أرسل عدد الساعات (1-168):")
-        elif action == "day":
-            StateManager.set(user_id, UserState.WAIT_DAY)
-            context.user_data['schedule_ch'] = ch_id
-            await query.edit_message_text("📅 أرسل عدد الأيام (1-365):")
-        elif action == "time":
-            StateManager.set(user_id, UserState.WAIT_PUB_TIME)
-            context.user_data['schedule_ch'] = ch_id
-            await query.edit_message_text("🕐 أرسل وقت النشر (HH:MM):")
 
     # -------- معالج الكلمات المحظورة --------
 
@@ -1774,6 +1784,37 @@ class CallbackHandlers:
             StateManager.set(user_id, UserState.WAIT_REM_GROUP_BAN)
             context.user_data['ban_chat'] = chat_id
             await query.edit_message_text("🗑️ أرسل الكلمة لحذفها:")
+
+    # -------- معالج الجدولة --------
+
+    @staticmethod
+    async def _handle_schedule(update, context, query, user_id):
+        data = query.data
+        parts = data.split(":")
+        if len(parts) < 2:
+            return
+        action = parts[0].replace("sched_", "")
+        try:
+            ch_id = int(parts[1])
+        except:
+            return
+
+        if action == "min":
+            StateManager.set(user_id, UserState.WAIT_MIN)
+            context.user_data['schedule_ch'] = ch_id
+            await query.edit_message_text("📅 أرسل عدد الدقائق (1-1440):")
+        elif action == "hour":
+            StateManager.set(user_id, UserState.WAIT_HOUR)
+            context.user_data['schedule_ch'] = ch_id
+            await query.edit_message_text("📅 أرسل عدد الساعات (1-168):")
+        elif action == "day":
+            StateManager.set(user_id, UserState.WAIT_DAY)
+            context.user_data['schedule_ch'] = ch_id
+            await query.edit_message_text("📅 أرسل عدد الأيام (1-365):")
+        elif action == "time":
+            StateManager.set(user_id, UserState.WAIT_PUB_TIME)
+            context.user_data['schedule_ch'] = ch_id
+            await query.edit_message_text("🕐 أرسل وقت النشر (HH:MM):")
 
     # -------- معالج الإجراءات المتقدمة --------
 
