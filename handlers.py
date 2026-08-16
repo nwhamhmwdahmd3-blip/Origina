@@ -399,15 +399,6 @@ class CommandHandlers:
         chat_name = update.effective_chat.title or "بدون اسم"
         user_id = update.effective_user.id
 
-        # ✅ منع البوتات من استخدام الأمر
-        if update.effective_user.is_bot:
-            await safe_send(context.bot, chat_id, "❌ البوتات لا تستطيع استخدام هذا الأمر")
-            return
-
-        if user_id < 0:
-            await safe_send(context.bot, chat_id, "❌ البوتات لا تستطيع")
-            return
-
         try:
             all_admins = await context.bot.get_chat_administrators(chat_id)
         except Exception as e:
