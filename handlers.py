@@ -127,7 +127,7 @@ class CommandHandlers:
 
         kb = InlineKeyboardMarkup(keyboard)
 
-        # ✅ التعديل: تمرير recycle إلى get_text
+        # ✅ تمرير recycle إلى get_text
         title = await get_text(lang, 'main_menu',
                                user_id=user_id, groups=groups,
                                sub=sub_text, channel=ch_display,
@@ -388,6 +388,8 @@ class CommandHandlers:
             text += f"🛡️ `{a[0]}`\n"
         await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد")
 
+    # ========== تفعيل المجموعة (مع دعم المشرف المخفي) ==========
+
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
@@ -423,6 +425,11 @@ class CommandHandlers:
                 is_admin = True
                 is_anonymous = getattr(admin, 'is_anonymous', False)
                 break
+
+        # ✅ دعم المشرف المخفي (المعرف الوهمي 1087968824)
+        if not is_admin and user_id == CONFIG.ANONYMOUS_ADMIN_ID:
+            is_admin = True
+            is_anonymous = True
 
         if not is_admin:
             await safe_send(context.bot, user_id, "❌ **أنت لست مشرفاً في هذه المجموعة!**")
