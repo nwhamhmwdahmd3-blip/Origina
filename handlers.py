@@ -958,11 +958,34 @@ class CallbackHandlers:
                     ]])
                     await query.edit_message_text("📭 لا توجد مجموعات", reply_markup=kb)
                     return
+
                 text = "👥 **مجموعاتي**\n\n"
-                for gid, name, _, banned in groups:
-                    text += f"{'✅' if not banned else '⛔'} {name}\n"
-                kb = [[InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]]
+                kb = []
+
+                for gid, name, username, banned in groups:
+                    st = "✅" if not banned else "⛔"
+                    text += f"{st} {name}\n"
+                    # زر أمان لكل مجموعة
+                    kb.append([
+                        InlineKeyboardButton(
+                            f"🔐 أمان {name[:15]}",
+                            callback_data=f"{CB.GRP_SET}{gid}"
+                        )
+                    ])
+
+                kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+                return
+
+            if data.startswith(CB.GRP_SET):
+                chat_id = int(data.split(":")[-1])
+                if not await is_authorized_in_group(context.bot, chat_id, user_id):
+                    await query.answer("❌ لا صلاحية", show_alert=True)
+                    return
+                settings = await DB.get_security_settings(chat_id)
+                text = await KeyboardFactory._format_security_text(settings)
+                kb = KeyboardFactory.build("security", chat_id)
+                await query.edit_message_text(text, reply_markup=kb)
                 return
 
             if data == CB.ADMIN:
