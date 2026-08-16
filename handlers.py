@@ -127,7 +127,6 @@ class CommandHandlers:
 
         kb = InlineKeyboardMarkup(keyboard)
 
-        # ✅ تمرير recycle إلى get_text
         title = await get_text(lang, 'main_menu',
                                user_id=user_id, groups=groups,
                                sub=sub_text, channel=ch_display,
@@ -1364,7 +1363,8 @@ class CallbackHandlers:
                 pass
             return
 
-        if action == "banned":
+        # ✅ إصلاح: قبول sec_banned و sec_banned_words
+        if action == "banned" or action == "banned_words":
             kb = KeyboardFactory.build("banned_words", chat_id)
             await query.edit_message_text("🚫 **الكلمات المحظورة**", reply_markup=kb)
             return
