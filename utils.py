@@ -7,6 +7,7 @@ utils.py - الأدوات المساعدة للبوت (نسخة مصححة نه�
 - جميع الإصلاحات الحرجة والمتوسطة مطبقة
 - معالجة الأخطاء بشكل أفضل
 - تحسين الأداء والاستقرار
+- إضافة جميع ثوابت CB المفقودة (ADMIN_DEL_CONTEST, GRP_SET, ...)
 """
 
 import asyncio
@@ -333,10 +334,11 @@ class StateManager:
         cls._timestamps.pop(user_id, None)
 
 # =====================================================================
-# 8. تعريفات الأزرار
+# 8. تعريفات الأزرار (CB) - مُحدثة ومتكاملة
 # =====================================================================
 
 class CB:
+    # الأزرار الأساسية
     MAIN = "main"
     BACK = "back"
     CANCEL = "cancel"
@@ -344,11 +346,15 @@ class CB:
     SETTINGS = "settings"
     LANGUAGE = "language"
     CHECK_SUB = "check_sub"
+
+    # القنوات
     CH_ADD = "ch_add"
     CH_LIST = "ch_list"
-    CH_DEL = "ch_del:"
     CH_SEL = "ch_sel:"
+    CH_DEL = "ch_del:"
     CH_STATS = "ch_stats:"
+
+    # المنشورات
     POST_ADD = "post_add"
     POST_PUB = "post_pub"
     POST_LIST = "post_list"
@@ -356,19 +362,33 @@ class CB:
     POST_DEL = "post_del:"
     POST_CLEAR = "post_clear:"
     PUB_ALL = "pub_all"
-    STATS_PEND = "stats_pend"
-    STATS_FULL = "stats_full"
+
+    # المجموعات
     GROUPS = "groups"
     GRP_SET = "grp_set:"
+
+    # الإعدادات
     TOGGLE_AUTO = "toggle_auto"
     TOGGLE_REC = "toggle_rec"
+
+    # الأمان
     SEC_CLOSE = "sec_close"
     SEC_ENABLE_ALL = "sec_enable_all:"
     SEC_DISABLE_ALL = "sec_disable_all:"
+
+    # الكلمات المحظورة
     BAN_ADD = "ban_add:"
     BAN_LIST = "ban_list:"
     BAN_REM = "ban_rem:"
+
+    # العقوبات
     PENALTY = "penalty:"
+    PEN_BAN = "pen_ban:"
+    PEN_MUTE = "pen_mute:"
+    PEN_KICK = "pen_kick:"
+    PEN_WARN = "pen_warn:"
+
+    # الإجراءات المتقدمة
     ADV_ACT = "adv_act:"
     ACT_BAN = "act_ban:"
     ACT_MUTE = "act_mute:"
@@ -378,33 +398,50 @@ class CB:
     ACT_PIN = "act_pin:"
     ACT_LOG = "act_log:"
     ACT_UNBAN = "act_unban:"
+
+    # لوحة المجموعة
     PANEL_LOCK = "panel_lock:"
     PANEL_UNLOCK = "panel_unlock:"
     PANEL_CLOSE = "panel_close"
+
+    # الدعم
     SUPPORT = "support"
     SUPPORT_TICKET = "support_ticket"
+
+    # الباقات والاشتراكات
     TRIAL = "trial"
     SUBSCRIBE = "subscribe"
     PLANS = "plans"
     INVOICES = "invoices"
+
+    # المطور
     DEVELOPER = "developer"
+
+    # الإحالات
     REFERRAL = "referral"
     REF_CLAIM = "ref_claim"
     REF_LIST = "ref_list"
+
+    # التذكيرات
     REMINDER = "reminder"
     REM_TOGGLE_SUB = "rem_sub"
     REM_TOGGLE_DAILY = "rem_daily"
     REM_TOGGLE_WEEKLY = "rem_weekly"
     REM_SET_DAYS = "rem_days"
-    REM_SET_LANG = "rem_lang"
     REM_LANG = "rem_lang:"
+
+    # الترجمة
     TRANSLATION = "translation"
     TRANS_OFF = "trans_off"
     TRANS_SET = "trans_set:"
+
+    # المسابقات
     CONTESTS = "contests"
     CONTEST_JOIN = "contest_join:"
     CONTEST_WINNERS = "contest_winners"
     DECLARE_WINNER_SEL = "declare_winner_sel:"
+
+    # لوحة الأدمن
     ADMIN = "admin"
     ADMIN_USERS = "admin_users"
     ADMIN_BANNED = "admin_banned"
@@ -443,10 +480,13 @@ class CB:
     ADMIN_REM_BANNED = "admin_rem_banned"
     ADMIN_CREATE_CONTEST = "admin_create_contest"
     ADMIN_DECLARE_WINNER = "admin_declare_winner"
+    ADMIN_DEL_CONTEST = "admin_del_contest:"   # ✅ ثابت جديد
     ADMIN_EXPORT_REPLIES = "admin_export_replies"
     ADMIN_IMPORT_REPLIES = "admin_import_replies"
     ADMIN_REFRESH_CACHE = "admin_refresh_cache"
     ADMIN_IMPORT_GITHUB = "admin_import_github"
+
+    # الردود التلقائية
     AUTO_REPLY_MENU = "auto_reply_menu:"
     AUTO_REPLY_TOGGLE = "auto_reply_toggle:"
     AUTO_REPLY_ADMINS = "auto_reply_admins:"
@@ -616,9 +656,7 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
     try:
         escaped = TextUtils.escape_markdown_v2(original)
         if len(escaped) > 4096:
-            # ✅ محاولة القطع بشكل آمن
             escaped = escaped[:4093]
-            # إذا كان القطع في منتصف هروب، نحذف جزءاً إضافياً
             if escaped.endswith('\\'):
                 escaped = escaped[:-1]
             escaped += "..."
@@ -774,7 +812,6 @@ async def _flush_usage_updates():
             )
     except Exception as e:
         logger.error(f"❌ فشل تحديث usage_count: {e}")
-        # ✅ إعادة البيانات إلى القائمة لعدم فقدانها
         async with _usage_lock:
             for key, count in data:
                 _usage_updates[key] = _usage_updates.get(key, 0) + count
@@ -885,7 +922,6 @@ class BackgroundTasks:
     @staticmethod
     async def auto_publish(bot) -> None:
         await asyncio.sleep(10)
-        # ✅ استخدام قيمة افتراضية إذا كان CONFIG لا يحتوي على MAX_CHANNELS_PER_CYCLE
         max_channels = getattr(CONFIG, 'MAX_CHANNELS_PER_CYCLE', 20)
         while True:
             try:
@@ -949,7 +985,6 @@ class BackgroundTasks:
                         days = int(u['days_left'])
                         lang = u.get('language', 'ar')
                         text = await get_text(lang, 'reminder_subscription_expires', days=days)
-                        # ✅ رسالة احتياطية إذا لم توجد الترجمة
                         if text == 'reminder_subscription_expires':
                             text = f"⚠️ اشتراكك سينتهي بعد {days} يوم"
                         await safe_send(bot, u['user_id'], text)
@@ -967,7 +1002,6 @@ class BackgroundTasks:
                 ram = get_ram_usage()
                 msg = f"💓 **Heartbeat**\n\n🕐 {TimeUtils.mecca_iso()}\n💾 RAM: {ram['percent']}%"
                 log_channel = await DB.get_log_channel()
-                # ✅ التحقق من صحة المعرف
                 try:
                     if log_channel:
                         await safe_send(bot, log_channel, msg)
@@ -1000,7 +1034,6 @@ class BackgroundTasks:
             try:
                 groups = await DB.fetchall("SELECT chat_id FROM bot_groups WHERE banned=0")
                 for group in groups:
-                    # ✅ التعامل مع صفوف aiosqlite.Row أو tuple بشكل آمن
                     if isinstance(group, dict):
                         chat_id = group['chat_id']
                     elif hasattr(group, 'chat_id'):
@@ -1043,7 +1076,6 @@ async def setup_webhook(app, port: int):
 
 async def webhook_handler(request):
     global _webhook_app
-    # ✅ التحقق من وجود _webhook_app و _webhook_app.bot
     if _webhook_app is None or not hasattr(_webhook_app, 'bot'):
         logger.error("❌ Webhook app not initialized")
         return web.Response(status=503, text="Service Unavailable")
@@ -1063,11 +1095,9 @@ class ErrorHandler:
     @staticmethod
     async def handle_error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
-            # ✅ تسجيل معلومات التحديث
             if update:
                 logger.error(f"❌ خطأ في التحديث {update.update_id}: {context.error}", exc_info=True)
             else:
                 logger.error(f"❌ خطأ: {context.error}", exc_info=True)
         except Exception:
             pass
-
