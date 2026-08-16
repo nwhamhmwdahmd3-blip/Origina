@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة النهائية المُصحَّحة)
+handlers.py - جميع معالجات البوت (النسخة النهائية المُصحَّحة بالكامل)
 ============================================================
 - CommandHandlers: جميع الأوامر (مع دعم المشرف المخفي)
 - CallbackHandlers: جميع الأزرار (مع إصلاح كلمات محظورة وتشغيل/إيقاف الردود)
@@ -1301,6 +1301,9 @@ class CallbackHandlers:
         except:
             return
 
+        # ✅ سجلات للتشخيص
+        logger.info(f"🔍 _handle_security تم استدعاؤها مع data: {data}, action: {action}, chat_id: {chat_id}")
+
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             await query.answer("❌ لا صلاحية", show_alert=True)
             return
@@ -1367,16 +1370,20 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ إصلاح: استخدام لوحة مفاتيح مباشرة بدلاً من KeyboardFactory.build
+        # ✅ إصلاح نهائي لزر كلمات محظورة (مع try/except)
         if action == "banned" or action == "banned_words":
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"ban_add:{chat_id}"),
-                 InlineKeyboardButton("📋 قائمة الكلمات", callback_data=f"ban_list:{chat_id}")],
-                [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"ban_rem:{chat_id}")],
-                [InlineKeyboardButton("🔙 رجوع", callback_data=f"sec_close")]
-            ])
-            await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
-            await query.answer()
+            try:
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"ban_add:{chat_id}"),
+                     InlineKeyboardButton("📋 قائمة الكلمات", callback_data=f"ban_list:{chat_id}")],
+                    [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"ban_rem:{chat_id}")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="sec_close")]
+                ])
+                await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
+                await query.answer()
+            except Exception as e:
+                logger.error(f"❌ خطأ في عرض كلمات محظورة: {e}", exc_info=True)
+                await query.answer("❌ حدث خطأ", show_alert=True)
             return
 
         if action == "maxlen":
@@ -2389,3 +2396,4 @@ class MessageHandlers:
                 await join_request.decline()
             except:
                 pass
+
