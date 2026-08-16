@@ -1367,10 +1367,11 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ إصلاح: قبول sec_banned و sec_banned_words
+        # ✅ إصلاح: قبول sec_banned و sec_banned_words مع إضافة query.answer()
         if action == "banned" or action == "banned_words":
             kb = KeyboardFactory.build("banned_words", chat_id)
-            await query.edit_message_text("🚫 **الكلمات المحظورة**", reply_markup=kb)
+            await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
+            await query.answer()  # ✅ هذه الجملة توقف "جاري البحث"
             return
 
         if action == "maxlen":
