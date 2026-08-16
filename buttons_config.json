@@ -63,6 +63,7 @@
     "admin_import_github": "🐙 استيراد من GitHub",
     "admin_refresh_cache": "🔄 تحديث الكاش",
     "contest_winners": "🏆 الفائزون",
+    "contests": "🏆 المسابقات",
     "reminder": "⏰ التذكيرات",
     "rem_sub": "🔔 تذكير الاشتراك",
     "rem_daily": "📊 التقرير اليومي",
@@ -73,7 +74,6 @@
     "referral": "🔗 الإحالات",
     "ref_claim": "🎁 صرف المكافأة",
     "ref_list": "📋 قائمة المُحالين",
-    "contests": "🏆 المسابقات",
     "invoices": "🧾 فواتيري",
     "auto_reply_add": "➕ إضافة رد",
     "auto_reply_del": "🗑️ حذف رد",
@@ -109,7 +109,7 @@
         ["plans", "subscribe"],
         ["support", "developer"],
         ["help", "language"],
-        ["trial"],
+        ["trial", "contests"],
         ["settings"]
       ]
     },
@@ -118,7 +118,6 @@
         ["toggle_auto", "toggle_rec"],
         ["translation", "reminder"],
         ["referral", "invoices"],
-        ["contests"],
         ["back"]
       ]
     },
