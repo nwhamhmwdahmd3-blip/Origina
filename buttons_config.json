@@ -3,137 +3,49 @@
     "main": "🌿 الرئيسية",
     "back": "🔙 رجوع",
     "cancel": "❌ إلغاء",
-    "help": "❓ مساعدة",
     "settings": "⚙️ الإعدادات",
-    "language": "🌐 اللغة",
-    "ch_add": "➕ إضافة قناة",
-    "ch_list": "📡 قنواتي",
-    "post_add": "📥 إضافة منشورات",
-    "post_pub": "📤 نشر واحد",
-    "post_list": "📋 منشوراتي",
-    "post_rec": "♻️ إعادة تدوير",
-    "pub_all": "📤 نشر الكل",
-    "stats_pend": "📊 غير المنشورة",
-    "stats_full": "📊 الإحصائيات",
+    "toggle_auto": "📤 النشر التلقائي",
+    "toggle_rec": "♻️ إعادة التدوير",
+    "channels": "📡 قنواتي",
     "groups": "👥 مجموعاتي",
-    "add_group": "➕ أضف المجموعة",
-    "add_group_url": "➕ أضف المجموعة",
-    "toggle_auto": "⚙️ النشر التلقائي",
-    "toggle_recycle": "♻️ إعادة التدوير",
-    "trial": "🎁 تجربة",
-    "subscribe": "💎 اشتراك",
-    "developer": "👨‍💻 المطور",
-    "support": "📞 دعم",
-    "referral": "🔗 إحالات",
-    "reminder": "⏰ تذكيرات",
-    "translation": "🌐 ترجمة",
-    "contests": "🏆 مسابقات",
-    "admin_panel_btn": "👑 لوحة الأدمن",
-    "claim_reward": "🎁 صرف المكافأة",
-    "check_sub": "✅ تحقق",
+    "post_add": "📥 إضافة منشورات",
+    "post_pub": "📤 نشر منشور",
+    "post_list": "📋 منشوراتي",
+    "post_rec": "♻️ إعادة التدوير",
+    "pub_all": "📤 نشر الكل",
     "plans": "💎 الباقات",
-    "invoices": "🧾 فواتيري",
-    "sec_links": "🔗 روابط",
-    "sec_mentions": "@ معرفات",
-    "sec_slow": "⏱️ بطيء",
-    "sec_welcome": "🎯 ترحيب",
-    "sec_goodbye": "👋 وداع",
-    "sec_banned": "🚫 كلمات",
-    "sec_video": "🎬 فيديو",
-    "sec_audio": "🎵 صوت",
-    "sec_anim": "🎞️ متحرك",
-    "sec_service": "🛠️ خدمة",
-    "sec_doc": "📄 ملفات",
-    "sec_sticker": "🖼️ ملصقات",
-    "sec_forward": "📨 مُعاد",
-    "sec_poll": "📊 استطلاع",
-    "sec_game": "🎮 ألعاب",
-    "sec_voice": "🎤 صوتي",
-    "sec_videonote": "🎥 نوت",
-    "sec_flood": "🌊 فيضان",
-    "sec_night": "🌙 ليلي",
-    "sec_maxlen": "📏 طول",
-    "sec_warn": "⚠️ تحذير",
-    "sec_del_pen": "⚖️ عقوبة الحذف",
-    "sec_enable_all": "⚡ تفعيل الكل",
-    "sec_disable_all": "⛔ تعطيل الكل",
-    "sec_penalty": "⚖️ العقوبة الأساسية",
-    "sec_adv_act": "🛠️ متقدم",
-    "sec_act_log": "📜 سجل",
-    "sec_auto_reply_menu": "📝 ردود تلقائية",
-    "sec_close": "🔙 إغلاق",
-    "penalty": "⚖️ العقوبة",
-    "pen_kick": "👢 طرد",
-    "pen_ban": "🛑 حظر",
-    "pen_mute": "🔇 كتم",
-    "pen_warn": "⚠️ تحذير",
-    "pen_restrict": "🔒 تقييد",
-    "pen_none": "❌ لا شيء",
-    "adv_act": "🛠️ إجراءات متقدمة",
-    "act_ban": "🛑 حظر",
-    "act_mute": "🔇 كتم",
-    "act_warn": "⚠️ تحذير",
-    "act_kick": "👢 طرد",
-    "act_restrict": "🔒 تقييد",
-    "act_pin": "📌 تثبيت",
-    "act_log": "📜 سجل",
-    "act_unban": "🔓 إلغاء حظر",
-    "mute_dur_5": "⏱️ 5 دقائق",
-    "mute_dur_30": "⏱️ 30 دقيقة",
-    "mute_dur_60": "⏱️ 1 ساعة",
-    "mute_dur_720": "⏱️ 12 ساعة",
-    "mute_dur_1440": "📆 يوم",
-    "mute_dur_10080": "📆 أسبوع",
-    "mute_dur_0": "🔇 كتم دائم",
-    "panel_lock": "🔒 قفل",
-    "panel_unlock": "🔓 فتح",
-    "panel_close": "🔙 إغلاق",
-    "support_ticket": "📞 تذكرة",
-    "buy_sub_1": "💎 1 يوم - 5 نجوم",
-    "buy_sub_7": "💎 7 أيام - 25 نجوم",
-    "buy_sub_30": "💎 30 يوم - 75 نجوم",
-    "buy_sub_90": "💎 90 يوم - 200 نجوم",
-    "ref_claim": "🎁 صرف المكافأة",
-    "ref_list": "📋 قائمة المُحالين",
-    "rem_sub": "🔔 تذكير الاشتراك",
-    "rem_daily": "📊 يومي",
-    "rem_weekly": "📈 أسبوعي",
-    "rem_days": "📅 عدد الأيام",
-    "rem_lang": "🌐 لغة الإشعارات",
-    "rem_lang_ar": "🇸🇦 عربي",
-    "rem_lang_en": "🇬🇧 English",
-    "trans_off": "🚫 إيقاف الترجمة",
-    "trans_set_ar": "🇸🇦 عربي",
-    "trans_set_en": "🇬🇧 English",
-    "contest_join": "📝 شارك",
-    "contest_winners": "🏆 الفائزون",
-    "admin": "👑 لوحة الأدمن",
+    "subscribe": "💎 اشتراك",
+    "support": "📞 دعم فني",
+    "support_ticket": "📝 تذكرة دعم",
+    "developer": "👨‍💻 المطور",
+    "help": "📚 مساعدة",
+    "language": "🌐 اللغة",
+    "trial": "🎁 تجربة مجانية",
+    "admin_panel_btn": "👑 لوحة الأدمن",
     "admin_users": "👥 المستخدمين",
     "admin_banned": "⛔ المحظورين",
     "admin_unban_all": "🔓 إلغاء حظر الكل",
-    "admin_channels": "📡 قنوات",
+    "admin_channels": "📡 القنوات",
     "admin_banned_ch": "🚫 القنوات المحظورة",
     "admin_activate_ch": "✅ تفعيل القنوات",
     "admin_groups": "👥 المجموعات",
     "admin_banned_gr": "🚫 المجموعات المحظورة",
     "admin_unban_gr": "🔓 إلغاء حظر المجموعات",
-    "admin_add_admin": "👑 + مشرف",
-    "admin_rem_admin": "🗑️ - مشرف",
-    "admin_ram": "🖥️ الرام",
-    "admin_stats": "📊 إحصائيات",
-    "admin_metrics": "📊 مراقبة",
+    "admin_add_admin": "➕ إضافة مشرف",
+    "admin_rem_admin": "➖ إزالة مشرف",
+    "admin_ram": "🖥️ استخدام الرام",
+    "admin_stats": "📊 الإحصائيات",
+    "admin_metrics": "📈 مقاييس الأداء",
     "admin_backup": "💾 نسخ احتياطي",
-    "admin_restore": "🔄 استعادة",
-    "admin_send_update": "📢 تحديث",
-    "admin_set_update_ch": "📢 تعيين قناة التحديث",
-    "admin_show_update": "📢 عرض قناة التحديث",
-    "admin_force_sub": "🔒 اشتراك إجباري",
-    "admin_set_force": "🔒 تعيين قناة الاشتراك",
-    "admin_broadcast": "📨 بث",
-    "admin_confirm_broadcast": "✅ تأكيد البث",
-    "admin_tickets": "📋 تذاكر",
+    "admin_restore": "🔄 استعادة نسخة",
+    "admin_send_update": "📢 إرسال تحديث",
+    "admin_set_update_ch": "📢 تعيين قناة التحديثات",
+    "admin_show_update": "👀 عرض قناة التحديثات",
+    "admin_force_sub": "🔒 الاشتراك الإجباري",
+    "admin_set_force": "🔒 تعيين الاشتراك الإجباري",
+    "admin_broadcast": "📨 بث رسالة",
+    "admin_tickets": "🎫 التذاكر",
     "admin_del_tickets": "🗑️ حذف التذاكر",
-    "admin_confirm_del_tickets": "✅ تأكيد حذف التذاكر",
     "admin_log_ch": "📋 قناة السجلات",
     "admin_set_log_ch": "📋 تعيين قناة السجلات",
     "admin_replies": "💬 الردود التلقائية",
@@ -142,49 +54,71 @@
     "admin_del_reply": "🗑️ حذف رد",
     "admin_banned_words": "🚫 الكلمات المحظورة",
     "admin_add_banned": "➕ إضافة كلمة",
-    "admin_list_banned": "📋 عرض الكلمات",
+    "admin_list_banned": "📋 قائمة الكلمات",
     "admin_rem_banned": "🗑️ حذف كلمة",
     "admin_create_contest": "🏆 إنشاء مسابقة",
     "admin_declare_winner": "🏆 إعلان الفائز",
-    "admin_del_contest": "🗑️ حذف مسابقة",
     "admin_export_replies": "📤 تصدير الردود",
     "admin_import_replies": "📥 استيراد ردود",
+    "admin_import_github": "🐙 استيراد من GitHub",
     "admin_refresh_cache": "🔄 تحديث الكاش",
-    "admin_import_github": "📥 استيراد من GitHub",
-    "auto_reply_menu": "📝 إدارة الردود",
-    "auto_reply_toggle": "📝 تفعيل/تعطيل",
-    "auto_reply_admins": "👥 المشرفين فقط",
-    "auto_reply_reset": "🔄 إعادة تعيين",
-    "auto_reply_confirm_reset": "✅ تأكيد إعادة التعيين",
-    "auto_reply_stats": "📊 إحصائيات",
+    "contest_winners": "🏆 الفائزون",
+    "reminder": "⏰ التذكيرات",
+    "rem_sub": "🔔 تذكير الاشتراك",
+    "rem_daily": "📊 التقرير اليومي",
+    "rem_weekly": "📈 التقرير الأسبوعي",
+    "rem_days": "📅 عدد الأيام",
+    "translation": "🌐 الترجمة",
+    "trans_off": "❌ إيقاف الترجمة",
+    "referral": "🔗 الإحالات",
+    "ref_claim": "🎁 صرف المكافأة",
+    "ref_list": "📋 قائمة المُحالين",
+    "contests": "🏆 المسابقات",
+    "invoices": "🧾 فواتيري",
     "auto_reply_add": "➕ إضافة رد",
     "auto_reply_del": "🗑️ حذف رد",
     "auto_reply_list": "📋 قائمة الردود",
+    "auto_reply_stats": "📊 إحصائيات",
+    "auto_reply_toggle": "🔄 تشغيل/إيقاف",
+    "auto_reply_admins": "👤 للمشرفين فقط",
+    "auto_reply_reset": "🗑️ حذف الكل",
+    "auto_reply_menu": "📝 الردود التلقائية",
+    "penalty": "⚖️ العقوبات",
     "ban_add": "➕ إضافة كلمة",
-    "ban_list": "📋 عرض الكلمات",
-    "ban_rem": "🗑️ حذف كلمة"
+    "ban_list": "📋 قائمة الكلمات",
+    "ban_rem": "🗑️ حذف كلمة",
+    "act_ban": "🚫 حظر",
+    "act_mute": "🔇 كتم",
+    "act_warn": "⚠️ تحذير",
+    "act_kick": "👢 طرد",
+    "act_restrict": "🔒 تقييد",
+    "act_unban": "🔓 إلغاء حظر",
+    "act_pin": "📌 تثبيت",
+    "act_log": "📜 سجل الإجراءات",
+    "panel_lock": "🔒 قفل المجموعة",
+    "panel_unlock": "🔓 فتح المجموعة",
+    "panel_close": "❌ إغلاق اللوحة"
   },
   "menus": {
     "main_menu": {
       "rows": [
-        ["groups", "ch_add"],
-        ["ch_list", "settings"],
+        ["channels", "groups"],
         ["post_add", "post_pub"],
         ["post_list", "post_rec"],
-        ["stats_pend", "stats_full"],
-        ["help", "trial"],
-        ["subscribe", "developer"],
-        ["language", "support"],
-        ["referral", "reminder"],
-        ["translation", "contests"],
-        ["add_group_url"],
-        ["admin_panel_btn"]
+        ["pub_all"],
+        ["plans", "subscribe"],
+        ["support", "developer"],
+        ["help", "language"],
+        ["trial"],
+        ["settings"]
       ]
     },
     "settings": {
       "rows": [
-        ["toggle_auto"],
-        ["toggle_recycle"],
+        ["toggle_auto", "toggle_rec"],
+        ["translation", "reminder"],
+        ["referral", "invoices"],
+        ["contests"],
         ["back"]
       ]
     },
@@ -201,27 +135,106 @@
         ["back"]
       ]
     },
-    "referral": {
+    "admin_panel": {
       "rows": [
-        ["ref_claim"],
-        ["ref_list"],
+        ["admin_users", "admin_banned"],
+        ["admin_unban_all"],
+        ["admin_channels", "admin_banned_ch"],
+        ["admin_activate_ch"],
+        ["admin_groups", "admin_banned_gr"],
+        ["admin_unban_gr"],
+        ["admin_add_admin", "admin_rem_admin"],
+        ["admin_ram", "admin_stats"],
+        ["admin_metrics"],
+        ["admin_backup", "admin_restore"],
+        ["admin_send_update", "admin_set_update_ch"],
+        ["admin_show_update"],
+        ["admin_force_sub", "admin_set_force"],
+        ["admin_broadcast"],
+        ["admin_tickets", "admin_del_tickets"],
+        ["admin_log_ch", "admin_set_log_ch"],
+        ["admin_replies"],
+        ["admin_add_reply", "admin_list_replies"],
+        ["admin_del_reply"],
+        ["admin_banned_words", "admin_add_banned"],
+        ["admin_list_banned", "admin_rem_banned"],
+        ["admin_create_contest", "admin_declare_winner"],
+        ["admin_export_replies", "admin_import_replies"],
+        ["admin_import_github"],
+        ["admin_refresh_cache"],
         ["back"]
       ]
     },
-    "reminder": {
+    "security": {
       "rows": [
-        ["rem_sub"],
-        ["rem_daily"],
-        ["rem_weekly"],
-        ["rem_days"],
-        ["rem_lang"],
+        ["sec_links", "sec_mentions"],
+        ["sec_slow", "sec_flood"],
+        ["sec_video", "sec_audio"],
+        ["sec_anim", "sec_service"],
+        ["sec_doc", "sec_sticker"],
+        ["sec_forward", "sec_poll"],
+        ["sec_game", "sec_voice"],
+        ["sec_videonote", "sec_banned_words"],
+        ["sec_welcome", "sec_goodbye"],
+        ["sec_night", "sec_approve_join"],
+        ["sec_reject_join"],
+        ["sec_maxlen", "sec_warn"],
+        ["sec_penalty", "sec_del_pen"],
+        ["sec_adv_act", "sec_act_log"],
+        ["sec_auto_reply_menu"],
+        ["sec_enable_all", "sec_disable_all"],
+        ["sec_close"]
+      ]
+    },
+    "banned_words": {
+      "rows": [
+        ["ban_add", "ban_list"],
+        ["ban_rem"],
+        ["back"]
+      ]
+    },
+    "penalty": {
+      "rows": [
+        ["pen_ban", "pen_mute"],
+        ["pen_kick", "pen_warn"],
+        ["back"]
+      ]
+    },
+    "advanced_actions": {
+      "rows": [
+        ["act_ban", "act_mute"],
+        ["act_warn", "act_kick"],
+        ["act_restrict", "act_unban"],
+        ["act_pin"],
+        ["act_log"],
+        ["back"]
+      ]
+    },
+    "auto_reply_manage": {
+      "rows": [
+        ["auto_reply_toggle", "auto_reply_admins"],
+        ["auto_reply_add", "auto_reply_del"],
+        ["auto_reply_list", "auto_reply_stats"],
+        ["auto_reply_reset"],
         ["back"]
       ]
     },
     "translation": {
       "rows": [
-        ["trans_set_ar", "trans_set_en"],
         ["trans_off"],
+        ["back"]
+      ]
+    },
+    "referral": {
+      "rows": [
+        ["ref_claim", "ref_list"],
+        ["back"]
+      ]
+    },
+    "reminder": {
+      "rows": [
+        ["rem_sub", "rem_daily"],
+        ["rem_weekly", "rem_days"],
         ["back"]
       ]
     },
@@ -231,99 +244,16 @@
         ["back"]
       ]
     },
-    "security": {
-      "rows": [
-        ["sec_links", "sec_mentions", "sec_slow"],
-        ["sec_welcome", "sec_goodbye", "sec_banned"],
-        ["sec_video", "sec_audio", "sec_anim"],
-        ["sec_service", "sec_doc", "sec_sticker"],
-        ["sec_forward", "sec_poll", "sec_game"],
-        ["sec_voice", "sec_videonote", "sec_flood"],
-        ["sec_night", "sec_maxlen", "sec_warn"],
-        ["sec_del_pen", "sec_enable_all", "sec_disable_all"],
-        ["sec_penalty", "sec_adv_act", "sec_act_log"],
-        ["sec_auto_reply_menu"],
-        ["sec_close"]
-      ]
-    },
-    "banned_words": {
-      "rows": [
-        ["ban_add", "ban_list"],
-        ["ban_rem", "back"]
-      ]
-    },
-    "penalty": {
-      "rows": [
-        ["pen_kick", "pen_ban"],
-        ["pen_mute", "pen_warn"],
-        ["pen_restrict", "pen_none"],
-        ["back"]
-      ]
-    },
-    "advanced_actions": {
-      "rows": [
-        ["act_ban", "act_mute"],
-        ["act_warn", "act_kick"],
-        ["act_restrict", "act_pin"],
-        ["act_unban", "act_log"],
-        ["back"]
-      ]
-    },
-    "mute_duration": {
-      "rows": [
-        ["mute_dur_5", "mute_dur_30"],
-        ["mute_dur_60", "mute_dur_720"],
-        ["mute_dur_1440", "mute_dur_10080"],
-        ["mute_dur_0", "back"]
-      ]
-    },
     "panel": {
       "rows": [
         ["panel_lock", "panel_unlock"],
         ["panel_close"]
       ]
     },
-    "admin_panel": {
+    "admin_restore": {
       "rows": [
-        ["admin_users", "admin_banned"],
-        ["admin_unban_all", "admin_channels"],
-        ["admin_banned_ch", "admin_activate_ch"],
-        ["admin_groups", "admin_banned_gr"],
-        ["admin_unban_gr", "admin_add_admin"],
-        ["admin_rem_admin", "admin_ram"],
-        ["admin_stats", "admin_metrics"],
-        ["admin_backup", "admin_restore"],
-        ["admin_send_update", "admin_set_update_ch"],
-        ["admin_show_update", "admin_force_sub"],
-        ["admin_set_force", "admin_broadcast"],
-        ["admin_confirm_broadcast", "admin_tickets"],
-        ["admin_del_tickets", "admin_confirm_del_tickets"],
-        ["admin_log_ch", "admin_set_log_ch"],
-        ["admin_replies", "admin_add_reply"],
-        ["admin_list_replies", "admin_del_reply"],
-        ["admin_banned_words", "admin_add_banned"],
-        ["admin_list_banned", "admin_rem_banned"],
-        ["admin_create_contest", "admin_declare_winner"],
-        ["admin_del_contest", "admin_export_replies"],
-        ["admin_import_replies", "admin_import_github"],
-        ["admin_refresh_cache", "back"]
-      ]
-    },
-    "auto_reply_manage": {
-      "rows": [
-        ["auto_reply_add", "auto_reply_del"],
-        ["auto_reply_list", "auto_reply_menu"]
-      ]
-    },
-    "auto_reply_settings": {
-      "rows": [
-        ["auto_reply_toggle"],
-        ["auto_reply_admins"],
-        ["auto_reply_reset"],
-        ["auto_reply_stats"],
-        ["auto_reply_menu"]
+        ["back"]
       ]
     }
   }
 }
-
