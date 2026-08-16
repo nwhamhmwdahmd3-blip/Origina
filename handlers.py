@@ -1367,11 +1367,16 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ إصلاح: قبول sec_banned و sec_banned_words مع إضافة query.answer()
+        # ✅ إصلاح: استخدام لوحة مفاتيح مباشرة بدلاً من KeyboardFactory.build
         if action == "banned" or action == "banned_words":
-            kb = KeyboardFactory.build("banned_words", chat_id)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"ban_add:{chat_id}"),
+                 InlineKeyboardButton("📋 قائمة الكلمات", callback_data=f"ban_list:{chat_id}")],
+                [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"ban_rem:{chat_id}")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data=f"sec_close")]
+            ])
             await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
-            await query.answer()  # ✅ هذه الجملة توقف "جاري البحث"
+            await query.answer()
             return
 
         if action == "maxlen":
