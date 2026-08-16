@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة المُحسَّنة)
+handlers.py - جميع معالجات البوت (النسخة النهائية المُعدَّلة)
 ============================================================
 - CommandHandlers: جميع الأوامر
 - CallbackHandlers: جميع الأزرار (مُحسَّن باستخدام القاموس)
@@ -127,12 +127,13 @@ class CommandHandlers:
 
         kb = InlineKeyboardMarkup(keyboard)
 
+        # ✅ التعديل: تمرير recycle إلى get_text
         title = await get_text(lang, 'main_menu',
                                user_id=user_id, groups=groups,
                                sub=sub_text, channel=ch_display,
                                pending=cnt, auto=auto_text,
+                               recycle=recycle_text,
                                bot_name=CONFIG.BOT_NAME)
-        title += f"\n♻️ إعادة التدوير: {recycle_text}"
 
         await safe_send(context.bot, user_id, title, reply_markup=kb)
 
@@ -663,7 +664,6 @@ class CallbackHandlers:
                 return
 
             # ========== الأزرار التي تعتمد على القاموس (للحصول على سرعة أعلى) ==========
-            # تعريف قاموس المعالجات للأزرار التي تحتاج إلى معالجة سريعة
             handlers = {
                 CB.SETTINGS: CallbackHandlers._handle_settings,
                 CB.TOGGLE_AUTO: CallbackHandlers._handle_toggle_auto,
