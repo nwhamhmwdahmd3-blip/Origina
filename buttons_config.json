@@ -150,7 +150,13 @@
     "sec_auto_reply_menu": "📝 الردود",
     "sec_enable_all": "✅ تفعيل الكل",
     "sec_disable_all": "❌ تعطيل الكل",
-    "sec_close": "❌ إغلاق"
+    "sec_close": "❌ إغلاق",
+    "status_only": "📊 الحالة",
+    "reminder_subscription_expires": "⚠️ اشتراكك سينتهي بعد {days} يوم",
+    "security_title": "إعدادات الأمان",
+    "security_protection": "الحماية",
+    "security_content": "المحتوى",
+    "security_welcome": "الترحيب"
   },
   "menus": {
     "main_menu": {
