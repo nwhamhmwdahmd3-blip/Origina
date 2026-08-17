@@ -9,6 +9,7 @@ handlers.py - جميع معالجات البوت (النسخة النهائية 
 - MessageHandlers: جميع الرسائل والحالات
 - إضافة زر sec_toggle_banned لتشغيل/إيقاف حذف الكلمات المحظورة
 - إضافة التحكم في الحد الأدنى للفاصل الزمني بين المنشورات (MIN_PUBLISH_INTERVAL)
+- إصلاح زر نشر الكل: منشور واحد لكل قناة فقط
 """
 
 import asyncio
@@ -961,23 +962,94 @@ class CallbackHandlers:
                     await query.edit_message_text(f"♻️ {count} منشور!")
                 return
 
+            # ✅ زر نشر الكل (PUB_ALL) - منشور واحد لكل قناة فقط
             if data == CB.PUB_ALL:
                 if not await DB.has_active_subscription(user_id):
-                    await query.answer("❌ انتهى اشتراكك!", show_alert=True)
+                    await query.answer("❌ انتهى اشتراكك! يرجى تجديد الاشتراك", show_alert=True)
                     return
+                
                 channels = await DB.get_user_channels(user_id)
-                tasks = []
+                if not channels:
+                    await query.edit_message_text("❌ لا توجد قنوات للنشر")
+                    return
+                
+                published_count = 0
+                failed_count = 0
+                await query.edit_message_text("⏳ جاري النشر...")
+                
                 for ch in channels:
+                    # جلب منشور واحد فقط لكل قناة
                     post = await DB.get_next_post(ch['id'])
-                    if post:
-                        ch_info = await DB.get_channel_info(ch['id'])
-                        if ch_info:
-                            tasks.append(CallbackHandlers._publish_single(context.bot, ch['id'], ch_info['channel_id'], post))
-                if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                    await query.edit_message_text("✅ تم النشر!")
+                    if not post:
+                        continue
+                        
+                    ch_info = await DB.get_channel_info(ch['id'])
+                    if not ch_info:
+                        continue
+                        
+                    try:
+                        # نشر المنشور حسب نوع الوسائط
+                        if post['media_type'] == 'photo' and post['media_file_id']:
+                            await context.bot.send_photo(
+                                ch_info['channel_id'],
+                                post['media_file_id'],
+                                caption=post['text'][:1024] if post['text'] else None
+                            )
+                        elif post['media_type'] == 'video' and post['media_file_id']:
+                            await context.bot.send_video(
+                                ch_info['channel_id'],
+                                post['media_file_id'],
+                                caption=post['text'][:1024] if post['text'] else None
+                            )
+                        elif post['media_type'] == 'animation' and post['media_file_id']:
+                            await context.bot.send_animation(
+                                ch_info['channel_id'],
+                                post['media_file_id'],
+                                caption=post['text'][:1024] if post['text'] else None
+                            )
+                        elif post['media_type'] == 'document' and post['media_file_id']:
+                            await context.bot.send_document(
+                                ch_info['channel_id'],
+                                post['media_file_id'],
+                                caption=post['text'][:1024] if post['text'] else None
+                            )
+                        elif post['media_type'] == 'audio' and post['media_file_id']:
+                            await context.bot.send_audio(
+                                ch_info['channel_id'],
+                                post['media_file_id'],
+                                caption=post['text'][:1024] if post['text'] else None
+                            )
+                        elif post['media_type'] == 'voice' and post['media_file_id']:
+                            await context.bot.send_voice(
+                                ch_info['channel_id'],
+                                post['media_file_id'],
+                                caption=post['text'][:1024] if post['text'] else None
+                            )
+                        else:
+                            await context.bot.send_message(
+                                ch_info['channel_id'],
+                                post['text'][:4096] if post['text'] else "."
+                            )
+                        
+                        # تحديث حالة المنشور في قاعدة البيانات
+                        await DB.mark_post_published(post['id'])
+                        published_count += 1
+                        
+                        # تأخير بسيط لتجنب الإزعاج والحظر
+                        await asyncio.sleep(0.5)
+                        
+                    except Exception as e:
+                        logger.error(f"❌ فشل النشر في القناة {ch['channel_id']}: {e}")
+                        failed_count += 1
+                        await DB.increment_post_fail(post['id'])
+                
+                # عرض النتيجة النهائية
+                if published_count > 0 and failed_count == 0:
+                    await query.edit_message_text(f"✅ تم نشر {published_count} منشور (منشور واحد في كل قناة)")
+                elif published_count > 0 and failed_count > 0:
+                    await query.edit_message_text(f"⚠️ تم نشر {published_count} منشور، فشل {failed_count} منشور")
                 else:
-                    await query.edit_message_text("📭 لا توجد منشورات")
+                    await query.edit_message_text("📭 لا توجد منشورات للنشر في أي قناة")
                 return
 
             if data.startswith(CB.POST_DEL + ":"):
