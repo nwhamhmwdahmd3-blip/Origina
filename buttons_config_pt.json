@@ -1,0 +1,317 @@
+{
+  "texts": {
+    "main": "🌿 Início",
+    "back": "🔙 Voltar",
+    "cancel": "❌ Cancelar",
+    "settings": "⚙️ Configurações",
+    "toggle_auto": "📤 Publicação Automática",
+    "toggle_rec": "♻️ Reciclagem",
+    "ch_list": "📡 Meus Canais",
+    "ch_add": "➕ Adicionar Canal",
+    "ch_stats": "📊 Estatísticas",
+    "ch_del": "🗑️ Eliminar",
+    "ch_sel": "📌 Selecionar",
+    "groups": "👥 Meus Grupos",
+    "post_add": "📥 Adicionar Publicações",
+    "post_pub": "📤 Publicar",
+    "post_list": "📋 Minhas Publicações",
+    "post_rec": "♻️ Reciclar",
+    "post_del": "🗑️ Eliminar Publicação",
+    "post_clear": "🧹 Limpar Tudo",
+    "pub_all": "📤 Publicar Tudo",
+    "plans": "💎 Planos",
+    "subscribe": "💎 Subscrever",
+    "support": "📞 Suporte",
+    "support_ticket": "📝 Ticket de Suporte",
+    "developer": "👨‍💻 Desenvolvedor",
+    "help": "📚 Ajuda",
+    "language": "🌐 Idioma",
+    "trial": "🎁 Teste Gratuito",
+    "admin_panel_btn": "👑 Painel Admin",
+    "admin_users": "👥 Utilizadores",
+    "admin_banned": "⛔ Banidos",
+    "admin_unban_all": "🔓 Desbanir Todos",
+    "admin_channels": "📡 Canais (Admin)",
+    "admin_banned_ch": "🚫 Canais Banidos",
+    "admin_activate_ch": "✅ Ativar Canais",
+    "admin_groups": "👥 Grupos (Admin)",
+    "admin_banned_gr": "🚫 Grupos Banidos",
+    "admin_unban_gr": "🔓 Desbanir Grupos",
+    "admin_add_admin": "➕ Adicionar Admin",
+    "admin_rem_admin": "➖ Remover Admin",
+    "admin_ram": "🖥️ Uso de RAM",
+    "admin_stats": "📊 Estatísticas",
+    "admin_metrics": "📈 Métricas de Desempenho",
+    "admin_backup": "💾 Cópia de Segurança",
+    "admin_restore": "🔄 Restaurar",
+    "admin_restore_sel": "📂 Selecionar",
+    "admin_send_update": "📢 Enviar Atualização",
+    "admin_set_update_ch": "📢 Definir Canal de Atualizações",
+    "admin_show_update": "👀 Mostrar Canal de Atualizações",
+    "admin_force_sub": "🔒 Subscrição Forçada",
+    "admin_set_force": "🔒 Definir Subscrição Forçada",
+    "admin_broadcast": "📨 Transmissão",
+    "admin_tickets": "🎫 Tickets",
+    "admin_del_tickets": "🗑️ Eliminar Tickets",
+    "admin_log_ch": "📋 Canal de Registos",
+    "admin_set_log_ch": "📋 Definir Canal de Registos",
+    "admin_replies": "💬 Respostas Automáticas",
+    "admin_add_reply": "➕ Adicionar Resposta",
+    "admin_list_replies": "📋 Lista de Respostas",
+    "admin_del_reply": "🗑️ Eliminar Resposta",
+    "admin_banned_words": "🚫 Palavras Proibidas",
+    "admin_add_banned": "➕ Adicionar Palavra",
+    "admin_list_banned": "📋 Lista de Palavras",
+    "admin_rem_banned": "🗑️ Eliminar Palavra",
+    "admin_create_contest": "🏆 Criar Concurso",
+    "admin_declare_winner": "🏆 Declarar Vencedor",
+    "admin_declare_winner_sel": "🏆 Selecionar Concurso",
+    "admin_del_contest": "🗑️ Eliminar Concurso",
+    "admin_export_replies": "📤 Exportar Respostas",
+    "admin_import_replies": "📥 Importar Respostas",
+    "admin_import_github": "🐙 Importar do GitHub",
+    "admin_refresh_cache": "🔄 Atualizar Cache",
+    "contest_winners": "🏆 Vencedores",
+    "contests": "🏆 Concursos",
+    "contest_join": "✍️ Participar",
+    "reminder": "⏰ Lembretes",
+    "rem_sub": "🔔 Lembrete de Subscrição",
+    "rem_daily": "📊 Relatório Diário",
+    "rem_weekly": "📈 Relatório Semanal",
+    "rem_days": "📅 Número de Dias",
+    "rem_lang": "🌐 Idioma dos Lembretes",
+    "translation": "🌐 Tradução",
+    "trans_off": "❌ Desativar Tradução",
+    "trans_set": "✅ Definir",
+    "referral": "🔗 Referências",
+    "ref_claim": "🎁 Reclamar Recompensa",
+    "ref_list": "📋 Lista de Referências",
+    "invoices": "🧾 Minhas Faturas",
+    "buy_sub_1": "🗓️ 1 Dia",
+    "buy_sub_7": "🗓️ 1 Semana",
+    "buy_sub_30": "🗓️ 1 Mês",
+    "buy_sub_90": "🗓️ 3 Meses",
+    "auto_reply_add": "➕ Adicionar Resposta",
+    "auto_reply_del": "🗑️ Eliminar Resposta",
+    "auto_reply_list": "📋 Lista de Respostas",
+    "auto_reply_stats": "📊 Estatísticas",
+    "auto_reply_toggle": "🔄 Ativar/Desativar",
+    "auto_reply_admins": "👤 Apenas Admins",
+    "auto_reply_reset": "🗑️ Reiniciar Tudo",
+    "auto_reply_menu": "📝 Respostas Automáticas",
+    "penalty": "⚖️ Penalidades",
+    "pen_ban": "🚫 Banir",
+    "pen_mute": "🔇 Silenciar",
+    "pen_kick": "👢 Expulsar",
+    "pen_warn": "⚠️ Advertir",
+    "ban_add": "➕ Adicionar Palavra",
+    "ban_list": "📋 Lista de Palavras",
+    "ban_rem": "🗑️ Eliminar Palavra",
+    "act_ban": "🚫 Banir",
+    "act_mute": "🔇 Silenciar",
+    "act_warn": "⚠️ Advertir",
+    "act_kick": "👢 Expulsar",
+    "act_restrict": "🔒 Restringir",
+    "act_unban": "🔓 Desbanir",
+    "act_pin": "📌 Fixar",
+    "act_log": "📜 Registo de Ações",
+    "panel_lock": "🔒 Bloquear Grupo",
+    "panel_unlock": "🔓 Desbloquear Grupo",
+    "panel_close": "❌ Fechar Painel",
+    "sec_links": "🔗 Links",
+    "sec_mentions": "👤 Menções",
+    "sec_slow": "🐌 Modo Lento",
+    "sec_flood": "🌊 Inundação",
+    "sec_video": "🎬 Vídeo",
+    "sec_audio": "🎵 Áudio",
+    "sec_anim": "🎞️ Animação",
+    "sec_service": "🛠️ Serviço",
+    "sec_doc": "📄 Documentos",
+    "sec_sticker": "🖼️ Autocolantes",
+    "sec_forward": "📨 Reencaminhados",
+    "sec_poll": "📊 Sondagem",
+    "sec_game": "🎮 Jogo",
+    "sec_voice": "🎤 Voz",
+    "sec_videonote": "🎥 Nota de Vídeo",
+    "sec_banned_words": "🚫 Palavras Proibidas",
+    "sec_welcome": "🎯 Boas-vindas",
+    "sec_goodbye": "👋 Despedida",
+    "sec_night": "🌙 Modo Noturno",
+    "sec_approve_join": "✅ Aprovar Entrada",
+    "sec_reject_join": "❌ Rejeitar Entrada",
+    "sec_maxlen": "📏 Comprimento Máximo",
+    "sec_warn": "⚠️ Advertências",
+    "sec_warn_count": "🔢 Número de Advertências",
+    "sec_warn_penalty": "⚖️ Penalidade de Advertência",
+    "sec_set_warn_penalty": "⚖️ Definir Penalidade",
+    "sec_del_pen": "⚖️ Eliminar Penalidade",
+    "sec_adv_act": "🛠️ Ações Avançadas",
+    "sec_act_log": "📜 Registo",
+    "sec_auto_reply_menu": "📝 Respostas",
+    "sec_enable_all": "✅ Ativar Tudo",
+    "sec_disable_all": "❌ Desativar Tudo",
+    "sec_close": "❌ Fechar",
+    "status_only": "📊 Estado",
+    "reminder_subscription_expires": "⚠️ A sua subscrição expira em {days} dia(s)",
+    "security_title": "Configurações de Segurança",
+    "security_protection": "Proteção",
+    "security_content": "Conteúdo",
+    "security_welcome": "Boas-vindas"
+  },
+  "menus": {
+    "main_menu": {
+      "rows": [
+        ["ch_list", "groups"],
+        ["post_add", "post_pub"],
+        ["post_list", "post_rec"],
+        ["pub_all"],
+        ["plans", "subscribe"],
+        ["support", "developer"],
+        ["help", "language"],
+        ["trial", "contests"],
+        ["settings"]
+      ]
+    },
+    "settings": {
+      "rows": [
+        ["toggle_auto", "toggle_rec"],
+        ["translation", "reminder"],
+        ["referral", "invoices"],
+        ["back"]
+      ]
+    },
+    "plans": {
+      "rows": [
+        ["buy_sub_1", "buy_sub_7"],
+        ["buy_sub_30", "buy_sub_90"],
+        ["back"]
+      ]
+    },
+    "support": {
+      "rows": [
+        ["support_ticket"],
+        ["back"]
+      ]
+    },
+    "admin_panel": {
+      "rows": [
+        ["admin_users", "admin_banned"],
+        ["admin_unban_all"],
+        ["admin_channels", "admin_banned_ch"],
+        ["admin_activate_ch"],
+        ["admin_groups", "admin_banned_gr"],
+        ["admin_unban_gr"],
+        ["admin_add_admin", "admin_rem_admin"],
+        ["admin_ram", "admin_stats"],
+        ["admin_metrics"],
+        ["admin_backup", "admin_restore"],
+        ["admin_send_update", "admin_set_update_ch"],
+        ["admin_show_update"],
+        ["admin_force_sub", "admin_set_force"],
+        ["admin_broadcast"],
+        ["admin_tickets", "admin_del_tickets"],
+        ["admin_log_ch", "admin_set_log_ch"],
+        ["admin_replies"],
+        ["admin_add_reply", "admin_list_replies"],
+        ["admin_del_reply"],
+        ["admin_banned_words", "admin_add_banned"],
+        ["admin_list_banned", "admin_rem_banned"],
+        ["admin_create_contest", "admin_declare_winner"],
+        ["admin_export_replies", "admin_import_replies"],
+        ["admin_import_github"],
+        ["admin_refresh_cache"],
+        ["back"]
+      ]
+    },
+    "security": {
+      "rows": [
+        ["sec_links", "sec_mentions"],
+        ["sec_slow", "sec_flood"],
+        ["sec_video", "sec_audio"],
+        ["sec_anim", "sec_service"],
+        ["sec_doc", "sec_sticker"],
+        ["sec_forward", "sec_poll"],
+        ["sec_game", "sec_voice"],
+        ["sec_videonote", "sec_banned_words"],
+        ["sec_welcome", "sec_goodbye"],
+        ["sec_night", "sec_approve_join"],
+        ["sec_reject_join"],
+        ["sec_maxlen", "sec_warn"],
+        ["sec_penalty", "sec_del_pen"],
+        ["sec_adv_act", "sec_act_log"],
+        ["sec_auto_reply_menu"],
+        ["sec_enable_all", "sec_disable_all"],
+        ["sec_close"]
+      ]
+    },
+    "banned_words": {
+      "rows": [
+        ["ban_add", "ban_list"],
+        ["ban_rem"],
+        ["back"]
+      ]
+    },
+    "penalty": {
+      "rows": [
+        ["pen_ban", "pen_mute"],
+        ["pen_kick", "pen_warn"],
+        ["back"]
+      ]
+    },
+    "advanced_actions": {
+      "rows": [
+        ["act_ban", "act_mute"],
+        ["act_warn", "act_kick"],
+        ["act_restrict", "act_unban"],
+        ["act_pin"],
+        ["act_log"],
+        ["back"]
+      ]
+    },
+    "auto_reply_manage": {
+      "rows": [
+        ["auto_reply_toggle", "auto_reply_admins"],
+        ["auto_reply_add", "auto_reply_del"],
+        ["auto_reply_list", "auto_reply_stats"],
+        ["auto_reply_reset"],
+        ["back"]
+      ]
+    },
+    "translation": {
+      "rows": [
+        ["trans_off"],
+        ["back"]
+      ]
+    },
+    "referral": {
+      "rows": [
+        ["ref_claim", "ref_list"],
+        ["back"]
+      ]
+    },
+    "reminder": {
+      "rows": [
+        ["rem_sub", "rem_daily"],
+        ["rem_weekly", "rem_days"],
+        ["back"]
+      ]
+    },
+    "contests": {
+      "rows": [
+        ["contest_winners"],
+        ["back"]
+      ]
+    },
+    "panel": {
+      "rows": [
+        ["panel_lock", "panel_unlock"],
+        ["panel_close"]
+      ]
+    },
+    "admin_restore": {
+      "rows": [
+        ["back"]
+      ]
+    }
+  }
+}
