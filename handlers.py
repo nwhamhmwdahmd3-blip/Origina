@@ -10,7 +10,8 @@ handlers.py - جميع معالجات البوت (النسخة النهائية 
 - إضافة زر sec_toggle_banned لتشغيل/إيقاف حذف الكلمات المحظورة
 - إضافة التحكم في الحد الأدنى للفاصل الزمني بين المنشورات (MIN_PUBLISH_INTERVAL)
 - إصلاح زر نشر الكل: منشور واحد لكل قناة فقط
-- ✅ إضافة عرض أزرار الجدولة (channel_settings) عند اختيار قناة
+- ✅ إضافة زر جدولة مستقل (sched_btn) في قائمة القنوات
+- ✅ إضافة معالج sched_open لعرض أزرار الجدولة
 """
 
 import asyncio
@@ -876,16 +877,10 @@ class CallbackHandlers:
                 await CallbackHandlers._show_channel_list(update, context, query, user_id, lang)
                 return
 
-            # ✅ هذا هو الجزء المعدل لعرض أزرار الجدولة
             if data.startswith(CB.CH_SEL + ":"):
                 ch_id = int(data.split(":")[-1])
                 await DB.set_active_channel(user_id, ch_id)
-                # ✅ عرض أزرار الجدولة
-                kb = KeyboardFactory.build("channel_settings", lang=lang)
-                await query.edit_message_text(
-                    f"📌 تم تحديد القناة!\nيمكنك الآن ضبط الجدولة:",
-                    reply_markup=kb
-                )
+                await query.edit_message_text("✅ تم تحديد القناة!")
                 return
 
             if data.startswith(CB.CH_DEL + ":"):
@@ -1179,6 +1174,16 @@ class CallbackHandlers:
                 await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
                 return
 
+            # ========== ✅ زر الجدولة المستقل (sched_open) ==========
+            if data.startswith("sched_open:"):
+                ch_id = int(data.split(":")[-1])
+                kb = KeyboardFactory.build("channel_settings", lang=lang)
+                await query.edit_message_text(
+                    f"📅 **جدولة القناة**\nيمكنك ضبط الفاصل الزمني للنشر:",
+                    reply_markup=kb
+                )
+                return
+
             if data.startswith("sched_"):
                 await CallbackHandlers._handle_schedule(update, context, query, user_id)
                 return
@@ -1261,8 +1266,18 @@ class CallbackHandlers:
                     f"📌 {ch['channel_name'][:20]}",
                     callback_data=f"{CB.CH_SEL}:{ch['id']}"
                 ),
-                InlineKeyboardButton(KeyboardFactory.get_text("ch_stats", lang), callback_data=f"{CB.CH_STATS}:{ch['id']}"),
-                InlineKeyboardButton(KeyboardFactory.get_text("ch_del", lang), callback_data=f"{CB.CH_DEL}:{ch['id']}")
+                InlineKeyboardButton(
+                    KeyboardFactory.get_text("sched_btn", lang),  # ✅ زر الجدولة المستقل
+                    callback_data=f"sched_open:{ch['id']}"
+                ),
+                InlineKeyboardButton(
+                    KeyboardFactory.get_text("ch_stats", lang),
+                    callback_data=f"{CB.CH_STATS}:{ch['id']}"
+                ),
+                InlineKeyboardButton(
+                    KeyboardFactory.get_text("ch_del", lang),
+                    callback_data=f"{CB.CH_DEL}:{ch['id']}"
+                )
             ])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
