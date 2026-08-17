@@ -8,6 +8,7 @@ handlers.py - جميع معالجات البوت (النسخة النهائية 
 - CallbackHandlers: جميع الأزرار (مع دعم ترجمة الأزرار)
 - MessageHandlers: جميع الرسائل والحالات
 - إضافة زر sec_toggle_banned لتشغيل/إيقاف حذف الكلمات المحظورة
+- إضافة التحكم في الحد الأدنى للفاصل الزمني بين المنشورات (MIN_PUBLISH_INTERVAL)
 """
 
 import asyncio
@@ -584,6 +585,31 @@ class CommandHandlers:
 
         success, msg = await apply_penalty(context.bot, chat_id, target, action, 60, reason, user_id)
         await safe_send(context.bot, user_id, msg)
+
+    # ========== ✅ أمر تعيين الحد الأدنى للفاصل الزمني (للمطور فقط) ==========
+
+    @staticmethod
+    async def set_min_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            await safe_send(context.bot, user_id, "❌ غير مصرح")
+            return
+        
+        args = context.args or []
+        if not args:
+            await safe_send(context.bot, user_id, "📝 /set_min_interval <دقائق>\nمثال: /set_min_interval 15")
+            return
+        
+        try:
+            val = int(args[0])
+            if val < 1:
+                await safe_send(context.bot, user_id, "❌ الحد الأدنى يجب أن يكون 1 دقيقة على الأقل")
+                return
+            # حفظ القيمة في قاعدة البيانات
+            await DB.set_setting('min_publish_interval', str(val))
+            await safe_send(context.bot, user_id, f"✅ تم تعيين الحد الأدنى إلى {val} دقيقة\n🔄 أعد تشغيل البوت لتطبيق التغيير")
+        except ValueError:
+            await safe_send(context.bot, user_id, "❌ قيمة غير صالحة، أدخل رقماً")
 
 
 # =====================================================================
@@ -1695,8 +1721,12 @@ class CallbackHandlers:
 
         await query.answer()
 
+    # =====================================================================
+    # ✅ _handle_schedule مع التحقق من الحد الأدنى
+    # =====================================================================
+
     @staticmethod
-    async def _handle_schedule(update, context, query, user_id):
+    async def _handle_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE, query, user_id):
         data = query.data
         parts = data.split(":")
         if len(parts) < 2:
@@ -1710,7 +1740,9 @@ class CallbackHandlers:
         if action == "min":
             StateManager.set(user_id, UserState.WAIT_MIN)
             context.user_data['schedule_ch'] = ch_id
-            await query.edit_message_text("📅 أرسل عدد الدقائق (1-1440):")
+            # ✅ التحقق من الحد الأدنى
+            min_val = getattr(CONFIG, 'MIN_PUBLISH_INTERVAL', 12)
+            await query.edit_message_text(f"📅 أرسل عدد الدقائق (الحد الأدنى {min_val} دقيقة، كحد أقصى 1440):")
         elif action == "hour":
             StateManager.set(user_id, UserState.WAIT_HOUR)
             context.user_data['schedule_ch'] = ch_id
@@ -2013,15 +2045,26 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # ========== ✅ WAIT_MIN مع التحقق من الحد الأدنى ==========
         if state == UserState.WAIT_MIN:
             try:
                 val = int(text)
+                min_val = getattr(CONFIG, 'MIN_PUBLISH_INTERVAL', 12)
+                if val < min_val:
+                    await safe_send(context.bot, user_id, f"❌ الحد الأدنى للفاصل الزمني هو {min_val} دقيقة")
+                    StateManager.clear(user_id)
+                    return
                 if 1 <= val <= 1440:
                     ch = context.user_data.get('schedule_ch')
                     if ch:
                         await DB.update_schedule(ch, schedule_type='interval_minutes', interval_minutes=val)
-            except:
-                pass
+                        await safe_send(context.bot, user_id, f"✅ تم التحديث إلى {val} دقيقة")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-1440)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            except Exception as e:
+                logger.error(f"❌ خطأ في WAIT_MIN: {e}")
             StateManager.clear(user_id)
             return
 
@@ -2032,8 +2075,11 @@ class MessageHandlers:
                     ch = context.user_data.get('schedule_ch')
                     if ch:
                         await DB.update_schedule(ch, schedule_type='interval_hours', interval_hours=val)
-            except:
-                pass
+                        await safe_send(context.bot, user_id, f"✅ تم التحديث إلى {val} ساعة")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-168)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
             StateManager.clear(user_id)
             return
 
@@ -2044,8 +2090,11 @@ class MessageHandlers:
                     ch = context.user_data.get('schedule_ch')
                     if ch:
                         await DB.update_schedule(ch, schedule_type='interval_days', interval_days=val)
-            except:
-                pass
+                        await safe_send(context.bot, user_id, f"✅ تم التحديث إلى {val} يوم")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-365)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
             StateManager.clear(user_id)
             return
 
@@ -2054,6 +2103,9 @@ class MessageHandlers:
                 ch = context.user_data.get('schedule_ch')
                 if ch:
                     await DB.update_schedule(ch, publish_time=text)
+                    await safe_send(context.bot, user_id, f"✅ تم التحديث إلى {text}")
+            else:
+                await safe_send(context.bot, user_id, "❌ الصيغة غير صالحة، استخدم HH:MM")
             StateManager.clear(user_id)
             return
 
@@ -2062,6 +2114,7 @@ class MessageHandlers:
             word = text.strip().lower()
             if chat_id_ban and len(word) >= 2:
                 await DB.add_banned_word(word, chat_id_ban, user_id)
+                await safe_send(context.bot, user_id, f"✅ تمت إضافة: {word}")
             StateManager.clear(user_id)
             return
 
@@ -2069,6 +2122,7 @@ class MessageHandlers:
             chat_id_ban = context.user_data.get('ban_chat')
             if chat_id_ban:
                 await DB.remove_banned_word(text.strip().lower(), chat_id_ban)
+                await safe_send(context.bot, user_id, f"✅ تم حذف: {text}")
             StateManager.clear(user_id)
             return
 
@@ -2086,21 +2140,30 @@ class MessageHandlers:
                 if action and chat_id_adv:
                     if action == 'unban':
                         await context.bot.unban_chat_member(chat_id_adv, target)
+                        await safe_send(context.bot, user_id, f"✅ تم إلغاء حظر `{target}`")
                     else:
                         success, msg = await apply_penalty(context.bot, chat_id_adv, target, action, 60)
                         await safe_send(context.bot, user_id, msg)
-            except:
-                pass
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+            except Exception as e:
+                logger.error(f"❌ خطأ في الإجراء: {e}")
             StateManager.clear(user_id)
             return
 
         if state == UserState.WAIT_PIN:
             chat_id_adv = context.user_data.get('adv_chat')
             try:
-                msg_id = update.message.reply_to_message.message_id if update.message.reply_to_message else int(text)
+                if update.message.reply_to_message:
+                    msg_id = update.message.reply_to_message.message_id
+                else:
+                    msg_id = int(text)
                 await context.bot.pin_chat_message(chat_id_adv, msg_id)
-            except:
-                pass
+                await safe_send(context.bot, user_id, f"📌 تم تثبيت الرسالة {msg_id}")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ معرف غير صالح أو رد على رسالة")
+            except Exception as e:
+                logger.error(f"❌ فشل التثبيت: {e}")
             StateManager.clear(user_id)
             return
 
@@ -2133,8 +2196,10 @@ class MessageHandlers:
                     TimeUtils.mecca_to_utc(end_date).strftime('%Y-%m-%d %H:%M:%S')
                 )
                 await safe_send(context.bot, user_id, f"✅ مسابقة #{cid}")
-            except:
-                pass
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ صيغة غير صالحة، استخدم YYYY-MM-DD HH:MM")
+            except Exception as e:
+                logger.error(f"❌ فشل إنشاء المسابقة: {e}")
             StateManager.clear(user_id)
             return
 
@@ -2142,6 +2207,7 @@ class MessageHandlers:
             cid = context.user_data.get('contest_join')
             if cid:
                 await DB.join_contest(cid, user_id, text)
+                await safe_send(context.bot, user_id, "✅ تم المشاركة!")
             StateManager.clear(user_id)
             return
 
@@ -2150,8 +2216,9 @@ class MessageHandlers:
                 target = int(text)
                 await DB.execute("INSERT OR IGNORE INTO bot_admins (user_id, added_by, added_at) VALUES (?,?,?)",
                                  (target, user_id, TimeUtils.sql_iso()))
-            except:
-                pass
+                await safe_send(context.bot, user_id, f"✅ تم إضافة `{target}` كمشرف")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ معرف غير صالح")
             StateManager.clear(user_id)
             return
 
@@ -2159,8 +2226,9 @@ class MessageHandlers:
             try:
                 target = int(text)
                 await DB.execute("DELETE FROM bot_admins WHERE user_id=?", (target,))
-            except:
-                pass
+                await safe_send(context.bot, user_id, f"✅ تم إزالة `{target}`")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ معرف غير صالح")
             StateManager.clear(user_id)
             return
 
@@ -2169,18 +2237,23 @@ class MessageHandlers:
             if ch:
                 try:
                     await context.bot.send_message(f"@{ch}", f"📢 {text}")
-                except:
-                    pass
+                    await safe_send(context.bot, user_id, "✅ تم الإرسال")
+                except Exception as e:
+                    await safe_send(context.bot, user_id, f"❌ فشل الإرسال: {str(e)[:50]}")
+            else:
+                await safe_send(context.bot, user_id, "❌ لا توجد قناة تحديثات")
             StateManager.clear(user_id)
             return
 
         if state == UserState.WAIT_UPDATE_CH:
             await DB.set_setting('updates_channel', text.replace('@', ''))
+            await safe_send(context.bot, user_id, f"✅ تم تعيين قناة التحديثات: {text}")
             StateManager.clear(user_id)
             return
 
         if state == UserState.WAIT_FORCE:
             await DB.set_setting('force_subscribe_channel', text.replace('@', ''))
+            await safe_send(context.bot, user_id, f"✅ تم تعيين الاشتراك الإجباري: {text}")
             StateManager.clear(user_id)
             return
 
@@ -2189,8 +2262,11 @@ class MessageHandlers:
                 val = int(text)
                 if 1 <= val <= 30:
                     await DB.update_reminder_settings(user_id, reminder_days_before=val)
-            except:
-                pass
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين الأيام إلى {val}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-30)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
             StateManager.clear(user_id)
             return
 
@@ -2200,8 +2276,11 @@ class MessageHandlers:
                 chat_id_sec = context.user_data.get(f'sec_chat_{user_id}')
                 if chat_id_sec and val >= 0:
                     await DB.execute("UPDATE group_security SET max_message_length=? WHERE chat_id=?", (val, chat_id_sec))
-            except:
-                pass
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين الحد الأقصى إلى {val}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ قيمة غير صالحة")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
             StateManager.clear(user_id)
             return
 
@@ -2211,8 +2290,11 @@ class MessageHandlers:
                 chat_id_sec = context.user_data.get(f'sec_chat_{user_id}')
                 if chat_id_sec and 1 <= val <= 10:
                     await DB.execute("UPDATE group_security SET max_warnings=? WHERE chat_id=?", (val, chat_id_sec))
-            except:
-                pass
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين عدد التحذيرات إلى {val}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-10)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
             StateManager.clear(user_id)
             return
 
@@ -2221,8 +2303,11 @@ class MessageHandlers:
                 chat = await context.bot.get_chat(text)
                 if chat.type == 'channel':
                     await DB.set_setting('log_channel_id', str(chat.id))
-            except:
-                pass
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين قناة السجلات: {text}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ هذه ليست قناة")
+            except Exception as e:
+                await safe_send(context.bot, user_id, f"❌ فشل التعيين: {str(e)[:50]}")
             StateManager.clear(user_id)
             return
 
@@ -2237,9 +2322,11 @@ class MessageHandlers:
             if keyword:
                 await DB.add_auto_reply(0, keyword, text)
                 _auto_reply_cache.invalidate()
+                await safe_send(context.bot, user_id, f"✅ تم إضافة الرد للكلمة: {keyword}")
             StateManager.clear(user_id)
             return
 
+        # إذا لم يتم التعرف على الحالة، نعيد المستخدم للقائمة الرئيسية
         await CommandHandlers.start(update, context)
 
     @staticmethod
@@ -2253,38 +2340,66 @@ class MessageHandlers:
         text = update.message.text or ""
         if update.effective_user.is_bot:
             return
+        
+        # التحقق من القفل
+        locked = await DB.fetchone("SELECT locked FROM chat_locks WHERE chat_id=?", (chat_id,))
+        if locked and locked[0] == 1:
+            try:
+                await update.message.delete()
+            except:
+                pass
+            return
+
         settings = await DB.get_security_settings(chat_id)
+        
+        # التحقق من الصلاحيات قبل الحذف
+        perms = await check_bot_permissions(context.bot, chat_id)
+        can_delete = perms.get('can_act', False)
+        
         if settings.get('delete_links', False) and TextUtils.contains_link(text):
-            try:
-                await update.message.delete()
-            except:
-                pass
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except:
+                    pass
             return
+            
         if settings.get('mentions', False) and TextUtils.contains_mention(text):
-            try:
-                await update.message.delete()
-            except:
-                pass
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except:
+                    pass
             return
+            
         if settings.get('delete_banned_words', False):
             banned_words = await DB.get_banned_words(chat_id)
             for word in banned_words:
                 if word in text.lower():
-                    try:
-                        await update.message.delete()
-                    except:
-                        pass
+                    if can_delete:
+                        try:
+                            await update.message.delete()
+                        except:
+                            pass
                     return
+                    
+        # الردود التلقائية
         ars = await DB.get_auto_reply_settings(chat_id)
         if ars.get('enabled', False):
+            # التحقق من صلاحية المشرفين
+            if ars.get('only_admins', False):
+                if not await is_authorized_in_group(context.bot, chat_id, update.effective_user.id):
+                    return
+            
             reply = get_reply_from_file(text.lower().strip())
             if not reply:
-                reply_data = await DB.get_auto_reply(text.lower(), chat_id)
+                reply_data = await DB.get_auto_reply(text.lower().strip(), chat_id)
                 if reply_data:
                     reply = reply_data.get('reply')
             if reply:
                 try:
                     await update.message.reply_text(reply)
+                    await _increment_usage_async(chat_id, text.lower().strip())
                 except:
                     pass
 
@@ -2294,29 +2409,39 @@ class MessageHandlers:
             return
         chat_id = update.effective_chat.id
         settings = await DB.get_security_settings(chat_id)
+        
         if settings.get('delete_service', False):
             try:
                 await update.message.delete()
             except:
                 pass
+                
         if settings.get('welcome_enabled', False) and update.message.new_chat_members:
             for member in update.message.new_chat_members:
                 if member.id != context.bot.id:
                     welcome_text = settings.get('welcome_text', "مرحباً {user} 🤍")
                     text = welcome_text.format(user=member.full_name or "العضو")
-                    await context.bot.send_message(chat_id, text)
+                    try:
+                        await context.bot.send_message(chat_id, text)
+                    except:
+                        pass
+                        
         if settings.get('goodbye_enabled', False) and update.message.left_chat_member:
             member = update.message.left_chat_member
             if member.id != context.bot.id:
                 goodbye_text = settings.get('goodbye_text', "وداعاً {user} 👋")
                 text = goodbye_text.format(user=member.full_name or "العضو")
-                await context.bot.send_message(chat_id, text)
+                try:
+                    await context.bot.send_message(chat_id, text)
+                except:
+                    pass
 
     @staticmethod
     async def handle_join_request(update, context):
         join_request = update.chat_join_request
         chat_id = update.effective_chat.id
         settings = await DB.get_security_settings(chat_id)
+        
         if settings.get('auto_approve_join', False):
             try:
                 await join_request.approve()
@@ -2325,6 +2450,7 @@ class MessageHandlers:
             except:
                 pass
             return
+            
         if settings.get('auto_reject_join', False):
             try:
                 await join_request.decline()
