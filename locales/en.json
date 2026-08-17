@@ -174,3 +174,4 @@
   "sync_bot_not_admin": "⚠️ **Bot is not an admin!**\n\nTo activate advanced features, make the bot an admin then use /syncgroup again.",
   "sync_not_admin": "❌ **You are not an admin in this group!**"
 }
+
