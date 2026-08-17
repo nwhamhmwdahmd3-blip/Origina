@@ -1,4 +1,3 @@
-#```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -647,22 +646,34 @@ class CallbackHandlers:
         try:
             # ========== الأزرار الأساسية ==========
             if base_data in [CB.MAIN, CB.BACK]:
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 await CommandHandlers.start(update, context)
                 return
 
             if base_data == CB.CANCEL:
                 StateManager.clear(user_id)
-                await query.answer("❌ تم الإلغاء")
+                try:
+                    await query.answer("❌ تم الإلغاء")
+                except BadRequest:
+                    pass
                 return
 
             if base_data == CB.HELP:
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 await CommandHandlers.help_command(update, context)
                 return
 
             if base_data == CB.TRIAL:
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 if await DB.has_used_trial(user_id):
                     await query.edit_message_text(await get_text(lang, 'trial_used'))
                     return
@@ -671,27 +682,42 @@ class CallbackHandlers:
                 return
 
             if base_data == CB.DEVELOPER:
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 await CommandHandlers.developer(update, context)
                 return
 
             if base_data == CB.SUBSCRIBE:
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 await CommandHandlers.subscribe(update, context)
                 return
 
             if base_data == CB.SUPPORT:
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 await CommandHandlers.support(update, context)
                 return
 
             if base_data == CB.LANGUAGE:
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 await CommandHandlers.language(update, context)
                 return
 
             if base_data == CB.CHECK_SUB:
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 await CommandHandlers.start(update, context)
                 return
 
@@ -729,16 +755,25 @@ class CallbackHandlers:
                 plan_names = {1: "يوم", 7: "أسبوع", 30: "شهر", 90: "3 أشهر"}
                 plan_name = plan_names.get(days)
                 if not plan_name:
-                    await query.answer("❌ باقة غير موجودة", show_alert=True)
+                    try:
+                        await query.answer("❌ باقة غير موجودة", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 plan = await DB.get_plan_by_name(plan_name)
                 if not plan:
-                    await query.answer("❌ باقة غير موجودة", show_alert=True)
+                    try:
+                        await query.answer("❌ باقة غير موجودة", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
 
                 invoice_number = await DB.create_invoice(user_id, plan['id'], plan['price'])
                 if not invoice_number:
-                    await query.answer("❌ فشل الدفع", show_alert=True)
+                    try:
+                        await query.answer("❌ فشل الدفع", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
 
                 try:
@@ -754,7 +789,10 @@ class CallbackHandlers:
                     await query.message.delete()
                 except Exception as e:
                     logger.error(f"❌ فشل إرسال الفاتورة: {e}")
-                    await query.answer(f"❌ {str(e)[:50]}", show_alert=True)
+                    try:
+                        await query.answer(f"❌ {str(e)[:50]}", show_alert=True)
+                    except BadRequest:
+                        pass
                 return
 
             if base_data == CB.INVOICES:
@@ -868,14 +906,20 @@ class CallbackHandlers:
                 cid = int(data.split(":")[-1])
                 StateManager.set(user_id, UserState.WAIT_CONTEST_ANSWER)
                 context.user_data['contest_join'] = cid
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 await safe_send(context.bot, user_id, "📝 أرسل إجابتك:")
                 return
 
             # ========== الدعم ==========
             if base_data == CB.SUPPORT_TICKET:
                 StateManager.set(user_id, UserState.SUPPORT_MODE)
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
                 await safe_send(context.bot, user_id, "📞 أرسل رسالتك:")
                 return
 
@@ -898,7 +942,10 @@ class CallbackHandlers:
             if data.startswith(CB.CH_DEL + ":"):
                 ch_id = int(data.split(":")[-1])
                 await DB.delete_channel(user_id, ch_id)
-                await query.answer("✅ تم الحذف")
+                try:
+                    await query.answer("✅ تم الحذف")
+                except BadRequest:
+                    pass
                 await CallbackHandlers._show_channel_list(update, context, query, user_id, lang)
                 return
 
@@ -906,7 +953,10 @@ class CallbackHandlers:
                 ch_id = int(data.split(":")[-1])
                 row = await DB.fetchone("SELECT user_id FROM user_channels WHERE id=?", (ch_id,))
                 if not row or row[0] != user_id:
-                    await query.answer("❌ هذه القناة ليست لك", show_alert=True)
+                    try:
+                        await query.answer("❌ هذه القناة ليست لك", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 stats = await DB.get_channel_stats(ch_id)
                 text = f"📊 **إحصائيات القناة**\n\n"
@@ -919,7 +969,10 @@ class CallbackHandlers:
             # ========== المنشورات ==========
             if base_data == CB.POST_ADD:
                 if not await DB.has_active_subscription(user_id):
-                    await query.answer("❌ انتهى اشتراكك!", show_alert=True)
+                    try:
+                        await query.answer("❌ انتهى اشتراكك!", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 active = await DB.get_active_channel(user_id)
                 if not active:
@@ -934,7 +987,10 @@ class CallbackHandlers:
 
             if base_data == CB.POST_PUB:
                 if not await DB.has_active_subscription(user_id):
-                    await query.answer("❌ انتهى اشتراكك!", show_alert=True)
+                    try:
+                        await query.answer("❌ انتهى اشتراكك!", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 active = await DB.get_active_channel(user_id)
                 if not active:
@@ -978,7 +1034,10 @@ class CallbackHandlers:
 
             if base_data == CB.PUB_ALL:
                 if not await DB.has_active_subscription(user_id):
-                    await query.answer("❌ انتهى اشتراكك! يرجى تجديد الاشتراك", show_alert=True)
+                    try:
+                        await query.answer("❌ انتهى اشتراكك! يرجى تجديد الاشتراك", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 
                 channels = await DB.get_user_channels(user_id)
@@ -1063,12 +1122,18 @@ class CallbackHandlers:
                 post_id = int(data.split(":")[-1])
                 row = await DB.fetchone("SELECT channel_db_id FROM posts WHERE id=?", (post_id,))
                 if not row:
-                    await query.answer("❌ المنشور غير موجود", show_alert=True)
+                    try:
+                        await query.answer("❌ المنشور غير موجود", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 ch_id = row[0]
                 row2 = await DB.fetchone("SELECT user_id FROM user_channels WHERE id=?", (ch_id,))
                 if not row2 or row2[0] != user_id:
-                    await query.answer("❌ غير مصرح", show_alert=True)
+                    try:
+                        await query.answer("❌ غير مصرح", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 await DB.execute("DELETE FROM posts WHERE id=?", (post_id,))
                 await query.edit_message_text("✅ تم حذف المنشور!")
@@ -1079,7 +1144,10 @@ class CallbackHandlers:
                 ch_id = int(data.split(":")[-1])
                 row = await DB.fetchone("SELECT user_id FROM user_channels WHERE id=?", (ch_id,))
                 if not row or row[0] != user_id:
-                    await query.answer("❌ غير مصرح", show_alert=True)
+                    try:
+                        await query.answer("❌ غير مصرح", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 await DB.execute("DELETE FROM posts WHERE channel_db_id=?", (ch_id,))
                 await query.edit_message_text("✅ تم مسح جميع المنشورات!")
@@ -1116,7 +1184,10 @@ class CallbackHandlers:
             if data.startswith(CB.GRP_SET + ":"):
                 chat_id = int(data.split(":")[-1])
                 if not await is_authorized_in_group(context.bot, chat_id, user_id):
-                    await query.answer("❌ لا صلاحية", show_alert=True)
+                    try:
+                        await query.answer("❌ لا صلاحية", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 settings = await DB.get_security_settings(chat_id)
                 text = await KeyboardFactory._format_security_text(settings)
@@ -1129,14 +1200,20 @@ class CallbackHandlers:
                     kb = KeyboardFactory.build("admin_panel", lang=lang)
                     await query.edit_message_text("👑 لوحة الأدمن", reply_markup=kb)
                 else:
-                    await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+                    try:
+                        await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+                    except BadRequest:
+                        pass
                 return
 
             # ========== أزرار لوحة المجموعة ==========
             if data.startswith(CB.PANEL_LOCK + ":"):
                 chat_id = int(data.split(":")[-1])
                 if not await is_authorized_in_group(context.bot, chat_id, user_id):
-                    await query.answer("❌ لا صلاحية", show_alert=True)
+                    try:
+                        await query.answer("❌ لا صلاحية", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 await DB.execute("INSERT OR REPLACE INTO chat_locks (chat_id, locked, locked_at, locked_by) VALUES (?,1,?,?)",
                                  (chat_id, TimeUtils.sql_iso(), user_id))
@@ -1146,7 +1223,10 @@ class CallbackHandlers:
             if data.startswith(CB.PANEL_UNLOCK + ":"):
                 chat_id = int(data.split(":")[-1])
                 if not await is_authorized_in_group(context.bot, chat_id, user_id):
-                    await query.answer("❌ لا صلاحية", show_alert=True)
+                    try:
+                        await query.answer("❌ لا صلاحية", show_alert=True)
+                    except BadRequest:
+                        pass
                     return
                 await DB.execute("DELETE FROM chat_locks WHERE chat_id=?", (chat_id,))
                 await query.edit_message_text("🔓 تم فتح المجموعة!")
@@ -1157,7 +1237,10 @@ class CallbackHandlers:
                     await query.message.delete()
                 except:
                     pass
-                await query.answer("✅ تم الإغلاق")
+                try:
+                    await query.answer("✅ تم الإغلاق")
+                except BadRequest:
+                    pass
                 return
 
             # ========== ✅ معالج مستقل لزر كلمات محظورة ==========
@@ -1215,11 +1298,17 @@ class CallbackHandlers:
             if data.startswith("lang_"):
                 lang_set = data.split("_")[-1]
                 await DB.set_user_language(user_id, lang_set)
-                await query.answer(f"✅ {lang_set}")
+                try:
+                    await query.answer(f"✅ {lang_set}")
+                except BadRequest:
+                    pass
                 await CommandHandlers.start(update, context)
                 return
 
-            await query.answer("⚠️ غير متوفر", show_alert=True)
+            try:
+                await query.answer("⚠️ غير متوفر", show_alert=True)
+            except BadRequest:
+                pass
 
         except Exception as e:
             logger.error(f"❌ Callback error: {e}", exc_info=True)
@@ -1326,7 +1415,10 @@ class CallbackHandlers:
         logger.info(f"🔍 _handle_security: action={action}, chat_id={chat_id}, data={data}")
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            try:
+                await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            except BadRequest:
+                pass
             return
 
         field_map = {
@@ -1397,7 +1489,10 @@ class CallbackHandlers:
             await DB.execute("UPDATE group_security SET delete_banned_words=? WHERE chat_id=?", (new_val, chat_id))
             status = "مفعل ✅" if new_val else "معطل ❌"
             await query.edit_message_text(f"🔄 حذف الكلمات المحظورة: {status}")
-            await query.answer()
+            try:
+                await query.answer()
+            except BadRequest:
+                pass
             return
 
         if action == "banned" or action == "banned_words":
@@ -1483,7 +1578,10 @@ class CallbackHandlers:
                 pass
             return
 
-        await query.answer()
+        try:
+            await query.answer()
+        except BadRequest:
+            pass
 
     @staticmethod
     async def _handle_banned_words_direct(update, context, query, user_id, lang=None):
@@ -1494,11 +1592,17 @@ class CallbackHandlers:
         chat_id = int(parts[1]) if len(parts) > 1 else None
 
         if not chat_id:
-            await query.answer("❌ خطأ في المعرف", show_alert=True)
+            try:
+                await query.answer("❌ خطأ في المعرف", show_alert=True)
+            except BadRequest:
+                pass
             return
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            try:
+                await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            except BadRequest:
+                pass
             return
 
         kb = InlineKeyboardMarkup([
@@ -1508,7 +1612,10 @@ class CallbackHandlers:
             [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data="sec_close")]
         ])
         await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
-        await query.answer()
+        try:
+            await query.answer()
+        except BadRequest:
+            pass
 
     @staticmethod
     async def _handle_admin(update, context, query, user_id, lang=None):
@@ -1583,7 +1690,10 @@ class CallbackHandlers:
                 shutil.copy2(PATHS.DB, backup_file)
                 with open(backup_file, 'rb') as f:
                     await context.bot.send_document(chat_id=user_id, document=f, filename=backup_file.name)
-                await query.answer()
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
             except Exception as e:
                 logger.error(f"❌ فشل النسخ الاحتياطي: {e}")
                 await safe_send(context.bot, user_id, "❌ فشل النسخ الاحتياطي")
@@ -1713,7 +1823,10 @@ class CallbackHandlers:
             await CallbackHandlers._handle_import(update, context, query, user_id)
 
         else:
-            await query.answer("⚠️ غير متوفر", show_alert=True)
+            try:
+                await query.answer("⚠️ غير متوفر", show_alert=True)
+            except BadRequest:
+                pass
 
     @staticmethod
     async def _handle_auto_reply(update, context, query, user_id, lang=None):
@@ -1730,7 +1843,10 @@ class CallbackHandlers:
             return
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            try:
+                await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            except BadRequest:
+                pass
             return
 
         settings = await DB.get_auto_reply_settings(chat_id)
@@ -1745,7 +1861,10 @@ class CallbackHandlers:
                 status_text,
                 reply_markup=KeyboardFactory.build("auto_reply_manage", chat_id, lang=lang)
             )
-            await query.answer()
+            try:
+                await query.answer()
+            except BadRequest:
+                pass
             return
 
         if action == "menu":
@@ -1770,14 +1889,20 @@ class CallbackHandlers:
 
         if action == "admins":
             await DB.update_auto_reply_settings(chat_id, only_admins=not settings.get('only_admins', False))
-            await query.answer("✅ تم")
+            try:
+                await query.answer("✅ تم")
+            except BadRequest:
+                pass
             await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
             return
 
         if action == "reset":
             await DB.reset_auto_replies(chat_id)
             _auto_reply_cache.invalidate()
-            await query.answer("✅ تم حذف جميع الردود")
+            try:
+                await query.answer("✅ تم حذف جميع الردود")
+            except BadRequest:
+                pass
             await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
             return
 
@@ -1805,7 +1930,10 @@ class CallbackHandlers:
             await query.edit_message_text(text)
             return
 
-        await query.answer()
+        try:
+            await query.answer()
+        except BadRequest:
+            pass
 
     # =====================================================================
     # ✅ _handle_schedule مع التحقق من الحد الأدنى
@@ -1857,7 +1985,10 @@ class CallbackHandlers:
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             lang = await DB.get_user_language(user_id)
-            await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            try:
+                await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            except BadRequest:
+                pass
             return
 
         if action == "add":
@@ -1889,7 +2020,10 @@ class CallbackHandlers:
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             lang = await DB.get_user_language(user_id)
-            await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            try:
+                await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            except BadRequest:
+                pass
             return
 
         actions = {
@@ -1921,7 +2055,10 @@ class CallbackHandlers:
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             lang = await DB.get_user_language(user_id)
-            await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            try:
+                await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            except BadRequest:
+                pass
             return
 
         await DB.execute("UPDATE group_security SET auto_penalty=? WHERE chat_id=?", (penalty, chat_id))
@@ -2553,4 +2690,3 @@ class MessageHandlers:
                 await join_request.decline()
             except:
                 pass
-

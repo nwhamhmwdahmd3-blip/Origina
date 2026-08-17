@@ -20,7 +20,7 @@ utils.py - الأدوات المساعدة للبوت (نسخة متكاملة �
 - إدارة الردود التلقائية: export_auto_replies, import_auto_replies, fetch_json_from_url
 - الردود من ملف: load_replies_from_file, get_reply_from_file, reload_replies_from_file
 - المهام الخلفية: BackgroundTasks
-- خادم الويب: setup_webhook, webhook_handler
+- خادم الويب: setup_webhook, webhook_handler (مع التصحيح)
 - معالج الأخطاء: ErrorHandler
 - دوال إضافية: get_min_publish_interval, get_banned_words_cached, invalidate_banned_words_cache
 """
@@ -39,6 +39,9 @@ from typing import Optional, List, Dict, Tuple, Any, Union
 from enum import Enum, auto
 from collections import OrderedDict, deque
 from abc import ABC, abstractmethod
+
+# ✅ استيراد aiohttp.web للـ webhook
+import aiohttp.web as web
 
 # ✅ استيراد psutil مع معالجة عدم وجوده
 try:
@@ -1202,7 +1205,7 @@ class BackgroundTasks:
 
 
 # =====================================================================
-# 18. خادم الويب
+# 18. خادم الويب (مع التصحيح)
 # =====================================================================
 
 _webhook_app = None
@@ -1211,7 +1214,6 @@ async def setup_webhook(app, port: int):
     global _webhook_app
     _webhook_app = app
 
-    import aiohttp.web as web
     web_app = web.Application()
     web_app.router.add_get('/health', lambda r: web.Response(text="OK"))
     web_app.router.add_get('/', lambda r: web.Response(text="🌿 Relax Manager"))
@@ -1235,6 +1237,14 @@ async def webhook_handler(request):
         data = await request.json()
         await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
         return web.Response(status=200, text="OK")
+    except BadRequest as e:
+        # تجاهل أخطاء انتهاء صلاحية الاستعلام (غير حرجة)
+        if "Query is too old" in str(e):
+            logger.debug("⏳ Callback query expired (ignored)")
+            return web.Response(status=200, text="OK")
+        else:
+            logger.error(f"❌ BadRequest in webhook: {e}")
+            return web.Response(status=400, text="Bad Request")
     except Exception as e:
         logger.error(f"❌ Webhook error: {e}")
         return web.Response(status=500, text="ERROR")
