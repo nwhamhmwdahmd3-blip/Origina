@@ -10,6 +10,7 @@ handlers.py - جميع معالجات البوت (النسخة النهائية 
 - إضافة زر sec_toggle_banned لتشغيل/إيقاف حذف الكلمات المحظورة
 - إضافة التحكم في الحد الأدنى للفاصل الزمني بين المنشورات (MIN_PUBLISH_INTERVAL)
 - إصلاح زر نشر الكل: منشور واحد لكل قناة فقط
+- ✅ إضافة عرض أزرار الجدولة (channel_settings) عند اختيار قناة
 """
 
 import asyncio
@@ -875,10 +876,16 @@ class CallbackHandlers:
                 await CallbackHandlers._show_channel_list(update, context, query, user_id, lang)
                 return
 
+            # ✅ هذا هو الجزء المعدل لعرض أزرار الجدولة
             if data.startswith(CB.CH_SEL + ":"):
                 ch_id = int(data.split(":")[-1])
                 await DB.set_active_channel(user_id, ch_id)
-                await query.edit_message_text("✅ تم تحديد القناة!")
+                # ✅ عرض أزرار الجدولة
+                kb = KeyboardFactory.build("channel_settings", lang=lang)
+                await query.edit_message_text(
+                    f"📌 تم تحديد القناة!\nيمكنك الآن ضبط الجدولة:",
+                    reply_markup=kb
+                )
                 return
 
             if data.startswith(CB.CH_DEL + ":"):
