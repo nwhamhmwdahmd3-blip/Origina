@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة النهائية المتكاملة)
+handlers.py - جميع معالجات البوت (النسخة النهائية مع دعم ترجمة الأزرار)
 ============================================================
 - CommandHandlers: جميع الأوامر (مع دعم المشرف المخفي)
-- CallbackHandlers: جميع الأزرار (مع إصلاح كلمات محظورة)
+- CallbackHandlers: جميع الأزرار (مع دعم ترجمة الأزرار حسب اللغة)
 - MessageHandlers: جميع الرسائل والحالات
 """
 
@@ -37,7 +37,7 @@ from utils import (
     KeyboardFactory, TranslationManager, CB,
     _auto_reply_cache, export_auto_replies, import_auto_replies,
     fetch_json_from_url, _increment_usage_async, get_ram_usage,
-    get_reply_from_file
+    get_reply_from_file, load_replies_from_file, reload_replies_from_file
 )
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ class CommandHandlers:
         recycle = await DB.get_auto_recycle_status(user_id)
         recycle_text = "مفعل" if recycle else "معطل"
 
-        kb_rows = KeyboardFactory.get_menu("main_menu")
+        kb_rows = KeyboardFactory.get_menu("main_menu", lang)
         keyboard = []
 
         for row in kb_rows:
@@ -110,10 +110,10 @@ class CommandHandlers:
             for item in row:
                 if item == "admin_panel_btn":
                     if CONFIG.is_developer(user_id):
-                        text_btn = KeyboardFactory.get_text("admin_panel_btn")
+                        text_btn = KeyboardFactory.get_text("admin_panel_btn", lang)
                         btn_row.append(InlineKeyboardButton(text_btn, callback_data=CB.ADMIN))
                 else:
-                    text_btn = KeyboardFactory.get_text(item)
+                    text_btn = KeyboardFactory.get_text(item, lang)
                     if item.endswith("_url"):
                         url = f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup"
                         btn_row.append(InlineKeyboardButton(text_btn, url=url))
@@ -123,7 +123,8 @@ class CommandHandlers:
                 keyboard.append(btn_row)
 
         if CONFIG.is_developer(user_id):
-            keyboard.append([InlineKeyboardButton("👑 لوحة الأدمن", callback_data=CB.ADMIN)])
+            admin_text = KeyboardFactory.get_text("admin_panel_btn", lang)
+            keyboard.append([InlineKeyboardButton(admin_text, callback_data=CB.ADMIN)])
 
         kb = InlineKeyboardMarkup(keyboard)
 
@@ -156,14 +157,14 @@ class CommandHandlers:
     async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
-        kb = KeyboardFactory.build("plans")
+        kb = KeyboardFactory.build("plans", lang=lang)
         await safe_send(context.bot, user_id, await get_text(lang, 'plan_selector'), reply_markup=kb)
 
     @staticmethod
     async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
-        kb = KeyboardFactory.build("support")
+        kb = KeyboardFactory.build("support", lang=lang)
         await safe_send(context.bot, user_id, await get_text(lang, 'send_support_message'), reply_markup=kb)
 
     @staticmethod
@@ -218,7 +219,8 @@ class CommandHandlers:
                 row = []
         if row:
             buttons.append(row)
-        buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
+        back_text = KeyboardFactory.get_text("back", lang)
+        buttons.append([InlineKeyboardButton(back_text, callback_data=CB.BACK)])
         kb = InlineKeyboardMarkup(buttons)
         await safe_send(context.bot, user_id, f"🌐 اختر اللغة:\n\nالحالية: {lang}", reply_markup=kb)
 
@@ -229,6 +231,7 @@ class CommandHandlers:
     @staticmethod
     async def contests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id)
         contests = await DB.get_active_contests(10)
         if not contests:
             await safe_send(context.bot, user_id, "📭 لا توجد مسابقات نشطة")
@@ -238,7 +241,7 @@ class CommandHandlers:
             text += f"• **{c['title']}**\n"
             text += f"  🎁 {c['prize']}\n"
             text += f"  📅 {c['end_date'][:10]}\n\n"
-        kb = KeyboardFactory.build("contests")
+        kb = KeyboardFactory.build("contests", lang=lang)
         await safe_send(context.bot, user_id, text, reply_markup=kb)
 
     @staticmethod
@@ -250,9 +253,10 @@ class CommandHandlers:
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             await safe_send(context.bot, user_id, "❌ ليس لديك صلاحية")
             return
+        lang = await DB.get_user_language(user_id)
         settings = await DB.get_security_settings(chat_id)
         text = await KeyboardFactory._format_security_text(settings)
-        kb = KeyboardFactory.build("security", chat_id)
+        kb = KeyboardFactory.build("security", chat_id, lang=lang)
         await safe_send(context.bot, user_id, text, reply_markup=kb)
 
     @staticmethod
@@ -264,7 +268,8 @@ class CommandHandlers:
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             await safe_send(context.bot, user_id, "❌ ليس لديك صلاحية")
             return
-        kb = KeyboardFactory.build("panel", chat_id)
+        lang = await DB.get_user_language(user_id)
+        kb = KeyboardFactory.build("panel", chat_id, lang=lang)
         await safe_send(context.bot, user_id, "📋 لوحة تحكم المجموعة", reply_markup=kb)
 
     @staticmethod
@@ -652,7 +657,7 @@ class CallbackHandlers:
             if data == CB.SETTINGS:
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
                 recycle = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
-                kb = KeyboardFactory.build("settings")
+                kb = KeyboardFactory.build("settings", lang=lang)
                 await query.edit_message_text(
                     f"⚙️ **الإعدادات**\n\n📤 النشر: {auto}\n♻️ التدوير: {recycle}",
                     reply_markup=kb
@@ -673,7 +678,7 @@ class CallbackHandlers:
 
             # ========== الباقات ==========
             if data == CB.PLANS:
-                kb = KeyboardFactory.build("plans")
+                kb = KeyboardFactory.build("plans", lang=lang)
                 await query.edit_message_text("💎 اختر الباقة:", reply_markup=kb)
                 return
 
@@ -718,7 +723,7 @@ class CallbackHandlers:
                 text = "🧾 **فواتيري**\n\n"
                 for inv in invoices:
                     text += f"• #{inv['number']} - {inv['amount']} ⭐\n"
-                kb = [[InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]]
+                kb = [[InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)]]
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
                 return
 
@@ -727,7 +732,7 @@ class CallbackHandlers:
                 stats = await DB.get_referral_stats(user_id)
                 code = await DB.get_referral_code(user_id)
                 text = f"🔗 **الإحالات**\n\n🔗 `https://t.me/{CONFIG.BOT_USERNAME}?start=ref_{code}`\n👥 {stats['total']}\n🎁 {stats['available']} يوم"
-                kb = KeyboardFactory.build("referral")
+                kb = KeyboardFactory.build("referral", lang=lang)
                 await query.edit_message_text(text, reply_markup=kb)
                 return
 
@@ -750,7 +755,7 @@ class CallbackHandlers:
                 text += f"📊 يومي: {'✅' if settings.get('daily_stats_reminder', False) else '❌'}\n"
                 text += f"📈 أسبوعي: {'✅' if settings.get('weekly_report', False) else '❌'}\n"
                 text += f"📅 الأيام: {settings.get('reminder_days_before', 3)}"
-                kb = KeyboardFactory.build("reminder")
+                kb = KeyboardFactory.build("reminder", lang=lang)
                 await query.edit_message_text(text, reply_markup=kb)
                 return
 
@@ -786,7 +791,7 @@ class CallbackHandlers:
             # ========== الترجمة ==========
             if data == CB.TRANSLATION:
                 cur = await DB.get_user_language(user_id)
-                kb = KeyboardFactory.build("translation")
+                kb = KeyboardFactory.build("translation", lang=lang)
                 await query.edit_message_text(f"🌐 الترجمة: {cur}", reply_markup=kb)
                 return
 
@@ -839,7 +844,7 @@ class CallbackHandlers:
                 return
 
             if data == CB.CH_LIST:
-                await CallbackHandlers._show_channel_list(update, context, query, user_id)
+                await CallbackHandlers._show_channel_list(update, context, query, user_id, lang)
                 return
 
             if data.startswith(CB.CH_SEL + ":"):
@@ -852,7 +857,7 @@ class CallbackHandlers:
                 ch_id = int(data.split(":")[-1])
                 await DB.delete_channel(user_id, ch_id)
                 await query.answer("✅ تم الحذف")
-                await CallbackHandlers._show_channel_list(update, context, query, user_id)
+                await CallbackHandlers._show_channel_list(update, context, query, user_id, lang)
                 return
 
             if data.startswith(CB.CH_STATS + ":"):
@@ -919,7 +924,7 @@ class CallbackHandlers:
                 return
 
             if data == CB.POST_LIST:
-                await CallbackHandlers._show_post_list(update, context, query, user_id)
+                await CallbackHandlers._show_post_list(update, context, query, user_id, lang)
                 return
 
             if data == CB.POST_REC:
@@ -961,7 +966,7 @@ class CallbackHandlers:
                     return
                 await DB.execute("DELETE FROM posts WHERE id=?", (post_id,))
                 await query.edit_message_text("✅ تم حذف المنشور!")
-                await CallbackHandlers._show_post_list(update, context, query, user_id)
+                await CallbackHandlers._show_post_list(update, context, query, user_id, lang)
                 return
 
             if data.startswith(CB.POST_CLEAR + ":"):
@@ -972,15 +977,16 @@ class CallbackHandlers:
                     return
                 await DB.execute("DELETE FROM posts WHERE channel_db_id=?", (ch_id,))
                 await query.edit_message_text("✅ تم مسح جميع المنشورات!")
-                await CallbackHandlers._show_post_list(update, context, query, user_id)
+                await CallbackHandlers._show_post_list(update, context, query, user_id, lang)
                 return
 
             # ========== المجموعات ==========
             if data == CB.GROUPS:
                 groups = await DB.get_user_groups(user_id)
                 if not groups:
+                    add_text = KeyboardFactory.get_text("add_group_button", lang)
                     kb = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("➕ أضف", url=f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup")
+                        InlineKeyboardButton(add_text, url=f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup")
                     ]])
                     await query.edit_message_text("📭 لا توجد مجموعات", reply_markup=kb)
                     return
@@ -989,13 +995,15 @@ class CallbackHandlers:
                 for gid, name, username, banned in groups:
                     st = "✅" if not banned else "⛔"
                     text += f"{st} {name}\n"
+                    security_text = KeyboardFactory.get_text("security_button", lang).replace("{name}", name[:15])
                     kb.append([
                         InlineKeyboardButton(
-                            f"🔐 أمان {name[:15]}",
+                            security_text,
                             callback_data=f"{CB.GRP_SET}:{gid}"
                         )
                     ])
-                kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
+                back_text = KeyboardFactory.get_text("back", lang)
+                kb.append([InlineKeyboardButton(back_text, callback_data=CB.BACK)])
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
                 return
 
@@ -1006,13 +1014,13 @@ class CallbackHandlers:
                     return
                 settings = await DB.get_security_settings(chat_id)
                 text = await KeyboardFactory._format_security_text(settings)
-                kb = KeyboardFactory.build("security", chat_id)
+                kb = KeyboardFactory.build("security", chat_id, lang=lang)
                 await query.edit_message_text(text, reply_markup=kb)
                 return
 
             if data == CB.ADMIN:
                 if CONFIG.is_developer(user_id):
-                    kb = KeyboardFactory.build("admin_panel")
+                    kb = KeyboardFactory.build("admin_panel", lang=lang)
                     await query.edit_message_text("👑 لوحة الأدمن", reply_markup=kb)
                 else:
                     await query.answer("❌ لا صلاحية", show_alert=True)
@@ -1048,21 +1056,21 @@ class CallbackHandlers:
 
             # ========== ✅ معالج مستقل لزر كلمات محظورة ==========
             if data.startswith("sec_banned_words") or data == "sec_banned_words":
-                await CallbackHandlers._handle_banned_words_direct(update, context, query, user_id)
+                await CallbackHandlers._handle_banned_words_direct(update, context, query, user_id, lang)
                 return
 
             # ========== الأزرار الفرعية ==========
             if data.startswith("sec_"):
-                await CallbackHandlers._handle_security(update, context, query, user_id)
+                await CallbackHandlers._handle_security(update, context, query, user_id, lang)
                 return
 
             if data.startswith("admin_"):
                 if CONFIG.is_developer(user_id):
-                    await CallbackHandlers._handle_admin(update, context, query, user_id)
+                    await CallbackHandlers._handle_admin(update, context, query, user_id, lang)
                 return
 
             if data.startswith("auto_reply_"):
-                await CallbackHandlers._handle_auto_reply(update, context, query, user_id)
+                await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
                 return
 
             if data.startswith("sched_"):
@@ -1126,12 +1134,14 @@ class CallbackHandlers:
             await DB.increment_post_fail(post['id'])
 
     @staticmethod
-    async def _show_channel_list(update, context, query, user_id):
+    async def _show_channel_list(update, context, query, user_id, lang=None):
+        if not lang:
+            lang = await DB.get_user_language(user_id)
         channels = await DB.get_user_channels(user_id)
         if not channels:
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ إضافة قناة", callback_data=CB.CH_ADD)],
-                [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
+                [InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)],
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)]
             ])
             await query.edit_message_text("📭 لا توجد قنوات!\nاضغط للإضافة:", reply_markup=kb)
             return
@@ -1140,20 +1150,23 @@ class CallbackHandlers:
         for ch in channels:
             st = "✅" if not ch['banned'] else "🚫"
             text += f"{st} {ch['channel_name']} (`{ch['channel_id']}`)\n"
+            select_text = KeyboardFactory.get_text("ch_sel", lang).replace("{name}", ch['channel_name'][:20])
             kb.append([
                 InlineKeyboardButton(
                     f"📌 {ch['channel_name'][:20]}",
                     callback_data=f"{CB.CH_SEL}:{ch['id']}"
                 ),
-                InlineKeyboardButton("📊", callback_data=f"{CB.CH_STATS}:{ch['id']}"),
-                InlineKeyboardButton("🗑️", callback_data=f"{CB.CH_DEL}:{ch['id']}")
+                InlineKeyboardButton(KeyboardFactory.get_text("ch_stats", lang), callback_data=f"{CB.CH_STATS}:{ch['id']}"),
+                InlineKeyboardButton(KeyboardFactory.get_text("ch_del", lang), callback_data=f"{CB.CH_DEL}:{ch['id']}")
             ])
-        kb.append([InlineKeyboardButton("➕ إضافة", callback_data=CB.CH_ADD)])
-        kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
+        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)])
+        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
     @staticmethod
-    async def _show_post_list(update, context, query, user_id):
+    async def _show_post_list(update, context, query, user_id, lang=None):
+        if not lang:
+            lang = await DB.get_user_language(user_id)
         active = await DB.get_active_channel(user_id)
         if not active:
             await query.edit_message_text("❌ لا توجد قناة نشطة")
@@ -1166,13 +1179,15 @@ class CallbackHandlers:
             kb.append([
                 InlineKeyboardButton(f"🗑️ حذف {p['id']}", callback_data=f"{CB.POST_DEL}:{p['id']}")
             ])
-        kb.append([InlineKeyboardButton("🗑️ مسح الكل", callback_data=f"{CB.POST_CLEAR}:{active}")])
-        kb.append([InlineKeyboardButton("♻️ إعادة التدوير", callback_data=CB.POST_REC)])
-        kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
+        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("post_clear", lang), callback_data=f"{CB.POST_CLEAR}:{active}")])
+        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("post_rec", lang), callback_data=CB.POST_REC)])
+        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
         await query.edit_message_text(text if posts else "📭 لا يوجد", reply_markup=InlineKeyboardMarkup(kb))
 
     @staticmethod
-    async def _handle_security(update, context, query, user_id):
+    async def _handle_security(update, context, query, user_id, lang=None):
+        if not lang:
+            lang = await DB.get_user_language(user_id)
         data = query.data
         parts = data.split(":")
         if len(parts) < 2:
@@ -1220,7 +1235,7 @@ class CallbackHandlers:
             await DB.execute(f"UPDATE group_security SET {col}=? WHERE chat_id=?", (new_val, chat_id))
             settings = await DB.get_security_settings(chat_id)
             text = await KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id)
+            kb = KeyboardFactory.build("security", chat_id, lang=lang)
             try:
                 await query.edit_message_text(text, reply_markup=kb)
             except BadRequest:
@@ -1232,7 +1247,7 @@ class CallbackHandlers:
                 await DB.execute(f"UPDATE group_security SET {f}=1 WHERE chat_id=?", (chat_id,))
             settings = await DB.get_security_settings(chat_id)
             text = await KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id)
+            kb = KeyboardFactory.build("security", chat_id, lang=lang)
             try:
                 await query.edit_message_text(text, reply_markup=kb)
             except BadRequest:
@@ -1244,26 +1259,26 @@ class CallbackHandlers:
                 await DB.execute(f"UPDATE group_security SET {f}=0 WHERE chat_id=?", (chat_id,))
             settings = await DB.get_security_settings(chat_id)
             text = await KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id)
+            kb = KeyboardFactory.build("security", chat_id, lang=lang)
             try:
                 await query.edit_message_text(text, reply_markup=kb)
             except BadRequest:
                 pass
             return
 
-        # ملاحظة: لم نعد نستخدم هذا الجزء لأنه تم استبداله بالمعالج المستقل، لكنه يبقى للتوافق
+        # ✅ إصلاح: استخدام لوحة مفاتيح مباشرة بدلاً من KeyboardFactory.build
         if action == "banned" or action == "banned_words":
             try:
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"ban_add:{chat_id}"),
-                     InlineKeyboardButton("📋 قائمة الكلمات", callback_data=f"ban_list:{chat_id}")],
-                    [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"ban_rem:{chat_id}")],
-                    [InlineKeyboardButton("🔙 رجوع", callback_data="sec_close")]
+                    [InlineKeyboardButton(KeyboardFactory.get_text("ban_add", lang), callback_data=f"ban_add:{chat_id}"),
+                     InlineKeyboardButton(KeyboardFactory.get_text("ban_list", lang), callback_data=f"ban_list:{chat_id}")],
+                    [InlineKeyboardButton(KeyboardFactory.get_text("ban_rem", lang), callback_data=f"ban_rem:{chat_id}")],
+                    [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data="sec_close")]
                 ])
                 await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
                 await query.answer()
             except Exception as e:
-                logger.error(f"❌ خطأ في عرض كلمات محظورة (sec): {e}", exc_info=True)
+                logger.error(f"❌ خطأ في عرض كلمات محظورة: {e}", exc_info=True)
                 await query.answer("❌ حدث خطأ", show_alert=True)
             return
 
@@ -1278,7 +1293,7 @@ class CallbackHandlers:
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📝 العدد", callback_data=f"sec_warn_count:{chat_id}"),
                  InlineKeyboardButton("⚖️ العقوبة", callback_data=f"sec_warn_penalty:{chat_id}")],
-                [InlineKeyboardButton("🔙 رجوع", callback_data=f"{CB.GRP_SET}:{chat_id}")]
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"{CB.GRP_SET}:{chat_id}")]
             ])
             await query.edit_message_text(
                 f"⚠️ **التحذيرات**\n\nالحد: {settings.get('max_warnings', 3)}\nالعقوبة: {settings.get('warn_penalty', 'ban')}",
@@ -1296,7 +1311,7 @@ class CallbackHandlers:
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛑 حظر", callback_data=f"sec_set_warn_penalty:{chat_id}:ban"),
                  InlineKeyboardButton("🔇 كتم", callback_data=f"sec_set_warn_penalty:{chat_id}:mute")],
-                [InlineKeyboardButton("🔙 رجوع", callback_data=f"sec_warn:{chat_id}")]
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_warn:{chat_id}")]
             ])
             await query.edit_message_text("⚖️ اختر العقوبة:", reply_markup=kb)
             return
@@ -1309,17 +1324,17 @@ class CallbackHandlers:
             return
 
         if action == "del_pen":
-            kb = KeyboardFactory.build("penalty", chat_id)
+            kb = KeyboardFactory.build("penalty", chat_id, lang=lang)
             await query.edit_message_text("⚖️ عقوبة الحذف:", reply_markup=kb)
             return
 
         if action == "penalty":
-            kb = KeyboardFactory.build("penalty", chat_id)
+            kb = KeyboardFactory.build("penalty", chat_id, lang=lang)
             await query.edit_message_text("⚖️ العقوبة:", reply_markup=kb)
             return
 
         if action == "adv_act":
-            kb = KeyboardFactory.build("advanced_actions", chat_id)
+            kb = KeyboardFactory.build("advanced_actions", chat_id, lang=lang)
             await query.edit_message_text("🛠️ إجراءات:", reply_markup=kb)
             return
 
@@ -1335,7 +1350,7 @@ class CallbackHandlers:
             return
 
         if action == "auto_reply_menu":
-            kb = KeyboardFactory.build("auto_reply_manage", chat_id)
+            kb = KeyboardFactory.build("auto_reply_manage", chat_id, lang=lang)
             await query.edit_message_text("📝 الردود:", reply_markup=kb)
             return
 
@@ -1349,8 +1364,10 @@ class CallbackHandlers:
         await query.answer()
 
     @staticmethod
-    async def _handle_banned_words_direct(update, context, query, user_id):
+    async def _handle_banned_words_direct(update, context, query, user_id, lang=None):
         """معالج مباشر لزر كلمات محظورة (يتجاوز أي تعقيدات)"""
+        if not lang:
+            lang = await DB.get_user_language(user_id)
         data = query.data
         parts = data.split(":")
         chat_id = int(parts[1]) if len(parts) > 1 else None
@@ -1364,16 +1381,18 @@ class CallbackHandlers:
             return
         
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"ban_add:{chat_id}"),
-             InlineKeyboardButton("📋 قائمة الكلمات", callback_data=f"ban_list:{chat_id}")],
-            [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"ban_rem:{chat_id}")],
-            [InlineKeyboardButton("🔙 رجوع", callback_data="sec_close")]
+            [InlineKeyboardButton(KeyboardFactory.get_text("ban_add", lang), callback_data=f"ban_add:{chat_id}"),
+             InlineKeyboardButton(KeyboardFactory.get_text("ban_list", lang), callback_data=f"ban_list:{chat_id}")],
+            [InlineKeyboardButton(KeyboardFactory.get_text("ban_rem", lang), callback_data=f"ban_rem:{chat_id}")],
+            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data="sec_close")]
         ])
         await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
         await query.answer()
 
     @staticmethod
-    async def _handle_admin(update, context, query, user_id):
+    async def _handle_admin(update, context, query, user_id, lang=None):
+        if not lang:
+            lang = await DB.get_user_language(user_id)
         data = query.data
 
         if data == CB.ADMIN_USERS:
@@ -1576,7 +1595,9 @@ class CallbackHandlers:
             await query.answer("⚠️ غير متوفر", show_alert=True)
 
     @staticmethod
-    async def _handle_auto_reply(update, context, query, user_id):
+    async def _handle_auto_reply(update, context, query, user_id, lang=None):
+        if not lang:
+            lang = await DB.get_user_language(user_id)
         data = query.data
         parts = data.split(":")
         if len(parts) < 2:
@@ -1601,7 +1622,7 @@ class CallbackHandlers:
             status_text = "✅ **تم تفعيل الردود التلقائية!**" if new_enabled else "❌ **تم تعطيل الردود التلقائية!**"
             await query.edit_message_text(
                 status_text,
-                reply_markup=KeyboardFactory.build("auto_reply_manage", chat_id)
+                reply_markup=KeyboardFactory.build("auto_reply_manage", chat_id, lang=lang)
             )
             await query.answer()
             return
@@ -1615,13 +1636,13 @@ class CallbackHandlers:
                     f"🔄 {'إيقاف' if current_enabled else 'تشغيل'} الردود",
                     callback_data=f"auto_reply_toggle:{chat_id}"
                 )],
-                [InlineKeyboardButton("👤 للمشرفين فقط", callback_data=f"auto_reply_admins:{chat_id}")],
-                [InlineKeyboardButton("➕ إضافة رد", callback_data=f"auto_reply_add:{chat_id}"),
-                 InlineKeyboardButton("🗑️ حذف رد", callback_data=f"auto_reply_del:{chat_id}")],
-                [InlineKeyboardButton("📋 قائمة الردود", callback_data=f"auto_reply_list:{chat_id}"),
-                 InlineKeyboardButton("📊 إحصائيات", callback_data=f"auto_reply_stats:{chat_id}")],
-                [InlineKeyboardButton("🗑️ حذف الكل", callback_data=f"auto_reply_reset:{chat_id}")],
-                [InlineKeyboardButton("🔙 رجوع", callback_data=f"sec_close")]
+                [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_admins", lang), callback_data=f"auto_reply_admins:{chat_id}")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_add", lang), callback_data=f"auto_reply_add:{chat_id}"),
+                 InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_del", lang), callback_data=f"auto_reply_del:{chat_id}")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_list", lang), callback_data=f"auto_reply_list:{chat_id}"),
+                 InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_stats", lang), callback_data=f"auto_reply_stats:{chat_id}")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_reset", lang), callback_data=f"auto_reply_reset:{chat_id}")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close")]
             ])
             await query.edit_message_text("📝 **إدارة الردود التلقائية**", reply_markup=kb)
             return
@@ -1629,14 +1650,14 @@ class CallbackHandlers:
         if action == "admins":
             await DB.update_auto_reply_settings(chat_id, only_admins=not settings.get('only_admins', False))
             await query.answer("✅ تم")
-            await CallbackHandlers._handle_auto_reply(update, context, query, user_id)
+            await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
             return
 
         if action == "reset":
             await DB.reset_auto_replies(chat_id)
             _auto_reply_cache.invalidate()
             await query.answer("✅ تم حذف جميع الردود")
-            await CallbackHandlers._handle_auto_reply(update, context, query, user_id)
+            await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
             return
 
         if action == "add":
