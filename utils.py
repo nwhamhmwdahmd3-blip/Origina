@@ -2,12 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-utils.py - الأدوات المساعدة للبوت (نسخة مصححة)
-=============================================
-- إصلاح safe_send (إزالة الهروب التلقائي)
-- إضافة الترجمة لنصوص الأمان
-- تحسين معالجة الملفات المؤقتة
-- إصلاح تعريف logger
+utils.py - الأدوات المساعدة للبوت (نسخة مصححة مع دعم ترجمة الأزرار)
+==========================================================
+- جميع الإصلاحات السابقة محفوظة
+- إضافة دعم لتغيير لغة الأزرار عبر ملفات buttons_config_{lang}.json
+- الحفاظ على التوافق مع الإصدارات السابقة (load_config)
 """
 
 import asyncio
@@ -31,7 +30,8 @@ try:
     import psutil
 except ImportError:
     psutil = None
-    # تم إزالة logger = logging.getLogger(__name__) المكرر
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️ psutil غير مثبت، لن تعمل إحصائيات الرام")
 
 import aiohttp
 
@@ -334,7 +334,7 @@ class StateManager:
         cls._timestamps.pop(user_id, None)
 
 # =====================================================================
-# 8. تعريفات الأزرار (CB)
+# 8. تعريفات الأزرار (CB) - مُحدثة ومتكاملة
 # =====================================================================
 
 class CB:
@@ -501,12 +501,19 @@ class CB:
 # =====================================================================
 
 class KeyboardFactory:
-    _configs: Dict[str, Dict] = {}
-    _default_lang: str = "ar"
+    _configs: Dict[str, Dict] = {}          # تخزين إعدادات كل لغة
+    _default_lang: str = "ar"               # اللغة الافتراضية
     _config_path_template: str = "buttons_config_{lang}.json"
+
+    # ✅ دالة متوافقة مع الإصدارات السابقة (يستخدمها bot.py)
+    @classmethod
+    def load_config(cls):
+        """تحميل الإعدادات الافتراضية (متوافق مع bot.py)"""
+        return cls.get_config(cls._default_lang)
 
     @classmethod
     def _load_config_for_lang(cls, lang: str) -> Dict:
+        """تحميل إعدادات الأزرار للغة محددة مع التخزين المؤقت"""
         if lang in cls._configs:
             return cls._configs[lang]
 
@@ -522,6 +529,7 @@ class KeyboardFactory:
                 logger.warning(f"⚠️ ملف buttons_config_{lang}.json غير موجود، سيتم استخدام اللغة الافتراضية")
                 return cls._load_config_for_lang(cls._default_lang)
             else:
+                # إنشاء إعدادات افتراضية للعربية
                 default_config = {
                     "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
                     "menus": {}
@@ -535,24 +543,29 @@ class KeyboardFactory:
 
     @classmethod
     def get_config(cls, lang: str = None) -> Dict:
+        """إرجاع إعدادات الأزرار حسب اللغة"""
         if not lang:
             lang = cls._default_lang
         return cls._load_config_for_lang(lang)
 
     @classmethod
     def get_text(cls, key: str, lang: str = None) -> str:
+        """إرجاع النص حسب اللغة والمفتاح"""
         config = cls.get_config(lang)
         return config.get("texts", {}).get(key, key)
 
     @classmethod
     def get_menu(cls, menu_name: str, lang: str = None) -> List[List[str]]:
+        """إرجاع صفوف القائمة حسب اللغة"""
         config = cls.get_config(lang)
         return config.get("menus", {}).get(menu_name, {}).get("rows", [])
 
     @classmethod
     def build(cls, menu_name: str, chat_id: int = None, extra_data: Dict = None, lang: str = None) -> InlineKeyboardMarkup:
+        """بناء لوحة المفاتيح مع دعم اللغة"""
         rows = cls.get_menu(menu_name, lang)
 
+        # إذا كانت القائمة فارغة، نقدم قوائم افتراضية
         if not rows:
             default_menus = {
                 "banned_words": [
@@ -632,30 +645,27 @@ class KeyboardFactory:
         return "✅" if value else "❌"
 
     @classmethod
-    async def _format_security_text(cls, settings: dict, lang: str = "ar") -> str:
-        """تنسيق نص إعدادات الأمان مع دعم الترجمة"""
+    async def _format_security_text(cls, settings: dict) -> str:
         st = cls._status_icon
-        t = lambda key: TranslationManager.get_text(lang, key, default=key)
-        
         lines = [
-            "🔐 **" + t("security_title") + "**",
+            "🔐 **إعدادات الأمان**",
             "━━━━━━━━━━━━━━━━━━━━\n",
-            "🛡️ **" + t("security_protection") + "**",
-            f"{t('sec_links')}: {st(settings.get('delete_links', 0))}",
-            f"{t('sec_mentions')}: {st(settings.get('mentions', 0))}",
-            f"{t('sec_flood')}: {st(settings.get('antiflood_enabled', 0))}\n",
-            "🎬 **" + t("security_content") + "**",
-            f"{t('sec_video')}: {st(settings.get('delete_videos', 0))}",
-            f"{t('sec_audio')}: {st(settings.get('delete_audio', 0))}",
-            f"{t('sec_anim')}: {st(settings.get('delete_animation', 0))}",
-            f"{t('sec_voice')}: {st(settings.get('delete_voice', 0))}",
-            f"{t('sec_sticker')}: {st(settings.get('delete_stickers', 0))}",
-            f"{t('sec_doc')}: {st(settings.get('delete_documents', 0))}",
-            f"{t('sec_forward')}: {st(settings.get('delete_forwarded', 0))}",
-            f"{t('sec_service')}: {st(settings.get('delete_service', 0))}\n",
-            "👋 **" + t("security_welcome") + "**",
-            f"{t('sec_welcome')}: {st(settings.get('welcome_enabled', 0))}",
-            f"{t('sec_goodbye')}: {st(settings.get('goodbye_enabled', 0))}",
+            "🛡️ **الحماية**",
+            f"🔗 الروابط: {st(settings.get('delete_links', 0))}",
+            f"👤 المعرفات: {st(settings.get('mentions', 0))}",
+            f"🌊 الفيضان: {st(settings.get('antiflood_enabled', 0))}\n",
+            "🎬 **المحتوى**",
+            f"🎬 فيديو: {st(settings.get('delete_videos', 0))}",
+            f"🎵 موسيقى: {st(settings.get('delete_audio', 0))}",
+            f"🎞️ متحرك: {st(settings.get('delete_animation', 0))}",
+            f"🎤 صوتي: {st(settings.get('delete_voice', 0))}",
+            f"🖼️ ملصقات: {st(settings.get('delete_stickers', 0))}",
+            f"📄 ملفات: {st(settings.get('delete_documents', 0))}",
+            f"📨 مُعاد: {st(settings.get('delete_forwarded', 0))}",
+            f"🛠️ خدمة: {st(settings.get('delete_service', 0))}\n",
+            "👋 **الترحيب**",
+            f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))}",
+            f"👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
             "━━━━━━━━━━━━━━━━━━━━"
         ]
         return "\n".join(lines)
@@ -722,67 +732,35 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
         return {'can_act': False, 'reason': str(e)[:50]}
 
 # =====================================================================
-# 11. إرسال آمن (تم إصلاح الهروب التلقائي)
+# 11. إرسال آمن
 # =====================================================================
 
-async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode: str = None, **kwargs):
+async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
     if not text:
         return
     await RATE_LIMITER.acquire()
     original = text[:4090]
     try:
-        # إذا تم تحديد parse_mode، نستخدمه مباشرة
-        if parse_mode:
-            return await bot.send_message(
-                chat_id=chat_id,
-                text=original,
-                parse_mode=parse_mode,
-                reply_markup=reply_markup,
-                **kwargs
-            )
-        # محاولة MarkdownV2 أولاً (بدون هروب تلقائي)
-        try:
-            # نحاول إرسال النص كما هو مع MarkdownV2
-            return await bot.send_message(
-                chat_id=chat_id,
-                text=original,
-                parse_mode='MarkdownV2',
-                reply_markup=reply_markup,
-                **kwargs
-            )
-        except BadRequest as e:
-            if "Can't parse entities" in str(e):
-                # فشل MarkdownV2، نحاول HTML
-                try:
-                    html_text = html.escape(original)
-                    return await bot.send_message(
-                        chat_id=chat_id,
-                        text=html_text,
-                        parse_mode='HTML',
-                        reply_markup=reply_markup,
-                        **kwargs
-                    )
-                except:
-                    # فشل HTML، نرسل بدون تنسيق
-                    plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
-                    return await bot.send_message(
-                        chat_id=chat_id,
-                        text=plain,
-                        reply_markup=reply_markup,
-                        **kwargs
-                    )
-            else:
-                raise
+        escaped = TextUtils.escape_markdown_v2(original)
+        if len(escaped) > 4096:
+            escaped = escaped[:4093]
+            if escaped.endswith('\\'):
+                escaped = escaped[:-1]
+            escaped += "..."
+        return await bot.send_message(chat_id=chat_id, text=escaped, parse_mode='MarkdownV2', reply_markup=reply_markup, **kwargs)
     except Exception as e:
-        logger.warning(f"⚠️ فشل safe_send: {e}")
-        # محاولة أخيرة بدون تنسيق
-        plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
-        return await bot.send_message(
-            chat_id=chat_id,
-            text=plain,
-            reply_markup=reply_markup,
-            **kwargs
-        )
+        logger.warning(f"⚠️ MarkdownV2 فشل: {e}")
+        try:
+            html_text = html.escape(original)
+            if len(html_text) > 4096:
+                html_text = html_text[:4093] + "..."
+            return await bot.send_message(chat_id=chat_id, text=html_text, parse_mode='HTML', reply_markup=reply_markup, **kwargs)
+        except Exception as e2:
+            logger.warning(f"⚠️ HTML فشل: {e2}")
+            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
+            if len(plain) > 4096:
+                plain = plain[:4093] + "..."
+            return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
 
 def get_ram_usage() -> dict:
     if psutil is None:
@@ -914,7 +892,6 @@ async def _flush_usage_updates():
         data = list(_usage_updates.items())
         _usage_updates.clear()
     try:
-        # تجميع التحديثات لتحسين الأداء
         for (chat_id, keyword), count in data:
             await DB.execute(
                 "UPDATE auto_replies SET usage_count = usage_count + ? WHERE chat_id=? AND keyword=?",
@@ -922,7 +899,6 @@ async def _flush_usage_updates():
             )
     except Exception as e:
         logger.error(f"❌ فشل تحديث usage_count: {e}")
-        # استعادة البيانات في حالة الفشل
         async with _usage_lock:
             for key, count in data:
                 _usage_updates[key] = _usage_updates.get(key, 0) + count
@@ -1006,11 +982,9 @@ def get_reply_from_file(keyword: str) -> Optional[str]:
     if not _REPLIES_FROM_FILE or not keyword:
         return None
     keyword = keyword.lower().strip()
-    # البحث التام أولاً
     if keyword in _REPLIES_FROM_FILE:
         replies = _REPLIES_FROM_FILE[keyword]
         return random.choice(replies) if replies else None
-    # البحث الجزئي (محدود)
     keyword_words = keyword.split()
     for key, replies in _REPLIES_FROM_FILE.items():
         if not isinstance(replies, list) or not replies:
@@ -1095,7 +1069,6 @@ class BackgroundTasks:
                     try:
                         days = int(u['days_left'])
                         lang = u.get('language', 'ar')
-                        # استخدام المفتاح الصحيح
                         text = await get_text(lang, 'reminder_subscription_expires', days=days)
                         if text == 'reminder_subscription_expires':
                             text = f"⚠️ اشتراكك سينتهي بعد {days} يوم"
@@ -1163,13 +1136,12 @@ class BackgroundTasks:
             await asyncio.sleep(3600)
 
 # =====================================================================
-# 16. خادم الويب (تم الإصلاح)
+# 16. خادم الويب
 # =====================================================================
 
 _webhook_app = None
 
 async def setup_webhook(app, port: int):
-    """إعداد خادم الويب لتلقي التحديثات عبر webhook"""
     global _webhook_app
     _webhook_app = app
 
@@ -1188,24 +1160,13 @@ async def setup_webhook(app, port: int):
     return runner
 
 async def webhook_handler(request):
-    """معالج طلبات webhook"""
     global _webhook_app
-    if _webhook_app is None:
+    if _webhook_app is None or not hasattr(_webhook_app, 'bot'):
         logger.error("❌ Webhook app not initialized")
         return web.Response(status=503, text="Service Unavailable")
-    
     try:
         data = await request.json()
-        # معالجة التحديث باستخدام التطبيق
-        if hasattr(_webhook_app, 'bot') and hasattr(_webhook_app, 'process_update'):
-            # استخدام الطريقة الصحيحة للإصدارات الحديثة
-            update = Update.de_json(data, _webhook_app.bot)
-            await _webhook_app.process_update(update)
-        else:
-            # محاولة بديلة
-            logger.warning("⚠️ _webhook_app لا يحتوي على bot أو process_update")
-            # يمكننا استخدام context.bot مباشرة إذا كان متاحاً
-            return web.Response(status=200, text="OK")
+        await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
         return web.Response(status=200, text="OK")
     except Exception as e:
         logger.error(f"❌ Webhook error: {e}")
