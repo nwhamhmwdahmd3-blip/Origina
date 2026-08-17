@@ -2,11 +2,27 @@
 # -*- coding: utf-8 -*-
 
 """
-utils.py - الأدوات المساعدة للبوت (نسخة مصححة مع دعم ترجمة الأزرار)
-==========================================================
-- جميع الإصلاحات السابقة محفوظة
-- إضافة دعم لتغيير لغة الأزرار عبر ملفات buttons_config_{lang}.json
-- الحفاظ على التوافق مع الإصدارات السابقة (load_config)
+utils.py - الأدوات المساعدة للبوت (نسخة متكاملة ومحدثة)
+========================================================
+- TimeUtils: أدوات الوقت
+- TextUtils: أدوات النصوص
+- RateLimiter: الحد من الطلبات
+- MetricsCollector: مقاييس الأداء
+- AutoReplyCache: كاش الردود التلقائية
+- TranslationManager: إدارة الترجمات
+- StateManager: إدارة الحالات
+- CB: ثوابت الأزرار
+- KeyboardFactory: مصنع لوحات المفاتيح مع دعم الترجمة
+- دوال الصلاحيات: is_authorized_in_group, invalidate_auth_cache, check_bot_permissions
+- safe_send: إرسال آمن
+- get_ram_usage: إحصائيات الرام
+- نظام العقوبات: PenaltyStrategy, PenaltyFactory, apply_penalty
+- إدارة الردود التلقائية: export_auto_replies, import_auto_replies, fetch_json_from_url
+- الردود من ملف: load_replies_from_file, get_reply_from_file, reload_replies_from_file
+- المهام الخلفية: BackgroundTasks
+- خادم الويب: setup_webhook, webhook_handler
+- معالج الأخطاء: ErrorHandler
+- دوال إضافية: get_min_publish_interval, get_banned_words_cached, invalidate_banned_words_cache
 """
 
 import asyncio
@@ -14,7 +30,6 @@ import os
 import re
 import json
 import time
-import html
 import shutil
 import logging
 import random
@@ -34,18 +49,16 @@ except ImportError:
     logger.warning("⚠️ psutil غير مثبت، لن تعمل إحصائيات الرام")
 
 import aiohttp
-
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton, ChatPermissions, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 from cachetools import TTLCache
 
-import aiohttp.web as web
-
 from config import CONFIG, PATHS
 from database import DB
 
 logger = logging.getLogger(__name__)
+
 
 # =====================================================================
 # 1. أدوات الوقت
@@ -89,6 +102,7 @@ class TimeUtils:
         except ValueError:
             return None
 
+
 # =====================================================================
 # 2. أدوات النصوص
 # =====================================================================
@@ -122,6 +136,7 @@ class TextUtils:
     def truncate(text: str, max_len: int = 200) -> str:
         return text[:max_len] + ("..." if len(text) > max_len else "")
 
+
 # =====================================================================
 # 3. Rate Limiter
 # =====================================================================
@@ -145,6 +160,7 @@ class RateLimiter:
                 self._last_calls.append(now)
 
 RATE_LIMITER = RateLimiter(max_concurrent=15, max_per_second=30)
+
 
 # =====================================================================
 # 4. مقاييس الأداء
@@ -179,6 +195,7 @@ class MetricsCollector:
 
 METRICS = MetricsCollector()
 
+
 # =====================================================================
 # 5. كاش الردود
 # =====================================================================
@@ -206,6 +223,7 @@ class AutoReplyCache:
             self.cache.clear()
 
 _auto_reply_cache = AutoReplyCache(maxsize=300)
+
 
 # =====================================================================
 # 6. الترجمات
@@ -245,7 +263,7 @@ class TranslationManager:
 
     @classmethod
     def get_available_languages(cls) -> Dict[str, str]:
-        all_languages = {
+        return {
             "ar": "العربية 🇸🇦",
             "en": "English 🇬🇧",
             "fr": "Français 🇫🇷",
@@ -259,10 +277,10 @@ class TranslationManager:
             "ja": "日本語 🇯🇵",
             "ko": "한국어 🇰🇷"
         }
-        return all_languages
 
 async def get_text(lang: str, key: str, **kwargs) -> str:
     return TranslationManager.get_text(lang, key, **kwargs)
+
 
 # =====================================================================
 # 7. إدارة الحالات
@@ -333,8 +351,9 @@ class StateManager:
         cls._states.pop(user_id, None)
         cls._timestamps.pop(user_id, None)
 
+
 # =====================================================================
-# 8. تعريفات الأزرار (CB) - مُحدثة ومتكاملة
+# 8. تعريفات الأزرار (CB)
 # =====================================================================
 
 class CB:
@@ -496,27 +515,30 @@ class CB:
     AUTO_REPLY_DEL = "auto_reply_del:"
     AUTO_REPLY_LIST = "auto_reply_list:"
 
+
 # =====================================================================
 # 9. مصنع الكيبوردات (مع دعم اللغات)
 # =====================================================================
 
 class KeyboardFactory:
-    _configs: Dict[str, Dict] = {}          # تخزين إعدادات كل لغة
-    _default_lang: str = "ar"               # اللغة الافتراضية
+    _configs: Dict[str, Dict] = {}
+    _default_lang: str = "ar"
     _config_path_template: str = "buttons_config_{lang}.json"
 
-    # ✅ دالة متوافقة مع الإصدارات السابقة (يستخدمها bot.py)
     @classmethod
     def load_config(cls):
-        """تحميل الإعدادات الافتراضية (متوافق مع bot.py)"""
-        return cls.get_config(cls._default_lang)
+        """تحميل جميع ملفات الأزرار عند بدء التشغيل"""
+        default_config = cls.get_config(cls._default_lang)
+        all_langs = TranslationManager.get_available_languages()
+        for lang in all_langs:
+            if lang != cls._default_lang:
+                cls._load_config_for_lang(lang)
+        return default_config
 
     @classmethod
     def _load_config_for_lang(cls, lang: str) -> Dict:
-        """تحميل إعدادات الأزرار للغة محددة مع التخزين المؤقت"""
         if lang in cls._configs:
             return cls._configs[lang]
-
         file_path = cls._config_path_template.format(lang=lang)
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -529,7 +551,6 @@ class KeyboardFactory:
                 logger.warning(f"⚠️ ملف buttons_config_{lang}.json غير موجود، سيتم استخدام اللغة الافتراضية")
                 return cls._load_config_for_lang(cls._default_lang)
             else:
-                # إنشاء إعدادات افتراضية للعربية
                 default_config = {
                     "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
                     "menus": {}
@@ -543,29 +564,23 @@ class KeyboardFactory:
 
     @classmethod
     def get_config(cls, lang: str = None) -> Dict:
-        """إرجاع إعدادات الأزرار حسب اللغة"""
         if not lang:
             lang = cls._default_lang
         return cls._load_config_for_lang(lang)
 
     @classmethod
     def get_text(cls, key: str, lang: str = None) -> str:
-        """إرجاع النص حسب اللغة والمفتاح"""
         config = cls.get_config(lang)
         return config.get("texts", {}).get(key, key)
 
     @classmethod
     def get_menu(cls, menu_name: str, lang: str = None) -> List[List[str]]:
-        """إرجاع صفوف القائمة حسب اللغة"""
         config = cls.get_config(lang)
         return config.get("menus", {}).get(menu_name, {}).get("rows", [])
 
     @classmethod
     def build(cls, menu_name: str, chat_id: int = None, extra_data: Dict = None, lang: str = None) -> InlineKeyboardMarkup:
-        """بناء لوحة المفاتيح مع دعم اللغة"""
         rows = cls.get_menu(menu_name, lang)
-
-        # إذا كانت القائمة فارغة، نقدم قوائم افتراضية
         if not rows:
             default_menus = {
                 "banned_words": [
@@ -610,6 +625,12 @@ class KeyboardFactory:
                     ["act_restrict", "act_unban"],
                     ["act_pin"],
                     ["act_log"],
+                    ["back"]
+                ],
+                "channel_settings": [
+                    ["ch_stats", "sched_min"],
+                    ["sched_hour", "sched_day"],
+                    ["sched_time"],
                     ["back"]
                 ]
             }
@@ -669,6 +690,7 @@ class KeyboardFactory:
             "━━━━━━━━━━━━━━━━━━━━"
         ]
         return "\n".join(lines)
+
 
 # =====================================================================
 # 10. دوال الصلاحيات
@@ -731,6 +753,7 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
     except Exception as e:
         return {'can_act': False, 'reason': str(e)[:50]}
 
+
 # =====================================================================
 # 11. إرسال آمن
 # =====================================================================
@@ -762,6 +785,11 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
                 plain = plain[:4093] + "..."
             return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
 
+
+# =====================================================================
+# 12. إحصائيات الرام
+# =====================================================================
+
 def get_ram_usage() -> dict:
     if psutil is None:
         logger.warning("⚠️ psutil غير مثبت، لن تعمل إحصائيات الرام")
@@ -773,8 +801,9 @@ def get_ram_usage() -> dict:
         logger.error(f"❌ فشل جلب إحصائيات الرام: {e}")
         return {'total': 0, 'used': 0, 'percent': 0}
 
+
 # =====================================================================
-# 12. نظام العقوبات
+# 13. نظام العقوبات
 # =====================================================================
 
 class PenaltyStrategy(ABC):
@@ -868,8 +897,9 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
         await DB.add_admin_log(chat_id, moderator, penalty, user_id, reason)
     return success, msg
 
+
 # =====================================================================
-# 13. الردود التلقائية
+# 14. الردود التلقائية
 # =====================================================================
 
 _usage_updates: Dict[Tuple[int, str], int] = {}
@@ -960,8 +990,9 @@ async def fetch_json_from_url(url: str) -> Optional[Union[list, dict]]:
         logger.error(f"❌ Fetch JSON error: {e}")
         return None
 
+
 # =====================================================================
-# 14. الردود من ملف
+# 15. الردود من ملف
 # =====================================================================
 
 def load_replies_from_file() -> dict:
@@ -999,8 +1030,42 @@ def reload_replies_from_file() -> dict:
     _REPLIES_FROM_FILE = load_replies_from_file()
     return _REPLIES_FROM_FILE
 
+
 # =====================================================================
-# 15. المهام الخلفية
+# 16. كاش الكلمات المحظورة ودوال مساعدة إضافية
+# =====================================================================
+
+_banned_words_cache: Dict[int, List[str]] = {}
+
+async def get_min_publish_interval() -> int:
+    """جلب الحد الأدنى للفاصل الزمني من قاعدة البيانات (مع fallback آمن)"""
+    try:
+        val = await DB.get_setting('min_publish_interval')
+        if val is not None:
+            int_val = int(val)
+            if int_val > 0:
+                return int_val
+    except (ValueError, TypeError):
+        pass
+    return 12
+
+async def get_banned_words_cached(chat_id: int) -> List[str]:
+    """جلب الكلمات المحظورة مع استخدام الكاش"""
+    if chat_id not in _banned_words_cache:
+        words = await DB.get_banned_words(chat_id)
+        _banned_words_cache[chat_id] = words
+    return _banned_words_cache[chat_id]
+
+def invalidate_banned_words_cache(chat_id: Optional[int] = None):
+    """مسح كاش الكلمات المحظورة (لكل أو لـ chat_id محدد)"""
+    if chat_id is not None:
+        _banned_words_cache.pop(chat_id, None)
+    else:
+        _banned_words_cache.clear()
+
+
+# =====================================================================
+# 17. المهام الخلفية
 # =====================================================================
 
 class BackgroundTasks:
@@ -1035,7 +1100,7 @@ class BackgroundTasks:
                         else:
                             await bot.send_message(ch['channel_id'], post['text'][:4096] if post['text'] else ".")
                         await DB.mark_post_published(post['id'])
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(0.5)  # ✅ تأخير لتجنب FloodWait
                     except Exception as e:
                         logger.error(f"❌ Publish error: {e}")
                         await DB.increment_post_fail(post['id'])
@@ -1135,8 +1200,9 @@ class BackgroundTasks:
                 logger.error(f"❌ Sync admins: {e}")
             await asyncio.sleep(3600)
 
+
 # =====================================================================
-# 16. خادم الويب
+# 18. خادم الويب
 # =====================================================================
 
 _webhook_app = None
@@ -1145,6 +1211,7 @@ async def setup_webhook(app, port: int):
     global _webhook_app
     _webhook_app = app
 
+    import aiohttp.web as web
     web_app = web.Application()
     web_app.router.add_get('/health', lambda r: web.Response(text="OK"))
     web_app.router.add_get('/', lambda r: web.Response(text="🌿 Relax Manager"))
@@ -1172,8 +1239,9 @@ async def webhook_handler(request):
         logger.error(f"❌ Webhook error: {e}")
         return web.Response(status=500, text="ERROR")
 
+
 # =====================================================================
-# 17. معالج الأخطاء
+# 19. معالج الأخطاء
 # =====================================================================
 
 class ErrorHandler:
