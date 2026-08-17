@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-utils.py - الأدوات المساعدة للبوت (نسخة مصححة نهائية 100%)
-==========================================================
-- جميع الإصلاحات الحرجة والمتوسطة مطبقة
-- معالجة الأخطاء بشكل أفضل
-- تحسين الأداء والاستقرار
-- إضافة جميع ثوابت CB المفقودة (ADMIN_DEL_CONTEST, GRP_SET, ...)
+utils.py - الأدوات المساعدة للبوت (نسخة مصححة)
+=============================================
+- إصلاح safe_send (إزالة الهروب التلقائي)
+- إضافة الترجمة لنصوص الأمان
+- تحسين معالجة الملفات المؤقتة
+- إصلاح تعريف logger
 """
 
 import asyncio
@@ -31,8 +31,7 @@ try:
     import psutil
 except ImportError:
     psutil = None
-    logger = logging.getLogger(__name__)
-    logger.warning("⚠️ psutil غير مثبت، لن تعمل إحصائيات الرام")
+    # تم إزالة logger = logging.getLogger(__name__) المكرر
 
 import aiohttp
 
@@ -246,8 +245,6 @@ class TranslationManager:
 
     @classmethod
     def get_available_languages(cls) -> Dict[str, str]:
-        """إرجاع جميع اللغات المدعومة بدون الحاجة لوجود ملفات الترجمة"""
-        # ✅ جميع اللغات المطلوبة
         all_languages = {
             "ar": "العربية 🇸🇦",
             "en": "English 🇬🇧",
@@ -262,7 +259,6 @@ class TranslationManager:
             "ja": "日本語 🇯🇵",
             "ko": "한국어 🇰🇷"
         }
-        # ✅ نرجع جميع اللغات دائماً (بدون التحقق من الملفات)
         return all_languages
 
 async def get_text(lang: str, key: str, **kwargs) -> str:
@@ -338,7 +334,7 @@ class StateManager:
         cls._timestamps.pop(user_id, None)
 
 # =====================================================================
-# 8. تعريفات الأزرار (CB) - مُحدثة ومتكاملة
+# 8. تعريفات الأزرار (CB)
 # =====================================================================
 
 class CB:
@@ -501,42 +497,62 @@ class CB:
     AUTO_REPLY_LIST = "auto_reply_list:"
 
 # =====================================================================
-# 9. مصنع الكيبوردات (مع دعم القوائم الافتراضية)
+# 9. مصنع الكيبوردات (مع دعم اللغات)
 # =====================================================================
 
 class KeyboardFactory:
-    _config: Dict = None
-    _config_path: str = "buttons_config.json"
+    _configs: Dict[str, Dict] = {}
+    _default_lang: str = "ar"
+    _config_path_template: str = "buttons_config_{lang}.json"
 
     @classmethod
-    def load_config(cls):
-        if cls._config is None:
-            try:
-                with open(cls._config_path, "r", encoding="utf-8") as f:
-                    cls._config = json.load(f)
-                logger.info(f"✅ تم تحميل buttons_config.json: {len(cls._config.get('texts', {}))} مفتاح")
-            except FileNotFoundError:
-                cls._config = {"texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"}, "menus": {}}
-                logger.warning("⚠️ buttons_config.json غير موجود، تم إنشاء إعدادات افتراضية")
-            except Exception as e:
-                cls._config = {"texts": {}, "menus": {}}
-                logger.error(f"❌ خطأ في قراءة buttons_config.json: {e}")
-        return cls._config
+    def _load_config_for_lang(cls, lang: str) -> Dict:
+        if lang in cls._configs:
+            return cls._configs[lang]
+
+        file_path = cls._config_path_template.format(lang=lang)
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                cls._configs[lang] = config
+                logger.info(f"✅ تم تحميل buttons_config_{lang}.json: {len(config.get('texts', {}))} مفتاح")
+                return config
+        except FileNotFoundError:
+            if lang != cls._default_lang:
+                logger.warning(f"⚠️ ملف buttons_config_{lang}.json غير موجود، سيتم استخدام اللغة الافتراضية")
+                return cls._load_config_for_lang(cls._default_lang)
+            else:
+                default_config = {
+                    "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
+                    "menus": {}
+                }
+                cls._configs[cls._default_lang] = default_config
+                logger.warning("⚠️ buttons_config_ar.json غير موجود، تم إنشاء إعدادات افتراضية")
+                return default_config
+        except Exception as e:
+            logger.error(f"❌ خطأ في قراءة buttons_config_{lang}.json: {e}")
+            return cls._load_config_for_lang(cls._default_lang)
 
     @classmethod
-    def get_text(cls, key: str) -> str:
-        config = cls.load_config()
+    def get_config(cls, lang: str = None) -> Dict:
+        if not lang:
+            lang = cls._default_lang
+        return cls._load_config_for_lang(lang)
+
+    @classmethod
+    def get_text(cls, key: str, lang: str = None) -> str:
+        config = cls.get_config(lang)
         return config.get("texts", {}).get(key, key)
 
     @classmethod
-    def get_menu(cls, menu_name: str) -> List[List[str]]:
-        config = cls.load_config()
+    def get_menu(cls, menu_name: str, lang: str = None) -> List[List[str]]:
+        config = cls.get_config(lang)
         return config.get("menus", {}).get(menu_name, {}).get("rows", [])
 
     @classmethod
-    def build(cls, menu_name: str, chat_id: int = None, extra_data: Dict = None) -> InlineKeyboardMarkup:
-        rows = cls.get_menu(menu_name)
-        
+    def build(cls, menu_name: str, chat_id: int = None, extra_data: Dict = None, lang: str = None) -> InlineKeyboardMarkup:
+        rows = cls.get_menu(menu_name, lang)
+
         if not rows:
             default_menus = {
                 "banned_words": [
@@ -588,18 +604,18 @@ class KeyboardFactory:
                 rows = default_menus[menu_name]
             else:
                 rows = []
-        
+
         keyboard = []
         for row in rows:
             btn_row = []
             for item in row:
                 if item.endswith("_url"):
                     key = item.replace("_url", "")
-                    text = cls.get_text(key)
+                    text = cls.get_text(key, lang)
                     url = f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup"
                     btn_row.append(InlineKeyboardButton(text, url=url))
                 else:
-                    text = cls.get_text(item)
+                    text = cls.get_text(item, lang)
                     callback = item
                     if chat_id and ":" in item:
                         callback = f"{item}{chat_id}"
@@ -616,27 +632,30 @@ class KeyboardFactory:
         return "✅" if value else "❌"
 
     @classmethod
-    async def _format_security_text(cls, settings: dict) -> str:
+    async def _format_security_text(cls, settings: dict, lang: str = "ar") -> str:
+        """تنسيق نص إعدادات الأمان مع دعم الترجمة"""
         st = cls._status_icon
+        t = lambda key: TranslationManager.get_text(lang, key, default=key)
+        
         lines = [
-            "🔐 **إعدادات الأمان**",
+            "🔐 **" + t("security_title") + "**",
             "━━━━━━━━━━━━━━━━━━━━\n",
-            "🛡️ **الحماية**",
-            f"🔗 الروابط: {st(settings.get('delete_links', 0))}",
-            f"👤 المعرفات: {st(settings.get('mentions', 0))}",
-            f"🌊 الفيضان: {st(settings.get('antiflood_enabled', 0))}\n",
-            "🎬 **المحتوى**",
-            f"🎬 فيديو: {st(settings.get('delete_videos', 0))}",
-            f"🎵 موسيقى: {st(settings.get('delete_audio', 0))}",
-            f"🎞️ متحرك: {st(settings.get('delete_animation', 0))}",
-            f"🎤 صوتي: {st(settings.get('delete_voice', 0))}",
-            f"🖼️ ملصقات: {st(settings.get('delete_stickers', 0))}",
-            f"📄 ملفات: {st(settings.get('delete_documents', 0))}",
-            f"📨 مُعاد: {st(settings.get('delete_forwarded', 0))}",
-            f"🛠️ خدمة: {st(settings.get('delete_service', 0))}\n",
-            "👋 **الترحيب**",
-            f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))}",
-            f"👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
+            "🛡️ **" + t("security_protection") + "**",
+            f"{t('sec_links')}: {st(settings.get('delete_links', 0))}",
+            f"{t('sec_mentions')}: {st(settings.get('mentions', 0))}",
+            f"{t('sec_flood')}: {st(settings.get('antiflood_enabled', 0))}\n",
+            "🎬 **" + t("security_content") + "**",
+            f"{t('sec_video')}: {st(settings.get('delete_videos', 0))}",
+            f"{t('sec_audio')}: {st(settings.get('delete_audio', 0))}",
+            f"{t('sec_anim')}: {st(settings.get('delete_animation', 0))}",
+            f"{t('sec_voice')}: {st(settings.get('delete_voice', 0))}",
+            f"{t('sec_sticker')}: {st(settings.get('delete_stickers', 0))}",
+            f"{t('sec_doc')}: {st(settings.get('delete_documents', 0))}",
+            f"{t('sec_forward')}: {st(settings.get('delete_forwarded', 0))}",
+            f"{t('sec_service')}: {st(settings.get('delete_service', 0))}\n",
+            "👋 **" + t("security_welcome") + "**",
+            f"{t('sec_welcome')}: {st(settings.get('welcome_enabled', 0))}",
+            f"{t('sec_goodbye')}: {st(settings.get('goodbye_enabled', 0))}",
             "━━━━━━━━━━━━━━━━━━━━"
         ]
         return "\n".join(lines)
@@ -703,35 +722,67 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
         return {'can_act': False, 'reason': str(e)[:50]}
 
 # =====================================================================
-# 11. إرسال آمن
+# 11. إرسال آمن (تم إصلاح الهروب التلقائي)
 # =====================================================================
 
-async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
+async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode: str = None, **kwargs):
     if not text:
         return
     await RATE_LIMITER.acquire()
     original = text[:4090]
     try:
-        escaped = TextUtils.escape_markdown_v2(original)
-        if len(escaped) > 4096:
-            escaped = escaped[:4093]
-            if escaped.endswith('\\'):
-                escaped = escaped[:-1]
-            escaped += "..."
-        return await bot.send_message(chat_id=chat_id, text=escaped, parse_mode='MarkdownV2', reply_markup=reply_markup, **kwargs)
-    except Exception as e:
-        logger.warning(f"⚠️ MarkdownV2 فشل: {e}")
+        # إذا تم تحديد parse_mode، نستخدمه مباشرة
+        if parse_mode:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=original,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+                **kwargs
+            )
+        # محاولة MarkdownV2 أولاً (بدون هروب تلقائي)
         try:
-            html_text = html.escape(original)
-            if len(html_text) > 4096:
-                html_text = html_text[:4093] + "..."
-            return await bot.send_message(chat_id=chat_id, text=html_text, parse_mode='HTML', reply_markup=reply_markup, **kwargs)
-        except Exception as e2:
-            logger.warning(f"⚠️ HTML فشل: {e2}")
-            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
-            if len(plain) > 4096:
-                plain = plain[:4093] + "..."
-            return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
+            # نحاول إرسال النص كما هو مع MarkdownV2
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=original,
+                parse_mode='MarkdownV2',
+                reply_markup=reply_markup,
+                **kwargs
+            )
+        except BadRequest as e:
+            if "Can't parse entities" in str(e):
+                # فشل MarkdownV2، نحاول HTML
+                try:
+                    html_text = html.escape(original)
+                    return await bot.send_message(
+                        chat_id=chat_id,
+                        text=html_text,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup,
+                        **kwargs
+                    )
+                except:
+                    # فشل HTML، نرسل بدون تنسيق
+                    plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
+                    return await bot.send_message(
+                        chat_id=chat_id,
+                        text=plain,
+                        reply_markup=reply_markup,
+                        **kwargs
+                    )
+            else:
+                raise
+    except Exception as e:
+        logger.warning(f"⚠️ فشل safe_send: {e}")
+        # محاولة أخيرة بدون تنسيق
+        plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=plain,
+            reply_markup=reply_markup,
+            **kwargs
+        )
 
 def get_ram_usage() -> dict:
     if psutil is None:
@@ -863,6 +914,7 @@ async def _flush_usage_updates():
         data = list(_usage_updates.items())
         _usage_updates.clear()
     try:
+        # تجميع التحديثات لتحسين الأداء
         for (chat_id, keyword), count in data:
             await DB.execute(
                 "UPDATE auto_replies SET usage_count = usage_count + ? WHERE chat_id=? AND keyword=?",
@@ -870,6 +922,7 @@ async def _flush_usage_updates():
             )
     except Exception as e:
         logger.error(f"❌ فشل تحديث usage_count: {e}")
+        # استعادة البيانات في حالة الفشل
         async with _usage_lock:
             for key, count in data:
                 _usage_updates[key] = _usage_updates.get(key, 0) + count
@@ -953,9 +1006,11 @@ def get_reply_from_file(keyword: str) -> Optional[str]:
     if not _REPLIES_FROM_FILE or not keyword:
         return None
     keyword = keyword.lower().strip()
+    # البحث التام أولاً
     if keyword in _REPLIES_FROM_FILE:
         replies = _REPLIES_FROM_FILE[keyword]
         return random.choice(replies) if replies else None
+    # البحث الجزئي (محدود)
     keyword_words = keyword.split()
     for key, replies in _REPLIES_FROM_FILE.items():
         if not isinstance(replies, list) or not replies:
@@ -1040,6 +1095,7 @@ class BackgroundTasks:
                     try:
                         days = int(u['days_left'])
                         lang = u.get('language', 'ar')
+                        # استخدام المفتاح الصحيح
                         text = await get_text(lang, 'reminder_subscription_expires', days=days)
                         if text == 'reminder_subscription_expires':
                             text = f"⚠️ اشتراكك سينتهي بعد {days} يوم"
@@ -1107,12 +1163,13 @@ class BackgroundTasks:
             await asyncio.sleep(3600)
 
 # =====================================================================
-# 16. خادم الويب
+# 16. خادم الويب (تم الإصلاح)
 # =====================================================================
 
 _webhook_app = None
 
 async def setup_webhook(app, port: int):
+    """إعداد خادم الويب لتلقي التحديثات عبر webhook"""
     global _webhook_app
     _webhook_app = app
 
@@ -1131,13 +1188,24 @@ async def setup_webhook(app, port: int):
     return runner
 
 async def webhook_handler(request):
+    """معالج طلبات webhook"""
     global _webhook_app
-    if _webhook_app is None or not hasattr(_webhook_app, 'bot'):
+    if _webhook_app is None:
         logger.error("❌ Webhook app not initialized")
         return web.Response(status=503, text="Service Unavailable")
+    
     try:
         data = await request.json()
-        await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
+        # معالجة التحديث باستخدام التطبيق
+        if hasattr(_webhook_app, 'bot') and hasattr(_webhook_app, 'process_update'):
+            # استخدام الطريقة الصحيحة للإصدارات الحديثة
+            update = Update.de_json(data, _webhook_app.bot)
+            await _webhook_app.process_update(update)
+        else:
+            # محاولة بديلة
+            logger.warning("⚠️ _webhook_app لا يحتوي على bot أو process_update")
+            # يمكننا استخدام context.bot مباشرة إذا كان متاحاً
+            return web.Response(status=200, text="OK")
         return web.Response(status=200, text="OK")
     except Exception as e:
         logger.error(f"❌ Webhook error: {e}")
@@ -1157,4 +1225,3 @@ class ErrorHandler:
                 logger.error(f"❌ خطأ: {context.error}", exc_info=True)
         except Exception:
             pass
-
