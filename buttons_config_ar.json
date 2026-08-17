@@ -11,6 +11,7 @@
     "ch_stats": "📊 إحصائيات",
     "ch_del": "🗑️ حذف",
     "ch_sel": "📌 اختيار",
+    "sched_btn": "📅 الجدولة",
     "groups": "👥 مجموعاتي",
     "post_add": "📥 إضافة منشورات",
     "post_pub": "📤 نشر منشور",
@@ -163,7 +164,14 @@
     "sched_min": "📅 دقائق",
     "sched_hour": "📅 ساعات",
     "sched_day": "📅 أيام",
-    "sched_time": "🕐 وقت النشر"
+    "sched_time": "🕐 وقت النشر",
+    "unauthorized": "❌ غير مصرح",
+    "main_menu": "👋 مرحباً {user_id}!\n\n📊 مجموعاتي: {groups}\n💎 الاشتراك: {sub}\n📡 القناة النشطة: {channel}\n📝 المنشورات المعلقة: {pending}\n📤 النشر التلقائي: {auto}\n♻️ إعادة التدوير: {recycle}\n\n🤖 {bot_name} في خدمتك!",
+    "help_text": "📚 **قائمة المساعدة**\n\n/start – القائمة الرئيسية\n/help – هذه الرسالة\n/trial – تجربة مجانية\n/subscribe – الاشتراكات\n/support – الدعم الفني\n/language – تغيير اللغة\n/developer – معلومات المطور\n\n🔹 للمجموعات:\n/syncgroup – تفعيل البوت\n/security – إعدادات الأمان\n/panel – لوحة التحكم\n\n🔹 للمشرفين:\n/ban, /mute, /warn, /kick, /restrict, /unban, /pin",
+    "trial_used": "❌ لقد استخدمت فترة التجربة مسبقاً.",
+    "trial_activated": "🎁 تم تفعيل {days} يوم تجريبي! استمتع بالمميزات.",
+    "plan_selector": "💎 **اختر الباقة المناسبة لك**\n\nالباقات المتاحة:",
+    "send_support_message": "📞 **الدعم الفني**\n\nأرسل رسالتك وسنرد عليك في أقرب وقت."
   },
   "menus": {
     "main_menu": {
