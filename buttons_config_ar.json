@@ -134,6 +134,7 @@
     "sec_voice": "🎤 صوتي",
     "sec_videonote": "🎥 فيديو ملاحظة",
     "sec_banned_words": "🚫 كلمات محظورة",
+    "sec_toggle_banned": "🔄 حذف الكلمات المحظورة",
     "sec_welcome": "🎯 ترحيب",
     "sec_goodbye": "👋 وداع",
     "sec_night": "🌙 ليلي",
@@ -156,7 +157,9 @@
     "security_title": "إعدادات الأمان",
     "security_protection": "الحماية",
     "security_content": "المحتوى",
-    "security_welcome": "الترحيب"
+    "security_welcome": "الترحيب",
+    "security_button": "🛡️ إعدادات {name}",
+    "add_group_button": "➕ إضافة مجموعة"
   },
   "menus": {
     "main_menu": {
@@ -241,6 +244,7 @@
         ["sec_adv_act", "sec_act_log"],
         ["sec_auto_reply_menu"],
         ["sec_enable_all", "sec_disable_all"],
+        ["sec_toggle_banned"],
         ["sec_close"]
       ]
     },
