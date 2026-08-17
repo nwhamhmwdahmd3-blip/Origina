@@ -1,130 +1,253 @@
-{
-  "main_menu": "🌿 **{bot_name}**\n\n👤 ID: `{user_id}`\n👥 Groups: {groups}\n💎 Subscription: {sub}\n📡 Channel: {channel}\n⏳ Pending: {pending}\n⚙️ Auto publish: {auto}",
-  "help_text": "📚 **Help Menu**\n\n📡 **Channel Management**:\n➕ Add Channel\n📥 Add Posts\n📤 Publish One\n📤 Publish All\n♻️ Recycle\n\n🛡️ **Group Management**:\n👥 My Groups\n🔐 Group Security\n📋 Control Panel\n\n💎 **Subscription**:\n🎁 30-Day Trial\n💎 Buy Plans\n\n📞 **Support**:\n📞 Support Ticket\n\n📋 **Group Commands**:\n/security - Security settings\n/panel - Control panel\n/lock - Lock group\n/unlock - Unlock group\n/ban - Ban user\n/mute - Mute user\n/warn - Warn user\n/kick - Kick user\n/restrict - Restrict user\n/unban - Unban user\n/pin - Pin message\n/syncgroup - Activate group",
-  "trial_used": "❌ You have already used the trial",
-  "trial_activated": "🎁 Trial activated successfully ({days} days)",
-  "plan_selector": "💎 Choose a plan:",
-  "send_support_message": "📞 Send your message now and it will be sent to support",
-  "language_select": "🌐 Choose language:\n\nCurrent: {current}",
-  "not_authorized": "❌ You are not authorized to use this button",
-  "subscription_expired": "❌ Your subscription expired! Use /trial or subscribe",
-  "enter_channel_id": "📡 Send channel ID (username or -100...):",
-  "channels_empty": "📭 No channels added yet",
-  "no_active_channel": "❌ No active channel, add one first",
-  "max_posts_reached": "⚠️ Maximum unpublished posts reached",
-  "enter_posts": "📥 Send {count} posts (text, photo, video, document)\nYou can send one by one",
-  "post_saved": "✅ Post saved {saved}/{target}\nRemaining: {remaining}",
-  "all_posts_saved": "🎉 All posts saved successfully",
-  "posts_empty": "📭 No unpublished posts",
-  "publish_success": "✅ Published successfully",
-  "publish_fail": "❌ Publish failed: {error}",
-  "my_posts_title": "📋 **My Posts**\n\n",
-  "no_posts": "📭 No posts",
-  "groups_empty": "📭 No groups",
-  "add_group": "➕ Add Group",
-  "schedule_current": "⏰ Current schedule: {type}",
-  "enter_minutes": "📅 Send minutes (1-1440):",
-  "enter_hours": "📅 Send hours (1-168):",
-  "enter_days": "📅 Send days (1-365):",
-  "enter_publish_time": "🕐 Send publish time (HH:MM):",
-  "schedule_updated_ok": "✅ Schedule updated successfully",
-  "enter_word": "📝 Send banned word:",
-  "word_added": "✅ Word added: {word}",
-  "word_exists": "⚠️ Word already exists: {word}",
-  "word_removed": "✅ Word removed: {word}",
-  "word_not_found": "❌ Word not found",
-  "word_too_short": "❌ Word too short",
-  "no_banned_words": "📭 No banned words",
-  "banned_words_list": "🚫 **Banned Words**\n\n{words}",
-  "enter_word_to_remove": "🗑️ Send word to remove:",
-  "enter_keyword": "📝 Send keyword:",
-  "enter_reply": "💬 Send reply:",
-  "auto_reply_added": "✅ Auto reply added: {keyword}",
-  "auto_reply_deleted": "✅ Auto reply deleted: {keyword}",
-  "auto_reply_not_found": "❌ Reply not found: {keyword}",
-  "no_auto_replies": "📭 No auto replies",
-  "no_auto_reply_stats": "📭 No statistics",
-  "auto_reply_list": "📋 **Auto Replies**\n\n{replies}",
-  "auto_reply_stats": "📊 **Reply Statistics**\n\n{stats}",
-  "auto_reply_settings": "📝 **Auto Reply Settings**",
-  "admin_panel": "👑 **Admin Panel**",
-  "admin_users": "👥 Users: {users}\n⛔ Banned: {banned}",
-  "admin_stats": "📊 General Statistics\n👥 Users: {users}\n⛔ Banned: {banned}\n📝 Posts: {posts}\n👥 Groups: {groups}\n📡 Channels: {channels}",
-  "admin_unbanned_all": "✅ All users unbanned",
-  "admin_channels_list": "📡 **Channels**\n\n{list}",
-  "no_channels": "📭 No channels",
-  "admin_groups_list": "👥 **Groups**\n\n{list}",
-  "no_groups": "📭 No groups",
+{ "main_menu": "🌿 
+  **{bot_name}**\n━━━━━━━━━━━━━━━━━━━━\n\n👤 
+  **ID:** `{user_id}`\n👥 **Groups:** 
+  {groups}\n📡 **Channel:** {channel}\n⏳ 
+  **Pending:** {pending}\n\n💎 
+  **Subscription:** {sub}\n⚙️ **Auto 
+  Publish:** {auto}\n♻️ **Auto Recycle:** 
+  {recycle}\n━━━━━━━━━━━━━━━━━━━━",
+# 4. الصق المحتوى أعلاه (Ctrl+Shift+V)
+  "help_text": "📚 **Commands & 
+  Help**\n━━━━━━━━━━━━━━━━━━━━\n\n🤖 
+  **Basic Commands:**\n• /start - Main 
+  menu\n• /help - Show this help\n• /trial 
+  - Activate trial\n• /subscribe - View 
+  plans\n• /support - Contact support\n• 
+  /developer - Bot info\n• /language - 
+  Change language\n• /contests - View 
+  active contests\n• /replies - Auto-reply 
+  info\n\n━━━━━━━━━━━━━━━━━━━━\n\n👥 
+  **Group Commands (Admins only):**\n• 
+  /syncgroup - Activate bot in group\n• 
+  /security - Security settings\n• /panel 
+  - Control panel\n• /lock - Lock group\n• 
+  /unlock - Unlock 
+  group\n\n━━━━━━━━━━━━━━━━━━━━\n\n🛡️ 
+  **Moderation Commands:**\n• /ban @user - 
+  Ban member\n• /mute @user - Mute 
+  member\n• /warn @user - Warn member\n• 
+  /kick @user - Kick member\n• /restrict 
+  @user - Restrict member\n• /unban @user 
+  - Unban member\n• /pin - Pin a message 
+  (reply to 
+  it)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🔐 
+  **Owner & Hidden Admin Commands:**\n• 
+  /register_hidden_owner <id> - Register 
+  hidden owner\n• /remove_hidden_owner 
+  <id> - Remove hidden owner\n• 
+  /add_hidden_admin <id> - Add hidden 
+  admin\n• /remove_hidden_admin <id> - 
+  Remove hidden admin\n• 
+  /list_hidden_admins - List hidden 
+  admins\n\n━━━━━━━━━━━━━━━━━━━━\n\n💡 
+  **Tips:**\n• Use buttons to navigate 
+  easily\n• Paid subscription unlocks 
+  channel features\n• Bot is completely 
+  free for groups\n\n📞 **Support:** 
+  @RelaxMgr",
+# 5. احفظ واخرج (Ctrl+X → Y → Enter)
+  "trial_used": "❌ You have already used 
+  the trial", "trial_activated": "🎁 Trial 
+  activated for **{days}** days",
+# 6. ارفع التغييرات
+git add locales/en.json "plan_selector": 
+"💎 **Choose your plan**\n\n• Paid plans 
+unlock extra features:\n✅ Auto-publish in 
+channels\n✅ Post recycling\n✅ Advanced 
+analytics\n\n📌 Click on the plan to 
+start:", git commit -m "✅ إضافة الترجمة 
+الإنجليزية" git push origin main 
+"send_support_message": "📞 **Send your 
+message** and a support ticket will be 
+created\n\n• Explain your issue in 
+detail\n• You can attach images or 
+files\n• Support team will reply ASAP",
+  
+  "reminder_subscription_expires": "⏰ 
+  **Reminder:** Your subscription expires 
+  in **{days}** days\n\n📌 Renew now to 
+  keep features\n/subscribe",
+# 7. أعد تشغيل البوت (على Render: Restart Service)
+  
+  "subscription_expired": "❌ **Your subscription has expired!**\n\nTo renew and restore features:\n/subscribe",
+  
+  "channel_already_exists": "⚠️ Channel already exists",
+  "channel_added": "✅ Channel **{name}** added successfully!",
+  "channel_not_found": "❌ Channel not found. Check the ID.",
+  "bot_not_admin": "❌ Bot is not an admin in this channel!",
+  "not_channel": "❌ This is not a channel. Send a valid channel ID.",
+  
+  "posts_saved": "✅ **{count}** posts saved successfully!",
+  "posts_progress": "✅ Received **{current}/{target}** posts.",
+  "no_posts": "📭 No unpublished posts.",
+  "posts_reset": "♻️ **{count}** posts reset to queue.",
+  
+  "no_active_channel": "❌ No active channel. Select a channel first.",
+  "subscription_required": "❌ This action requires an active subscription.\n\n/subscribe",
+  
+  "publish_success": "✅ Published successfully!",
+  "publish_failed": "❌ Publish failed: {error}",
+  
+  "security_settings": "🔐 **Security Settings**\n━━━━━━━━━━━━━━━━━━━━\n\n🛡️ **Protection**\n• 🔗 Links: {links}\n• 👤 Mentions: {mentions}\n• 🌊 Flood: {flood}\n\n🎬 **Content**\n• 🎬 Video: {video}\n• 🎵 Audio: {audio}\n• 🎞️ Animation: {anim}\n• 🎤 Voice: {voice}\n• 🖼️ Stickers: {sticker}\n• 📄 Documents: {doc}\n• 📨 Forwarded: {forward}\n• 🛠️ Service: {service}\n\n👋 **Welcome/Goodbye**\n• 🎯 Welcome: {welcome}\n• 👋 Goodbye: {goodbye}\n━━━━━━━━━━━━━━━━━━━━",
+  
+  "no_groups": "📭 No active groups.\n\n➕ Add bot to a group and type /syncgroup",
+  
+  "back": "🔙 Back",
+  "cancel": "❌ Cancel",
+  "main": "🌿 Main Menu",
+  "admin_panel_btn": "👑 Admin Panel",
+  
+  "admin_users": "👥 Users: {total}\n⛔ Banned: {banned}",
+  "admin_banned": "⛔ **Banned:**\n{list}",
+  "admin_unban_all": "✅ All unbanned",
+  "admin_channels": "📡 **Channels:**\n{list}",
+  "admin_banned_ch": "🚫 **Banned Channels:**\n{list}",
+  "admin_activate_ch": "✅ All channels activated",
+  "admin_groups": "👥 **Groups:**\n{list}",
+  "admin_banned_gr": "🚫 **Banned Groups:**\n{list}",
+  "admin_unban_gr": "✅ All groups unbanned",
   "admin_add_admin": "👑 Send new admin ID:",
   "admin_rem_admin": "🗑️ Send admin ID to remove:",
-  "admin_added": "✅ Admin added: {user}",
-  "admin_removed": "✅ Admin removed: {user}",
-  "admin_ram": "🖥️ RAM used: {used}GB/{total}GB ({percent}%)",
-  "admin_stats_text": "📊 General Statistics\n👥 Users: {users}\n⛔ Banned: {banned}\n📝 Posts: {posts}\n👥 Groups: {groups}\n📡 Channels: {channels}",
-  "admin_metrics": "📊 **System Metrics**\n\n👥 Active (30d): {active}\n📝 Posts today: {today}\n💾 DB size: {db_size}MB\n📡 API Calls (hour): {api_calls}\n⚠️ Errors (hour): {errors}\n⏱️ Uptime: {uptime}",
-  "admin_backup_created": "✅ Backup created: {filename}",
-  "admin_backup_failed": "❌ Backup failed: {error}",
-  "no_backups": "📭 No backups",
-  "admin_restore_choose": "🔄 Choose backup:",
-  "file_not_found": "❌ File not found",
-  "admin_restore_success": "✅ Restore successful",
-  "admin_restore_failed": "❌ Restore failed: {error}",
-  "admin_force_sub_on": "🔒 Force subscribe channel: @{channel}",
-  "admin_force_sub_off": "🔒 No force subscribe channel",
-  "admin_force_sub_set": "✅ Force subscribe channel set: @{channel}",
-  "admin_broadcast_confirm": "📨 Broadcast message:\n\n{text}\n\nSend?",
-  "admin_broadcast_sent": "✅ Broadcast sent to {sent} users",
-  "no_tickets": "📭 No tickets",
-  "tickets_list": "📋 **Tickets**\n\n{tickets}",
-  "confirm_delete_tickets": "🗑️ Delete all tickets?",
-  "tickets_deleted": "✅ All tickets deleted",
-  "admin_update_sent": "✅ Update sent",
-  "admin_update_failed": "❌ Update failed",
-  "admin_log_channel_set": "✅ Log channel set: {channel}",
-  "admin_log_channel_not_channel": "❌ Not a channel",
-  "admin_log_channel_failed": "❌ Failed to get channel",
-  "no_auto_replies": "📭 No auto replies",
-  "admin_contest_declared": "✅ Winner declared: {winner} in {title}",
-  "admin_contest_no_participants": "❌ No participants",
-  "admin_contest_deleted": "✅ Contest deleted",
+  "admin_ram": "🖥️ RAM: {percent}%",
+  "admin_stats": "👥 {users} users\n⛔ {banned} banned",
+  "admin_metrics": "📊 API: {api}\n⚠️ Errors: {errors}",
+  "admin_backup": "✅ Backup created",
+  "admin_restore": "🔄 Choose backup to restore:",
+  "admin_restore_success": "✅ Restored successfully",
+  "admin_send_update": "📢 Send update text:",
+  "admin_set_update_ch": "📢 Send updates channel ID (without @):",
+  "admin_show_update": "📢 Updates channel: @{channel}",
+  "admin_force_sub": "🔒 Force subscribe channel: @{channel}",
+  "admin_set_force": "🔒 Send force subscribe channel ID (without @):",
+  "admin_broadcast": "📨 Send broadcast message:",
+  "admin_tickets": "📋 **Tickets:**\n{list}",
+  "admin_del_tickets": "✅ All tickets deleted",
+  "admin_log_ch": "📋 Log channel: {channel}",
+  "admin_set_log_ch": "📋 Send log channel ID:",
+  "admin_replies": "📊 **Replies:**\n{list}",
+  "admin_add_reply": "📝 Send keyword:",
+  "admin_list_replies": "📋 **Replies:**\n{list}",
+  "admin_del_reply": "🗑️ Send keyword to delete:",
+  "admin_banned_words": "🚫 **Banned Words:**\n{list}",
+  "admin_add_banned": "🚫 Send word:",
+  "admin_list_banned": "🚫 **Words:**\n{list}",
+  "admin_rem_banned": "🗑️ Send word to delete:",
+  "admin_create_contest": "🏆 Send contest title:",
+  "admin_declare_winner": "🏆 Choose contest to declare winner:",
+  "admin_export_replies": "✅ {count} replies exported",
+  "admin_refresh_cache": "🔄 Cache refreshed",
+  "admin_import_replies": "📤 Send JSON file to import:",
+  "admin_import_github": "📥 Send GitHub JSON link:",
+  
+  "auto_reply_menu": "📝 **Auto Replies**",
+  "auto_reply_toggle": "✅ Auto-reply status toggled",
+  "auto_reply_admins": "✅ Only admins status toggled",
+  "auto_reply_reset": "✅ All auto-replies deleted",
+  "auto_reply_add": "📝 Send keyword:",
+  "auto_reply_del": "🗑️ Send keyword to delete:",
+  "auto_reply_stats": "📊 **Statistics:**\n{list}",
+  "auto_reply_list": "📋 **Replies:**\n{list}",
+  
+  "contest_created": "✅ Contest #{id} created successfully!",
+  "contest_joined": "✅ You have joined the contest!",
   "contest_no_active": "📭 No active contests",
-  "contest_created": "✅ Contest created (ID: {id})",
-  "contest_joined": "✅ Joined successfully",
-  "contest_not_found": "❌ Contest not found",
-  "no_contest_winners": "📭 No winners",
-  "contest_winners": "🏆 **Winners**\n\n{winners}",
-  "no_active_contests": "📭 No active contests",
-  "import_github_prompt": "📥 Send GitHub JSON URL:",
-  "import_github_loading": "⏳ Loading...",
-  "import_github_invalid_url": "❌ Invalid URL",
-  "import_github_failed": "❌ Download failed",
-  "import_github_success": "✅ Imported {count} replies",
-  "import_github_error": "❌ Error: {error}",
-  "reminder_subscription_expires": "⚠️ Your subscription expires in {days} days",
-  "reminder_days_updated": "✅ Days updated: {days}",
-  "warning_settings": "⚠️ **Warning Settings**\n\n📝 Max: {max_warnings}\n⚖️ Penalty: {warn_penalty}",
-  "warning_count_updated": "✅ Warning count updated: {count}",
-  "translation_off": "🚫 Translation off",
-  "translation_set": "✅ Language set: {lang}",
-  "referral_header": "🔗 **Referrals**\n\n🔗 Link: {link}\n👥 Total: {total}\n🎁 Available: {available} days",
-  "referral_claimed": "✅ Claimed {days} days",
-  "no_referrals": "📭 No referrals",
-  "referral_list": "📋 **Referral List**\n\n{list}",
-  "buy_plan": "💎 Buy {plan}",
-  "plan_description": "{description}\nPrice: {price} stars",
-  "plan_not_found": "❌ Plan not found",
-  "payment_init_failed": "❌ Payment failed to start",
-  "no_invoices": "📭 No invoices",
-  "invoice_list": "🧾 **My Invoices**\n\n{invoices}",
-  "error_user_admin": "❌ Cannot handle admin",
-  "heartbeat_status": "💓 **Bot Status**\n\n🕐 Time: {time}\n💾 RAM: {ram}%"
-}
-
-{
-  "main_menu": "🌿 **{bot_name}**\n\n👤 `{user_id}`\n👥 {groups} groups\n💎 {sub}\n📡 {channel}\n⏳ {pending}\n⚙️ {auto}",
-  "help_text": "📚 **Commands:**\n\n/start - Main\n/trial - Trial\n/subscribe - Subscribe\n/support - Support",
-  "trial_used": "❌ Trial used",
-  "trial_activated": "🎁 {days} days!",
-  "plan_selector": "💎 Choose plan:",
-  "send_support_message": "📞 Send your message:"
+  "contest_winners": "🏆 **Winners:**\n{list}",
+  "contest_declare_winner": "✅ Winner: `{winner}`",
+  
+  "group_locked": "🔒 Group locked",
+  "group_unlocked": "🔓 Group unlocked",
+  "not_authorized": "❌ You are not authorized for this action",
+  "cannot_moderate_owner": "❌ Cannot moderate owner",
+  "cannot_moderate_admin": "❌ Cannot moderate admin",
+  "cannot_moderate_bot": "❌ Cannot moderate bot",
+  "insufficient_permissions": "❌ Insufficient bot permissions",
+  
+  "welcome_message": "Welcome {user} to {chat} 🤍",
+  "goodbye_message": "Goodbye {user} 👋",
+  
+  "sync_success": "✅ **Group activated!**\n\n📌 {name}\n🆔 `{id}`\n👑 Owner: `{owner}`\n👤 Admin: `{admin}`\n👥 {admins} admins",
+  "sync_bot_not_admin": "⚠️ **Bot is not an admin!**\n\nTo activate advanced features, make the bot an admin then use /syncgroup again.",
+  "sync_not_admin": "❌ **You are not an admin in this group!**",
+  
+  "groups_list_title": "👥 **My Groups**",
+  "channels_list_title": "📡 **My Channels**",
+  "add_channel_button": "➕ Add Channel",
+  "select_channel": "📌 {name}",
+  "channel_status_active": "✅",
+  "channel_status_banned": "🚫",
+  "group_status_active": "✅",
+  "group_status_banned": "⛔",
+  "security_button": "🔐 Security {name}",
+  "no_channels": "📭 No channels!\nClick to add:",
+  "add_group_button": "➕ Add",
+  "my_groups": "👥 **My Groups**",
+  "settings_title": "⚙️ **Settings**",
+  "auto_publish_status": "📤 Auto Publish: {status}",
+  "auto_recycle_status": "♻️ Auto Recycle: {status}",
+  "publish_all_button": "📤 Publish All",
+  "post_list_title": "📋 **My Posts**",
+  "post_item": "🆔 {id}: {text}",
+  "no_posts_found": "📭 None",
+  "recycle_posts": "♻️ Recycle",
+  "invoice_list_title": "🧾 **My Invoices**",
+  "invoice_item": "• #{number} - {amount} ⭐",
+  "referral_title": "🔗 **Referrals**",
+  "referral_link": "🔗 `https://t.me/{bot}?start=ref_{code}`",
+  "referral_stats": "👥 {total}\n🎁 {available} days",
+  "claim_reward": "🎁 Claim Reward",
+  "no_referrals": "📭 None",
+  "reminder_title": "⏰ **Reminders**",
+  "reminder_subscription": "🔔 Subscription: {status}",
+  "reminder_daily": "📊 Daily: {status}",
+  "reminder_weekly": "📈 Weekly: {status}",
+  "reminder_days": "📅 Days: {days}",
+  "translation_title": "🌐 Translation: {lang}",
+  "translation_off": "✅ Translation disabled",
+  "translation_set": "✅ Set to: {lang}",
+  "contests_title": "🏆 **Active Contests**",
+  "contest_item": "• **{title}**\n  🎁 {prize}\n  📅 {date}",
+  "support_ticket_created": "✅ Ticket #{ticket}",
+  "admin_added": "✅ Added",
+  "admin_removed": "✅ Removed",
+  "update_sent": "✅ Sent",
+  "update_channel_set": "✅ Set",
+  "force_sub_set": "✅ Set",
+  "reminder_days_set": "✅ Updated",
+  "max_length_set": "✅ Set",
+  "max_warnings_set": "✅ Set",
+  "log_channel_set": "✅ Set",
+  "reply_added": "✅ Added",
+  "reply_deleted": "✅ Deleted",
+  "banned_word_added": "✅ Added",
+  "banned_word_exists": "⚠️ Already exists",
+  "banned_word_deleted": "✅ Deleted",
+  "contest_join_prompt": "📝 Send your answer:",
+  "contest_answer_sent": "✅ You have joined!",
+  "schedule_min_prompt": "📅 Send minutes (1-1440):",
+  "schedule_hour_prompt": "📅 Send hours (1-168):",
+  "schedule_day_prompt": "📅 Send days (1-365):",
+  "schedule_time_prompt": "🕐 Send publish time (HH:MM):",
+  "schedule_updated": "✅ Updated",
+  "pin_success": "📌 Pinned",
+  "pin_failed": "❌ Pin failed",
+  "unban_success": "✅ Unbanned",
+  "moderation_success": "✅ {action}",
+  "moderation_failed": "❌ {error}",
+  "penalty_set": "✅ Penalty set: {penalty}",
+  "admin_logs_title": "📜 **Logs**",
+  "admin_log_item": "• {action} → {target}",
+  "no_admin_logs": "📭 No logs",
+  "hidden_admins_title": "👤 **Hidden Admins**",
+  "hidden_owner_item": "👑 `{id}`",
+  "hidden_admin_item": "🛡️ `{id}`",
+  "no_hidden_admins": "📭 None",
+  "hidden_owner_registered": "✅ `{id}` registered as hidden owner",
+  "hidden_owner_removed": "✅ `{id}` removed",
+  "hidden_admin_added": "✅ `{id}` added as hidden admin",
+  "hidden_admin_removed": "✅ `{id}` removed",
+  "invalid_user_id": "⚠️ Invalid user ID",
+  "need_user_id": "📝 /command <user_id>",
+  "unauthorized": "🔒 Unauthorized",
+  "bot_only_groups": "❌ This command is for groups only",
+  "bot_cannot_act": "❌ Bots cannot use this"
 }
