@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة النهائية مع دعم ترجمة الأزرار)
+handlers.py - جميع معالجات البوت (النسخة النهائية المتكاملة)
 ============================================================
 - CommandHandlers: جميع الأوامر (مع دعم المشرف المخفي)
 - CallbackHandlers: جميع الأزرار (مع دعم ترجمة الأزرار حسب اللغة)
@@ -583,8 +583,6 @@ class CommandHandlers:
 
         success, msg = await apply_penalty(context.bot, chat_id, target, action, 60, reason, user_id)
         await safe_send(context.bot, user_id, msg)
-
-
 # =====================================================================
 # 2. معالج الكولباك
 # =====================================================================
@@ -1112,735 +1110,731 @@ class CallbackHandlers:
                 await query.answer("❌ خطأ", show_alert=True)
             except:
                 pass
-
-    # =====================================================================
-    # دوال مساعدة
-    # =====================================================================
-
-    @staticmethod
-    async def _publish_single(bot, ch_db_id, ch_tele, post):
-        try:
-            if post['media_type'] == 'photo' and post['media_file_id']:
-                await bot.send_photo(ch_tele, post['media_file_id'],
-                                     caption=post['text'][:1024] if post['text'] else None)
-            elif post['media_type'] == 'video' and post['media_file_id']:
-                await bot.send_video(ch_tele, post['media_file_id'],
-                                     caption=post['text'][:1024] if post['text'] else None)
-            else:
-                await bot.send_message(ch_tele, post['text'][:4096] if post['text'] else ".")
-            await DB.mark_post_published(post['id'])
-        except Exception as e:
-            logger.error(f"❌ فشل النشر التلقائي: {e}")
-            await DB.increment_post_fail(post['id'])
-
-    @staticmethod
-    async def _show_channel_list(update, context, query, user_id, lang=None):
-        if not lang:
-            lang = await DB.get_user_language(user_id)
-        channels = await DB.get_user_channels(user_id)
-        if not channels:
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)],
-                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)]
-            ])
-            await query.edit_message_text("📭 لا توجد قنوات!\nاضغط للإضافة:", reply_markup=kb)
-            return
-        text = "📡 **قنواتي**\n\n"
-        kb = []
-        for ch in channels:
-            st = "✅" if not ch['banned'] else "🚫"
-            text += f"{st} {ch['channel_name']} (`{ch['channel_id']}`)\n"
-            kb.append([
-                InlineKeyboardButton(
-                    f"📌 {ch['channel_name'][:20]}",
-                    callback_data=f"{CB.CH_SEL}:{ch['id']}"
-                ),
-                InlineKeyboardButton(KeyboardFactory.get_text("ch_stats", lang), callback_data=f"{CB.CH_STATS}:{ch['id']}"),
-                InlineKeyboardButton(KeyboardFactory.get_text("ch_del", lang), callback_data=f"{CB.CH_DEL}:{ch['id']}")
-            ])
-        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)])
-        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
-
-    @staticmethod
-    async def _show_post_list(update, context, query, user_id, lang=None):
-        if not lang:
-            lang = await DB.get_user_language(user_id)
-        active = await DB.get_active_channel(user_id)
-        if not active:
-            await query.edit_message_text("❌ لا توجد قناة نشطة")
-            return
-        posts = await DB.get_user_posts(active, 10)
-        text = "📋 **منشوراتي**\n\n"
-        kb = []
-        for p in posts:
-            text += f"🆔 {p['id']}: {(p['text'] or '')[:30]}\n"
-            kb.append([
-                InlineKeyboardButton(f"🗑️ حذف {p['id']}", callback_data=f"{CB.POST_DEL}:{p['id']}")
-            ])
-        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("post_clear", lang), callback_data=f"{CB.POST_CLEAR}:{active}")])
-        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("post_rec", lang), callback_data=CB.POST_REC)])
-        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
-        await query.edit_message_text(text if posts else "📭 لا يوجد", reply_markup=InlineKeyboardMarkup(kb))
-
-    @staticmethod
-    async def _handle_security(update, context, query, user_id, lang=None):
-        if not lang:
-            lang = await DB.get_user_language(user_id)
-        data = query.data
-        parts = data.split(":")
-        if len(parts) < 2:
-            return
-        action = parts[0].replace("sec_", "")
-        try:
-            chat_id = int(parts[1])
-        except:
-            return
-
-        logger.info(f"🔍 _handle_security: action={action}, chat_id={chat_id}, data={data}")
-
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer("❌ لا صلاحية", show_alert=True)
-            return
-
-        field_map = {
-            "links": "delete_links",
-            "mentions": "mentions",
-            "slow": "slow_mode",
-            "video": "delete_videos",
-            "audio": "delete_audio",
-            "anim": "delete_animation",
-            "service": "delete_service",
-            "doc": "delete_documents",
-            "sticker": "delete_stickers",
-            "forward": "delete_forwarded",
-            "poll": "delete_polls",
-            "game": "delete_games",
-            "voice": "delete_voice",
-            "videonote": "delete_video_note",
-            "welcome": "welcome_enabled",
-            "goodbye": "goodbye_enabled",
-            "flood": "antiflood_enabled",
-            "night": "night_mode_enabled",
-            "banned_words": "delete_banned_words",
-            "approve_join": "auto_approve_join",
-            "reject_join": "auto_reject_join"
-        }
-
-        if action in field_map:
-            col = field_map[action]
-            current = await DB.fetchone(f"SELECT {col} FROM group_security WHERE chat_id=?", (chat_id,))
-            new_val = 1 - (current[0] if current else 0)
-            await DB.execute(f"UPDATE group_security SET {col}=? WHERE chat_id=?", (new_val, chat_id))
-            settings = await DB.get_security_settings(chat_id)
-            text = await KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id, lang=lang)
-            try:
-                await query.edit_message_text(text, reply_markup=kb)
-            except BadRequest:
-                pass
-            return
-
-        if action == "enable_all":
-            for f in field_map.values():
-                await DB.execute(f"UPDATE group_security SET {f}=1 WHERE chat_id=?", (chat_id,))
-            settings = await DB.get_security_settings(chat_id)
-            text = await KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id, lang=lang)
-            try:
-                await query.edit_message_text(text, reply_markup=kb)
-            except BadRequest:
-                pass
-            return
-
-        if action == "disable_all":
-            for f in field_map.values():
-                await DB.execute(f"UPDATE group_security SET {f}=0 WHERE chat_id=?", (chat_id,))
-            settings = await DB.get_security_settings(chat_id)
-            text = await KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id, lang=lang)
-            try:
-                await query.edit_message_text(text, reply_markup=kb)
-            except BadRequest:
-                pass
-            return
-
-        # ✅ تبديل حالة حذف الكلمات المحظورة (sec_toggle_banned)
-        if action == "toggle_banned":
-            current = await DB.fetchone("SELECT delete_banned_words FROM group_security WHERE chat_id=?", (chat_id,))
-            new_val = 1 - (current[0] if current else 0)
-            await DB.execute("UPDATE group_security SET delete_banned_words=? WHERE chat_id=?", (new_val, chat_id))
-            status = "مفعل ✅" if new_val else "معطل ❌"
-            await query.edit_message_text(f"🔄 حذف الكلمات المحظورة: {status}")
-            await query.answer()
-            return
-
-        if action == "banned" or action == "banned_words":
-            try:
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(KeyboardFactory.get_text("ban_add", lang), callback_data=f"ban_add:{chat_id}"),
-                     InlineKeyboardButton(KeyboardFactory.get_text("ban_list", lang), callback_data=f"ban_list:{chat_id}")],
-                    [InlineKeyboardButton(KeyboardFactory.get_text("ban_rem", lang), callback_data=f"ban_rem:{chat_id}")],
-                    [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data="sec_close")]
-                ])
-                await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
-                await query.answer()
-            except Exception as e:
-                logger.error(f"❌ خطأ في عرض كلمات محظورة: {e}", exc_info=True)
-                await query.answer("❌ حدث خطأ", show_alert=True)
-            return
-
-        if action == "maxlen":
-            StateManager.set(user_id, UserState.WAIT_MAX_LEN)
-            context.user_data[f"sec_chat_{user_id}"] = chat_id
-            await query.edit_message_text("📏 أرسل الحد الأقصى للطول:")
-            return
-
-        if action == "warn":
-            settings = await DB.get_security_settings(chat_id)
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📝 العدد", callback_data=f"sec_warn_count:{chat_id}"),
-                 InlineKeyboardButton("⚖️ العقوبة", callback_data=f"sec_warn_penalty:{chat_id}")],
-                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"{CB.GRP_SET}:{chat_id}")]
-            ])
-            await query.edit_message_text(
-                f"⚠️ **التحذيرات**\n\nالحد: {settings.get('max_warnings', 3)}\nالعقوبة: {settings.get('warn_penalty', 'ban')}",
-                reply_markup=kb
-            )
-            return
-
-        if action == "warn_count":
-            StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
-            context.user_data[f"sec_chat_{user_id}"] = chat_id
-            await query.edit_message_text("📝 أرسل العدد (1-10):")
-            return
-
-        if action == "warn_penalty":
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛑 حظر", callback_data=f"sec_set_warn_penalty:{chat_id}:ban"),
-                 InlineKeyboardButton("🔇 كتم", callback_data=f"sec_set_warn_penalty:{chat_id}:mute")],
-                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_warn:{chat_id}")]
-            ])
-            await query.edit_message_text("⚖️ اختر العقوبة:", reply_markup=kb)
-            return
-
-        if action == "set_warn_penalty":
-            if len(parts) >= 3:
-                penalty = parts[2]
-                await DB.execute("UPDATE group_security SET warn_penalty=? WHERE chat_id=?", (penalty, chat_id))
-                await query.edit_message_text(f"✅ تم التعيين: {penalty}")
-            return
-
-        if action == "del_pen":
-            kb = KeyboardFactory.build("penalty", chat_id, lang=lang)
-            await query.edit_message_text("⚖️ عقوبة الحذف:", reply_markup=kb)
-            return
-
-        if action == "penalty":
-            kb = KeyboardFactory.build("penalty", chat_id, lang=lang)
-            await query.edit_message_text("⚖️ العقوبة:", reply_markup=kb)
-            return
-
-        if action == "adv_act":
-            kb = KeyboardFactory.build("advanced_actions", chat_id, lang=lang)
-            await query.edit_message_text("🛠️ إجراءات:", reply_markup=kb)
-            return
-
-        if action == "act_log":
-            logs = await DB.get_admin_logs(chat_id, 20)
-            if not logs:
-                await query.edit_message_text("📭 لا توجد سجلات")
-                return
-            text = "📜 **السجل**\n\n"
-            for log in logs:
-                text += f"• {log['action']} → {log['target_id'] or '-'}\n"
-            await query.edit_message_text(text)
-            return
-
-        if action == "auto_reply_menu":
-            kb = KeyboardFactory.build("auto_reply_manage", chat_id, lang=lang)
-            await query.edit_message_text("📝 الردود:", reply_markup=kb)
-            return
-
-        if action == "close":
-            try:
-                await query.message.delete()
-            except BadRequest:
-                pass
-            return
-
-        await query.answer()
-
-    @staticmethod
-    async def _handle_banned_words_direct(update, context, query, user_id, lang=None):
-        """معالج مباشر لزر كلمات محظورة (يتجاوز أي تعقيدات)"""
-        if not lang:
-            lang = await DB.get_user_language(user_id)
-        data = query.data
-        parts = data.split(":")
-        chat_id = int(parts[1]) if len(parts) > 1 else None
-        
-        if not chat_id:
-            await query.answer("❌ خطأ في المعرف", show_alert=True)
-            return
-        
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer("❌ لا صلاحية", show_alert=True)
-            return
-        
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(KeyboardFactory.get_text("ban_add", lang), callback_data=f"ban_add:{chat_id}"),
-             InlineKeyboardButton(KeyboardFactory.get_text("ban_list", lang), callback_data=f"ban_list:{chat_id}")],
-            [InlineKeyboardButton(KeyboardFactory.get_text("ban_rem", lang), callback_data=f"ban_rem:{chat_id}")],
-            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data="sec_close")]
-        ])
-        await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
-        await query.answer()
-
-    @staticmethod
-    async def _handle_admin(update, context, query, user_id, lang=None):
-        if not lang:
-            lang = await DB.get_user_language(user_id)
-        data = query.data
-
-        if data == CB.ADMIN_USERS:
-            stats = await DB.get_user_stats()
-            await query.edit_message_text(f"👥 {stats['users']} مستخدم\n⛔ {stats['banned']} محظور")
-
-        elif data == CB.ADMIN_BANNED:
-            users = await DB.get_all_users()
-            banned = [str(u[0]) for u in users if u[1] == 1]
-            await query.edit_message_text("⛔ **المحظورين**\n\n" + "\n".join(banned[:20]) if banned else "لا يوجد")
-
-        elif data == CB.ADMIN_UNBAN_ALL:
-            await DB.execute("UPDATE users SET banned=0 WHERE banned=1")
-            await query.edit_message_text("✅ تم إلغاء حظر الجميع")
-
-        elif data == CB.ADMIN_CHANNELS:
-            channels = await DB.fetchall("SELECT channel_id, channel_name, banned FROM user_channels LIMIT 50")
-            text = "📡 **القنوات**\n\n" + "\n".join(f"{'✅' if not c[2] else '🚫'} {c[1]}" for c in channels)
-            await query.edit_message_text(text if channels else "📭 لا توجد")
-
-        elif data == CB.ADMIN_BANNED_CH:
-            channels = await DB.fetchall("SELECT channel_id, channel_name FROM user_channels WHERE banned=1")
-            text = "🚫 **القنوات المحظورة**\n\n" + "\n".join(f"• {c[1]}" for c in channels)
-            await query.edit_message_text(text if channels else "📭 لا يوجد")
-
-        elif data == CB.ADMIN_ACTIVATE_CH:
-            await DB.execute("UPDATE user_channels SET banned=0 WHERE banned=1")
-            await query.edit_message_text("✅ تم تفعيل الكل")
-
-        elif data == CB.ADMIN_GROUPS:
-            groups = await DB.fetchall("SELECT chat_id, chat_name, banned FROM bot_groups LIMIT 50")
-            text = "👥 **المجموعات**\n\n" + "\n".join(f"{'✅' if not g[2] else '🚫'} {g[1]}" for g in groups)
-            await query.edit_message_text(text if groups else "📭 لا توجد")
-
-        elif data == CB.ADMIN_BANNED_GR:
-            groups = await DB.fetchall("SELECT chat_id, chat_name FROM bot_groups WHERE banned=1")
-            text = "🚫 **المجموعات المحظورة**\n\n" + "\n".join(f"• {g[1]}" for g in groups)
-            await query.edit_message_text(text if groups else "📭 لا يوجد")
-
-        elif data == CB.ADMIN_UNBAN_GR:
-            await DB.execute("UPDATE bot_groups SET banned=0 WHERE banned=1")
-            await query.edit_message_text("✅ تم إلغاء حظر المجموعات")
-
-        elif data == CB.ADMIN_ADD_ADMIN:
-            StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
-            await query.edit_message_text("👑 أرسل معرف المشرف:")
-
-        elif data == CB.ADMIN_REM_ADMIN:
-            StateManager.set(user_id, UserState.WAIT_ADMIN_REM)
-            await query.edit_message_text("🗑️ أرسل معرف المشرف:")
-
-        elif data == CB.ADMIN_RAM:
-            ram = get_ram_usage()
-            await query.edit_message_text(f"🖥️ الرام: {ram['percent']}%")
-
-        elif data == CB.ADMIN_STATS:
-            stats = await DB.get_user_stats()
-            await query.edit_message_text(f"👥 {stats['users']} مستخدم")
-
-        elif data == CB.ADMIN_METRICS:
-            m = METRICS.get_stats()
-            await query.edit_message_text(f"📊 API: {m['api_calls_last_hour']}\n⚠️ أخطاء: {m['errors_last_hour']}")
-
-        elif data == CB.ADMIN_BACKUP:
-            try:
-                backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
-                shutil.copy2(PATHS.DB, backup_file)
-                with open(backup_file, 'rb') as f:
-                    await context.bot.send_document(chat_id=user_id, document=f, filename=backup_file.name)
-                await query.answer()
-            except Exception as e:
-                logger.error(f"❌ فشل النسخ الاحتياطي: {e}")
-                await safe_send(context.bot, user_id, "❌ فشل النسخ الاحتياطي")
-
-        elif data == CB.ADMIN_RESTORE:
-            backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
-            if not backups:
-                await query.edit_message_text("📭 لا توجد نسخ")
-            else:
-                kb = [[InlineKeyboardButton(b.name, callback_data=f"{CB.ADMIN_RESTORE_SEL}:{b.name}")] for b in backups[:10]]
-                await query.edit_message_text("🔄 اختر النسخة:", reply_markup=InlineKeyboardMarkup(kb))
-
-        elif data.startswith(CB.ADMIN_RESTORE_SEL + ":"):
-            filename = data.split(":")[-1]
-            filepath = PATHS.BACKUPS / filename
-            if filepath.exists():
-                shutil.copy2(filepath, PATHS.DB)
-                await query.edit_message_text("✅ تمت الاستعادة")
-
-        elif data == CB.ADMIN_SEND_UPDATE:
-            StateManager.set(user_id, UserState.WAIT_UPDATE)
-            await query.edit_message_text("📢 أرسل نص التحديث:")
-
-        elif data == CB.ADMIN_SET_UPDATE_CH:
-            StateManager.set(user_id, UserState.WAIT_UPDATE_CH)
-            await query.edit_message_text("📢 أرسل معرف قناة التحديثات:")
-
-        elif data == CB.ADMIN_SHOW_UPDATE:
-            ch = await DB.get_updates_channel()
-            await query.edit_message_text(f"📢 قناة التحديثات: @{ch}" if ch else "📢 لا توجد قناة")
-
-        elif data == CB.ADMIN_FORCE_SUB:
-            ch = await DB.get_force_subscribe_channel()
-            await query.edit_message_text(f"🔒 قناة الاشتراك الإجباري: @{ch}" if ch else "🔒 غير محددة")
-
-        elif data == CB.ADMIN_SET_FORCE:
-            StateManager.set(user_id, UserState.WAIT_FORCE)
-            await query.edit_message_text("🔒 أرسل معرف القناة:")
-
-        elif data == CB.ADMIN_BROADCAST:
-            StateManager.set(user_id, UserState.WAIT_BROADCAST)
-            await query.edit_message_text("📨 أرسل الرسالة:")
-
-        elif data == CB.ADMIN_TICKETS:
-            tickets = await DB.get_tickets()
-            if not tickets:
-                await query.edit_message_text("📭 لا توجد تذاكر")
-            else:
-                text = "📋 **التذاكر**\n\n" + "\n".join(f"#{t['ticket_number']} - `{t['user_id']}`" for t in tickets)
-                await query.edit_message_text(text)
-
-        elif data == CB.ADMIN_DEL_TICKETS:
-            await DB.delete_all_tickets()
-            await query.edit_message_text("✅ تم الحذف")
-
-        elif data == CB.ADMIN_LOG_CH:
-            log_id = await DB.get_log_channel()
-            await query.edit_message_text(f"📋 قناة السجلات: {log_id}" if log_id else "📋 غير محدد")
-
-        elif data == CB.ADMIN_SET_LOG_CH:
-            StateManager.set(user_id, UserState.WAIT_LOG_CH)
-            await query.edit_message_text("📋 أرسل معرف القناة:")
-
-        elif data == CB.ADMIN_REPLIES:
-            stats = await DB.get_auto_reply_stats(-1, 20)
-            text = "📊 **الردود**\n\n" + "\n".join(f"• {kw}: {cnt}" for kw, cnt in stats)
-            await query.edit_message_text(text if stats else "📭 لا يوجد")
-
-        elif data == CB.ADMIN_ADD_REPLY:
-            StateManager.set(user_id, UserState.WAIT_KEYWORD)
-            await query.edit_message_text("📝 أرسل الكلمة:")
-
-        elif data == CB.ADMIN_LIST_REPLIES:
-            replies = await DB.fetchall("SELECT keyword, usage_count FROM auto_replies WHERE chat_id=0 LIMIT 20")
-            text = "📋 **الردود**\n\n" + "\n".join(f"• {r[0]} ({r[1]})" for r in replies)
-            await query.edit_message_text(text if replies else "📭 لا يوجد")
-
-        elif data == CB.ADMIN_DEL_REPLY:
-            StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
-            context.user_data['auto_chat'] = -1
-            await query.edit_message_text("🗑️ أرسل الكلمة:")
-
-        elif data == CB.ADMIN_BANNED_WORDS:
-            words = await DB.get_banned_words(-1)
-            text = "🚫 **الكلمات المحظورة**\n\n" + "\n".join(words) if words else "📭 لا يوجد"
-            await query.edit_message_text(text)
-
-        elif data == CB.ADMIN_ADD_BANNED:
-            StateManager.set(user_id, UserState.WAIT_GLOBAL_BAN)
-            await query.edit_message_text("🚫 أرسل الكلمة:")
-
-        elif data == CB.ADMIN_LIST_BANNED:
-            words = await DB.get_banned_words(-1)
-            text = "🚫 **الكلمات**\n\n" + "\n".join(words) if words else "📭 لا يوجد"
-            await query.edit_message_text(text)
-
-        elif data == CB.ADMIN_REM_BANNED:
-            StateManager.set(user_id, UserState.WAIT_REM_GLOBAL_BAN)
-            await query.edit_message_text("🗑️ أرسل الكلمة:")
-
-        elif data == CB.ADMIN_CREATE_CONTEST:
-            StateManager.set(user_id, UserState.WAIT_CONTEST_TITLE)
-            await query.edit_message_text("🏆 أرسل عنوان المسابقة:")
-
-        elif data == CB.ADMIN_DECLARE_WINNER:
-            contests = await DB.fetchall("SELECT id, title FROM contests WHERE status='active'")
-            if not contests:
-                await query.edit_message_text("📭 لا توجد مسابقات نشطة")
-            else:
-                kb = [[InlineKeyboardButton(title, callback_data=f"{CB.DECLARE_WINNER_SEL}:{cid}")] for cid, title in contests]
-                await query.edit_message_text("اختر المسابقة:", reply_markup=InlineKeyboardMarkup(kb))
-
-        elif data.startswith(CB.ADMIN_DEL_CONTEST + ":"):
-            cid = int(data.split(":")[-1])
-            await DB.delete_contest(cid, user_id)
-            await query.edit_message_text("✅ تم حذف المسابقة")
-
-        elif data == CB.ADMIN_EXPORT_REPLIES:
-            count = await export_auto_replies(-1)
-            await query.edit_message_text(f"✅ تم تصدير {count} رد")
-
-        elif data == CB.ADMIN_REFRESH_CACHE:
-            _auto_reply_cache.invalidate()
-            await query.edit_message_text("🔄 تم تحديث الكاش")
-
-        elif data in (CB.ADMIN_IMPORT_REPLIES, CB.ADMIN_IMPORT_GITHUB):
-            await CallbackHandlers._handle_import(update, context, query, user_id)
-
+# =====================================================================
+# دوال مساعدة
+# =====================================================================
+
+@staticmethod
+async def _publish_single(bot, ch_db_id, ch_tele, post):
+    try:
+        if post['media_type'] == 'photo' and post['media_file_id']:
+            await bot.send_photo(ch_tele, post['media_file_id'],
+                                 caption=post['text'][:1024] if post['text'] else None)
+        elif post['media_type'] == 'video' and post['media_file_id']:
+            await bot.send_video(ch_tele, post['media_file_id'],
+                                 caption=post['text'][:1024] if post['text'] else None)
         else:
-            await query.answer("⚠️ غير متوفر", show_alert=True)
+            await bot.send_message(ch_tele, post['text'][:4096] if post['text'] else ".")
+        await DB.mark_post_published(post['id'])
+    except Exception as e:
+        logger.error(f"❌ فشل النشر التلقائي: {e}")
+        await DB.increment_post_fail(post['id'])
 
-    @staticmethod
-    async def _handle_auto_reply(update, context, query, user_id, lang=None):
-        if not lang:
-            lang = await DB.get_user_language(user_id)
-        data = query.data
-        parts = data.split(":")
-        if len(parts) < 2:
-            return
-        action = parts[0].replace("auto_reply_", "")
+@staticmethod
+async def _show_channel_list(update, context, query, user_id, lang=None):
+    if not lang:
+        lang = await DB.get_user_language(user_id)
+    channels = await DB.get_user_channels(user_id)
+    if not channels:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)],
+            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)]
+        ])
+        await query.edit_message_text("📭 لا توجد قنوات!\nاضغط للإضافة:", reply_markup=kb)
+        return
+    text = "📡 **قنواتي**\n\n"
+    kb = []
+    for ch in channels:
+        st = "✅" if not ch['banned'] else "🚫"
+        text += f"{st} {ch['channel_name']} (`{ch['channel_id']}`)\n"
+        kb.append([
+            InlineKeyboardButton(
+                f"📌 {ch['channel_name'][:20]}",
+                callback_data=f"{CB.CH_SEL}:{ch['id']}"
+            ),
+            InlineKeyboardButton(KeyboardFactory.get_text("ch_stats", lang), callback_data=f"{CB.CH_STATS}:{ch['id']}"),
+            InlineKeyboardButton(KeyboardFactory.get_text("ch_del", lang), callback_data=f"{CB.CH_DEL}:{ch['id']}")
+        ])
+    kb.append([InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)])
+    kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+
+@staticmethod
+async def _show_post_list(update, context, query, user_id, lang=None):
+    if not lang:
+        lang = await DB.get_user_language(user_id)
+    active = await DB.get_active_channel(user_id)
+    if not active:
+        await query.edit_message_text("❌ لا توجد قناة نشطة")
+        return
+    posts = await DB.get_user_posts(active, 10)
+    text = "📋 **منشوراتي**\n\n"
+    kb = []
+    for p in posts:
+        text += f"🆔 {p['id']}: {(p['text'] or '')[:30]}\n"
+        kb.append([
+            InlineKeyboardButton(f"🗑️ حذف {p['id']}", callback_data=f"{CB.POST_DEL}:{p['id']}")
+        ])
+    kb.append([InlineKeyboardButton(KeyboardFactory.get_text("post_clear", lang), callback_data=f"{CB.POST_CLEAR}:{active}")])
+    kb.append([InlineKeyboardButton(KeyboardFactory.get_text("post_rec", lang), callback_data=CB.POST_REC)])
+    kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
+    await query.edit_message_text(text if posts else "📭 لا يوجد", reply_markup=InlineKeyboardMarkup(kb))
+
+@staticmethod
+async def _handle_security(update, context, query, user_id, lang=None):
+    if not lang:
+        lang = await DB.get_user_language(user_id)
+    data = query.data
+    parts = data.split(":")
+    if len(parts) < 2:
+        return
+    action = parts[0].replace("sec_", "")
+    try:
+        chat_id = int(parts[1])
+    except:
+        return
+
+    logger.info(f"🔍 _handle_security: action={action}, chat_id={chat_id}, data={data}")
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("❌ لا صلاحية", show_alert=True)
+        return
+
+    field_map = {
+        "links": "delete_links",
+        "mentions": "mentions",
+        "slow": "slow_mode",
+        "video": "delete_videos",
+        "audio": "delete_audio",
+        "anim": "delete_animation",
+        "service": "delete_service",
+        "doc": "delete_documents",
+        "sticker": "delete_stickers",
+        "forward": "delete_forwarded",
+        "poll": "delete_polls",
+        "game": "delete_games",
+        "voice": "delete_voice",
+        "videonote": "delete_video_note",
+        "welcome": "welcome_enabled",
+        "goodbye": "goodbye_enabled",
+        "flood": "antiflood_enabled",
+        "night": "night_mode_enabled",
+        "banned_words": "delete_banned_words",
+        "approve_join": "auto_approve_join",
+        "reject_join": "auto_reject_join"
+    }
+
+    if action in field_map:
+        col = field_map[action]
+        current = await DB.fetchone(f"SELECT {col} FROM group_security WHERE chat_id=?", (chat_id,))
+        new_val = 1 - (current[0] if current else 0)
+        await DB.execute(f"UPDATE group_security SET {col}=? WHERE chat_id=?", (new_val, chat_id))
+        settings = await DB.get_security_settings(chat_id)
+        text = await KeyboardFactory._format_security_text(settings)
+        kb = KeyboardFactory.build("security", chat_id, lang=lang)
         try:
-            chat_id = int(parts[1])
-        except:
-            return
+            await query.edit_message_text(text, reply_markup=kb)
+        except BadRequest:
+            pass
+        return
 
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer("❌ لا صلاحية", show_alert=True)
-            return
+    if action == "enable_all":
+        for f in field_map.values():
+            await DB.execute(f"UPDATE group_security SET {f}=1 WHERE chat_id=?", (chat_id,))
+        settings = await DB.get_security_settings(chat_id)
+        text = await KeyboardFactory._format_security_text(settings)
+        kb = KeyboardFactory.build("security", chat_id, lang=lang)
+        try:
+            await query.edit_message_text(text, reply_markup=kb)
+        except BadRequest:
+            pass
+        return
 
-        settings = await DB.get_auto_reply_settings(chat_id)
-        current_enabled = settings.get('enabled', False)
+    if action == "disable_all":
+        for f in field_map.values():
+            await DB.execute(f"UPDATE group_security SET {f}=0 WHERE chat_id=?", (chat_id,))
+        settings = await DB.get_security_settings(chat_id)
+        text = await KeyboardFactory._format_security_text(settings)
+        kb = KeyboardFactory.build("security", chat_id, lang=lang)
+        try:
+            await query.edit_message_text(text, reply_markup=kb)
+        except BadRequest:
+            pass
+        return
 
-        if action == "toggle":
-            new_enabled = not current_enabled
-            await DB.update_auto_reply_settings(chat_id, enabled=new_enabled)
-            _auto_reply_cache.invalidate()
-            status_text = "✅ **تم تفعيل الردود التلقائية!**" if new_enabled else "❌ **تم تعطيل الردود التلقائية!**"
-            await query.edit_message_text(
-                status_text,
-                reply_markup=KeyboardFactory.build("auto_reply_manage", chat_id, lang=lang)
-            )
-            await query.answer()
-            return
-
-        if action == "menu":
-            status_icon = "🟢" if current_enabled else "🔴"
-            status_text = "مفعل" if current_enabled else "معطل"
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"{status_icon} الحالة: {status_text}", callback_data="status_only")],
-                [InlineKeyboardButton(
-                    f"🔄 {'إيقاف' if current_enabled else 'تشغيل'} الردود",
-                    callback_data=f"auto_reply_toggle:{chat_id}"
-                )],
-                [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_admins", lang), callback_data=f"auto_reply_admins:{chat_id}")],
-                [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_add", lang), callback_data=f"auto_reply_add:{chat_id}"),
-                 InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_del", lang), callback_data=f"auto_reply_del:{chat_id}")],
-                [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_list", lang), callback_data=f"auto_reply_list:{chat_id}"),
-                 InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_stats", lang), callback_data=f"auto_reply_stats:{chat_id}")],
-                [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_reset", lang), callback_data=f"auto_reply_reset:{chat_id}")],
-                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close")]
-            ])
-            await query.edit_message_text("📝 **إدارة الردود التلقائية**", reply_markup=kb)
-            return
-
-        if action == "admins":
-            await DB.update_auto_reply_settings(chat_id, only_admins=not settings.get('only_admins', False))
-            await query.answer("✅ تم")
-            await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
-            return
-
-        if action == "reset":
-            await DB.reset_auto_replies(chat_id)
-            _auto_reply_cache.invalidate()
-            await query.answer("✅ تم حذف جميع الردود")
-            await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
-            return
-
-        if action == "add":
-            StateManager.set(user_id, UserState.WAIT_AUTO_KEY)
-            context.user_data['auto_chat'] = chat_id
-            await query.edit_message_text("📝 أرسل الكلمة المفتاحية:")
-            return
-
-        if action == "del":
-            StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
-            context.user_data['auto_chat'] = chat_id
-            await query.edit_message_text("🗑️ أرسل الكلمة لحذفها:")
-            return
-
-        if action == "stats":
-            rows = await DB.fetchall("SELECT keyword, usage_count FROM auto_replies WHERE chat_id=? LIMIT 10", (chat_id,))
-            text = "📊 **الإحصائيات**\n\n" + "\n".join(f"• {r[0]}: {r[1]}" for r in rows) if rows else "📭 لا يوجد"
-            await query.edit_message_text(text)
-            return
-
-        if action == "list":
-            rows = await DB.fetchall("SELECT keyword FROM auto_replies WHERE chat_id=? LIMIT 20", (chat_id,))
-            text = "📋 **الردود**\n\n" + "\n".join(f"• {r[0]}" for r in rows) if rows else "📭 لا يوجد"
-            await query.edit_message_text(text)
-            return
-
+    # ✅ تبديل حالة حذف الكلمات المحظورة (sec_toggle_banned)
+    if action == "toggle_banned":
+        current = await DB.fetchone("SELECT delete_banned_words FROM group_security WHERE chat_id=?", (chat_id,))
+        new_val = 1 - (current[0] if current else 0)
+        await DB.execute("UPDATE group_security SET delete_banned_words=? WHERE chat_id=?", (new_val, chat_id))
+        status = "مفعل ✅" if new_val else "معطل ❌"
+        await query.edit_message_text(f"🔄 حذف الكلمات المحظورة: {status}")
         await query.answer()
+        return
 
-    @staticmethod
-    async def _handle_schedule(update, context, query, user_id):
-        data = query.data
-        parts = data.split(":")
-        if len(parts) < 2:
-            return
-        action = parts[0].replace("sched_", "")
+    if action == "banned" or action == "banned_words":
         try:
-            ch_id = int(parts[1])
-        except:
-            return
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(KeyboardFactory.get_text("ban_add", lang), callback_data=f"ban_add:{chat_id}"),
+                 InlineKeyboardButton(KeyboardFactory.get_text("ban_list", lang), callback_data=f"ban_list:{chat_id}")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("ban_rem", lang), callback_data=f"ban_rem:{chat_id}")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data="sec_close")]
+            ])
+            await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
+            await query.answer()
+        except Exception as e:
+            logger.error(f"❌ خطأ في عرض كلمات محظورة: {e}", exc_info=True)
+            await query.answer("❌ حدث خطأ", show_alert=True)
+        return
 
-        if action == "min":
-            StateManager.set(user_id, UserState.WAIT_MIN)
-            context.user_data['schedule_ch'] = ch_id
-            await query.edit_message_text("📅 أرسل عدد الدقائق (1-1440):")
-        elif action == "hour":
-            StateManager.set(user_id, UserState.WAIT_HOUR)
-            context.user_data['schedule_ch'] = ch_id
-            await query.edit_message_text("📅 أرسل عدد الساعات (1-168):")
-        elif action == "day":
-            StateManager.set(user_id, UserState.WAIT_DAY)
-            context.user_data['schedule_ch'] = ch_id
-            await query.edit_message_text("📅 أرسل عدد الأيام (1-365):")
-        elif action == "time":
-            StateManager.set(user_id, UserState.WAIT_PUB_TIME)
-            context.user_data['schedule_ch'] = ch_id
-            await query.edit_message_text("🕐 أرسل وقت النشر (HH:MM):")
+    if action == "maxlen":
+        StateManager.set(user_id, UserState.WAIT_MAX_LEN)
+        context.user_data[f"sec_chat_{user_id}"] = chat_id
+        await query.edit_message_text("📏 أرسل الحد الأقصى للطول:")
+        return
 
-    @staticmethod
-    async def _handle_banned_words(update, context, query, user_id):
-        data = query.data
-        parts = data.split(":")
-        if len(parts) < 2:
+    if action == "warn":
+        settings = await DB.get_security_settings(chat_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 العدد", callback_data=f"sec_warn_count:{chat_id}"),
+             InlineKeyboardButton("⚖️ العقوبة", callback_data=f"sec_warn_penalty:{chat_id}")],
+            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"{CB.GRP_SET}:{chat_id}")]
+        ])
+        await query.edit_message_text(
+            f"⚠️ **التحذيرات**\n\nالحد: {settings.get('max_warnings', 3)}\nالعقوبة: {settings.get('warn_penalty', 'ban')}",
+            reply_markup=kb
+        )
+        return
+
+    if action == "warn_count":
+        StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
+        context.user_data[f"sec_chat_{user_id}"] = chat_id
+        await query.edit_message_text("📝 أرسل العدد (1-10):")
+        return
+
+    if action == "warn_penalty":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛑 حظر", callback_data=f"sec_set_warn_penalty:{chat_id}:ban"),
+             InlineKeyboardButton("🔇 كتم", callback_data=f"sec_set_warn_penalty:{chat_id}:mute")],
+            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_warn:{chat_id}")]
+        ])
+        await query.edit_message_text("⚖️ اختر العقوبة:", reply_markup=kb)
+        return
+
+    if action == "set_warn_penalty":
+        if len(parts) >= 3:
+            penalty = parts[2]
+            await DB.execute("UPDATE group_security SET warn_penalty=? WHERE chat_id=?", (penalty, chat_id))
+            await query.edit_message_text(f"✅ تم التعيين: {penalty}")
+        return
+
+    if action == "del_pen":
+        kb = KeyboardFactory.build("penalty", chat_id, lang=lang)
+        await query.edit_message_text("⚖️ عقوبة الحذف:", reply_markup=kb)
+        return
+
+    if action == "penalty":
+        kb = KeyboardFactory.build("penalty", chat_id, lang=lang)
+        await query.edit_message_text("⚖️ العقوبة:", reply_markup=kb)
+        return
+
+    if action == "adv_act":
+        kb = KeyboardFactory.build("advanced_actions", chat_id, lang=lang)
+        await query.edit_message_text("🛠️ إجراءات:", reply_markup=kb)
+        return
+
+    if action == "act_log":
+        logs = await DB.get_admin_logs(chat_id, 20)
+        if not logs:
+            await query.edit_message_text("📭 لا توجد سجلات")
             return
-        action = parts[0].replace("ban_", "")
+        text = "📜 **السجل**\n\n"
+        for log in logs:
+            text += f"• {log['action']} → {log['target_id'] or '-'}\n"
+        await query.edit_message_text(text)
+        return
+
+    if action == "auto_reply_menu":
+        kb = KeyboardFactory.build("auto_reply_manage", chat_id, lang=lang)
+        await query.edit_message_text("📝 الردود:", reply_markup=kb)
+        return
+
+    if action == "close":
         try:
-            chat_id = int(parts[1])
-        except:
-            return
+            await query.message.delete()
+        except BadRequest:
+            pass
+        return
 
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer("❌ لا صلاحية", show_alert=True)
-            return
+    await query.answer()
 
-        if action == "add":
-            StateManager.set(user_id, UserState.WAIT_GROUP_BAN)
-            context.user_data['ban_chat'] = chat_id
-            await query.edit_message_text("📝 أرسل الكلمة المحظورة:")
-        elif action == "list":
-            words = await DB.get_banned_words(chat_id)
-            if not words:
-                await query.edit_message_text("📭 لا توجد كلمات محظورة")
-            else:
-                await query.edit_message_text("🚫 **الكلمات المحظورة**\n\n" + "\n".join(f"• {w}" for w in words))
-        elif action == "rem":
-            StateManager.set(user_id, UserState.WAIT_REM_GROUP_BAN)
-            context.user_data['ban_chat'] = chat_id
-            await query.edit_message_text("🗑️ أرسل الكلمة لحذفها:")
+@staticmethod
+async def _handle_banned_words_direct(update, context, query, user_id, lang=None):
+    """معالج مباشر لزر كلمات محظورة (يتجاوز أي تعقيدات)"""
+    if not lang:
+        lang = await DB.get_user_language(user_id)
+    data = query.data
+    parts = data.split(":")
+    chat_id = int(parts[1]) if len(parts) > 1 else None
+    
+    if not chat_id:
+        await query.answer("❌ خطأ في المعرف", show_alert=True)
+        return
+    
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("❌ لا صلاحية", show_alert=True)
+        return
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(KeyboardFactory.get_text("ban_add", lang), callback_data=f"ban_add:{chat_id}"),
+         InlineKeyboardButton(KeyboardFactory.get_text("ban_list", lang), callback_data=f"ban_list:{chat_id}")],
+        [InlineKeyboardButton(KeyboardFactory.get_text("ban_rem", lang), callback_data=f"ban_rem:{chat_id}")],
+        [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data="sec_close")]
+    ])
+    await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
+    await query.answer()
+@staticmethod
+async def _handle_admin(update, context, query, user_id, lang=None):
+    if not lang:
+        lang = await DB.get_user_language(user_id)
+    data = query.data
 
-    @staticmethod
-    async def _handle_advanced_actions(update, context, query, user_id):
-        data = query.data
-        parts = data.split(":")
-        if len(parts) < 2:
-            return
-        action = parts[0].replace("act_", "")
+    if data == CB.ADMIN_USERS:
+        stats = await DB.get_user_stats()
+        await query.edit_message_text(f"👥 {stats['users']} مستخدم\n⛔ {stats['banned']} محظور")
+
+    elif data == CB.ADMIN_BANNED:
+        users = await DB.get_all_users()
+        banned = [str(u[0]) for u in users if u[1] == 1]
+        await query.edit_message_text("⛔ **المحظورين**\n\n" + "\n".join(banned[:20]) if banned else "لا يوجد")
+
+    elif data == CB.ADMIN_UNBAN_ALL:
+        await DB.execute("UPDATE users SET banned=0 WHERE banned=1")
+        await query.edit_message_text("✅ تم إلغاء حظر الجميع")
+
+    elif data == CB.ADMIN_CHANNELS:
+        channels = await DB.fetchall("SELECT channel_id, channel_name, banned FROM user_channels LIMIT 50")
+        text = "📡 **القنوات**\n\n" + "\n".join(f"{'✅' if not c[2] else '🚫'} {c[1]}" for c in channels)
+        await query.edit_message_text(text if channels else "📭 لا توجد")
+
+    elif data == CB.ADMIN_BANNED_CH:
+        channels = await DB.fetchall("SELECT channel_id, channel_name FROM user_channels WHERE banned=1")
+        text = "🚫 **القنوات المحظورة**\n\n" + "\n".join(f"• {c[1]}" for c in channels)
+        await query.edit_message_text(text if channels else "📭 لا يوجد")
+
+    elif data == CB.ADMIN_ACTIVATE_CH:
+        await DB.execute("UPDATE user_channels SET banned=0 WHERE banned=1")
+        await query.edit_message_text("✅ تم تفعيل الكل")
+
+    elif data == CB.ADMIN_GROUPS:
+        groups = await DB.fetchall("SELECT chat_id, chat_name, banned FROM bot_groups LIMIT 50")
+        text = "👥 **المجموعات**\n\n" + "\n".join(f"{'✅' if not g[2] else '🚫'} {g[1]}" for g in groups)
+        await query.edit_message_text(text if groups else "📭 لا توجد")
+
+    elif data == CB.ADMIN_BANNED_GR:
+        groups = await DB.fetchall("SELECT chat_id, chat_name FROM bot_groups WHERE banned=1")
+        text = "🚫 **المجموعات المحظورة**\n\n" + "\n".join(f"• {g[1]}" for g in groups)
+        await query.edit_message_text(text if groups else "📭 لا يوجد")
+
+    elif data == CB.ADMIN_UNBAN_GR:
+        await DB.execute("UPDATE bot_groups SET banned=0 WHERE banned=1")
+        await query.edit_message_text("✅ تم إلغاء حظر المجموعات")
+
+    elif data == CB.ADMIN_ADD_ADMIN:
+        StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
+        await query.edit_message_text("👑 أرسل معرف المشرف:")
+
+    elif data == CB.ADMIN_REM_ADMIN:
+        StateManager.set(user_id, UserState.WAIT_ADMIN_REM)
+        await query.edit_message_text("🗑️ أرسل معرف المشرف:")
+
+    elif data == CB.ADMIN_RAM:
+        ram = get_ram_usage()
+        await query.edit_message_text(f"🖥️ الرام: {ram['percent']}%")
+
+    elif data == CB.ADMIN_STATS:
+        stats = await DB.get_user_stats()
+        await query.edit_message_text(f"👥 {stats['users']} مستخدم")
+
+    elif data == CB.ADMIN_METRICS:
+        m = METRICS.get_stats()
+        await query.edit_message_text(f"📊 API: {m['api_calls_last_hour']}\n⚠️ أخطاء: {m['errors_last_hour']}")
+
+    elif data == CB.ADMIN_BACKUP:
         try:
-            chat_id = int(parts[1])
-        except:
-            return
+            backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+            shutil.copy2(PATHS.DB, backup_file)
+            with open(backup_file, 'rb') as f:
+                await context.bot.send_document(chat_id=user_id, document=f, filename=backup_file.name)
+            await query.answer()
+        except Exception as e:
+            logger.error(f"❌ فشل النسخ الاحتياطي: {e}")
+            await safe_send(context.bot, user_id, "❌ فشل النسخ الاحتياطي")
 
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer("❌ لا صلاحية", show_alert=True)
-            return
+    elif data == CB.ADMIN_RESTORE:
+        backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
+        if not backups:
+            await query.edit_message_text("📭 لا توجد نسخ")
+        else:
+            kb = [[InlineKeyboardButton(b.name, callback_data=f"{CB.ADMIN_RESTORE_SEL}:{b.name}")] for b in backups[:10]]
+            await query.edit_message_text("🔄 اختر النسخة:", reply_markup=InlineKeyboardMarkup(kb))
 
-        actions = {
-            "ban": (UserState.WAIT_BAN, "🚫 أرسل معرف المستخدم:"),
-            "mute": (UserState.WAIT_MUTE, "🔇 أرسل معرف المستخدم:"),
-            "warn": (UserState.WAIT_WARN, "⚠️ أرسل معرف المستخدم:"),
-            "kick": (UserState.WAIT_KICK, "👢 أرسل معرف المستخدم:"),
-            "restrict": (UserState.WAIT_RESTRICT, "🔒 أرسل معرف المستخدم:"),
-            "unban": (UserState.WAIT_UNBAN, "🔓 أرسل معرف المستخدم:"),
-            "pin": (UserState.WAIT_PIN, "📌 أرسل معرف الرسالة أو رد عليها:"),
-        }
-        if action in actions:
-            state, text = actions[action]
-            StateManager.set(user_id, state)
-            context.user_data['adv_chat'] = chat_id
+    elif data.startswith(CB.ADMIN_RESTORE_SEL + ":"):
+        filename = data.split(":")[-1]
+        filepath = PATHS.BACKUPS / filename
+        if filepath.exists():
+            shutil.copy2(filepath, PATHS.DB)
+            await query.edit_message_text("✅ تمت الاستعادة")
+
+    elif data == CB.ADMIN_SEND_UPDATE:
+        StateManager.set(user_id, UserState.WAIT_UPDATE)
+        await query.edit_message_text("📢 أرسل نص التحديث:")
+
+    elif data == CB.ADMIN_SET_UPDATE_CH:
+        StateManager.set(user_id, UserState.WAIT_UPDATE_CH)
+        await query.edit_message_text("📢 أرسل معرف قناة التحديثات:")
+
+    elif data == CB.ADMIN_SHOW_UPDATE:
+        ch = await DB.get_updates_channel()
+        await query.edit_message_text(f"📢 قناة التحديثات: @{ch}" if ch else "📢 لا توجد قناة")
+
+    elif data == CB.ADMIN_FORCE_SUB:
+        ch = await DB.get_force_subscribe_channel()
+        await query.edit_message_text(f"🔒 قناة الاشتراك الإجباري: @{ch}" if ch else "🔒 غير محددة")
+
+    elif data == CB.ADMIN_SET_FORCE:
+        StateManager.set(user_id, UserState.WAIT_FORCE)
+        await query.edit_message_text("🔒 أرسل معرف القناة:")
+
+    elif data == CB.ADMIN_BROADCAST:
+        StateManager.set(user_id, UserState.WAIT_BROADCAST)
+        await query.edit_message_text("📨 أرسل الرسالة:")
+
+    elif data == CB.ADMIN_TICKETS:
+        tickets = await DB.get_tickets()
+        if not tickets:
+            await query.edit_message_text("📭 لا توجد تذاكر")
+        else:
+            text = "📋 **التذاكر**\n\n" + "\n".join(f"#{t['ticket_number']} - `{t['user_id']}`" for t in tickets)
             await query.edit_message_text(text)
 
-    @staticmethod
-    async def _handle_penalty(update, context, query, user_id):
-        data = query.data
-        parts = data.split(":")
-        if len(parts) < 2:
-            return
-        penalty = parts[0].replace("pen_", "")
-        try:
-            chat_id = int(parts[1])
-        except:
-            return
+    elif data == CB.ADMIN_DEL_TICKETS:
+        await DB.delete_all_tickets()
+        await query.edit_message_text("✅ تم الحذف")
 
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            await query.answer("❌ لا صلاحية", show_alert=True)
-            return
+    elif data == CB.ADMIN_LOG_CH:
+        log_id = await DB.get_log_channel()
+        await query.edit_message_text(f"📋 قناة السجلات: {log_id}" if log_id else "📋 غير محدد")
 
-        await DB.execute("UPDATE group_security SET auto_penalty=? WHERE chat_id=?", (penalty, chat_id))
-        await query.edit_message_text(f"✅ تم تعيين العقوبة: {penalty}")
+    elif data == CB.ADMIN_SET_LOG_CH:
+        StateManager.set(user_id, UserState.WAIT_LOG_CH)
+        await query.edit_message_text("📋 أرسل معرف القناة:")
 
-    @staticmethod
-    async def _handle_contests(update, context, query, user_id):
-        data = query.data
-        if data == CB.ADMIN_CREATE_CONTEST:
-            StateManager.set(user_id, UserState.WAIT_CONTEST_TITLE)
-            await query.edit_message_text("🏆 أرسل عنوان المسابقة:")
-        elif data.startswith(CB.CONTEST_JOIN + ":"):
-            cid = int(data.split(":")[-1])
-            StateManager.set(user_id, UserState.WAIT_CONTEST_ANSWER)
-            context.user_data['contest_join'] = cid
-            await query.edit_message_text("📝 أرسل إجابتك:")
-        elif data == CB.CONTEST_WINNERS:
-            winners = await DB.get_contest_winners(10)
-            if not winners:
-                await query.edit_message_text("📭 لا يوجد فائزون")
-            else:
-                text = "🏆 **الفائزون**\n\n" + "\n".join(f"• {w['title']} → `{w['winner_id']}`" for w in winners)
-                await query.edit_message_text(text)
-        elif data.startswith(CB.DECLARE_WINNER_SEL + ":"):
-            cid = int(data.split(":")[-1])
-            winner = await DB.fetchone("SELECT user_id FROM contest_participants WHERE contest_id=? ORDER BY RANDOM() LIMIT 1", (cid,))
-            if winner:
-                await DB.declare_winner(cid, winner[0])
-                await query.edit_message_text(f"✅ الفائز: `{winner[0]}`")
+    elif data == CB.ADMIN_REPLIES:
+        stats = await DB.get_auto_reply_stats(-1, 20)
+        text = "📊 **الردود**\n\n" + "\n".join(f"• {kw}: {cnt}" for kw, cnt in stats)
+        await query.edit_message_text(text if stats else "📭 لا يوجد")
 
-    @staticmethod
-    async def _handle_import(update, context, query, user_id):
-        data = query.data
-        if data == CB.ADMIN_IMPORT_REPLIES:
-            StateManager.set(user_id, UserState.WAIT_IMPORT_FILE)
-            context.user_data['import_chat_id'] = -1
-            await query.edit_message_text("📤 أرسل ملف JSON للاستيراد:")
-        elif data == CB.ADMIN_IMPORT_GITHUB:
-            StateManager.set(user_id, UserState.WAIT_GITHUB_URL)
-            await query.edit_message_text("📥 أرسل رابط GitHub (JSON):")
+    elif data == CB.ADMIN_ADD_REPLY:
+        StateManager.set(user_id, UserState.WAIT_KEYWORD)
+        await query.edit_message_text("📝 أرسل الكلمة:")
 
+    elif data == CB.ADMIN_LIST_REPLIES:
+        replies = await DB.fetchall("SELECT keyword, usage_count FROM auto_replies WHERE chat_id=0 LIMIT 20")
+        text = "📋 **الردود**\n\n" + "\n".join(f"• {r[0]} ({r[1]})" for r in replies)
+        await query.edit_message_text(text if replies else "📭 لا يوجد")
 
+    elif data == CB.ADMIN_DEL_REPLY:
+        StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
+        context.user_data['auto_chat'] = -1
+        await query.edit_message_text("🗑️ أرسل الكلمة:")
+
+    elif data == CB.ADMIN_BANNED_WORDS:
+        words = await DB.get_banned_words(-1)
+        text = "🚫 **الكلمات المحظورة**\n\n" + "\n".join(words) if words else "📭 لا يوجد"
+        await query.edit_message_text(text)
+
+    elif data == CB.ADMIN_ADD_BANNED:
+        StateManager.set(user_id, UserState.WAIT_GLOBAL_BAN)
+        await query.edit_message_text("🚫 أرسل الكلمة:")
+
+    elif data == CB.ADMIN_LIST_BANNED:
+        words = await DB.get_banned_words(-1)
+        text = "🚫 **الكلمات**\n\n" + "\n".join(words) if words else "📭 لا يوجد"
+        await query.edit_message_text(text)
+
+    elif data == CB.ADMIN_REM_BANNED:
+        StateManager.set(user_id, UserState.WAIT_REM_GLOBAL_BAN)
+        await query.edit_message_text("🗑️ أرسل الكلمة:")
+
+    elif data == CB.ADMIN_CREATE_CONTEST:
+        StateManager.set(user_id, UserState.WAIT_CONTEST_TITLE)
+        await query.edit_message_text("🏆 أرسل عنوان المسابقة:")
+
+    elif data == CB.ADMIN_DECLARE_WINNER:
+        contests = await DB.fetchall("SELECT id, title FROM contests WHERE status='active'")
+        if not contests:
+            await query.edit_message_text("📭 لا توجد مسابقات نشطة")
+        else:
+            kb = [[InlineKeyboardButton(title, callback_data=f"{CB.DECLARE_WINNER_SEL}:{cid}")] for cid, title in contests]
+            await query.edit_message_text("اختر المسابقة:", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data.startswith(CB.ADMIN_DEL_CONTEST + ":"):
+        cid = int(data.split(":")[-1])
+        await DB.delete_contest(cid, user_id)
+        await query.edit_message_text("✅ تم حذف المسابقة")
+
+    elif data == CB.ADMIN_EXPORT_REPLIES:
+        count = await export_auto_replies(-1)
+        await query.edit_message_text(f"✅ تم تصدير {count} رد")
+
+    elif data == CB.ADMIN_REFRESH_CACHE:
+        _auto_reply_cache.invalidate()
+        await query.edit_message_text("🔄 تم تحديث الكاش")
+
+    elif data in (CB.ADMIN_IMPORT_REPLIES, CB.ADMIN_IMPORT_GITHUB):
+        await CallbackHandlers._handle_import(update, context, query, user_id)
+
+    else:
+        await query.answer("⚠️ غير متوفر", show_alert=True)
+
+@staticmethod
+async def _handle_auto_reply(update, context, query, user_id, lang=None):
+    if not lang:
+        lang = await DB.get_user_language(user_id)
+    data = query.data
+    parts = data.split(":")
+    if len(parts) < 2:
+        return
+    action = parts[0].replace("auto_reply_", "")
+    try:
+        chat_id = int(parts[1])
+    except:
+        return
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("❌ لا صلاحية", show_alert=True)
+        return
+
+    settings = await DB.get_auto_reply_settings(chat_id)
+    current_enabled = settings.get('enabled', False)
+
+    if action == "toggle":
+        new_enabled = not current_enabled
+        await DB.update_auto_reply_settings(chat_id, enabled=new_enabled)
+        _auto_reply_cache.invalidate()
+        status_text = "✅ **تم تفعيل الردود التلقائية!**" if new_enabled else "❌ **تم تعطيل الردود التلقائية!**"
+        await query.edit_message_text(
+            status_text,
+            reply_markup=KeyboardFactory.build("auto_reply_manage", chat_id, lang=lang)
+        )
+        await query.answer()
+        return
+
+    if action == "menu":
+        status_icon = "🟢" if current_enabled else "🔴"
+        status_text = "مفعل" if current_enabled else "معطل"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"{status_icon} الحالة: {status_text}", callback_data="status_only")],
+            [InlineKeyboardButton(
+                f"🔄 {'إيقاف' if current_enabled else 'تشغيل'} الردود",
+                callback_data=f"auto_reply_toggle:{chat_id}"
+            )],
+            [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_admins", lang), callback_data=f"auto_reply_admins:{chat_id}")],
+            [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_add", lang), callback_data=f"auto_reply_add:{chat_id}"),
+             InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_del", lang), callback_data=f"auto_reply_del:{chat_id}")],
+            [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_list", lang), callback_data=f"auto_reply_list:{chat_id}"),
+             InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_stats", lang), callback_data=f"auto_reply_stats:{chat_id}")],
+            [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_reset", lang), callback_data=f"auto_reply_reset:{chat_id}")],
+            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close")]
+        ])
+        await query.edit_message_text("📝 **إدارة الردود التلقائية**", reply_markup=kb)
+        return
+
+    if action == "admins":
+        await DB.update_auto_reply_settings(chat_id, only_admins=not settings.get('only_admins', False))
+        await query.answer("✅ تم")
+        await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
+        return
+
+    if action == "reset":
+        await DB.reset_auto_replies(chat_id)
+        _auto_reply_cache.invalidate()
+        await query.answer("✅ تم حذف جميع الردود")
+        await CallbackHandlers._handle_auto_reply(update, context, query, user_id, lang)
+        return
+
+    if action == "add":
+        StateManager.set(user_id, UserState.WAIT_AUTO_KEY)
+        context.user_data['auto_chat'] = chat_id
+        await query.edit_message_text("📝 أرسل الكلمة المفتاحية:")
+        return
+
+    if action == "del":
+        StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
+        context.user_data['auto_chat'] = chat_id
+        await query.edit_message_text("🗑️ أرسل الكلمة لحذفها:")
+        return
+
+    if action == "stats":
+        rows = await DB.fetchall("SELECT keyword, usage_count FROM auto_replies WHERE chat_id=? LIMIT 10", (chat_id,))
+        text = "📊 **الإحصائيات**\n\n" + "\n".join(f"• {r[0]}: {r[1]}" for r in rows) if rows else "📭 لا يوجد"
+        await query.edit_message_text(text)
+        return
+
+    if action == "list":
+        rows = await DB.fetchall("SELECT keyword FROM auto_replies WHERE chat_id=? LIMIT 20", (chat_id,))
+        text = "📋 **الردود**\n\n" + "\n".join(f"• {r[0]}" for r in rows) if rows else "📭 لا يوجد"
+        await query.edit_message_text(text)
+        return
+
+    await query.answer()
+
+@staticmethod
+async def _handle_schedule(update, context, query, user_id):
+    data = query.data
+    parts = data.split(":")
+    if len(parts) < 2:
+        return
+    action = parts[0].replace("sched_", "")
+    try:
+        ch_id = int(parts[1])
+    except:
+        return
+
+    if action == "min":
+        StateManager.set(user_id, UserState.WAIT_MIN)
+        context.user_data['schedule_ch'] = ch_id
+        await query.edit_message_text("📅 أرسل عدد الدقائق (1-1440):")
+    elif action == "hour":
+        StateManager.set(user_id, UserState.WAIT_HOUR)
+        context.user_data['schedule_ch'] = ch_id
+        await query.edit_message_text("📅 أرسل عدد الساعات (1-168):")
+    elif action == "day":
+        StateManager.set(user_id, UserState.WAIT_DAY)
+        context.user_data['schedule_ch'] = ch_id
+        await query.edit_message_text("📅 أرسل عدد الأيام (1-365):")
+    elif action == "time":
+        StateManager.set(user_id, UserState.WAIT_PUB_TIME)
+        context.user_data['schedule_ch'] = ch_id
+        await query.edit_message_text("🕐 أرسل وقت النشر (HH:MM):")
+
+@staticmethod
+async def _handle_banned_words(update, context, query, user_id):
+    data = query.data
+    parts = data.split(":")
+    if len(parts) < 2:
+        return
+    action = parts[0].replace("ban_", "")
+    try:
+        chat_id = int(parts[1])
+    except:
+        return
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("❌ لا صلاحية", show_alert=True)
+        return
+
+    if action == "add":
+        StateManager.set(user_id, UserState.WAIT_GROUP_BAN)
+        context.user_data['ban_chat'] = chat_id
+        await query.edit_message_text("📝 أرسل الكلمة المحظورة:")
+    elif action == "list":
+        words = await DB.get_banned_words(chat_id)
+        if not words:
+            await query.edit_message_text("📭 لا توجد كلمات محظورة")
+        else:
+            await query.edit_message_text("🚫 **الكلمات المحظورة**\n\n" + "\n".join(f"• {w}" for w in words))
+    elif action == "rem":
+        StateManager.set(user_id, UserState.WAIT_REM_GROUP_BAN)
+        context.user_data['ban_chat'] = chat_id
+        await query.edit_message_text("🗑️ أرسل الكلمة لحذفها:")
+
+@staticmethod
+async def _handle_advanced_actions(update, context, query, user_id):
+    data = query.data
+    parts = data.split(":")
+    if len(parts) < 2:
+        return
+    action = parts[0].replace("act_", "")
+    try:
+        chat_id = int(parts[1])
+    except:
+        return
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("❌ لا صلاحية", show_alert=True)
+        return
+
+    actions = {
+        "ban": (UserState.WAIT_BAN, "🚫 أرسل معرف المستخدم:"),
+        "mute": (UserState.WAIT_MUTE, "🔇 أرسل معرف المستخدم:"),
+        "warn": (UserState.WAIT_WARN, "⚠️ أرسل معرف المستخدم:"),
+        "kick": (UserState.WAIT_KICK, "👢 أرسل معرف المستخدم:"),
+        "restrict": (UserState.WAIT_RESTRICT, "🔒 أرسل معرف المستخدم:"),
+        "unban": (UserState.WAIT_UNBAN, "🔓 أرسل معرف المستخدم:"),
+        "pin": (UserState.WAIT_PIN, "📌 أرسل معرف الرسالة أو رد عليها:"),
+    }
+    if action in actions:
+        state, text = actions[action]
+        StateManager.set(user_id, state)
+        context.user_data['adv_chat'] = chat_id
+        await query.edit_message_text(text)
+
+@staticmethod
+async def _handle_penalty(update, context, query, user_id):
+    data = query.data
+    parts = data.split(":")
+    if len(parts) < 2:
+        return
+    penalty = parts[0].replace("pen_", "")
+    try:
+        chat_id = int(parts[1])
+    except:
+        return
+
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        await query.answer("❌ لا صلاحية", show_alert=True)
+        return
+
+    await DB.execute("UPDATE group_security SET auto_penalty=? WHERE chat_id=?", (penalty, chat_id))
+    await query.edit_message_text(f"✅ تم تعيين العقوبة: {penalty}")
+
+@staticmethod
+async def _handle_contests(update, context, query, user_id):
+    data = query.data
+    if data == CB.ADMIN_CREATE_CONTEST:
+        StateManager.set(user_id, UserState.WAIT_CONTEST_TITLE)
+        await query.edit_message_text("🏆 أرسل عنوان المسابقة:")
+    elif data.startswith(CB.CONTEST_JOIN + ":"):
+        cid = int(data.split(":")[-1])
+        StateManager.set(user_id, UserState.WAIT_CONTEST_ANSWER)
+        context.user_data['contest_join'] = cid
+        await query.edit_message_text("📝 أرسل إجابتك:")
+    elif data == CB.CONTEST_WINNERS:
+        winners = await DB.get_contest_winners(10)
+        if not winners:
+            await query.edit_message_text("📭 لا يوجد فائزون")
+        else:
+            text = "🏆 **الفائزون**\n\n" + "\n".join(f"• {w['title']} → `{w['winner_id']}`" for w in winners)
+            await query.edit_message_text(text)
+    elif data.startswith(CB.DECLARE_WINNER_SEL + ":"):
+        cid = int(data.split(":")[-1])
+        winner = await DB.fetchone("SELECT user_id FROM contest_participants WHERE contest_id=? ORDER BY RANDOM() LIMIT 1", (cid,))
+        if winner:
+            await DB.declare_winner(cid, winner[0])
+            await query.edit_message_text(f"✅ الفائز: `{winner[0]}`")
+
+@staticmethod
+async def _handle_import(update, context, query, user_id):
+    data = query.data
+    if data == CB.ADMIN_IMPORT_REPLIES:
+        StateManager.set(user_id, UserState.WAIT_IMPORT_FILE)
+        context.user_data['import_chat_id'] = -1
+        await query.edit_message_text("📤 أرسل ملف JSON للاستيراد:")
+    elif data == CB.ADMIN_IMPORT_GITHUB:
+        StateManager.set(user_id, UserState.WAIT_GITHUB_URL)
+        await query.edit_message_text("📥 أرسل رابط GitHub (JSON):")
 # =====================================================================
 # 3. معالج الرسائل
 # =====================================================================
