@@ -159,7 +159,11 @@
     "security_content": "المحتوى",
     "security_welcome": "الترحيب",
     "security_button": "🛡️ إعدادات {name}",
-    "add_group_button": "➕ إضافة مجموعة"
+    "add_group_button": "➕ إضافة مجموعة",
+    "sched_min": "📅 دقائق",
+    "sched_hour": "📅 ساعات",
+    "sched_day": "📅 أيام",
+    "sched_time": "🕐 وقت النشر"
   },
   "menus": {
     "main_menu": {
@@ -246,6 +250,14 @@
         ["sec_enable_all", "sec_disable_all"],
         ["sec_toggle_banned"],
         ["sec_close"]
+      ]
+    },
+    "channel_settings": {
+      "rows": [
+        ["ch_stats", "sched_min"],
+        ["sched_hour", "sched_day"],
+        ["sched_time"],
+        ["back"]
       ]
     },
     "banned_words": {
