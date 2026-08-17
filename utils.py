@@ -240,26 +240,30 @@ class TranslationManager:
         if template is None:
             template = key
         try:
-            # ✅ استخدام format_map لتجنب KeyError
             return template.format_map(kwargs)
         except (KeyError, IndexError):
             return template
 
     @classmethod
     def get_available_languages(cls) -> Dict[str, str]:
-        languages = {
-            "ar": "العربية 🇸🇦", "en": "English 🇬🇧", "fr": "Français 🇫🇷",
-            "tr": "Türkçe 🇹🇷", "zh": "中文 🇨🇳", "ru": "Русский 🇷🇺",
-            "de": "Deutsch 🇩🇪", "es": "Español 🇪🇸", "it": "Italiano 🇮🇹",
-            "pt": "Português 🇵🇹", "ja": "日本語 🇯🇵", "ko": "한국어 🇰🇷"
+        """إرجاع جميع اللغات المدعومة بدون الحاجة لوجود ملفات الترجمة"""
+        # ✅ جميع اللغات المطلوبة
+        all_languages = {
+            "ar": "العربية 🇸🇦",
+            "en": "English 🇬🇧",
+            "fr": "Français 🇫🇷",
+            "tr": "Türkçe 🇹🇷",
+            "zh": "中文 🇨🇳",
+            "ru": "Русский 🇷🇺",
+            "de": "Deutsch 🇩🇪",
+            "es": "Español 🇪🇸",
+            "it": "Italiano 🇮🇹",
+            "pt": "Português 🇵🇹",
+            "ja": "日本語 🇯🇵",
+            "ko": "한국어 🇰🇷"
         }
-        available = {}
-        for code, name in languages.items():
-            if (Path(cls._locales_dir) / f"{code}.json").exists():
-                available[code] = name
-        if not available:
-            available["ar"] = languages["ar"]
-        return available
+        # ✅ نرجع جميع اللغات دائماً (بدون التحقق من الملفات)
+        return all_languages
 
 async def get_text(lang: str, key: str, **kwargs) -> str:
     return TranslationManager.get_text(lang, key, **kwargs)
@@ -480,7 +484,7 @@ class CB:
     ADMIN_REM_BANNED = "admin_rem_banned"
     ADMIN_CREATE_CONTEST = "admin_create_contest"
     ADMIN_DECLARE_WINNER = "admin_declare_winner"
-    ADMIN_DEL_CONTEST = "admin_del_contest:"   # ✅ ثابت جديد
+    ADMIN_DEL_CONTEST = "admin_del_contest:"
     ADMIN_EXPORT_REPLIES = "admin_export_replies"
     ADMIN_IMPORT_REPLIES = "admin_import_replies"
     ADMIN_REFRESH_CACHE = "admin_refresh_cache"
@@ -497,7 +501,7 @@ class CB:
     AUTO_REPLY_LIST = "auto_reply_list:"
 
 # =====================================================================
-# 9. مصنع الكيبوردات
+# 9. مصنع الكيبوردات (مع دعم القوائم الافتراضية)
 # =====================================================================
 
 class KeyboardFactory:
@@ -510,6 +514,7 @@ class KeyboardFactory:
             try:
                 with open(cls._config_path, "r", encoding="utf-8") as f:
                     cls._config = json.load(f)
+                logger.info(f"✅ تم تحميل buttons_config.json: {len(cls._config.get('texts', {}))} مفتاح")
             except FileNotFoundError:
                 cls._config = {"texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"}, "menus": {}}
                 logger.warning("⚠️ buttons_config.json غير موجود، تم إنشاء إعدادات افتراضية")
@@ -531,6 +536,59 @@ class KeyboardFactory:
     @classmethod
     def build(cls, menu_name: str, chat_id: int = None, extra_data: Dict = None) -> InlineKeyboardMarkup:
         rows = cls.get_menu(menu_name)
+        
+        if not rows:
+            default_menus = {
+                "banned_words": [
+                    ["ban_add", "ban_list"],
+                    ["ban_rem"],
+                    ["back"]
+                ],
+                "auto_reply_manage": [
+                    ["auto_reply_toggle", "auto_reply_admins"],
+                    ["auto_reply_add", "auto_reply_del"],
+                    ["auto_reply_list", "auto_reply_stats"],
+                    ["auto_reply_reset"],
+                    ["back"]
+                ],
+                "security": [
+                    ["sec_links", "sec_mentions"],
+                    ["sec_slow", "sec_flood"],
+                    ["sec_video", "sec_audio"],
+                    ["sec_anim", "sec_service"],
+                    ["sec_doc", "sec_sticker"],
+                    ["sec_forward", "sec_poll"],
+                    ["sec_game", "sec_voice"],
+                    ["sec_videonote", "sec_banned_words"],
+                    ["sec_welcome", "sec_goodbye"],
+                    ["sec_night", "sec_approve_join"],
+                    ["sec_reject_join"],
+                    ["sec_maxlen", "sec_warn"],
+                    ["sec_penalty", "sec_del_pen"],
+                    ["sec_adv_act", "sec_act_log"],
+                    ["sec_auto_reply_menu"],
+                    ["sec_enable_all", "sec_disable_all"],
+                    ["sec_close"]
+                ],
+                "penalty": [
+                    ["pen_ban", "pen_mute"],
+                    ["pen_kick", "pen_warn"],
+                    ["back"]
+                ],
+                "advanced_actions": [
+                    ["act_ban", "act_mute"],
+                    ["act_warn", "act_kick"],
+                    ["act_restrict", "act_unban"],
+                    ["act_pin"],
+                    ["act_log"],
+                    ["back"]
+                ]
+            }
+            if menu_name in default_menus:
+                rows = default_menus[menu_name]
+            else:
+                rows = []
+        
         keyboard = []
         for row in rows:
             btn_row = []
@@ -895,11 +953,9 @@ def get_reply_from_file(keyword: str) -> Optional[str]:
     if not _REPLIES_FROM_FILE or not keyword:
         return None
     keyword = keyword.lower().strip()
-    # ✅ تطابق تام
     if keyword in _REPLIES_FROM_FILE:
         replies = _REPLIES_FROM_FILE[keyword]
         return random.choice(replies) if replies else None
-    # ✅ تطابق كلمات كاملة
     keyword_words = keyword.split()
     for key, replies in _REPLIES_FROM_FILE.items():
         if not isinstance(replies, list) or not replies:
@@ -1101,3 +1157,4 @@ class ErrorHandler:
                 logger.error(f"❌ خطأ: {context.error}", exc_info=True)
         except Exception:
             pass
+
