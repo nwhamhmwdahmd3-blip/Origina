@@ -1046,6 +1046,11 @@ class CallbackHandlers:
                 await query.answer("✅ تم الإغلاق")
                 return
 
+            # ========== ✅ معالج مستقل لزر كلمات محظورة ==========
+            if data.startswith("sec_banned_words") or data == "sec_banned_words":
+                await CallbackHandlers._handle_banned_words_direct(update, context, query, user_id)
+                return
+
             # ========== الأزرار الفرعية ==========
             if data.startswith("sec_"):
                 await CallbackHandlers._handle_security(update, context, query, user_id)
@@ -1246,7 +1251,7 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ إصلاح زر كلمات محظورة (بناء مباشر)
+        # ملاحظة: لم نعد نستخدم هذا الجزء لأنه تم استبداله بالمعالج المستقل، لكنه يبقى للتوافق
         if action == "banned" or action == "banned_words":
             try:
                 kb = InlineKeyboardMarkup([
@@ -1258,7 +1263,7 @@ class CallbackHandlers:
                 await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
                 await query.answer()
             except Exception as e:
-                logger.error(f"❌ خطأ في عرض كلمات محظورة: {e}", exc_info=True)
+                logger.error(f"❌ خطأ في عرض كلمات محظورة (sec): {e}", exc_info=True)
                 await query.answer("❌ حدث خطأ", show_alert=True)
             return
 
@@ -1341,6 +1346,30 @@ class CallbackHandlers:
                 pass
             return
 
+        await query.answer()
+
+    @staticmethod
+    async def _handle_banned_words_direct(update, context, query, user_id):
+        """معالج مباشر لزر كلمات محظورة (يتجاوز أي تعقيدات)"""
+        data = query.data
+        parts = data.split(":")
+        chat_id = int(parts[1]) if len(parts) > 1 else None
+        
+        if not chat_id:
+            await query.answer("❌ خطأ في المعرف", show_alert=True)
+            return
+        
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await query.answer("❌ لا صلاحية", show_alert=True)
+            return
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"ban_add:{chat_id}"),
+             InlineKeyboardButton("📋 قائمة الكلمات", callback_data=f"ban_list:{chat_id}")],
+            [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"ban_rem:{chat_id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="sec_close")]
+        ])
+        await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
         await query.answer()
 
     @staticmethod
