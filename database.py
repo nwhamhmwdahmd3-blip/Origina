@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-database.py - قاعدة البيانات المتكاملة للبوت
+database.py - قاعدة البيانات المتكاملة للبوت (نسخة معدلة)
 """
 
 import sqlite3
@@ -41,7 +41,6 @@ class TimeUtils:
 
     @staticmethod
     def sql_iso() -> str:
-        """صيغة متوافقة مع SQLite للمقارنات (YYYY-MM-DD HH:MM:SS)"""
         return TimeUtils.utc_now().strftime('%Y-%m-%d %H:%M:%S')
 
     @staticmethod
@@ -75,7 +74,7 @@ class Database:
     async def _get_connection(self):
         async with aiosqlite.connect(
             str(PATHS.DB),
-            timeout=60,  # زيادة المهلة لتفادي تعارض العمليات الطويلة
+            timeout=60,
             check_same_thread=False
         ) as conn:
             conn.row_factory = aiosqlite.Row
@@ -119,6 +118,7 @@ class Database:
         logger.info("✅ تم تهيئة قاعدة البيانات بنجاح")
 
     async def _create_tables(self, conn) -> None:
+        # ===================== جداول المستخدمين =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -179,6 +179,8 @@ class Database:
                 last_publish_time TEXT
             )
         """)
+
+        # ===================== جداول المجموعات =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_groups (
                 chat_id INTEGER PRIMARY KEY,
@@ -221,6 +223,8 @@ class Database:
                 PRIMARY KEY (chat_id, admin_id)
             )
         """)
+
+        # ===================== جداول الأمان =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS group_security (
                 chat_id INTEGER PRIMARY KEY,
@@ -283,6 +287,8 @@ class Database:
                 UNIQUE(word, chat_id)
             )
         """)
+
+        # ===================== جداول الردود التلقائية =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS auto_replies (
                 chat_id INTEGER,
@@ -306,6 +312,8 @@ class Database:
                 updated_at TEXT
             )
         """)
+
+        # ===================== جداول الدعم =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS support_tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -337,6 +345,10 @@ class Database:
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup', '1')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_ticket_number', '0')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_backup', '')")
+        # ✅ إضافة الإعداد الافتراضي للحد الأدنى للفاصل الزمني
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('min_publish_interval', '12')")
+
+        # ===================== جداول الإحالات =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -355,6 +367,8 @@ class Database:
                 last_referral_date TEXT
             )
         """)
+
+        # ===================== جداول التذكيرات =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_reminder_settings (
                 user_id INTEGER PRIMARY KEY,
@@ -372,6 +386,8 @@ class Database:
                 lang TEXT DEFAULT 'off'
             )
         """)
+
+        # ===================== جداول المسابقات =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS contests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -404,6 +420,8 @@ class Database:
                 announced_at TEXT
             )
         """)
+
+        # ===================== جداول السجلات والإدارة =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS admin_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -459,6 +477,8 @@ class Database:
                 created_at TEXT
             )
         """)
+
+        # ===================== جداول الباقات والاشتراكات =====================
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS plans (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -602,7 +622,10 @@ class Database:
         except Exception as e:
             logger.error(f"❌ خطأ في استيراد الكلمات المحظورة: {e}")
 
-    # ========= دوال المستخدمين =========
+    # =====================================================================
+    # دوال المستخدمين
+    # =====================================================================
+
     async def register_user(self, user_id: int, username: str = "", first_name: str = "") -> bool:
         try:
             row = await self.fetchone("SELECT user_id FROM users WHERE user_id=?", (user_id,))
@@ -779,7 +802,10 @@ class Database:
             logger.error(f"❌ Error in get_active_plan: {e}", exc_info=True)
             return None
 
-    # ========= دوال القنوات =========
+    # =====================================================================
+    # دوال القنوات
+    # =====================================================================
+
     async def add_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
         try:
             channel_id = int(channel_id)
@@ -795,17 +821,18 @@ class Database:
                     "INSERT INTO user_channels (user_id, channel_id, channel_name, created_at) VALUES (?,?,?,?)",
                     (user_id, channel_id, channel_name, TimeUtils.sql_iso())
                 )
-                # ✅ إصلاح: استخدام last_insert_rowid بدل lastrowid
                 cur = await conn.execute("SELECT last_insert_rowid()")
                 row = await cur.fetchone()
                 ch_db_id = row[0] if row else None
                 if not ch_db_id:
                     return None
-                interval = 720
-                next_date = (TimeUtils.utc_now() + timedelta(seconds=interval)).strftime('%Y-%m-%d %H:%M:%S')
+                # ✅ تعيين الفاصل الافتراضي إلى الحد الأدنى من الإعدادات
+                min_interval = await self.get_min_publish_interval_setting()
+                interval_seconds = min_interval * 60  # تحويل الدقائق إلى ثواني
+                next_date = (TimeUtils.utc_now() + timedelta(seconds=interval_seconds)).strftime('%Y-%m-%d %H:%M:%S')
                 await conn.execute(
-                    "INSERT OR IGNORE INTO schedule (channel_db_id, next_publish_date) VALUES (?,?)",
-                    (ch_db_id, next_date)
+                    "INSERT OR IGNORE INTO schedule (channel_db_id, interval_minutes, next_publish_date) VALUES (?,?,?)",
+                    (ch_db_id, min_interval, next_date)
                 )
                 await conn.commit()
                 return ch_db_id
@@ -873,11 +900,13 @@ class Database:
             logger.error(f"❌ Error in get_channel_stats: {e}", exc_info=True)
             return {'total': 0, 'published': 0, 'unpublished': 0}
 
-    # ========= دوال المنشورات =========
+    # =====================================================================
+    # دوال المنشورات
+    # =====================================================================
+
     async def add_posts(self, channel_id: int, posts: List[Tuple[str, str, str]]) -> int:
         try:
             total = 0
-            # ✅ تحسين: تقسيم إلى دفعات 100
             for i in range(0, len(posts), 100):
                 batch = posts[i:i+100]
                 vals = [(channel_id, (t or "")[:4096], m, f, TimeUtils.sql_iso()) for t, m, f in batch]
@@ -978,7 +1007,10 @@ class Database:
             logger.error(f"❌ Error in reset_posts: {e}", exc_info=True)
             return 0
 
-    # ========= دوال المجموعات =========
+    # =====================================================================
+    # دوال المجموعات
+    # =====================================================================
+
     async def register_group(self, chat_id: int, chat_name: str, user_id: int, username: str = None) -> bool:
         try:
             row = await self.fetchone("SELECT chat_id FROM bot_groups WHERE chat_id=?", (chat_id,))
@@ -999,7 +1031,6 @@ class Database:
 
     async def get_user_groups(self, user_id: int) -> List[Tuple[int, str, str, int]]:
         try:
-            # ✅ تحسين: استعلام UNION أسرع
             rows = await self.fetchall("""
                 SELECT chat_id, chat_name, username, banned FROM bot_groups
                 WHERE chat_id IN (
@@ -1065,7 +1096,10 @@ class Database:
             logger.error(f"❌ Error in get_hidden_admins: {e}", exc_info=True)
             return []
 
-    # ========= دوال الأمان =========
+    # =====================================================================
+    # دوال الأمان
+    # =====================================================================
+
     async def get_security_settings(self, chat_id: int) -> Dict:
         try:
             row = await self.fetchone("SELECT * FROM group_security WHERE chat_id=?", (chat_id,))
@@ -1132,7 +1166,6 @@ class Database:
 
     async def add_user_warning(self, user_id: int, chat_id: int) -> int:
         try:
-            # ✅ إصلاح: استخدام ON CONFLICT DO UPDATE
             await self.execute(
                 "INSERT INTO user_warnings (user_id, chat_id, warnings) VALUES (?,?,1) "
                 "ON CONFLICT(user_id, chat_id) DO UPDATE SET warnings = warnings + 1",
@@ -1173,7 +1206,10 @@ class Database:
             logger.error(f"❌ Error in get_admin_logs: {e}", exc_info=True)
             return []
 
-    # ========= دوال الردود التلقائية =========
+    # =====================================================================
+    # دوال الردود التلقائية
+    # =====================================================================
+
     async def get_auto_reply_settings(self, chat_id: int) -> Dict:
         try:
             row = await self.fetchone("SELECT * FROM auto_reply_settings WHERE chat_id=?", (chat_id,))
@@ -1266,16 +1302,20 @@ class Database:
             logger.error(f"❌ Error in reset_auto_replies: {e}", exc_info=True)
             return False
 
-    # ========= دوال الجدولة =========
+    # =====================================================================
+    # دوال الجدولة
+    # =====================================================================
+
     async def get_schedule(self, channel_id: int) -> Dict:
         try:
             row = await self.fetchone("SELECT * FROM schedule WHERE channel_db_id=?", (channel_id,))
             if row:
                 return dict(row)
-            # ✅ إصلاح: استخدام INSERT OR IGNORE لتفادي تعارضات الاستدعاء المتزامن
+            # إذا لم يكن هناك جدول، أنشئ واحداً بالحد الأدنى الافتراضي
+            min_interval = await self.get_min_publish_interval_setting()
             await self.execute(
-                "INSERT OR IGNORE INTO schedule (channel_db_id, schedule_type, interval_minutes) VALUES (?, 'interval_minutes', 60)",
-                (channel_id,)
+                "INSERT OR IGNORE INTO schedule (channel_db_id, schedule_type, interval_minutes) VALUES (?, 'interval_minutes', ?)",
+                (channel_id, min_interval)
             )
             row = await self.fetchone("SELECT * FROM schedule WHERE channel_db_id=?", (channel_id,))
             return dict(row) if row else {}
@@ -1293,14 +1333,32 @@ class Database:
             logger.error(f"❌ Error in update_schedule: {e}", exc_info=True)
             return False
 
+    # ✅ دالة جديدة لجلب الحد الأدنى للفاصل الزمني من الإعدادات
+    async def get_min_publish_interval_setting(self) -> int:
+        """جلب الحد الأدنى للفاصل الزمني من الإعدادات، مع fallback 12"""
+        try:
+            val = await self.get_setting('min_publish_interval')
+            if val is not None:
+                int_val = int(val)
+                if int_val > 0:
+                    return int_val
+        except (ValueError, TypeError):
+            pass
+        return 12
+
+    # ✅ دالة update_next_publish المعدلة
     async def update_next_publish(self, channel_id: int) -> bool:
         try:
             sched = await self.get_schedule(channel_id)
             last_pub = await self.fetchone("SELECT last_publish_time FROM last_publish WHERE channel_db_id=?", (channel_id,))
             last_time = TimeUtils.safe_parse_iso(last_pub[0]) if last_pub and last_pub[0] else TimeUtils.utc_now()
+            
+            # ✅ جلب الحد الأدنى من الإعدادات
+            min_interval = await self.get_min_publish_interval_setting()
+            
             st = sched.get('schedule_type', 'interval_minutes')
             if st == 'interval_minutes':
-                interval = max(1, sched.get('interval_minutes', 12))
+                interval = max(min_interval, sched.get('interval_minutes', min_interval))
                 next_date = last_time + timedelta(minutes=interval)
             elif st == 'interval_hours':
                 interval = max(1, sched.get('interval_hours', 1))
@@ -1309,10 +1367,9 @@ class Database:
                 interval = max(1, sched.get('interval_days', 1))
                 next_date = last_time + timedelta(days=interval)
             else:
-                interval = 12
+                interval = min_interval
                 next_date = last_time + timedelta(minutes=interval)
 
-            # ✅ إصلاح: حد أقصى للتكرار لتجنب الحلقات اللانهائية
             counter = 0
             while next_date <= TimeUtils.utc_now() and counter < 100:
                 if st == 'interval_minutes':
@@ -1322,7 +1379,7 @@ class Database:
                 elif st == 'interval_days':
                     next_date += timedelta(days=interval)
                 else:
-                    next_date += timedelta(minutes=12)
+                    next_date += timedelta(minutes=min_interval)
                 counter += 1
             await self.execute("UPDATE schedule SET next_publish_date=? WHERE channel_db_id=?", (next_date.strftime('%Y-%m-%d %H:%M:%S'), channel_id))
             return True
@@ -1363,7 +1420,10 @@ class Database:
             logger.error(f"❌ Error in get_channels_to_publish: {e}", exc_info=True)
             return []
 
-    # ========= دوال التذاكر =========
+    # =====================================================================
+    # دوال التذاكر
+    # =====================================================================
+
     async def create_ticket(self, user_id: int, username: str, content: str,
                             media_type: str = None, media_file_id: str = None) -> int:
         try:
@@ -1403,12 +1463,14 @@ class Database:
             logger.error(f"❌ Error in delete_all_tickets: {e}", exc_info=True)
             return False
 
-    # ========= دوال الإحالات =========
+    # =====================================================================
+    # دوال الإحالات
+    # =====================================================================
+
     async def add_referral(self, referrer_id: int, referred_id: int) -> bool:
         if referrer_id == referred_id:
             return False
         try:
-            # ✅ إصلاح: استخدام معاملة واحدة لضمان الذرية
             async with self._get_connection() as conn:
                 await conn.execute(
                     "INSERT INTO referrals (referrer_id, referred_id, created_at) VALUES (?,?,?)",
@@ -1475,7 +1537,10 @@ class Database:
             logger.error(f"❌ Error in get_referrals_list: {e}", exc_info=True)
             return []
 
-    # ========= دوال التذكيرات =========
+    # =====================================================================
+    # دوال التذكيرات
+    # =====================================================================
+
     async def get_reminder_settings(self, user_id: int) -> Dict:
         try:
             row = await self.fetchone("SELECT * FROM user_reminder_settings WHERE user_id=?", (user_id,))
@@ -1500,7 +1565,6 @@ class Database:
 
     async def get_users_for_reminder(self) -> List[Dict]:
         try:
-            # ✅ استخدام صيغة SQLite الصحيحة
             now_sql = TimeUtils.sql_iso()
             rows = await self.fetchall("""
                 SELECT u.user_id, u.language, r.reminder_days_before,
@@ -1520,11 +1584,13 @@ class Database:
             logger.error(f"❌ Error in get_users_for_reminder: {e}", exc_info=True)
             return []
 
-    # ========= دوال المسابقات =========
+    # =====================================================================
+    # دوال المسابقات
+    # =====================================================================
+
     async def create_contest(self, creator_id: int, title: str, description: str,
                              prize: str, end_date: str) -> int:
         try:
-            # ✅ إصلاح: لا نعتمد على RETURNING
             async with self._get_connection() as conn:
                 await conn.execute(
                     "INSERT INTO contests (creator_id, title, description, prize, end_date, created_at) "
@@ -1605,7 +1671,10 @@ class Database:
             logger.error(f"❌ Error in delete_contest: {e}", exc_info=True)
             return False
 
-    # ========= دوال الإعدادات العامة =========
+    # =====================================================================
+    # دوال الإعدادات العامة
+    # =====================================================================
+
     async def get_setting(self, key: str, default: str = None) -> Optional[str]:
         try:
             row = await self.fetchone("SELECT value FROM settings WHERE key=?", (key,))
@@ -1645,7 +1714,10 @@ class Database:
         except:
             return True
 
-    # ========= دوال الباقات والاشتراكات =========
+    # =====================================================================
+    # دوال الباقات والاشتراكات
+    # =====================================================================
+
     async def get_plan(self, plan_id: int) -> Optional[Dict]:
         try:
             row = await self.fetchone("SELECT * FROM plans WHERE id=?", (plan_id,))
@@ -1676,7 +1748,6 @@ class Database:
             plan = await self.get_plan(plan_id)
             if not plan:
                 return 0
-            # ✅ إصلاح: استخدام last_insert_rowid بدل RETURNING
             async with self._get_connection() as conn:
                 await conn.execute(
                     "INSERT INTO subscriptions (user_id, plan_id, status, start_date, end_date, auto_renew, provider, provider_subscription_id, created_at, updated_at) "
@@ -1713,7 +1784,10 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Error in expire_expired_subscriptions: {e}", exc_info=True)
 
-    # ========= دوال الفواتير والدفع =========
+    # =====================================================================
+    # دوال الفواتير والدفع
+    # =====================================================================
+
     async def create_invoice(self, user_id: int, plan_id: int, amount: int,
                               currency: str = 'XTR', provider: str = 'xtr') -> str:
         try:
