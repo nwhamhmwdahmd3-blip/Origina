@@ -2539,12 +2539,29 @@ class MessageHandlers:
                     await safe_send(context.bot, user_id, "❌ البوت ليس مشرفاً!")
                     StateManager.clear(user_id)
                     return
+
+                # ✅ التحقق من وجود القناة مسبقاً
+                existing_channel = await DB.get_channel_by_user(user_id, chat.id)
+                if existing_channel:
+                    await safe_send(context.bot, user_id, "⚠️ هذه القناة مضافة مسبقاً")
+                    StateManager.clear(user_id)
+                    return
+
+                # ✅ التحقق من وجود اشتراك نشط (لغير المالك)
+                if user_id != CONFIG.PRIMARY_OWNER_ID:
+                    has_sub = await DB.has_active_subscription(user_id)
+                    if not has_sub:
+                        await safe_send(context.bot, user_id, "❌ يجب أن يكون لديك اشتراك نشط لإضافة قناة")
+                        StateManager.clear(user_id)
+                        return
+
+                # ✅ إضافة القناة
                 result = await DB.add_channel(user_id, chat.id, chat.title or "قناة")
                 if result:
                     await DB.set_active_channel(user_id, result)
                     await safe_send(context.bot, user_id, f"✅ تمت إضافة {chat.title}!")
                 else:
-                    await safe_send(context.bot, user_id, "⚠️ القناة موجودة مسبقاً")
+                    await safe_send(context.bot, user_id, "❌ فشلت الإضافة (ربما تجاوزت حد القنوات المسموح)")
             except Exception as e:
                 logger.error(f"❌ فشل إضافة القناة: {e}")
             StateManager.clear(user_id)
