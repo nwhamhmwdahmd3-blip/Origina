@@ -9,6 +9,7 @@ handlers.py - جميع معالجات البوت (النسخة النهائية 
 - MessageHandlers: جميع الرسائل والحالات
 - إضافة زر sec_toggle_banned لتفعيل/تعطيل حذف الكلمات المحظورة
 - تحسين منطق إضافة القناة: فحص الاشتراك والتكرار
+- إضافة gift_plans و redeem_gift
 """
 
 import asyncio
@@ -161,6 +162,55 @@ class CommandHandlers:
         lang = await DB.get_user_language(user_id)
         kb = KeyboardFactory.build("plans", lang=lang)
         await safe_send(context.bot, user_id, await get_text(lang, 'plan_selector'), reply_markup=kb)
+
+    @staticmethod
+    async def gift_plans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """عرض خطط الهدايا المتاحة"""
+        user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id)
+        
+        plans = await DB.get_gift_plans()
+        if not plans:
+            await safe_send(context.bot, user_id, "📭 لا توجد خطط متاحة حالياً.")
+            return
+        
+        kb = []
+        for plan in plans:
+            days = plan['days']
+            price = plan['price']
+            kb.append([InlineKeyboardButton(
+                f"🎁 {days} يوم - {price} ⭐",
+                callback_data=f"buy_gift:{plan['id']}"
+            )])
+        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
+        
+        text = "💎 **شراء كود هدية**\n\nاختر المدة المناسبة:\n\n"
+        text += "• بعد الدفع، ستحصل على كود فريد.\n"
+        text += "• يمكنك إرسال الكود لأي شخص.\n"
+        text += "• الشخص الذي يستخدم الكود يحصل على اشتراك مجاني."
+        
+        await safe_send(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(kb))
+
+    @staticmethod
+    async def redeem_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """استخدام كود هدية"""
+        user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id)
+        
+        args = context.args or []
+        if not args:
+            await safe_send(context.bot, user_id, "📝 أرسل الكود: `/redeem_gift <الكود>`")
+            return
+        
+        code = args[0].strip()
+        success, days = await DB.redeem_gift_code(user_id, code)
+        
+        if success and days > 0:
+            await safe_send(context.bot, user_id, f"🎉 **تم تفعيل الاشتراك بنجاح!**\n\n✅ {days} يوم اشتراك مجاني.")
+        elif days == -1:
+            await safe_send(context.bot, user_id, "❌ لا يمكنك استخدام كود هدية قمت بإنشائه بنفسك.")
+        else:
+            await safe_send(context.bot, user_id, "❌ كود غير صالح أو مستخدم مسبقاً.")
 
     @staticmethod
     async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -432,7 +482,6 @@ class CommandHandlers:
                 is_anonymous = getattr(admin, 'is_anonymous', False)
                 break
 
-        # ✅ دعم المشرف المخفي (المعرف الوهمي 1087968824)
         if not is_admin and user_id == CONFIG.ANONYMOUS_ADMIN_ID:
             is_admin = True
             is_anonymous = True
@@ -715,6 +764,30 @@ class CallbackHandlers:
                 except Exception as e:
                     logger.error(f"❌ فشل إرسال الفاتورة: {e}")
                     await query.answer(f"❌ {str(e)[:50]}", show_alert=True)
+                return
+
+            if data.startswith("buy_gift:"):
+                try:
+                    gift_plan_id = int(data.split(":")[-1])
+                except:
+                    await query.answer("❌ خطة غير صالحة", show_alert=True)
+                    return
+                
+                gift_plan = await DB.get_gift_plan(gift_plan_id)
+                if not gift_plan:
+                    await query.answer("❌ خطة غير موجودة", show_alert=True)
+                    return
+
+                context.user_data['pending_gift_plan'] = gift_plan_id
+                await query.answer(f"🎁 خطة {gift_plan['days']} يوم - {gift_plan['price']} ⭐")
+                await safe_send(
+                    context.bot,
+                    user_id,
+                    f"🎁 **شراء كود هدية**\n\n"
+                    f"المدة: {gift_plan['days']} يوم\n"
+                    f"السعر: {gift_plan['price']} ⭐\n\n"
+                    f"⚠️ لم يتم تنفيذ الدفع بعد، هذه نسخة تجريبية."
+                )
                 return
 
             if data == CB.INVOICES:
@@ -1268,13 +1341,10 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ تبديل حالة حذف الكلمات المحظورة (sec_toggle_banned)
         if action == "toggle_banned":
             current = await DB.fetchone("SELECT delete_banned_words FROM group_security WHERE chat_id=?", (chat_id,))
             new_val = 1 - (current[0] if current else 0)
             await DB.execute("UPDATE group_security SET delete_banned_words=? WHERE chat_id=?", (new_val, chat_id))
-            status = "مفعل ✅" if new_val else "معطل ❌"
-            # تحديث القائمة
             settings = await DB.get_security_settings(chat_id)
             text = await KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id, lang=lang)
@@ -1284,7 +1354,6 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ إصلاح: استخدام لوحة مفاتيح مباشرة بدلاً من KeyboardFactory.build
         if action == "banned" or action == "banned_words":
             try:
                 kb = InlineKeyboardMarkup([
@@ -1383,7 +1452,6 @@ class CallbackHandlers:
 
     @staticmethod
     async def _handle_banned_words_direct(update, context, query, user_id, lang=None):
-        """معالج مباشر لزر كلمات محظورة (يتجاوز أي تعقيدات)"""
         if not lang:
             lang = await DB.get_user_language(user_id)
         data = query.data
@@ -1915,7 +1983,6 @@ class MessageHandlers:
                     StateManager.clear(user_id)
                     return
 
-                # ✅ التحقق من أن البوت مشرف في القناة
                 bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
                 if bot_member.status != 'administrator':
                     await safe_send(context.bot, user_id, "❌ البوت ليس مشرفاً في هذه القناة! اجعل البوت مشرفاً ثم حاول مرة أخرى.")
