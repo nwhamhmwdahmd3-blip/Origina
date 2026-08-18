@@ -3,6 +3,8 @@
 
 """
 database.py - قاعدة البيانات المتكاملة للبوت (نسخة معدلة)
+- إصلاح مشكلة النشر كل دقيقة
+- تطبيق الحد الأدنى للفاصل الزمني على جميع القنوات الجديدة والحالية
 """
 
 import sqlite3
@@ -826,6 +828,7 @@ class Database:
                 ch_db_id = row[0] if row else None
                 if not ch_db_id:
                     return None
+                
                 # ✅ تعيين الفاصل الافتراضي إلى الحد الأدنى من الإعدادات
                 min_interval = await self.get_min_publish_interval_setting()
                 interval_seconds = min_interval * 60  # تحويل الدقائق إلى ثواني
@@ -1303,7 +1306,7 @@ class Database:
             return False
 
     # =====================================================================
-    # دوال الجدولة
+    # دوال الجدولة (مع الإصلاح)
     # =====================================================================
 
     async def get_schedule(self, channel_id: int) -> Dict:
@@ -1313,9 +1316,10 @@ class Database:
                 return dict(row)
             # إذا لم يكن هناك جدول، أنشئ واحداً بالحد الأدنى الافتراضي
             min_interval = await self.get_min_publish_interval_setting()
+            next_date = (TimeUtils.utc_now() + timedelta(minutes=min_interval)).strftime('%Y-%m-%d %H:%M:%S')
             await self.execute(
-                "INSERT OR IGNORE INTO schedule (channel_db_id, schedule_type, interval_minutes) VALUES (?, 'interval_minutes', ?)",
-                (channel_id, min_interval)
+                "INSERT OR IGNORE INTO schedule (channel_db_id, schedule_type, interval_minutes, next_publish_date) VALUES (?, 'interval_minutes', ?, ?)",
+                (channel_id, min_interval, next_date)
             )
             row = await self.fetchone("SELECT * FROM schedule WHERE channel_db_id=?", (channel_id,))
             return dict(row) if row else {}
