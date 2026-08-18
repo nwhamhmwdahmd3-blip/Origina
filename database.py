@@ -8,6 +8,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - إضافة خطط افتراضية للتجربة والإحالة وربطها بالاشتراكات
 - تحسين الأداء والذرية
 - تنظيف الاشتراكات المنتهية وتحديث users.subscription_end
+- منع إضافة القنوات بدون اشتراك نشط (لغير المالك)
 """
 
 import sqlite3
@@ -871,7 +872,6 @@ class Database:
 
     async def has_active_subscription(self, user_id: int) -> bool:
         try:
-            # نعتمد على subscriptions أولاً ثم users كاحتياطي
             sub = await self.get_active_subscription(user_id)
             if sub:
                 return True
@@ -998,13 +998,21 @@ class Database:
                         await conn.rollback()
                         logger.warning(f"⚠️ محاولة إضافة قناة محظورة: {channel_id} للمستخدم {user_id}")
                         return None
+                    # القناة موجودة وغير محظورة → نعيد المعرف (لا نضيف مكرر)
                     await conn.commit()
                     return ch_db_id
 
-                # التحقق من حد القنوات (فقط للمستخدمين غير المالك)
+                # التحقق من وجود اشتراك نشط (لغير المالك)
                 if user_id != CONFIG.PRIMARY_OWNER_ID:
                     plan = await self._get_active_plan_conn(conn, user_id)
-                    if plan and plan.get('max_channels') is not None:
+                    if not plan:
+                        # لا يوجد اشتراك نشط → منع إضافة القناة
+                        await conn.rollback()
+                        logger.warning(f"⚠️ المستخدم {user_id} بدون اشتراك نشط يحاول إضافة قناة")
+                        return None
+
+                    # تطبيق حد القنوات
+                    if plan.get('max_channels') is not None:
                         cur = await conn.execute(
                             "SELECT COUNT(*) FROM user_channels WHERE user_id=? AND banned=0",
                             (user_id,)
@@ -1015,6 +1023,7 @@ class Database:
                             logger.warning(f"⚠️ المستخدم {user_id} تجاوز حد القنوات المسموح ({plan['max_channels']})")
                             return None
 
+                # إدراج القناة الجديدة
                 await conn.execute(
                     "INSERT INTO user_channels (user_id, channel_id, channel_name, created_at) VALUES (?,?,?,?)",
                     (user_id, channel_id, channel_name, TimeUtils.sql_iso())
@@ -1023,6 +1032,7 @@ class Database:
                 row = await cur.fetchone()
                 ch_db_id = row[0] if row else None
 
+                # إضافة جدولة افتراضية
                 cur = await conn.execute("SELECT value FROM settings WHERE key='min_publish_interval'")
                 row = await cur.fetchone()
                 min_interval = int(row[0]) if row and row[0] else 12
