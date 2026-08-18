@@ -4,10 +4,7 @@
 """
 database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية الكاملة)
 - جميع الإصلاحات السابقة مدمجة
-- إصلاح مشكلة تجاوز حدود الخطط لمستخدمي التجربة والإحالات
-- إضافة خطط افتراضية للتجربة والإحالة وربطها بالاشتراكات
-- تحسين الأداء والذرية
-- تنظيف الاشتراكات المنتهية وتحديث users.subscription_end
+- إضافة دالة get_channel_by_user للمساعدة في التحقق من القنوات
 - منع إضافة القنوات بدون اشتراك نشط (لغير المالك)
 """
 
@@ -1006,7 +1003,6 @@ class Database:
                 if user_id != CONFIG.PRIMARY_OWNER_ID:
                     plan = await self._get_active_plan_conn(conn, user_id)
                     if not plan:
-                        # لا يوجد اشتراك نشط → منع إضافة القناة
                         await conn.rollback()
                         logger.warning(f"⚠️ المستخدم {user_id} بدون اشتراك نشط يحاول إضافة قناة")
                         return None
@@ -1045,6 +1041,18 @@ class Database:
                 return ch_db_id
         except Exception as e:
             logger.error(f"❌ Error in add_channel: {e}", exc_info=True)
+            return None
+
+    async def get_channel_by_user(self, user_id: int, channel_id: int) -> Optional[Dict]:
+        """البحث عن قناة محددة لمستخدم معين."""
+        try:
+            row = await self.fetchone(
+                "SELECT * FROM user_channels WHERE user_id=? AND channel_id=?",
+                (user_id, channel_id)
+            )
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"❌ Error in get_channel_by_user: {e}", exc_info=True)
             return None
 
     async def get_user_channels(self, user_id: int) -> List[Dict]:
