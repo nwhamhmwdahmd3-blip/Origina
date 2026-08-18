@@ -2,13 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة النهائية المصححة بالكامل)
-تم إصلاح الأخطاء التالية مع إبقاء جميع الأزرار:
-- الخطأ النحوي في handle_private
-- زر الرجوع في الكلمات المحظورة (sec_close -> CB.GRP_SET مع بقاء النص)
-- زر status_only أصبح يعرض رسالة منبثقة بالحالة
-- إزالة التكرار في معالجة banned_words
-- تعيين creator_id احتياطي في syncgroup
+handlers.py - جميع معالجات البوت (النسخة النهائية المتكاملة والمصلحة)
 """
 
 import asyncio
@@ -410,11 +404,6 @@ class CommandHandlers:
             if admin.status == 'creator' and not admin.user.is_bot:
                 creator_id = admin.user.id
                 break
-        # إذا لم يتم العثور على مالك ظاهر، نستخدم المستخدم الحالي كقيمة احتياطية
-        if not creator_id:
-            creator_id = user_id
-            logger.warning(f"⚠️ لم يتم العثور على مالك صريح، تم تعيين creator_id = {user_id}")
-
         logger.info(f"🔍 المالك: {creator_id}")
 
         is_admin = False
@@ -438,7 +427,7 @@ class CommandHandlers:
         logger.info(f"🔍 المستخدم مشرف: is_anonymous={is_anonymous}")
 
         try:
-            await DB.register_group(chat_id, chat_name, creator_id, update.effective_chat.username)
+            await DB.register_group(chat_id, chat_name, creator_id or user_id, update.effective_chat.username)
             logger.info("✅ تم تسجيل المجموعة في bot_groups")
         except Exception as e:
             logger.error(f"❌ فشل تسجيل المجموعة في bot_groups: {e}")
@@ -1377,23 +1366,9 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ========== ✅ زر كلمات محظورة ==========
+            # ========== ✅ معالج مستقل لزر كلمات محظورة ==========
             if data.startswith("sec_banned_words") or base_data == "sec_banned_words":
                 await CallbackHandlers._handle_banned_words_direct(update, context, query, user_id, lang)
-                return
-
-            # ========== ✅ معالج زر status_only (الآن يعمل) ==========
-            if data.startswith("status_only:"):
-                # استخراج chat_id من البيانات
-                try:
-                    chat_id = int(data.split(":")[1])
-                    settings = await DB.get_auto_reply_settings(chat_id)
-                    enabled = settings.get('enabled', False)
-                    status_text = "مفعلة ✅" if enabled else "معطلة ❌"
-                    await query.answer(f"الردود التلقائية: {status_text}", show_alert=True)
-                except Exception as e:
-                    logger.error(f"❌ خطأ في status_only: {e}")
-                    await query.answer("حدث خطأ", show_alert=True)
                 return
 
             # ========== الأزرار الفرعية ==========
@@ -1508,25 +1483,6 @@ class CallbackHandlers:
                         await query.answer(f"❌ {str(e)[:50]}", show_alert=True)
                     except BadRequest:
                         pass
-                return
-
-            # ========== معالج sec_close احتياطي (يعود لإعدادات الأمان إن أمكن) ==========
-            if data == "sec_close":
-                # نحاول استعادة chat_id من السياق إذا كان متاحاً
-                chat_id = context.user_data.get(f"sec_chat_{user_id}")
-                if chat_id:
-                    # نعيد فتح إعدادات الأمان
-                    settings = await DB.get_security_settings(chat_id)
-                    text = await KeyboardFactory._format_security_text(settings)
-                    kb = KeyboardFactory.build("security", chat_id, lang=lang)
-                    await query.edit_message_text(text, reply_markup=kb)
-                else:
-                    # إذا لم نعرف chat_id، نغلق الرسالة
-                    try:
-                        await query.message.delete()
-                    except:
-                        pass
-                await query.answer()
                 return
 
             try:
@@ -1748,7 +1704,9 @@ class CallbackHandlers:
                 pass
             return
 
-        # تم نقل معالجة banned_words إلى _handle_banned_words_direct، لذا لا نتعامل معها هنا
+        if action == "banned" or action == "banned_words":
+            await CallbackHandlers._handle_banned_words_direct(update, context, query, user_id, lang)
+            return
 
         if action == "maxlen":
             StateManager.set(user_id, UserState.WAIT_MAX_LEN)
@@ -1904,12 +1862,11 @@ class CallbackHandlers:
                 pass
             return
 
-        # 🔹 زر الرجوع يعود إلى إعدادات الأمان الخاصة بالمجموعة (بدلاً من sec_close)
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(KeyboardFactory.get_text("ban_add", lang), callback_data=f"ban_add:{chat_id}"),
              InlineKeyboardButton(KeyboardFactory.get_text("ban_list", lang), callback_data=f"ban_list:{chat_id}")],
             [InlineKeyboardButton(KeyboardFactory.get_text("ban_rem", lang), callback_data=f"ban_rem:{chat_id}")],
-            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"{CB.GRP_SET}:{chat_id}")]
+            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data="sec_close")]
         ])
         await query.edit_message_text("🚫 **إدارة الكلمات المحظورة**", reply_markup=kb)
         try:
@@ -2174,9 +2131,8 @@ class CallbackHandlers:
                 pass
             status_icon = "🟢" if current_enabled else "🔴"
             status_text = "مفعل" if current_enabled else "معطل"
-            # الاحتفاظ بزر status_only مع callback_data يحتوي على chat_id
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"{status_icon} الحالة: {status_text}", callback_data=f"status_only:{chat_id}")],
+                [InlineKeyboardButton(f"{status_icon} الحالة: {status_text}", callback_data="status_only")],
                 [InlineKeyboardButton(
                     f"🔄 {'إيقاف' if current_enabled else 'تشغيل'} الردود",
                     callback_data=f"auto_reply_toggle:{chat_id}"
@@ -2187,7 +2143,7 @@ class CallbackHandlers:
                 [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_list", lang), callback_data=f"auto_reply_list:{chat_id}"),
                  InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_stats", lang), callback_data=f"auto_reply_stats:{chat_id}")],
                 [InlineKeyboardButton(KeyboardFactory.get_text("auto_reply_reset", lang), callback_data=f"auto_reply_reset:{chat_id}")],
-                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"{CB.GRP_SET}:{chat_id}")]
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close")]
             ])
             await query.edit_message_text("📝 **إدارة الردود التلقائية**", reply_markup=kb)
             return
