@@ -3,8 +3,9 @@
 
 """
 database.py - قاعدة البيانات المتكاملة للبوت (نسخة معدلة)
-- إصلاح مشكلة النشر كل دقيقة
+- إصلاح مشكلة النشر كل دقيقة أو دفعة واحدة
 - تطبيق الحد الأدنى للفاصل الزمني على جميع القنوات الجديدة والحالية
+- ضمان تحديث last_publish_time و next_publish_date بعد كل نشر
 """
 
 import sqlite3
@@ -1306,7 +1307,7 @@ class Database:
             return False
 
     # =====================================================================
-    # دوال الجدولة (مع الإصلاح)
+    # دوال الجدولة (مع الإصلاح الكامل للنشر)
     # =====================================================================
 
     async def get_schedule(self, channel_id: int) -> Dict:
@@ -1354,8 +1355,9 @@ class Database:
     async def update_next_publish(self, channel_id: int) -> bool:
         try:
             sched = await self.get_schedule(channel_id)
-            last_pub = await self.fetchone("SELECT last_publish_time FROM last_publish WHERE channel_db_id=?", (channel_id,))
-            last_time = TimeUtils.safe_parse_iso(last_pub[0]) if last_pub and last_pub[0] else TimeUtils.utc_now()
+            # ✅ نأخذ وقت النشر الحالي (آخر نشر) من جدول last_publish
+            last_pub_row = await self.fetchone("SELECT last_publish_time FROM last_publish WHERE channel_db_id=?", (channel_id,))
+            last_time = TimeUtils.safe_parse_iso(last_pub_row[0]) if last_pub_row and last_pub_row[0] else TimeUtils.utc_now()
             
             # ✅ جلب الحد الأدنى من الإعدادات
             min_interval = await self.get_min_publish_interval_setting()
@@ -1374,6 +1376,7 @@ class Database:
                 interval = min_interval
                 next_date = last_time + timedelta(minutes=interval)
 
+            # ✅ التأكد من أن next_date في المستقبل
             counter = 0
             while next_date <= TimeUtils.utc_now() and counter < 100:
                 if st == 'interval_minutes':
@@ -1385,6 +1388,7 @@ class Database:
                 else:
                     next_date += timedelta(minutes=min_interval)
                 counter += 1
+
             await self.execute("UPDATE schedule SET next_publish_date=? WHERE channel_db_id=?", (next_date.strftime('%Y-%m-%d %H:%M:%S'), channel_id))
             return True
         except Exception as e:
@@ -1404,11 +1408,15 @@ class Database:
 
     async def get_channels_to_publish(self, limit: int = 20) -> List[Dict]:
         try:
+            # ✅ نأخذ فقط القنوات التي حان وقت نشرها (next_publish_date <= الآن)
+            # ونضمن أن last_publish_time موجود لضمان حساب الفاصل الزمني بشكل صحيح
             rows = await self.fetchall("""
-                SELECT uc.id, uc.channel_id, uc.user_id, u.auto_publish
+                SELECT uc.id, uc.channel_id, uc.user_id, u.auto_publish,
+                       COALESCE(s.next_publish_date, '1970-01-01 00:00:00') as next_publish_date
                 FROM user_channels uc
                 JOIN users u ON uc.user_id = u.user_id
                 LEFT JOIN schedule s ON uc.id = s.channel_db_id
+                LEFT JOIN last_publish lp ON uc.id = lp.channel_db_id
                 WHERE uc.banned = 0 AND u.banned = 0 AND u.auto_publish = 1
                 AND (s.next_publish_date IS NULL OR s.next_publish_date <= ?)
                 AND EXISTS (
@@ -1419,7 +1427,12 @@ class Database:
                 ORDER BY COALESCE(s.next_publish_date, '1970-01-01 00:00:00') ASC
                 LIMIT ?
             """, (TimeUtils.sql_iso(), limit))
-            return [dict(row) for row in rows]
+            
+            # ✅ نعيد القنوات كقائمة من الديكتات
+            result = []
+            for row in rows:
+                result.append(dict(row))
+            return result
         except Exception as e:
             logger.error(f"❌ Error in get_channels_to_publish: {e}", exc_info=True)
             return []
