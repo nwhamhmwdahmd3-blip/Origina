@@ -2441,8 +2441,7 @@ class MessageHandlers:
     @staticmethod
     async def handle_private(update, context):
         if not update.message or not update.effective_user:
-            return
-        user_id = update.effective_user.id
+            return        user_id = update.effective_user.id
         msg = update.message
         text = msg.text.strip() if msg.text else ""
         state = StateManager.get(user_id)
