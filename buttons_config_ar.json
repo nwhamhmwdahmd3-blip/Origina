@@ -40,6 +40,8 @@
     "admin_unban_gr": "🔓 إلغاء حظر المجموعات",
     "admin_add_admin": "➕ إضافة مشرف",
     "admin_rem_admin": "➖ إزالة مشرف",
+    "admin_grant_free": "🎁 منح اشتراك مجاني",
+    "admin_close": "❌ إغلاق اللوحة",
     "admin_ram": "🖥️ استخدام الرام",
     "admin_stats": "📊 الإحصائيات",
     "admin_metrics": "📈 مقاييس الأداء",
@@ -210,6 +212,7 @@
         ["admin_groups", "admin_banned_gr"],
         ["admin_unban_gr"],
         ["admin_add_admin", "admin_rem_admin"],
+        ["admin_grant_free"],
         ["admin_ram", "admin_stats"],
         ["admin_metrics"],
         ["admin_backup", "admin_restore"],
@@ -228,7 +231,7 @@
         ["admin_export_replies", "admin_import_replies"],
         ["admin_import_github"],
         ["admin_refresh_cache"],
-        ["back"]
+        ["admin_close"]
       ]
     },
     "security": {

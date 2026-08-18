@@ -23,6 +23,7 @@ utils.py - الأدوات المساعدة للبوت (نسخة متكاملة �
 - خادم الويب: setup_webhook, webhook_handler (مع التصحيح)
 - معالج الأخطاء: ErrorHandler
 - دوال إضافية: get_min_publish_interval, get_banned_words_cached, invalidate_banned_words_cache
+- ✅ تمت إضافة: WAIT_GRANT_FREE + زر منح اشتراك مجاني في لوحة الأدمن
 """
 
 import asyncio
@@ -41,10 +42,8 @@ from enum import Enum, auto
 from collections import OrderedDict, deque
 from abc import ABC, abstractmethod
 
-# ✅ استيراد aiohttp.web للـ webhook
 import aiohttp.web as web
 
-# ✅ استيراد psutil مع معالجة عدم وجوده
 try:
     import psutil
 except ImportError:
@@ -332,6 +331,7 @@ class UserState(Enum):
     WAIT_IMPORT_FILE = auto()
     WAIT_GITHUB_URL = auto()
     SUPPORT_MODE = auto()
+    WAIT_GRANT_FREE = auto()  # ✅ تمت الإضافة
 
 class StateManager:
     _states: Dict[int, UserState] = {}
@@ -508,6 +508,8 @@ class CB:
     ADMIN_IMPORT_REPLIES = "admin_import_replies"
     ADMIN_REFRESH_CACHE = "admin_refresh_cache"
     ADMIN_IMPORT_GITHUB = "admin_import_github"
+    ADMIN_GRANT_FREE = "admin_grant_free"  # ✅ تمت الإضافة
+    ADMIN_CLOSE = "admin_close"  # ✅ تمت الإضافة
 
     # الردود التلقائية
     AUTO_REPLY_MENU = "auto_reply_menu:"
@@ -636,6 +638,32 @@ class KeyboardFactory:
                     ["sched_hour", "sched_day"],
                     ["sched_time"],
                     ["back"]
+                ],
+                "admin_panel": [  # ✅ تمت الإضافة
+                    ["admin_users", "admin_banned"],
+                    ["admin_unban_all"],
+                    ["admin_channels", "admin_banned_ch"],
+                    ["admin_activate_ch"],
+                    ["admin_groups", "admin_banned_gr"],
+                    ["admin_unban_gr"],
+                    ["admin_add_admin", "admin_rem_admin"],
+                    ["admin_grant_free"],
+                    ["admin_backup", "admin_restore"],
+                    ["admin_broadcast", "admin_send_update"],
+                    ["admin_set_update_ch", "admin_show_update"],
+                    ["admin_force_sub", "admin_set_force"],
+                    ["admin_tickets", "admin_del_tickets"],
+                    ["admin_log_ch", "admin_set_log_ch"],
+                    ["admin_replies", "admin_add_reply"],
+                    ["admin_list_replies", "admin_del_reply"],
+                    ["admin_banned_words", "admin_add_banned"],
+                    ["admin_list_banned", "admin_rem_banned"],
+                    ["admin_create_contest", "admin_declare_winner"],
+                    ["admin_export_replies", "admin_import_replies"],
+                    ["admin_refresh_cache", "admin_import_github"],
+                    ["admin_ram", "admin_stats"],
+                    ["admin_metrics"],
+                    ["admin_close"]
                 ]
             }
             if menu_name in default_menus:

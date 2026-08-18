@@ -3,6 +3,7 @@
 
 """
 handlers.py - جميع معالجات البوت (النسخة النهائية المتكاملة والمصلحة)
+- تمت إضافة أمر /grant ومنح اشتراك مجاني من لوحة الأدمن
 """
 
 import asyncio
@@ -593,6 +594,39 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, f"✅ تم تعيين الحد الأدنى إلى {val} دقيقة\n🔄 أعد تشغيل البوت لتطبيق التغيير")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ قيمة غير صالحة، أدخل رقماً")
+
+    # ========== ✅ أمر منح اشتراك مجاني (للمطور فقط) ==========
+
+    @staticmethod
+    async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """منح اشتراك مجاني لمستخدم (للمطور فقط)"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            return
+        
+        args = context.args or []
+        if len(args) < 2:
+            await safe_send(context.bot, user_id, "📝 /grant <user_id> <days>")
+            return
+        
+        try:
+            target_id = int(args[0])
+            days = int(args[1])
+        except ValueError:
+            await safe_send(context.bot, user_id, "❌ قيم غير صالحة")
+            return
+        
+        # الحصول على خطة الهدية
+        gift_plan = await DB.fetchone("SELECT id FROM plans WHERE is_gift=1 LIMIT 1")
+        plan_id = gift_plan[0] if gift_plan else None
+        
+        success = await DB.grant_subscription_days(target_id, days, plan_id=plan_id, provider='manual')
+        if success:
+            await safe_send(context.bot, user_id, f"✅ تم منح {days} يوم للمستخدم `{target_id}`")
+        else:
+            await safe_send(context.bot, user_id, "❌ فشل المنح")
 
 
     # ========== أوامر الهدايا (Gift Codes) ==========
@@ -1360,6 +1394,22 @@ class CallbackHandlers:
                         pass
                 return
 
+            # ========== ✅ زر منح اشتراك مجاني (للمطور فقط) ==========
+            if data == "admin_grant_free":
+                if not CONFIG.is_developer(user_id):
+                    try:
+                        await query.answer("❌ غير مصرح", show_alert=True)
+                    except BadRequest:
+                        pass
+                    return
+                StateManager.set(user_id, UserState.WAIT_GRANT_FREE)
+                await query.edit_message_text("🎁 أرسل معرف المستخدم ثم عدد الأيام هكذا:\n`123456789 365`")
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
+                return
+
             # ========== أزرار لوحة المجموعة ==========
             if data.startswith(CB.PANEL_LOCK + ":"):
                 chat_id = int(data.split(":")[-1])
@@ -1967,6 +2017,16 @@ class CallbackHandlers:
         elif data == CB.ADMIN_REM_ADMIN:
             StateManager.set(user_id, UserState.WAIT_ADMIN_REM)
             await query.edit_message_text("🗑️ أرسل معرف المشرف:")
+
+        elif data == "admin_grant_free":
+            if not CONFIG.is_developer(user_id):
+                try:
+                    await query.answer("❌ غير مصرح", show_alert=True)
+                except BadRequest:
+                    pass
+                return
+            StateManager.set(user_id, UserState.WAIT_GRANT_FREE)
+            await query.edit_message_text("🎁 أرسل معرف المستخدم ثم عدد الأيام هكذا:\n`123456789 365`")
 
         elif data == CB.ADMIN_RAM:
             ram = get_ram_usage()
@@ -2850,6 +2910,32 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, f"✅ تم إزالة `{target}`")
             except ValueError:
                 await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+            StateManager.clear(user_id)
+            return
+
+        # ✅ معالج منح اشتراك مجاني
+        if state == UserState.WAIT_GRANT_FREE:
+            parts = text.split()
+            if len(parts) < 2:
+                await safe_send(context.bot, user_id, "❌ أرسل المعرف والأيام هكذا: `123456789 365`")
+                StateManager.clear(user_id)
+                return
+            try:
+                target_id = int(parts[0])
+                days = int(parts[1])
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ قيم غير صالحة")
+                StateManager.clear(user_id)
+                return
+            
+            gift_plan = await DB.fetchone("SELECT id FROM plans WHERE is_gift=1 LIMIT 1")
+            plan_id = gift_plan[0] if gift_plan else None
+            
+            success = await DB.grant_subscription_days(target_id, days, plan_id=plan_id, provider='manual')
+            if success:
+                await safe_send(context.bot, user_id, f"✅ تم منح {days} يوم للمستخدم `{target_id}`")
+            else:
+                await safe_send(context.bot, user_id, "❌ فشل المنح")
             StateManager.clear(user_id)
             return
 

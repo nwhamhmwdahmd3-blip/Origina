@@ -140,6 +140,9 @@ async def main():
     app.add_handler(CommandHandler("gift_plans", CommandHandlers.gift_plans))
     app.add_handler(CommandHandler("redeem_gift", CommandHandlers.redeem_gift))
 
+    # ========== أمر منح اشتراك مجاني (للمطور فقط) ==========
+    app.add_handler(CommandHandler("grant", CommandHandlers.grant))
+
     # ========== أوامر المجموعة ==========
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
     app.add_handler(CommandHandler("security", CommandHandlers.security))
@@ -162,6 +165,9 @@ async def main():
     app.add_handler(CommandHandler("add_hidden_admin", CommandHandlers.add_hidden_admin))
     app.add_handler(CommandHandler("remove_hidden_admin", CommandHandlers.remove_hidden_admin))
     app.add_handler(CommandHandler("list_hidden_admins", CommandHandlers.list_hidden_admins))
+
+    # ========== أمر تعيين الحد الأدنى للفاصل الزمني ==========
+    app.add_handler(CommandHandler("set_min_interval", CommandHandlers.set_min_interval))
 
     # ========== معالجات الدفع ==========
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
