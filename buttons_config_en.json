@@ -160,7 +160,10 @@
     "sched_hour": "📅 Hours",
     "sched_day": "📅 Days",
     "sched_time": "🕐 Publish Time",
-    "unauthorized": "❌ Unauthorized"
+    "unauthorized": "❌ Unauthorized",
+    "gift_plans": "🎁 Buy Gift Code",
+    "redeem_gift": "🎟️ Use Gift Code",
+    "my_gifts": "📋 My Codes"
   },
   "menus": {
     "main_menu": {
@@ -170,6 +173,7 @@
         ["post_list", "post_rec"],
         ["pub_all"],
         ["plans", "subscribe"],
+        ["gift_plans", "redeem_gift"],
         ["support", "developer"],
         ["help", "language"],
         ["trial", "contests"],
