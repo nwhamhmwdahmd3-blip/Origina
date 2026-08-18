@@ -6,6 +6,11 @@ database.py - قاعدة البيانات المتكاملة للبوت (نسخ�
 - إصلاح مشكلة النشر كل دقيقة
 - تطبيق الحد الأدنى للفاصل الزمني على جميع القنوات الجديدة والحالية
 - إضافة نظام كود الهدية المدفوع
+- إصلاحات أمنية: قوائم بيضاء للأعمدة لمنع SQL Injection
+- توحيد إدارة الاشتراكات
+- التحقق من الاشتراك النشط في النشر التلقائي
+- تحديث عداد الردود العامة
+- معالجة تكرار كود الهدية
 """
 
 import sqlite3
@@ -23,6 +28,42 @@ import aiosqlite
 from config import PATHS, CONFIG
 
 logger = logging.getLogger(__name__)
+
+# =====================================================================
+# قوائم بيضاء للأعمدة المسموحة (لمنع SQL Injection)
+# =====================================================================
+
+ALLOWED_SECURITY_COLUMNS = {
+    'delete_links', 'mentions', 'slow_mode', 'slow_mode_seconds',
+    'welcome_enabled', 'welcome_text', 'goodbye_enabled', 'goodbye_text',
+    'delete_banned_words', 'auto_penalty', 'auto_mute_duration',
+    'delete_videos', 'delete_audio', 'delete_animation', 'delete_service',
+    'delete_documents', 'delete_stickers', 'delete_penalty', 'delete_penalty_duration',
+    'antiflood_enabled', 'antiflood_messages', 'antiflood_seconds', 'antiflood_penalty',
+    'max_warnings', 'warn_penalty', 'max_message_length',
+    'night_mode_enabled', 'night_mode_start', 'night_mode_end', 'night_mode_action',
+    'nsfw_enabled', 'nsfw_threshold', 'auto_approve_join', 'auto_reject_join'
+}
+
+ALLOWED_AUTO_REPLY_SETTINGS_COLUMNS = {
+    'enabled', 'only_admins', 'ignore_bots'
+}
+
+ALLOWED_SCHEDULE_COLUMNS = {
+    'schedule_type', 'interval_minutes', 'interval_hours', 'interval_days',
+    'days_of_week', 'specific_dates', 'publish_time', 'cron_expression',
+    'next_publish_date'
+}
+
+ALLOWED_USER_COLUMNS = {
+    'language', 'auto_publish', 'auto_recycle', 'banned', 'trial_used',
+    'subscription_end', 'active_channel'
+}
+
+ALLOWED_REMINDER_SETTINGS_COLUMNS = {
+    'subscription_reminder', 'daily_stats_reminder', 'weekly_report',
+    'reminder_days_before', 'last_reminder_sent', 'notification_lang'
+}
 
 
 class TimeUtils:
@@ -61,7 +102,10 @@ class TimeUtils:
         try:
             return datetime.fromisoformat(date_str)
         except ValueError:
-            return None
+            try:
+                return datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                return None
 
 
 class Database:
@@ -795,12 +839,17 @@ class Database:
             return {'users': 0, 'banned': 0}
 
     async def has_active_subscription(self, user_id: int) -> bool:
+        # استخدام users.subscription_end كمرجع أساسي (متوافق مع النظام القديم)
         try:
             row = await self.fetchone(
                 "SELECT subscription_end FROM users WHERE user_id=? AND subscription_end > datetime('now')",
                 (user_id,)
             )
-            return row is not None
+            if row:
+                return True
+            # إذا لم يكن هناك في users، نتحقق من جدول subscriptions
+            sub = await self.get_active_subscription(user_id)
+            return sub is not None
         except Exception as e:
             logger.error(f"❌ Error in has_active_subscription: {e}", exc_info=True)
             return False
@@ -858,6 +907,7 @@ class Database:
     async def add_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
         try:
             channel_id = int(channel_id)
+            # التحقق من وجود القناة مسبقاً
             row = await self.fetchone(
                 "SELECT id FROM user_channels WHERE user_id=? AND channel_id=?",
                 (user_id, channel_id)
@@ -875,8 +925,12 @@ class Database:
                 ch_db_id = row[0] if row else None
                 if not ch_db_id:
                     return None
-                
-                min_interval = await self.get_min_publish_interval_setting()
+
+                # جلب min_interval من نفس الاتصال لتجنب الاتصال المتداخل
+                cur = await conn.execute("SELECT value FROM settings WHERE key='min_publish_interval'")
+                row = await cur.fetchone()
+                min_interval = int(row[0]) if row and row[0] else 12
+
                 interval_seconds = min_interval * 60
                 next_date = (TimeUtils.utc_now() + timedelta(seconds=interval_seconds)).strftime('%Y-%m-%d %H:%M:%S')
                 await conn.execute(
@@ -1146,7 +1200,7 @@ class Database:
             return []
 
     # =====================================================================
-    # دوال الأمان
+    # دوال الأمان (مع التحقق من القائمة البيضاء)
     # =====================================================================
 
     async def get_security_settings(self, chat_id: int) -> Dict:
@@ -1163,6 +1217,10 @@ class Database:
 
     async def update_security_settings(self, chat_id: int, **kwargs) -> bool:
         try:
+            # ✅ التحقق من صحة الأعمدة
+            for key in kwargs:
+                if key not in ALLOWED_SECURITY_COLUMNS:
+                    raise ValueError(f"عمود غير صالح: {key}")
             updates = [f"{k}=?" for k in kwargs]
             vals = list(kwargs.values()) + [chat_id]
             await self.execute(f"UPDATE group_security SET {', '.join(updates)} WHERE chat_id=?", vals)
@@ -1256,7 +1314,7 @@ class Database:
             return []
 
     # =====================================================================
-    # دوال الردود التلقائية
+    # دوال الردود التلقائية (مع التحقق من القائمة البيضاء)
     # =====================================================================
 
     async def get_auto_reply_settings(self, chat_id: int) -> Dict:
@@ -1273,6 +1331,10 @@ class Database:
 
     async def update_auto_reply_settings(self, chat_id: int, **kwargs) -> bool:
         try:
+            # ✅ التحقق من صحة الأعمدة
+            for key in kwargs:
+                if key not in ALLOWED_AUTO_REPLY_SETTINGS_COLUMNS:
+                    raise ValueError(f"عمود غير صالح: {key}")
             updates = [f"{k}=?" for k in kwargs]
             vals = list(kwargs.values()) + [chat_id]
             await self.execute(f"UPDATE auto_reply_settings SET {', '.join(updates)} WHERE chat_id=?", vals)
@@ -1313,6 +1375,7 @@ class Database:
     async def get_auto_reply(self, keyword: str, chat_id: int) -> Optional[Dict]:
         try:
             keyword = keyword.lower().strip()
+            # البحث عن رد خاص بالمجموعة
             row = await self.fetchone(
                 "SELECT reply, reply_type, reply_media_id, reply_buttons FROM auto_replies WHERE chat_id=? AND keyword=? AND is_active=1",
                 (chat_id, keyword)
@@ -1323,11 +1386,19 @@ class Database:
                     (chat_id, keyword)
                 )
                 return dict(row)
+            # البحث عن رد عام
             row = await self.fetchone(
                 "SELECT reply, reply_type, reply_media_id, reply_buttons FROM auto_replies WHERE chat_id=-1 AND keyword=? AND is_active=1",
                 (keyword,)
             )
-            return dict(row) if row else None
+            if row:
+                # ✅ تحديث العداد للردود العامة أيضاً
+                await self.execute(
+                    "UPDATE auto_replies SET usage_count = usage_count + 1 WHERE chat_id=-1 AND keyword=?",
+                    (keyword,)
+                )
+                return dict(row)
+            return None
         except Exception as e:
             logger.error(f"❌ Error in get_auto_reply: {e}", exc_info=True)
             return None
@@ -1352,7 +1423,7 @@ class Database:
             return False
 
     # =====================================================================
-    # دوال الجدولة
+    # دوال الجدولة (مع التحقق من القائمة البيضاء)
     # =====================================================================
 
     async def get_schedule(self, channel_id: int) -> Dict:
@@ -1374,6 +1445,10 @@ class Database:
 
     async def update_schedule(self, channel_id: int, **kwargs) -> bool:
         try:
+            # ✅ التحقق من صحة الأعمدة
+            for key in kwargs:
+                if key not in ALLOWED_SCHEDULE_COLUMNS:
+                    raise ValueError(f"عمود غير صالح: {key}")
             updates = [f"{k}=?" for k in kwargs]
             vals = list(kwargs.values()) + [channel_id]
             await self.execute(f"UPDATE schedule SET {', '.join(updates)} WHERE channel_db_id=?", vals)
@@ -1382,49 +1457,70 @@ class Database:
             logger.error(f"❌ Error in update_schedule: {e}", exc_info=True)
             return False
 
-    async def get_min_publish_interval_setting(self) -> int:
+    async def get_min_publish_interval_setting(self, conn=None) -> int:
+        """
+        الحصول على الحد الأدنى للفاصل الزمني من الإعدادات.
+        يمكن تمرير اتصال مفتوح لتجنب الاتصال المتداخل.
+        """
         try:
-            val = await self.get_setting('min_publish_interval')
-            if val is not None:
-                int_val = int(val)
-                if int_val > 0:
-                    return int_val
+            if conn:
+                cur = await conn.execute("SELECT value FROM settings WHERE key='min_publish_interval'")
+                row = await cur.fetchone()
+                if row and row[0]:
+                    int_val = int(row[0])
+                    if int_val > 0:
+                        return int_val
+            else:
+                val = await self.get_setting('min_publish_interval')
+                if val is not None:
+                    int_val = int(val)
+                    if int_val > 0:
+                        return int_val
         except (ValueError, TypeError):
             pass
         return 12
 
+    # ✅ دالة update_next_publish المعدلة بالكامل
     async def update_next_publish(self, channel_id: int) -> bool:
         try:
             sched = await self.get_schedule(channel_id)
             last_pub = await self.fetchone("SELECT last_publish_time FROM last_publish WHERE channel_db_id=?", (channel_id,))
             last_time = TimeUtils.safe_parse_iso(last_pub[0]) if last_pub and last_pub[0] else TimeUtils.utc_now()
             
-            min_interval = await self.get_min_publish_interval_setting()
+            min_interval_minutes = await self.get_min_publish_interval_setting()
             
             st = sched.get('schedule_type', 'interval_minutes')
+            
+            # تعريف المتغيرات لاستخدامها في الحلقة
+            interval_minutes = min_interval_minutes
+            interval_hours = 1.0
+            interval_days = 1.0
+            
             if st == 'interval_minutes':
-                interval = max(min_interval, sched.get('interval_minutes', min_interval))
-                next_date = last_time + timedelta(minutes=interval)
+                interval_minutes = max(min_interval_minutes, sched.get('interval_minutes', min_interval_minutes))
+                next_date = last_time + timedelta(minutes=interval_minutes)
             elif st == 'interval_hours':
-                interval = max(1, sched.get('interval_hours', 1))
-                next_date = last_time + timedelta(hours=interval)
+                min_interval_hours = min_interval_minutes / 60.0
+                interval_hours = max(min_interval_hours, sched.get('interval_hours', 1))
+                next_date = last_time + timedelta(hours=interval_hours)
             elif st == 'interval_days':
-                interval = max(1, sched.get('interval_days', 1))
-                next_date = last_time + timedelta(days=interval)
+                min_interval_days = min_interval_minutes / (60 * 24)
+                interval_days = max(min_interval_days, sched.get('interval_days', 1))
+                next_date = last_time + timedelta(days=interval_days)
             else:
-                interval = min_interval
-                next_date = last_time + timedelta(minutes=interval)
+                interval_minutes = min_interval_minutes
+                next_date = last_time + timedelta(minutes=interval_minutes)
 
             counter = 0
             while next_date <= TimeUtils.utc_now() and counter < 100:
                 if st == 'interval_minutes':
-                    next_date += timedelta(minutes=interval)
+                    next_date += timedelta(minutes=interval_minutes)
                 elif st == 'interval_hours':
-                    next_date += timedelta(hours=interval)
+                    next_date += timedelta(hours=interval_hours)
                 elif st == 'interval_days':
-                    next_date += timedelta(days=interval)
+                    next_date += timedelta(days=interval_days)
                 else:
-                    next_date += timedelta(minutes=min_interval)
+                    next_date += timedelta(minutes=min_interval_minutes)
                 counter += 1
             await self.execute("UPDATE schedule SET next_publish_date=? WHERE channel_db_id=?", (next_date.strftime('%Y-%m-%d %H:%M:%S'), channel_id))
             return True
@@ -1443,23 +1539,32 @@ class Database:
             logger.error(f"❌ Error in update_last_publish: {e}", exc_info=True)
             return False
 
+    # ✅ دالة get_channels_to_publish المعدلة (مع التحقق من الاشتراك)
     async def get_channels_to_publish(self, limit: int = 20) -> List[Dict]:
         try:
+            owner_id = CONFIG.PRIMARY_OWNER_ID
             rows = await self.fetchall("""
                 SELECT uc.id, uc.channel_id, uc.user_id, u.auto_publish
                 FROM user_channels uc
                 JOIN users u ON uc.user_id = u.user_id
                 LEFT JOIN schedule s ON uc.id = s.channel_db_id
-                WHERE uc.banned = 0 AND u.banned = 0 AND u.auto_publish = 1
-                AND (s.next_publish_date IS NULL OR s.next_publish_date <= ?)
-                AND EXISTS (
-                    SELECT 1 FROM posts p
-                    WHERE p.channel_db_id = uc.id AND p.published = 0
-                    AND (p.fail_count IS NULL OR p.fail_count < 3)
-                )
+                WHERE uc.banned = 0
+                  AND u.banned = 0
+                  AND u.auto_publish = 1
+                  AND (
+                      (u.subscription_end IS NOT NULL AND u.subscription_end > datetime('now'))
+                      OR u.user_id = ?
+                  )
+                  AND (s.next_publish_date IS NULL OR s.next_publish_date <= ?)
+                  AND EXISTS (
+                      SELECT 1 FROM posts p
+                      WHERE p.channel_db_id = uc.id
+                        AND p.published = 0
+                        AND (p.fail_count IS NULL OR p.fail_count < 3)
+                  )
                 ORDER BY COALESCE(s.next_publish_date, '1970-01-01 00:00:00') ASC
                 LIMIT ?
-            """, (TimeUtils.sql_iso(), limit))
+            """, (owner_id, TimeUtils.sql_iso(), limit))
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"❌ Error in get_channels_to_publish: {e}", exc_info=True)
@@ -1552,23 +1657,26 @@ class Database:
             av = stats['available']
             if av <= 0:
                 return 0
-            await self.execute(
-                "UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?",
-                (av, user_id)
-            )
-            row = await self.fetchone("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
-            if row and row[0]:
-                current_end = TimeUtils.safe_parse_iso(row[0])
-                if current_end:
-                    new_end = current_end + timedelta(days=av)
+            # استخدام معاملة واحدة لضمان الاتساق
+            async with self._get_connection() as conn:
+                await conn.execute(
+                    "UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id=?",
+                    (av, user_id)
+                )
+                row = await (await conn.execute("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))).fetchone()
+                if row and row[0]:
+                    current_end = TimeUtils.safe_parse_iso(row[0])
+                    if current_end and current_end > TimeUtils.utc_now():
+                        new_end = current_end + timedelta(days=av)
+                    else:
+                        new_end = TimeUtils.utc_now() + timedelta(days=av)
                 else:
                     new_end = TimeUtils.utc_now() + timedelta(days=av)
-            else:
-                new_end = TimeUtils.utc_now() + timedelta(days=av)
-            await self.execute(
-                "UPDATE users SET subscription_end=? WHERE user_id=?",
-                (new_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
-            )
+                await conn.execute(
+                    "UPDATE users SET subscription_end=? WHERE user_id=?",
+                    (new_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
+                )
+                await conn.commit()
             return av
         except Exception as e:
             logger.error(f"❌ Error in claim_referral_reward: {e}", exc_info=True)
@@ -1600,6 +1708,10 @@ class Database:
 
     async def update_reminder_settings(self, user_id: int, **kwargs) -> bool:
         try:
+            # ✅ التحقق من صحة الأعمدة
+            for key in kwargs:
+                if key not in ALLOWED_REMINDER_SETTINGS_COLUMNS:
+                    raise ValueError(f"عمود غير صالح: {key}")
             updates = [f"{k}=?" for k in kwargs]
             vals = list(kwargs.values()) + [user_id]
             await self.execute(f"UPDATE user_reminder_settings SET {', '.join(updates)} WHERE user_id=?", vals)
@@ -1787,23 +1899,39 @@ class Database:
             logger.error(f"❌ Error in get_all_plans: {e}", exc_info=True)
             return []
 
+    # ✅ create_subscription المعدلة (تمديد الاشتراك الحالي)
     async def create_subscription(self, user_id: int, plan_id: int, provider: str = 'xtr',
                                    provider_sub_id: str = None) -> int:
         try:
             plan = await self.get_plan(plan_id)
             if not plan:
                 return 0
+            start_date = TimeUtils.sql_iso()
+            # حساب تاريخ الانتهاء الجديد بتمديد الاشتراك الحالي إذا كان نشطًا
+            current_end = await self.fetchone("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
+            if current_end and current_end[0]:
+                current_end_dt = TimeUtils.safe_parse_iso(current_end[0])
+                if current_end_dt and current_end_dt > TimeUtils.utc_now():
+                    new_end = current_end_dt + timedelta(days=plan['duration_days'])
+                else:
+                    new_end = TimeUtils.utc_now() + timedelta(days=plan['duration_days'])
+            else:
+                new_end = TimeUtils.utc_now() + timedelta(days=plan['duration_days'])
+            end_date = new_end.strftime('%Y-%m-%d %H:%M:%S')
+
             async with self._get_connection() as conn:
                 await conn.execute(
                     "INSERT INTO subscriptions (user_id, plan_id, status, start_date, end_date, auto_renew, provider, provider_subscription_id, created_at, updated_at) "
                     "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (user_id, plan_id, 'active',
-                     TimeUtils.sql_iso(),
-                     (TimeUtils.utc_now() + timedelta(days=plan['duration_days'])).strftime('%Y-%m-%d %H:%M:%S'),
-                     0, provider, provider_sub_id, TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                    (user_id, plan_id, 'active', start_date, end_date, 0, provider, provider_sub_id, start_date, start_date)
                 )
                 cur = await conn.execute("SELECT last_insert_rowid()")
                 row = await cur.fetchone()
+                # تحديث users.subscription_end
+                await conn.execute(
+                    "UPDATE users SET subscription_end=? WHERE user_id=?",
+                    (end_date, user_id)
+                )
                 await conn.commit()
                 return row[0] if row else 0
         except Exception as e:
@@ -1814,7 +1942,8 @@ class Database:
         try:
             row = await self.fetchone("""
                 SELECT s.*, p.name, p.duration_days, p.max_channels, p.max_posts, p.features
-                FROM subscriptions s JOIN plans p ON s.plan_id = p.id
+                FROM subscriptions s
+                LEFT JOIN plans p ON s.plan_id = p.id
                 WHERE s.user_id=? AND s.status='active' AND s.end_date > datetime('now')
                 ORDER BY s.end_date DESC LIMIT 1
             """, (user_id,))
@@ -1825,7 +1954,27 @@ class Database:
 
     async def expire_expired_subscriptions(self) -> None:
         try:
-            await self.execute("UPDATE subscriptions SET status='expired' WHERE status='active' AND end_date < datetime('now')")
+            # تعليم الاشتراكات المنتهية
+            await self.execute("""
+                UPDATE subscriptions SET status='expired'
+                WHERE status='active' AND end_date < datetime('now')
+            """)
+            # تحديث users.subscription_end لأحدث اشتراك نشط (أو NULL إن لم يوجد)
+            await self.execute("""
+                UPDATE users
+                SET subscription_end = (
+                    SELECT MAX(s.end_date)
+                    FROM subscriptions s
+                    WHERE s.user_id = users.user_id
+                      AND s.status = 'active'
+                      AND s.end_date > datetime('now')
+                )
+                WHERE EXISTS (
+                    SELECT 1 FROM subscriptions s2
+                    WHERE s2.user_id = users.user_id
+                )
+            """)
+            # لا حاجة لاستعلام إضافي، لأن القيمة الفرعية ستعيد NULL إذا لم يوجد اشتراك نشط
         except Exception as e:
             logger.error(f"❌ Error in expire_expired_subscriptions: {e}", exc_info=True)
 
@@ -1884,7 +2033,7 @@ class Database:
             logger.error(f"❌ Error in add_payment_log: {e}", exc_info=True)
 
     # =====================================================================
-    # دوال الهدايا (Gift Codes)
+    # دوال الهدايا (Gift Codes) - مع إصلاحات
     # =====================================================================
 
     async def get_gift_plans(self) -> List[Dict]:
@@ -1903,10 +2052,15 @@ class Database:
             logger.error(f"❌ Error in get_gift_plan: {e}", exc_info=True)
             return None
 
+    # ✅ generate_gift_code مع معالجة التكرار
     async def generate_gift_code(self, user_id: int, days: int, plan_id: int) -> str:
         try:
             import secrets
-            code = secrets.token_urlsafe(8).upper()
+            while True:
+                code = secrets.token_urlsafe(8).upper()
+                existing = await self.fetchone("SELECT 1 FROM gift_codes WHERE code=?", (code,))
+                if not existing:
+                    break
             await self.execute(
                 "INSERT INTO gift_codes (code, days, plan_id, created_by, created_at) VALUES (?,?,?,?,?)",
                 (code, days, plan_id, user_id, TimeUtils.sql_iso())
@@ -1917,23 +2071,28 @@ class Database:
             logger.error(f"❌ Error in generate_gift_code: {e}", exc_info=True)
             return ""
 
+    # ✅ redeem_gift_code المعدلة (تحديث users.subscription_end وإدراج في subscriptions)
     async def redeem_gift_code(self, user_id: int, code: str) -> Tuple[bool, int]:
         try:
             code = code.strip().upper()
             row = await self.fetchone(
-                "SELECT id, days FROM gift_codes WHERE code=? AND is_used=0",
+                "SELECT id, days, plan_id FROM gift_codes WHERE code=? AND is_used=0",
                 (code,)
             )
             if not row:
                 return False, 0
-            gift_id, days = row
-            
-            # التحقق من أن المستخدم ليس هو من أنشأ الكود
+            gift_id, days, plan_id = row
+
+            # التحقق من وجود المستخدم
+            user_exists = await self.fetchone("SELECT 1 FROM users WHERE user_id=?", (user_id,))
+            if not user_exists:
+                return False, -2  # المستخدم غير موجود
+
             creator = await self.fetchone("SELECT created_by FROM gift_codes WHERE id=?", (gift_id,))
             if creator and creator[0] == user_id:
                 return False, -1
-            
-            # تحديث اشتراك المستخدم
+
+            # حساب تاريخ الانتهاء الجديد (تمديد الاشتراك الحالي)
             current_end = await self.fetchone("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
             if current_end and current_end[0]:
                 end_date = TimeUtils.safe_parse_iso(current_end[0])
@@ -1943,17 +2102,28 @@ class Database:
                     new_end = TimeUtils.utc_now() + timedelta(days=days)
             else:
                 new_end = TimeUtils.utc_now() + timedelta(days=days)
-            
+            new_end_str = new_end.strftime('%Y-%m-%d %H:%M:%S')
+
+            # تحديث users.subscription_end
             await self.execute(
                 "UPDATE users SET subscription_end=? WHERE user_id=?",
-                (new_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
+                (new_end_str, user_id)
             )
-            
+
+            # تحديث gift_codes
             await self.execute(
                 "UPDATE gift_codes SET used_by=?, used_at=?, is_used=1 WHERE id=?",
                 (user_id, TimeUtils.sql_iso(), gift_id)
             )
-            
+
+            # ✅ إدراج سجل في subscriptions مع plan_id = NULL دائمًا (لأن plan_id من gift_codes يشير إلى gift_plans وليس plans)
+            start_date = TimeUtils.sql_iso()
+            await self.execute(
+                "INSERT INTO subscriptions (user_id, plan_id, status, start_date, end_date, auto_renew, provider, created_at, updated_at) "
+                "VALUES (?,NULL,?,?,?,?,?,?,?)",
+                (user_id, 'active', start_date, new_end_str, 0, 'gift', start_date, start_date)
+            )
+
             logger.info(f"✅ تم استرداد كود هدية {code} بواسطة {user_id} (+{days} يوم)")
             return True, days
         except Exception as e:
