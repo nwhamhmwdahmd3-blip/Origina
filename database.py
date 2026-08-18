@@ -5,6 +5,7 @@
 database.py - قاعدة البيانات المتكاملة للبوت (نسخة معدلة)
 - إصلاح مشكلة النشر كل دقيقة
 - تطبيق الحد الأدنى للفاصل الزمني على جميع القنوات الجديدة والحالية
+- إضافة نظام كود الهدية المدفوع
 """
 
 import sqlite3
@@ -347,7 +348,6 @@ class Database:
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup', '1')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_ticket_number', '0')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_backup', '')")
-        # ✅ إضافة الإعداد الافتراضي للحد الأدنى للفاصل الزمني
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('min_publish_interval', '12')")
 
         # ===================== جداول الإحالات =====================
@@ -540,6 +540,33 @@ class Database:
                 created_at TEXT
             )
         """)
+
+        # ===================== جداول الهدايا (Gift Codes) =====================
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS gift_plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                days INTEGER NOT NULL,
+                price INTEGER NOT NULL,
+                currency TEXT DEFAULT 'XTR',
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS gift_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                days INTEGER NOT NULL,
+                plan_id INTEGER,
+                created_by INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                used_by INTEGER DEFAULT NULL,
+                used_at TEXT DEFAULT NULL,
+                is_used INTEGER DEFAULT 0,
+                FOREIGN KEY (plan_id) REFERENCES gift_plans(id)
+            )
+        """)
+
         await conn.commit()
 
     async def _create_indexes(self, conn) -> None:
@@ -581,6 +608,10 @@ class Database:
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_contest_participants_contest ON contest_participants(contest_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_contest_participants_user ON contest_participants(user_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_user ON user_reminder_settings(user_id)")
+        # فهارس الهدايا
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_gift_codes_code ON gift_codes(code)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_gift_codes_used ON gift_codes(is_used)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_gift_codes_created ON gift_codes(created_by)")
         await conn.commit()
 
     async def _init_default_data(self, conn) -> None:
@@ -601,6 +632,22 @@ class Database:
                     plan["duration_days"], plan["max_channels"], plan["max_posts"],
                     plan["features"], 1, TimeUtils.sql_iso()
                 ))
+
+        # ===================== خطط الهدايا الافتراضية =====================
+        default_gift_plans = [
+            {"days": 7, "price": 50},
+            {"days": 30, "price": 150},
+            {"days": 90, "price": 400},
+        ]
+        for plan in default_gift_plans:
+            row = await conn.execute("SELECT id FROM gift_plans WHERE days=? AND price=?", (plan["days"], plan["price"]))
+            if not await row.fetchone():
+                await conn.execute(
+                    "INSERT INTO gift_plans (days, price, currency, is_active, created_at) VALUES (?,?,?,?,?)",
+                    (plan["days"], plan["price"], "XTR", 1, TimeUtils.sql_iso())
+                )
+                logger.info(f"✅ تم إضافة خطة هدية: {plan['days']} يوم - {plan['price']} ⭐")
+
         await conn.commit()
 
     async def _import_banned_words(self, conn) -> None:
@@ -829,9 +876,8 @@ class Database:
                 if not ch_db_id:
                     return None
                 
-                # ✅ تعيين الفاصل الافتراضي إلى الحد الأدنى من الإعدادات
                 min_interval = await self.get_min_publish_interval_setting()
-                interval_seconds = min_interval * 60  # تحويل الدقائق إلى ثواني
+                interval_seconds = min_interval * 60
                 next_date = (TimeUtils.utc_now() + timedelta(seconds=interval_seconds)).strftime('%Y-%m-%d %H:%M:%S')
                 await conn.execute(
                     "INSERT OR IGNORE INTO schedule (channel_db_id, interval_minutes, next_publish_date) VALUES (?,?,?)",
@@ -1306,7 +1352,7 @@ class Database:
             return False
 
     # =====================================================================
-    # دوال الجدولة (مع الإصلاح)
+    # دوال الجدولة
     # =====================================================================
 
     async def get_schedule(self, channel_id: int) -> Dict:
@@ -1314,7 +1360,6 @@ class Database:
             row = await self.fetchone("SELECT * FROM schedule WHERE channel_db_id=?", (channel_id,))
             if row:
                 return dict(row)
-            # إذا لم يكن هناك جدول، أنشئ واحداً بالحد الأدنى الافتراضي
             min_interval = await self.get_min_publish_interval_setting()
             next_date = (TimeUtils.utc_now() + timedelta(minutes=min_interval)).strftime('%Y-%m-%d %H:%M:%S')
             await self.execute(
@@ -1337,9 +1382,7 @@ class Database:
             logger.error(f"❌ Error in update_schedule: {e}", exc_info=True)
             return False
 
-    # ✅ دالة جديدة لجلب الحد الأدنى للفاصل الزمني من الإعدادات
     async def get_min_publish_interval_setting(self) -> int:
-        """جلب الحد الأدنى للفاصل الزمني من الإعدادات، مع fallback 12"""
         try:
             val = await self.get_setting('min_publish_interval')
             if val is not None:
@@ -1350,14 +1393,12 @@ class Database:
             pass
         return 12
 
-    # ✅ دالة update_next_publish المعدلة
     async def update_next_publish(self, channel_id: int) -> bool:
         try:
             sched = await self.get_schedule(channel_id)
             last_pub = await self.fetchone("SELECT last_publish_time FROM last_publish WHERE channel_db_id=?", (channel_id,))
             last_time = TimeUtils.safe_parse_iso(last_pub[0]) if last_pub and last_pub[0] else TimeUtils.utc_now()
             
-            # ✅ جلب الحد الأدنى من الإعدادات
             min_interval = await self.get_min_publish_interval_setting()
             
             st = sched.get('schedule_type', 'interval_minutes')
@@ -1841,6 +1882,108 @@ class Database:
             )
         except Exception as e:
             logger.error(f"❌ Error in add_payment_log: {e}", exc_info=True)
+
+    # =====================================================================
+    # دوال الهدايا (Gift Codes)
+    # =====================================================================
+
+    async def get_gift_plans(self) -> List[Dict]:
+        try:
+            rows = await self.fetchall("SELECT * FROM gift_plans WHERE is_active=1 ORDER BY price")
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ Error in get_gift_plans: {e}", exc_info=True)
+            return []
+
+    async def get_gift_plan(self, plan_id: int) -> Optional[Dict]:
+        try:
+            row = await self.fetchone("SELECT * FROM gift_plans WHERE id=?", (plan_id,))
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"❌ Error in get_gift_plan: {e}", exc_info=True)
+            return None
+
+    async def generate_gift_code(self, user_id: int, days: int, plan_id: int) -> str:
+        try:
+            import secrets
+            code = secrets.token_urlsafe(8).upper()
+            await self.execute(
+                "INSERT INTO gift_codes (code, days, plan_id, created_by, created_at) VALUES (?,?,?,?,?)",
+                (code, days, plan_id, user_id, TimeUtils.sql_iso())
+            )
+            logger.info(f"✅ تم إنشاء كود هدية: {code} لمستخدم {user_id}")
+            return code
+        except Exception as e:
+            logger.error(f"❌ Error in generate_gift_code: {e}", exc_info=True)
+            return ""
+
+    async def redeem_gift_code(self, user_id: int, code: str) -> Tuple[bool, int]:
+        try:
+            code = code.strip().upper()
+            row = await self.fetchone(
+                "SELECT id, days FROM gift_codes WHERE code=? AND is_used=0",
+                (code,)
+            )
+            if not row:
+                return False, 0
+            gift_id, days = row
+            
+            # التحقق من أن المستخدم ليس هو من أنشأ الكود
+            creator = await self.fetchone("SELECT created_by FROM gift_codes WHERE id=?", (gift_id,))
+            if creator and creator[0] == user_id:
+                return False, -1
+            
+            # تحديث اشتراك المستخدم
+            current_end = await self.fetchone("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
+            if current_end and current_end[0]:
+                end_date = TimeUtils.safe_parse_iso(current_end[0])
+                if end_date:
+                    new_end = max(end_date, TimeUtils.utc_now()) + timedelta(days=days)
+                else:
+                    new_end = TimeUtils.utc_now() + timedelta(days=days)
+            else:
+                new_end = TimeUtils.utc_now() + timedelta(days=days)
+            
+            await self.execute(
+                "UPDATE users SET subscription_end=? WHERE user_id=?",
+                (new_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
+            )
+            
+            await self.execute(
+                "UPDATE gift_codes SET used_by=?, used_at=?, is_used=1 WHERE id=?",
+                (user_id, TimeUtils.sql_iso(), gift_id)
+            )
+            
+            logger.info(f"✅ تم استرداد كود هدية {code} بواسطة {user_id} (+{days} يوم)")
+            return True, days
+        except Exception as e:
+            logger.error(f"❌ Error in redeem_gift_code: {e}", exc_info=True)
+            return False, 0
+
+    async def get_gift_code_info(self, code: str) -> Optional[Dict]:
+        try:
+            row = await self.fetchone(
+                """SELECT gc.*, u.username as creator_name 
+                   FROM gift_codes gc 
+                   LEFT JOIN users u ON gc.created_by = u.user_id 
+                   WHERE gc.code=?""",
+                (code.upper(),)
+            )
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"❌ Error in get_gift_code_info: {e}", exc_info=True)
+            return None
+
+    async def get_user_gift_codes(self, user_id: int) -> List[Dict]:
+        try:
+            rows = await self.fetchall(
+                "SELECT * FROM gift_codes WHERE created_by=? ORDER BY created_at DESC",
+                (user_id,)
+            )
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ Error in get_user_gift_codes: {e}", exc_info=True)
+            return []
 
 
 # =====================================================================

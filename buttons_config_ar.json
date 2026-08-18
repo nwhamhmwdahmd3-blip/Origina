@@ -160,7 +160,10 @@
     "sched_hour": "📅 ساعات",
     "sched_day": "📅 أيام",
     "sched_time": "🕐 وقت النشر",
-    "unauthorized": "❌ غير مصرح"
+    "unauthorized": "❌ غير مصرح",
+    "gift_plans": "🎁 شراء كود هدية",
+    "redeem_gift": "🎟️ استخدام كود هدية",
+    "my_gifts": "📋 أكوادي"
   },
   "menus": {
     "main_menu": {
@@ -170,6 +173,7 @@
         ["post_list", "post_rec"],
         ["pub_all"],
         ["plans", "subscribe"],
+        ["gift_plans", "redeem_gift"],
         ["support", "developer"],
         ["help", "language"],
         ["trial", "contests"],

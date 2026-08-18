@@ -1104,7 +1104,7 @@ class BackgroundTasks:
                         else:
                             await bot.send_message(ch['channel_id'], post['text'][:4096] if post['text'] else ".")
                         await DB.mark_post_published(post['id'])
-                        await DB.update_next_publish(ch['id'])  # ✅ السطر الأساسي لحل المشكلة
+                        await DB.update_next_publish(ch['id'])
                         await asyncio.sleep(0.5)
                     except Exception as e:
                         logger.error(f"❌ Publish error: {e}")
@@ -1240,7 +1240,6 @@ async def webhook_handler(request):
         await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
         return web.Response(status=200, text="OK")
     except BadRequest as e:
-        # تجاهل أخطاء انتهاء صلاحية الاستعلام (غير حرجة)
         if "Query is too old" in str(e):
             logger.debug("⏳ Callback query expired (ignored)")
             return web.Response(status=200, text="OK")

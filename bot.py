@@ -12,7 +12,8 @@ import traceback
 
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ChatJoinRequestHandler, filters
+    MessageHandler, ChatJoinRequestHandler, filters,
+    PreCheckoutQueryHandler
 )
 
 from config import CONFIG, PATHS
@@ -20,7 +21,7 @@ from database import DB, initialize_db
 from handlers import CommandHandlers, CallbackHandlers, MessageHandlers
 from utils import (
     TranslationManager, KeyboardFactory, BackgroundTasks,
-    ErrorHandler, setup_webhook
+    ErrorHandler, setup_webhook, safe_send
 )
 
 logging.basicConfig(
@@ -32,6 +33,69 @@ logger = logging.getLogger(__name__)
 app = None
 
 
+async def pre_checkout(update, context):
+    """معالجة ما قبل الدفع (التحقق من صحة الفاتورة)"""
+    query = update.pre_checkout_query
+    try:
+        await query.answer(ok=True)
+        logger.info(f"✅ Pre-checkout success: {query.id}")
+    except Exception as e:
+        logger.error(f"❌ Pre-checkout error: {e}")
+        try:
+            await query.answer(ok=False, error_message="حدث خطأ، حاول مرة أخرى")
+        except:
+            pass
+
+
+async def successful_payment(update, context):
+    """معالجة الدفع الناجح"""
+    user_id = update.effective_user.id
+    payment = update.message.successful_payment
+    payload = payment.invoice_payload
+    
+    try:
+        import json
+        data = json.loads(payload)
+        logger.info(f"💰 Payment success: user={user_id}, data={data}")
+        
+        if data.get('type') == 'gift':
+            plan_id = data.get('gift_plan_id')
+            plan = await DB.fetchone("SELECT * FROM gift_plans WHERE id=?", (plan_id,))
+            if plan:
+                plan = dict(plan)
+                days = plan['days']
+                code = await DB.generate_gift_code(user_id, days, plan_id)
+                text = (
+                    f"🎁 **تم شراء كود الهدية بنجاح!**\n\n"
+                    f"الكود: `{code}`\n"
+                    f"المدة: {days} يوم\n\n"
+                    f"أرسل هذا الكود لأي شخص ليحصل على اشتراك مجاني!\n"
+                    f"يمكنه استخدام الأمر: `/redeem_gift {code}`"
+                )
+                await safe_send(context.bot, user_id, text)
+                
+                dev_text = f"💰 تم شراء كود هدية\n👤 المستخدم: `{user_id}`\n📅 المدة: {days} يوم\n🔑 الكود: `{code}`"
+                await safe_send(context.bot, CONFIG.PRIMARY_OWNER_ID, dev_text)
+            else:
+                await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع، يرجى التواصل مع الدعم.")
+        
+        elif data.get('type') == 'subscription':
+            plan_id = data.get('plan_id')
+            invoice_number = data.get('invoice')
+            plan = await DB.get_plan(plan_id)
+            if plan:
+                await DB.mark_invoice_paid(invoice_number, payment.provider_payment_charge_id)
+                await DB.create_subscription(user_id, plan_id, 'xtr', payment.provider_payment_charge_id)
+                await safe_send(context.bot, user_id, f"✅ تم تفعيل اشتراك {plan['name']} بنجاح!")
+        
+        else:
+            await safe_send(context.bot, user_id, "✅ تم الدفع بنجاح، شكراً لك!")
+            
+    except Exception as e:
+        logger.error(f"❌ Error in successful_payment: {e}")
+        await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع، يرجى التواصل مع الدعم.")
+
+
 async def main():
     global app
 
@@ -40,12 +104,10 @@ async def main():
 
     await initialize_db()
 
-    # تسجيل المطورين
     for dev_id in CONFIG.DEVELOPER_IDS:
         await DB.register_user(dev_id)
     await DB.register_user(CONFIG.PRIMARY_OWNER_ID)
 
-    # تحميل الإعدادات
     KeyboardFactory.load_config()
     available_langs = TranslationManager.get_available_languages()
     for lang in available_langs:
@@ -59,7 +121,6 @@ async def main():
         os.getenv("HEROKU_APP_NAME")
     )
 
-    # بناء التطبيق
     app = Application.builder().token(CONFIG.TOKEN).build()
     await app.initialize()
 
@@ -74,6 +135,10 @@ async def main():
     app.add_handler(CommandHandler("language", CommandHandlers.language))
     app.add_handler(CommandHandler("contests", CommandHandlers.contests))
     app.add_handler(CommandHandler("replies", CommandHandlers.replies_command))
+
+    # ========== أوامر الهدايا ==========
+    app.add_handler(CommandHandler("gift_plans", CommandHandlers.gift_plans))
+    app.add_handler(CommandHandler("redeem_gift", CommandHandlers.redeem_gift))
 
     # ========== أوامر المجموعة ==========
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -97,6 +162,10 @@ async def main():
     app.add_handler(CommandHandler("add_hidden_admin", CommandHandlers.add_hidden_admin))
     app.add_handler(CommandHandler("remove_hidden_admin", CommandHandlers.remove_hidden_admin))
     app.add_handler(CommandHandler("list_hidden_admins", CommandHandlers.list_hidden_admins))
+
+    # ========== معالجات الدفع ==========
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
     # ========== الكولباك ==========
     app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
@@ -140,7 +209,6 @@ async def main():
         asyncio.create_task(BackgroundTasks.sync_admins_periodically(app.bot)),
     ]
 
-    # ========== تشغيل Webhook أو Polling ==========
     if hostname:
         webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
         print(f"🔗 Webhook: {webhook_url}")
@@ -156,7 +224,6 @@ async def main():
         print("⚠️ Polling")
         await app.run_polling(drop_pending_updates=True)
 
-    # إلغاء المهام
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)

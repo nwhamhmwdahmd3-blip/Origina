@@ -595,6 +595,58 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ قيمة غير صالحة، أدخل رقماً")
 
 
+    # ========== أوامر الهدايا (Gift Codes) ==========
+
+    @staticmethod
+    async def gift_plans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """عرض خطط الهدايا المتاحة"""
+        user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id)
+        
+        plans = await DB.get_gift_plans()
+        if not plans:
+            await safe_send(context.bot, user_id, "📭 لا توجد خطط متاحة حالياً.")
+            return
+        
+        kb = []
+        for plan in plans:
+            days = plan['days']
+            price = plan['price']
+            kb.append([InlineKeyboardButton(
+                f"🎁 {days} يوم - {price} ⭐",
+                callback_data=f"buy_gift:{plan['id']}"
+            )])
+        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
+        
+        text = "💎 **شراء كود هدية**\n\nاختر المدة المناسبة:\n\n"
+        text += "• بعد الدفع، ستحصل على كود فريد.\n"
+        text += "• يمكنك إرسال الكود لأي شخص.\n"
+        text += "• الشخص الذي يستخدم الكود يحصل على اشتراك مجاني."
+        
+        await safe_send(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(kb))
+
+    @staticmethod
+    async def redeem_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """استخدام كود هدية"""
+        user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id)
+        
+        args = context.args or []
+        if not args:
+            await safe_send(context.bot, user_id, "📝 أرسل الكود: `/redeem_gift <الكود>`")
+            return
+        
+        code = args[0].strip()
+        success, days = await DB.redeem_gift_code(user_id, code)
+        
+        if success and days > 0:
+            await safe_send(context.bot, user_id, f"🎉 **تم تفعيل الاشتراك بنجاح!**\n\n✅ {days} يوم اشتراك مجاني.")
+        elif days == -1:
+            await safe_send(context.bot, user_id, "❌ لا يمكنك استخدام كود هدية قمت بإنشائه بنفسك.")
+        else:
+            await safe_send(context.bot, user_id, "❌ كود غير صالح أو مستخدم مسبقاً.")
+
+
 # =====================================================================
 # 2. معالج الكولباك
 # =====================================================================
@@ -801,7 +853,7 @@ class CallbackHandlers:
                         chat_id=user_id,
                         title=f"💎 {plan['name']}",
                         description=plan['description'],
-                        payload=json.dumps({'plan_id': plan['id'], 'invoice': invoice_number}),
+                        payload=json.dumps({'plan_id': plan['id'], 'invoice': invoice_number, 'type': 'subscription'}),
                         provider_token="",
                         currency="XTR",
                         prices=[LabeledPrice(plan['name'], plan['price'])]
@@ -1380,6 +1432,59 @@ class CallbackHandlers:
                 await CommandHandlers.start(update, context)
                 return
 
+            # ========== شراء كود هدية ==========
+            if data.startswith("buy_gift:"):
+                try:
+                    await query.answer("🔄 جارٍ التحضير...")
+                except BadRequest:
+                    pass
+                
+                plan_id = int(data.split(":")[-1])
+                plan = await DB.get_gift_plan(plan_id)
+                if not plan:
+                    try:
+                        await query.answer("❌ خطة غير موجودة", show_alert=True)
+                    except BadRequest:
+                        pass
+                    return
+                
+                invoice_number = await DB.create_invoice(
+                    user_id, 
+                    plan_id, 
+                    plan['price'], 
+                    currency='XTR', 
+                    provider='xtr_gift'
+                )
+                if not invoice_number:
+                    try:
+                        await query.answer("❌ فشل إنشاء الفاتورة", show_alert=True)
+                    except BadRequest:
+                        pass
+                    return
+                
+                try:
+                    await context.bot.send_invoice(
+                        chat_id=user_id,
+                        title=f"🎁 كود هدية {plan['days']} يوم",
+                        description=f"ستحصل على كود هدية لمدة {plan['days']} يوم يمكنك إرساله لأي شخص.",
+                        payload=json.dumps({
+                            'gift_plan_id': plan_id, 
+                            'invoice': invoice_number, 
+                            'type': 'gift'
+                        }),
+                        provider_token="",
+                        currency="XTR",
+                        prices=[LabeledPrice(f"{plan['days']} يوم", plan['price'])]
+                    )
+                    await query.message.delete()
+                except Exception as e:
+                    logger.error(f"❌ فشل إرسال الفاتورة: {e}")
+                    try:
+                        await query.answer(f"❌ {str(e)[:50]}", show_alert=True)
+                    except BadRequest:
+                        pass
+                return
+
             try:
                 await query.answer("⚠️ غير متوفر", show_alert=True)
             except BadRequest:
@@ -1408,7 +1513,7 @@ class CallbackHandlers:
             else:
                 await bot.send_message(ch_tele, post['text'][:4096] if post['text'] else ".")
             await DB.mark_post_published(post['id'])
-            await DB.update_next_publish(ch_db_id)  # ✅ إضافة السطر الأساسي
+            await DB.update_next_publish(ch_db_id)
             await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"❌ فشل النشر التلقائي: {e}")
@@ -2835,7 +2940,6 @@ class MessageHandlers:
             pass
             
         if settings.get('delete_banned_words', False):
-            # ✅ استخدام الكاش لقراءة الكلمات المحظورة
             banned_words = await get_banned_words_cached(chat_id)
             for word in banned_words:
                 if word in text.lower():
