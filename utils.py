@@ -19,7 +19,7 @@ utils.py - الأدوات المساعدة للبوت (نسخة متكاملة �
 - نظام العقوبات: PenaltyStrategy, PenaltyFactory, apply_penalty
 - إدارة الردود التلقائية: export_auto_replies, import_auto_replies, fetch_json_from_url
 - الردود من ملف: load_replies_from_file, get_reply_from_file, reload_replies_from_file
-- المهام الخلفية: BackgroundTasks
+- المهام الخلفية: BackgroundTasks (مع إصلاح auto_publish)
 - خادم الويب: setup_webhook, webhook_handler (مع التصحيح)
 - معالج الأخطاء: ErrorHandler
 - دوال إضافية: get_min_publish_interval, get_banned_words_cached, invalidate_banned_words_cache
@@ -33,6 +33,7 @@ import time
 import shutil
 import logging
 import random
+import html
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any, Union
@@ -1068,7 +1069,7 @@ def invalidate_banned_words_cache(chat_id: Optional[int] = None):
 
 
 # =====================================================================
-# 17. المهام الخلفية
+# 17. المهام الخلفية (مع إصلاح auto_publish)
 # =====================================================================
 
 class BackgroundTasks:
@@ -1103,7 +1104,8 @@ class BackgroundTasks:
                         else:
                             await bot.send_message(ch['channel_id'], post['text'][:4096] if post['text'] else ".")
                         await DB.mark_post_published(post['id'])
-                        await asyncio.sleep(0.5)  # ✅ تأخير لتجنب FloodWait
+                        await DB.update_next_publish(ch['id'])  # ✅ السطر الأساسي لحل المشكلة
+                        await asyncio.sleep(0.5)
                     except Exception as e:
                         logger.error(f"❌ Publish error: {e}")
                         await DB.increment_post_fail(post['id'])

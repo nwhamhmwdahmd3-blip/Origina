@@ -1103,22 +1103,8 @@ class CallbackHandlers:
                 ch_info = await DB.get_channel_info(active)
                 if not ch_info:
                     return
-                try:
-                    if post['media_type'] == 'photo' and post['media_file_id']:
-                        await context.bot.send_photo(ch_info['channel_id'], post['media_file_id'],
-                                                     caption=post['text'][:1024] if post['text'] else None)
-                    elif post['media_type'] == 'video' and post['media_file_id']:
-                        await context.bot.send_video(ch_info['channel_id'], post['media_file_id'],
-                                                     caption=post['text'][:1024] if post['text'] else None)
-                    else:
-                        await context.bot.send_message(ch_info['channel_id'],
-                                                       post['text'][:4096] if post['text'] else ".")
-                    await DB.mark_post_published(post['id'])
-                    await query.edit_message_text("✅ تم النشر!")
-                except Exception as e:
-                    logger.error(f"❌ فشل النشر: {e}")
-                    await DB.increment_post_fail(post['id'])
-                    await query.edit_message_text(f"❌ {str(e)[:100]}")
+                await CallbackHandlers._publish_single(context.bot, active, ch_info['channel_id'], post)
+                await query.edit_message_text("✅ تم النشر!")
                 return
 
             if base_data == CB.POST_LIST:
@@ -1165,62 +1151,15 @@ class CallbackHandlers:
                     post = await DB.get_next_post(ch['id'])
                     if not post:
                         continue
-                        
                     ch_info = await DB.get_channel_info(ch['id'])
                     if not ch_info:
                         continue
-                        
                     try:
-                        if post['media_type'] == 'photo' and post['media_file_id']:
-                            await context.bot.send_photo(
-                                ch_info['channel_id'],
-                                post['media_file_id'],
-                                caption=post['text'][:1024] if post['text'] else None
-                            )
-                        elif post['media_type'] == 'video' and post['media_file_id']:
-                            await context.bot.send_video(
-                                ch_info['channel_id'],
-                                post['media_file_id'],
-                                caption=post['text'][:1024] if post['text'] else None
-                            )
-                        elif post['media_type'] == 'animation' and post['media_file_id']:
-                            await context.bot.send_animation(
-                                ch_info['channel_id'],
-                                post['media_file_id'],
-                                caption=post['text'][:1024] if post['text'] else None
-                            )
-                        elif post['media_type'] == 'document' and post['media_file_id']:
-                            await context.bot.send_document(
-                                ch_info['channel_id'],
-                                post['media_file_id'],
-                                caption=post['text'][:1024] if post['text'] else None
-                            )
-                        elif post['media_type'] == 'audio' and post['media_file_id']:
-                            await context.bot.send_audio(
-                                ch_info['channel_id'],
-                                post['media_file_id'],
-                                caption=post['text'][:1024] if post['text'] else None
-                            )
-                        elif post['media_type'] == 'voice' and post['media_file_id']:
-                            await context.bot.send_voice(
-                                ch_info['channel_id'],
-                                post['media_file_id'],
-                                caption=post['text'][:1024] if post['text'] else None
-                            )
-                        else:
-                            await context.bot.send_message(
-                                ch_info['channel_id'],
-                                post['text'][:4096] if post['text'] else "."
-                            )
-                        
-                        await DB.mark_post_published(post['id'])
+                        await CallbackHandlers._publish_single(context.bot, ch['id'], ch_info['channel_id'], post)
                         published_count += 1
-                        await asyncio.sleep(0.5)
-                        
                     except Exception as e:
                         logger.error(f"❌ فشل النشر في القناة {ch['channel_id']}: {e}")
                         failed_count += 1
-                        await DB.increment_post_fail(post['id'])
                 
                 if published_count > 0 and failed_count == 0:
                     await query.edit_message_text(f"✅ تم نشر {published_count} منشور (منشور واحد في كل قناة)")
@@ -1469,6 +1408,7 @@ class CallbackHandlers:
             else:
                 await bot.send_message(ch_tele, post['text'][:4096] if post['text'] else ".")
             await DB.mark_post_published(post['id'])
+            await DB.update_next_publish(ch_db_id)  # ✅ إضافة السطر الأساسي
             await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"❌ فشل النشر التلقائي: {e}")
