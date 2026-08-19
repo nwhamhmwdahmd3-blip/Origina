@@ -4,8 +4,12 @@
 """
 database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية الكاملة)
 - جميع الإصلاحات السابقة مدمجة
-- إضافة دالة get_channel_by_user للمساعدة في التحقق من القنوات
+- إصلاح مشكلة تجاوز حدود الخطط لمستخدمي التجربة والإحالات
+- إضافة خطط افتراضية للتجربة والإحالة وربطها بالاشتراكات
+- تحسين الأداء والذرية
+- تنظيف الاشتراكات المنتهية وتحديث users.subscription_end
 - منع إضافة القنوات بدون اشتراك نشط (لغير المالك)
+- ✅ إصلاح إعادة تدوير المنشورات في get_channels_to_publish
 """
 
 import sqlite3
@@ -105,7 +109,7 @@ class TimeUtils:
 
 class Database:
     _instance = None
-    _lock = None  # initialized later
+    _lock = None
 
     def __new__(cls) -> 'Database':
         if cls._instance is None:
@@ -995,11 +999,9 @@ class Database:
                         await conn.rollback()
                         logger.warning(f"⚠️ محاولة إضافة قناة محظورة: {channel_id} للمستخدم {user_id}")
                         return None
-                    # القناة موجودة وغير محظورة → نعيد المعرف (لا نضيف مكرر)
                     await conn.commit()
                     return ch_db_id
 
-                # التحقق من وجود اشتراك نشط (لغير المالك)
                 if user_id != CONFIG.PRIMARY_OWNER_ID:
                     plan = await self._get_active_plan_conn(conn, user_id)
                     if not plan:
@@ -1007,7 +1009,6 @@ class Database:
                         logger.warning(f"⚠️ المستخدم {user_id} بدون اشتراك نشط يحاول إضافة قناة")
                         return None
 
-                    # تطبيق حد القنوات
                     if plan.get('max_channels') is not None:
                         cur = await conn.execute(
                             "SELECT COUNT(*) FROM user_channels WHERE user_id=? AND banned=0",
@@ -1019,7 +1020,6 @@ class Database:
                             logger.warning(f"⚠️ المستخدم {user_id} تجاوز حد القنوات المسموح ({plan['max_channels']})")
                             return None
 
-                # إدراج القناة الجديدة
                 await conn.execute(
                     "INSERT INTO user_channels (user_id, channel_id, channel_name, created_at) VALUES (?,?,?,?)",
                     (user_id, channel_id, channel_name, TimeUtils.sql_iso())
@@ -1028,7 +1028,6 @@ class Database:
                 row = await cur.fetchone()
                 ch_db_id = row[0] if row else None
 
-                # إضافة جدولة افتراضية
                 cur = await conn.execute("SELECT value FROM settings WHERE key='min_publish_interval'")
                 row = await cur.fetchone()
                 min_interval = int(row[0]) if row and row[0] else 12
@@ -1044,7 +1043,6 @@ class Database:
             return None
 
     async def get_channel_by_user(self, user_id: int, channel_id: int) -> Optional[Dict]:
-        """البحث عن قناة محددة لمستخدم معين."""
         try:
             row = await self.fetchone(
                 "SELECT * FROM user_channels WHERE user_id=? AND channel_id=?",
@@ -1736,8 +1734,6 @@ class Database:
                   AND EXISTS (
                       SELECT 1 FROM posts p
                       WHERE p.channel_db_id = uc.id
-                        AND p.published = 0
-                        AND (p.fail_count IS NULL OR p.fail_count < 3)
                   )
                 ORDER BY COALESCE(s.next_publish_date, '1970-01-01 00:00:00') ASC
                 LIMIT ?
@@ -2183,7 +2179,6 @@ class Database:
                           AND s2.end_date > datetime('now')
                     )
                 """)
-                # تنظيف المستخدمين الذين لا يملكون أي اشتراك نشط
                 await conn.execute("""
                     UPDATE users SET subscription_end = NULL
                     WHERE user_id NOT IN (
@@ -2211,7 +2206,6 @@ class Database:
             return False
 
     async def _grant_subscription_days_conn(self, conn, user_id: int, days: int, plan_id: Optional[int], provider: str) -> None:
-        """تنفيذ منح الأيام داخل اتصال مفتوح (يجب أن يكون داخل معاملة)."""
         if days <= 0:
             return
         cur = await conn.execute("""
@@ -2372,7 +2366,6 @@ class Database:
                     await conn.rollback()
                     return False, -1
 
-                # الحصول على معرّف خطة الهدية من plans (is_gift=1)
                 cur = await conn.execute("SELECT id FROM plans WHERE is_gift=1 LIMIT 1")
                 plan_row = await cur.fetchone()
                 if not plan_row:
