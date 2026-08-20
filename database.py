@@ -31,6 +31,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ update_next_publish يحدّث last_publish تلقائيًا
 - ✅ فرض حد max_channels عند إضافة القنوات (can_add_channel)
 - ✅ get_active_plan يدعم المستخدمين في فترة التجربة
+- ✅ إصلاح get_referral_stats للتعامل مع عدم وجود صفوف (TypeError)
 """
 
 import sqlite3
@@ -516,6 +517,7 @@ class Database:
                 created_at TEXT
             )
         """)
+        # لا حاجة لـ ALTER TABLE الآن لأن العمود موجود في التعريف
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2267,3 +2269,4 @@ async def get_db() -> Database:
 
 async def initialize_db() -> None:
     await DB.initialize()
+
