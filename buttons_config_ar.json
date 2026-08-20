@@ -13,8 +13,6 @@
     "ch_sel": "📌 اختيار",
     "sched_btn": "📅 الجدولة",
     "groups": "👥 مجموعاتي",
-    "add_group_button": "➕ إضافة مجموعة",
-    "security_button": "🛡️ الإعدادات",
     "post_add": "📥 إضافة منشورات",
     "post_pub": "📤 نشر منشور",
     "post_list": "📋 منشوراتي",
@@ -137,6 +135,7 @@
     "sec_voice": "🎤 صوتي",
     "sec_videonote": "🎥 فيديو ملاحظة",
     "sec_banned_words": "🚫 كلمات محظورة",
+    "sec_toggle_banned": "🔄 حذف الكلمات المحظورة",
     "sec_welcome": "🎯 ترحيب",
     "sec_goodbye": "👋 وداع",
     "sec_night": "🌙 ليلي",
@@ -153,7 +152,19 @@
     "sec_auto_reply_menu": "📝 الردود",
     "sec_enable_all": "✅ تفعيل الكل",
     "sec_disable_all": "❌ تعطيل الكل",
-    "sec_close": "❌ إغلاق"
+    "sec_close": "❌ إغلاق",
+    "sec_penalty": "⚖️ العقوبات",
+    "status_only": "📊 الحالة",
+    "security_button": "🛡️ إعدادات {name}",
+    "add_group_button": "➕ إضافة مجموعة",
+    "sched_min": "📅 دقائق",
+    "sched_hour": "📅 ساعات",
+    "sched_day": "📅 أيام",
+    "sched_time": "🕐 وقت النشر",
+    "unauthorized": "❌ غير مصرح",
+    "gift_plans": "🎁 شراء كود هدية",
+    "redeem_gift": "🎟️ استخدام كود هدية",
+    "my_gifts": "📋 أكوادي"
   },
   "menus": {
     "main_menu": {
@@ -163,6 +174,8 @@
         ["post_list", "post_rec"],
         ["pub_all"],
         ["plans", "subscribe"],
+        ["gift_plans", "redeem_gift"],
+        ["my_gifts"],
         ["support", "developer"],
         ["help", "language"],
         ["trial", "contests"],
@@ -230,6 +243,7 @@
         ["sec_forward", "sec_poll"],
         ["sec_game", "sec_voice"],
         ["sec_videonote", "sec_banned_words"],
+        ["sec_toggle_banned"],
         ["sec_welcome", "sec_goodbye"],
         ["sec_night", "sec_approve_join"],
         ["sec_reject_join"],
@@ -239,6 +253,14 @@
         ["sec_auto_reply_menu"],
         ["sec_enable_all", "sec_disable_all"],
         ["sec_close"]
+      ]
+    },
+    "channel_settings": {
+      "rows": [
+        ["ch_stats", "sched_min"],
+        ["sched_hour", "sched_day"],
+        ["sched_time"],
+        ["back"]
       ]
     },
     "banned_words": {
