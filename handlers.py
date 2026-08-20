@@ -18,6 +18,7 @@ handlers.py - جميع معالجات البوت (النسخة النهائية 
 - ✅ التحقق من حالة المسابقة قبل إعلان الفائز
 - ✅ إصلاح استدعاء _handle_banned_words_direct مع chat_id اختياري
 - ✅ تحديد الحد الأقصى للمنشورات (30 منشور لكل قناة)
+- ✅ إصلاح كامل لزر "كلمات محظورة" في لوحة الأدمن (إدارة كاملة + صلاحية المطور)
 """
 
 import asyncio
@@ -2217,9 +2218,8 @@ class CallbackHandlers:
             await query.edit_message_text("🗑️ أرسل الكلمة:")
 
         elif data == CB.ADMIN_BANNED_WORDS:
-            words = await DB.get_banned_words(-1)
-            text = "🚫 **الكلمات المحظورة**\n\n" + "\n".join(words) if words else "📭 لا يوجد"
-            await query.edit_message_text(text)
+            # ✅ استدعاء قائمة إدارة الكلمات المحظورة العامة
+            await CallbackHandlers._handle_banned_words_direct(update, context, query, user_id, -1, lang)
 
         elif data == CB.ADMIN_ADD_BANNED:
             StateManager.set(user_id, UserState.WAIT_GLOBAL_BAN)
@@ -2479,21 +2479,32 @@ class CallbackHandlers:
         except:
             return
 
-        try:
-            if not await is_authorized_in_group(context.bot, chat_id, user_id):
-                lang = await DB.get_user_language(user_id)
+        # 🔹 التحقق من الصلاحية حسب نوع القائمة (عامة أو مجموعة)
+        if chat_id == -1:
+            # الكلمات العامة: تخص لوحة الأدمن → صلاحية المطور فقط
+            if not CONFIG.is_developer(user_id):
                 try:
-                    await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+                    await query.answer("❌ غير مصرح", show_alert=True)
                 except BadRequest:
                     pass
                 return
-        except Exception as e:
-            logger.warning(f"⚠️ فشل التحقق من الصلاحية: {e}")
+        else:
+            # كلمات مجموعة → صلاحية مشرف المجموعة
             try:
-                await query.answer("❌ تعذر التحقق من الصلاحية", show_alert=True)
-            except BadRequest:
-                pass
-            return
+                if not await is_authorized_in_group(context.bot, chat_id, user_id):
+                    lang = await DB.get_user_language(user_id)
+                    try:
+                        await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+                    except BadRequest:
+                        pass
+                    return
+            except Exception as e:
+                logger.warning(f"⚠️ فشل التحقق من الصلاحية: {e}")
+                try:
+                    await query.answer("❌ تعذر التحقق من الصلاحية", show_alert=True)
+                except BadRequest:
+                    pass
+                return
 
         if action == "add":
             StateManager.set(user_id, UserState.WAIT_GROUP_BAN)
