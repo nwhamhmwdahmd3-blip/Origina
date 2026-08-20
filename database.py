@@ -4,7 +4,7 @@
 """
 database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية الكاملة)
 - جميع الجداول والدوال الأساسية
-- دعم العقوبات المؤقتة والدائمة
+- دعم العقوبات المؤقتة والدائمة (كتم، حظر، إنذار، تقييد)
 - تسجيل العقوبات في قاعدة البيانات مع المدة والسبب
 - رفع العقوبات تلقائياً عند انتهاء المدة
 - إعدادات العقوبات لكل مجموعة على حدة
@@ -18,7 +18,8 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ expire_penalties يرجع عدد العقوبات المنتهية
 - ✅ add_penalty يتحقق من duration >= 0
 - ✅ get_user_groups يشمل المجموعات المضافة عبر added_by
-- ✅ دوال قواعد العقوبات للمخالفات (violation_penalties)
+- ✅ دوال قواعد العقوبات للمخالفات (violation_penalties) مع strikes_before_ban
+- ✅ جدول violation_logs لتتبع المخالفات
 - ✅ جدول plans يشمل is_gift
 - ✅ جدول gift_codes ودوال الهدايا
 - ✅ دالة get_channel_by_user
@@ -27,9 +28,9 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ خطة هدية افتراضية
 - ✅ إصلاح add_hidden_admin لفصل الصلاحيات
 - ✅ redeem_gift_code عملية ذرّية
-- ✅ update_next_publish يحدّث last_publish تلقائيًا (إصلاح مشكلة النشر المتتالي)
+- ✅ update_next_publish يحدّث last_publish تلقائيًا
 - ✅ فرض حد max_channels عند إضافة القنوات (can_add_channel)
-- ✅ get_active_plan يدعم المستخدمين في فترة التجربة (خطة افتراضية)
+- ✅ get_active_plan يدعم المستخدمين في فترة التجربة
 """
 
 import sqlite3
@@ -515,7 +516,6 @@ class Database:
                 created_at TEXT
             )
         """)
-        # لا حاجة لـ ALTER TABLE الآن لأن العمود موجود في التعريف
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -581,7 +581,17 @@ class Database:
                 violation_type TEXT NOT NULL,
                 penalty_type TEXT NOT NULL DEFAULT 'mute',
                 duration_seconds INTEGER DEFAULT 3600,
+                strikes_before_ban INTEGER DEFAULT 2,
                 PRIMARY KEY (chat_id, violation_type)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS violation_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                chat_id INTEGER,
+                violation_type TEXT,
+                created_at TEXT
             )
         """)
         await conn.execute("""
@@ -863,7 +873,6 @@ class Database:
                 return await self.get_plan(sub['plan_id'])
             # إذا لم توجد اشتراكات نشطة لكن المستخدم لديه اشتراك فعال (مثل التجربة)
             if await self.has_active_subscription(user_id):
-                # إرجاع خطة افتراضية (أول خطة عادية)
                 default_plan = await self.fetchone(
                     "SELECT * FROM plans WHERE is_active=1 AND is_gift=0 ORDER BY id LIMIT 1"
                 )
@@ -876,7 +885,6 @@ class Database:
 
     # ========= دوال القنوات =========
     async def can_add_channel(self, user_id: int) -> bool:
-        """التحقق من أن المستخدم يستطيع إضافة قناة جديدة حسب حدود خطته"""
         try:
             if user_id == CONFIG.PRIMARY_OWNER_ID:
                 return True
@@ -895,7 +903,6 @@ class Database:
     async def add_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
         try:
             channel_id = int(channel_id)
-            # التحقق من عدم التكرار
             row = await self.fetchone(
                 "SELECT id FROM user_channels WHERE user_id=? AND channel_id=?",
                 (user_id, channel_id)
@@ -903,7 +910,6 @@ class Database:
             if row:
                 return row[0]
 
-            # التحقق من الحد الأقصى للقنوات (لغير المالك)
             if user_id != CONFIG.PRIMARY_OWNER_ID:
                 can_add = await self.can_add_channel(user_id)
                 if not can_add:
@@ -1428,21 +1434,17 @@ class Database:
             return False
 
     async def update_next_publish(self, channel_id: int) -> bool:
-        """تحديث وقت النشر التالي مع تحديث last_publish تلقائيًا (إصلاح مشكلة النشر المتتالي)"""
         try:
             async with self._get_connection() as conn:
-                # تحديث last_publish أولاً داخل نفس الاتصال
                 now = TimeUtils.sql_iso()
                 await conn.execute(
                     "INSERT OR REPLACE INTO last_publish (channel_db_id, last_publish_time) VALUES (?,?)",
                     (channel_id, now)
                 )
 
-                # جلب الإعدادات والوقت الأخير
                 sched_row = await conn.execute("SELECT * FROM schedule WHERE channel_db_id=?", (channel_id,))
                 sched = await sched_row.fetchone()
                 if not sched:
-                    # إنشاء جدولة افتراضية إذا لم تكن موجودة
                     await conn.execute(
                         "INSERT OR IGNORE INTO schedule (channel_db_id, schedule_type, interval_minutes) VALUES (?, 'interval_minutes', 60)",
                         (channel_id,)
@@ -1592,8 +1594,16 @@ class Database:
     async def get_referral_stats(self, user_id: int) -> Dict:
         try:
             total = (await self.fetchone("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,)))[0]
-            claimed = (await self.fetchone("SELECT COALESCE(SUM(claimed_reward_days),0) FROM referral_rewards WHERE user_id=?", (user_id,)))[0]
-            available = (await self.fetchone("SELECT total_reward_days - claimed_reward_days FROM referral_rewards WHERE user_id=?", (user_id,)))[0] or 0
+            claimed_row = await self.fetchone(
+                "SELECT COALESCE(SUM(claimed_reward_days),0) FROM referral_rewards WHERE user_id=?",
+                (user_id,)
+            )
+            claimed = claimed_row[0] if claimed_row else 0
+            available_row = await self.fetchone(
+                "SELECT total_reward_days - claimed_reward_days FROM referral_rewards WHERE user_id=?",
+                (user_id,)
+            )
+            available = available_row[0] if available_row else 0
             return {'total': total, 'claimed': claimed, 'available': available}
         except Exception as e:
             logger.error(f"❌ Error in get_referral_stats: {e}", exc_info=True)
@@ -1869,13 +1879,11 @@ class Database:
                 if not plan:
                     return False, 0
 
-                # تحديث الكود كمستخدم
                 await conn.execute(
                     "UPDATE gift_codes SET used_by=?, used_at=? WHERE id=?",
                     (user_id, TimeUtils.sql_iso(), row['id'])
                 )
 
-                # منح الاشتراك
                 current_end = TimeUtils.utc_now()
                 user_row = await conn.execute("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
                 user_row = await user_row.fetchone()
@@ -2183,7 +2191,7 @@ class Database:
     async def get_violation_penalty(self, chat_id: int, violation_type: str) -> Optional[Dict]:
         try:
             row = await self.fetchone(
-                "SELECT penalty_type, duration_seconds FROM violation_penalties WHERE chat_id=? AND violation_type=?",
+                "SELECT penalty_type, duration_seconds, strikes_before_ban FROM violation_penalties WHERE chat_id=? AND violation_type=?",
                 (chat_id, violation_type)
             )
             return dict(row) if row else None
@@ -2192,30 +2200,55 @@ class Database:
             return None
 
     async def set_violation_penalty(self, chat_id: int, violation_type: str,
-                                    penalty_type: str, duration_seconds: int) -> bool:
+                                    penalty_type: str, duration_seconds: int,
+                                    strikes_before_ban: int = 2) -> bool:
         try:
             await self.execute(
                 """INSERT OR REPLACE INTO violation_penalties 
-                   (chat_id, violation_type, penalty_type, duration_seconds)
-                   VALUES (?,?,?,?)""",
-                (chat_id, violation_type, penalty_type, duration_seconds)
+                   (chat_id, violation_type, penalty_type, duration_seconds, strikes_before_ban)
+                   VALUES (?,?,?,?,?)""",
+                (chat_id, violation_type, penalty_type, duration_seconds, strikes_before_ban)
             )
             return True
         except Exception as e:
             logger.error(f"❌ Error in set_violation_penalty: {e}", exc_info=True)
             return False
 
+    async def add_violation_log(self, user_id: int, chat_id: int, violation_type: str) -> bool:
+        try:
+            await self.execute(
+                "INSERT INTO violation_logs (user_id, chat_id, violation_type, created_at) VALUES (?,?,?,?)",
+                (user_id, chat_id, violation_type, TimeUtils.sql_iso())
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error in add_violation_log: {e}", exc_info=True)
+            return False
+
+    async def get_violation_count(self, user_id: int, chat_id: int, violation_type: str, hours: int = 24) -> int:
+        try:
+            since = (TimeUtils.utc_now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
+            row = await self.fetchval(
+                "SELECT COUNT(*) FROM violation_logs WHERE user_id=? AND chat_id=? AND violation_type=? AND created_at > ?",
+                (user_id, chat_id, violation_type, since)
+            )
+            return row or 0
+        except Exception as e:
+            logger.error(f"❌ Error in get_violation_count: {e}", exc_info=True)
+            return 0
+
     async def get_all_violation_penalties(self, chat_id: int) -> Dict[str, Dict]:
         try:
             rows = await self.fetchall(
-                "SELECT violation_type, penalty_type, duration_seconds FROM violation_penalties WHERE chat_id=?",
+                "SELECT violation_type, penalty_type, duration_seconds, strikes_before_ban FROM violation_penalties WHERE chat_id=?",
                 (chat_id,)
             )
             result = {}
             for row in rows:
                 result[row[0]] = {
                     'penalty_type': row[1],
-                    'duration_seconds': row[2]
+                    'duration_seconds': row[2],
+                    'strikes_before_ban': row[3]
                 }
             return result
         except Exception as e:
