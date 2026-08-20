@@ -10,6 +10,10 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - إصلاح safe_send لتفادي كسر التنسيق
 - إزالة اعتماد الصلاحيات على user_groups_link
 - تحديث last_publish بعد النشر التلقائي
+- إضافة حالات WAIT_VIOLATION_STRIKES و WAIT_VIOLATION_DURATION
+- استثناءات للأزرار التي لا تحتاج chat_id في build()
+- استخدام get_min_publish_interval في auto_publish
+- تحسين safe_send مع try/except شامل
 """
 
 import asyncio
@@ -328,6 +332,8 @@ class UserState(Enum):
     WAIT_GITHUB_URL = auto()
     WAIT_GRANT_FREE = auto()
     WAIT_PENALTY_DURATION = auto()
+    WAIT_VIOLATION_STRIKES = auto()
+    WAIT_VIOLATION_DURATION = auto()
     SUPPORT_MODE = auto()
 
 
@@ -519,13 +525,26 @@ class CB:
 
 
 # =====================================================================
-# 9. مصنع الكيبوردات (مع دعم اللغات)
+# 9. مصنع الكيبوردات (مع دعم اللغات والاستثناءات)
 # =====================================================================
 
 class KeyboardFactory:
     _configs: Dict[str, Dict] = {}
     _default_lang: str = "ar"
     _config_path_template: str = "buttons_config_{lang}.json"
+
+    # ✅ أزرار لا تحتاج إلى chat_id في callback
+    _NO_CHAT_ID_BUTTONS = {
+        "sec_close", "panel_close", "back", "main", "cancel",
+        "help", "settings", "language", "check_sub",
+        "toggle_auto", "toggle_rec", "plans", "subscribe",
+        "support", "support_ticket", "developer", "trial",
+        "contests", "contest_winners", "referral", "ref_claim",
+        "ref_list", "reminder", "rem_sub", "rem_daily",
+        "rem_weekly", "rem_days", "translation", "trans_off",
+        "invoices", "groups", "admin", "panel_close",
+        "pub_all", "post_add", "post_pub", "post_list", "post_rec"
+    }
 
     @classmethod
     def _load_config_for_lang(cls, lang: str) -> Dict:
@@ -645,11 +664,9 @@ class KeyboardFactory:
                 else:
                     text = cls.get_text(item, lang)
                     callback = item
-                    if chat_id:
-                        if item.endswith(':'):
-                            callback = f"{item}{chat_id}"  # السلسلة موجودة بنقطة في النهاية
-                        else:
-                            callback = f"{item}:{chat_id}"
+                    # ✅ استثناءات الأزرار التي لا تحتاج chat_id
+                    if chat_id and item not in cls._NO_CHAT_ID_BUTTONS:
+                        callback = f"{item}:{chat_id}"
                     btn_row.append(InlineKeyboardButton(text, callback_data=callback))
             keyboard.append(btn_row)
         return InlineKeyboardMarkup(keyboard)
@@ -820,7 +837,7 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
         )
     except Exception as e:
         logger.warning(f"⚠️ فشل الإرسال: {e}")
-        # محاولة أخيرة بعد إزالة الرموز الخاصة
+        # محاولة بإزالة الرموز الخاصة
         plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
         if len(plain) > 4096:
             plain = plain[:4093] + "..."
@@ -828,7 +845,12 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
             return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
         except Exception as e2:
             logger.error(f"❌ فشل الإرسال النهائي: {e2}")
-            return None
+            # محاولة أخيرة بدون أي تنسيق
+            try:
+                return await bot.send_message(chat_id=chat_id, text=original[:4000], reply_markup=reply_markup, **kwargs)
+            except Exception as e3:
+                logger.error(f"❌ فشل كامل: {e3}")
+                return None
 
 def get_ram_usage() -> dict:
     if psutil is None:
@@ -1080,6 +1102,9 @@ class BackgroundTasks:
     async def auto_publish(bot) -> None:
         await asyncio.sleep(10)
         max_channels = getattr(CONFIG, 'MAX_CHANNELS_PER_CYCLE', 20)
+        # ✅ الحصول على الحد الأدنى للفاصل الزمني
+        min_interval = await get_min_publish_interval()
+        
         while True:
             try:
                 channels = await DB.get_channels_to_publish(max_channels)
@@ -1107,10 +1132,10 @@ class BackgroundTasks:
                         else:
                             await bot.send_message(ch['channel_id'], post['text'][:4096] if post['text'] else ".")
                         await DB.mark_post_published(post['id'])
-                        # ✅ تحديث last_publish بعد النشر
                         await DB.update_last_publish(ch['id'])
                         await DB.update_next_publish(ch['id'])
-                        await asyncio.sleep(0.5)
+                        # ✅ استخدام min_interval كحد أدنى للفاصل الزمني
+                        await asyncio.sleep(max(0.5, min_interval))
                     except Exception as e:
                         logger.error(f"❌ Publish error: {e}")
                         await DB.increment_post_fail(post['id'])
