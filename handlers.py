@@ -2,23 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (النسخة النهائية الكاملة والمصلحة)
-- حفظ المنشورات فورًا (واحد أو أكثر) مع /done للإنهاء
-- إخفاء رسالة تفعيل المجموعة بعد 5 ثوان
-- أمر /grant لمنح اشتراك مجاني (للمطور فقط)
-- زر منح اشتراك مجاني في لوحة الأدمن
-- إصلاح إضافة القنوات والتحقق من الاشتراك
-- إصلاح زر قائمة الكلمات المحظورة
-- ✅ تطبيق إصلاحات المراجعة الأمنية والمنطقية
-- ✅ معالجة زر status_only
-- ✅ إصلاح رابط الاشتراك الإجباري للقنوات الرقمية
-- ✅ إنشاء مجلد النسخ الاحتياطي تلقائيًا
-- ✅ try/except لحلقة البث العام
-- ✅ تأكيدات الإضافة/الحذف في الردود التلقائية
-- ✅ التحقق من حالة المسابقة قبل إعلان الفائز
-- ✅ إصلاح استدعاء _handle_banned_words_direct مع chat_id اختياري
-- ✅ تحديد الحد الأقصى للمنشورات (30 منشور لكل قناة)
-- ✅ إصلاح كامل لزر "كلمات محظورة" في لوحة الأدمن (إدارة كاملة + صلاحية المطور)
+handlers.py - جميع معالجات البوت (النسخة النهائية المُصحَّحة)
+- حفظ المنشورات فورًا مع /done
+- إخفاء رسالة تفعيل المجموعة
+- أمر /grant للمطور
+- دعم مدة مخصصة في أوامر الكتم والحظر
+- نظام عقوبات مخصصة لكل مخالفة
+- فرض حدود الخطة (max_channels, max_posts)
+- إصلاح شامل لجميع الأخطاء الحرجة
 """
 
 import asyncio
@@ -86,14 +77,12 @@ class CommandHandlers:
         force_ch = await DB.get_force_subscribe_channel()
         if force_ch and user_id != CONFIG.PRIMARY_OWNER_ID:
             try:
-                # دعم المعرف الرقمي
                 if force_ch.lstrip('-').isdigit():
                     chat = await context.bot.get_chat(int(force_ch))
                 else:
                     chat = await context.bot.get_chat(f"@{force_ch}")
                 member = await context.bot.get_chat_member(chat.id, user_id)
                 if member.status not in ['member', 'administrator', 'creator']:
-                    # محاولة جلب رابط دعوة صالح
                     invite_link = None
                     try:
                         invite_link = await context.bot.export_chat_invite_link(chat.id)
@@ -154,7 +143,6 @@ class CommandHandlers:
             if btn_row:
                 keyboard.append(btn_row)
 
-        # ✅ منع تكرار زر الأدمن إذا كان موجودًا بالفعل
         if CONFIG.is_developer(user_id):
             admin_text = KeyboardFactory.get_text("admin_panel_btn", lang)
             if not any(btn.callback_data == CB.ADMIN for row in keyboard for btn in row):
@@ -273,7 +261,8 @@ class CommandHandlers:
             return
         lang = await DB.get_user_language(user_id)
         settings = await DB.get_security_settings(chat_id)
-        text = await KeyboardFactory._format_security_text(settings)
+        # ✅ بدون await لأن الدالة غير متزامنة
+        text = KeyboardFactory._format_security_text(settings)
         kb = KeyboardFactory.build("security", chat_id, lang=lang)
         await safe_send(context.bot, user_id, text, reply_markup=kb)
 
@@ -370,7 +359,7 @@ class CommandHandlers:
             admin_id = int(context.args[0])
         except:
             return
-        await DB.execute("INSERT OR IGNORE INTO hidden_admins (chat_id, admin_id, added_by, added_at) VALUES (?,?,?,?)", (chat_id, admin_id, user_id, TimeUtils.sql_iso()))
+        await DB.add_hidden_admin(chat_id, admin_id, user_id)
         invalidate_auth_cache(chat_id, admin_id)
         await safe_send(context.bot, user_id, f"✅ تم إضافة `{admin_id}` كمشرف مخفي")
 
@@ -413,7 +402,7 @@ class CommandHandlers:
             text += f"🛡️ `{a[0]}`\n"
         await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد")
 
-    # ========== تفعيل المجموعة (مع دعم المشرف المخفي) ==========
+    # ========== تفعيل المجموعة ==========
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -522,7 +511,6 @@ class CommandHandlers:
             else:
                 logger.error(f"❌ فشل إرسال رسالة التأكيد: {e}")
 
-        # إرسال رسالة التفعيل إلى المجموعة ثم حذفها بعد 5 ثوانٍ
         sent_msg = await safe_send(context.bot, chat_id, "🤖 **تم تفعيل البوت!**")
         if sent_msg:
             try:
@@ -586,7 +574,7 @@ class CommandHandlers:
 
         args = context.args or []
         if not args:
-            await safe_send(context.bot, user_id, f"📝 /{action} معرف_المستخدم")
+            await safe_send(context.bot, user_id, f"📝 /{action} معرف_المستخدم [مدة_بالدقائق]")
             return
 
         try:
@@ -599,20 +587,108 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ لا يمكن معاملة مشرف")
             return
 
-        reason = " ".join(args[1:]) if len(args) > 1 else ""
+        reason_parts = []
+        duration_seconds = 60  # افتراضي 60 ثانية
+        if len(args) > 1:
+            try:
+                minutes = int(args[1])
+                if minutes > 0:
+                    duration_seconds = minutes * 60
+                    reason_parts = args[2:]
+                else:
+                    reason_parts = args[1:]
+            except ValueError:
+                reason_parts = args[1:]
+
+        reason = " ".join(reason_parts)
 
         if action == 'unban':
             try:
                 await context.bot.unban_chat_member(chat_id, target)
+                # ✅ إزالة العقوبة من قاعدة البيانات
+                await DB.remove_penalties_for_user(target, chat_id, penalty_type='ban')
                 await safe_send(context.bot, user_id, "✅ تم إلغاء الحظر")
             except Exception as e:
                 logger.error(f"❌ فشل إلغاء الحظر: {e}")
             return
 
-        success, msg = await apply_penalty(context.bot, chat_id, target, action, 60, reason, user_id)
+        success, msg = await apply_penalty(context.bot, chat_id, target, action, duration_seconds, reason, user_id)
         await safe_send(context.bot, user_id, msg)
 
-    # ========== ✅ أمر تعيين الحد الأدنى للفاصل الزمني (للمطور فقط) ==========
+    @staticmethod
+    async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """رفع مستخدم إلى مشرف (بالمعرف أو بالرد)"""
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            return
+
+        target_id = None
+        title = None
+
+        if update.message.reply_to_message:
+            target_id = update.message.reply_to_message.from_user.id
+            if context.args:
+                title = " ".join(context.args)
+        else:
+            if not context.args:
+                await safe_send(context.bot, user_id, "📝 /promote (بالرد على رسالة) أو /promote <معرف_المستخدم> [لقب]")
+                return
+            try:
+                target_id = int(context.args[0])
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+                return
+            if len(context.args) > 1:
+                title = " ".join(context.args[1:])
+
+        if target_id is None:
+            await safe_send(context.bot, user_id, "❌ لم يتم تحديد المستخدم")
+            return
+
+        # ✅ منع ترقية البوتات
+        try:
+            target_member = await context.bot.get_chat_member(chat_id, target_id)
+            if target_member.user.is_bot:
+                await safe_send(context.bot, user_id, "❌ لا يمكن ترقية بوت")
+                return
+        except:
+            pass
+
+        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        if bot_member.status != 'administrator' or not bot_member.can_promote_members:
+            await safe_send(context.bot, user_id, "❌ البوت ليس مشرفًا أو لا يملك صلاحية رفع مشرفين")
+            return
+
+        try:
+            await context.bot.promote_chat_member(
+                chat_id=chat_id,
+                user_id=target_id,
+                can_change_info=False,
+                can_post_messages=False,
+                can_edit_messages=False,
+                can_delete_messages=True,
+                can_invite_users=True,
+                can_restrict_members=True,
+                can_pin_messages=True,
+                can_promote_members=False,
+                can_manage_video_chats=False,
+                can_manage_topics=False,
+            )
+            if title:
+                await context.bot.set_chat_administrator_custom_title(chat_id, target_id, title)
+            await safe_send(context.bot, user_id, f"✅ تم رفع المستخدم `{target_id}` إلى مشرف")
+        except Exception as e:
+            logger.error(f"❌ فشل الرفع: {e}")
+            await safe_send(context.bot, user_id, "❌ فشل رفع المستخدم (تحقق من صلاحيات البوت)")
+
+    # ========== أمر منح اشتراك مجاني ==========
 
     @staticmethod
     async def set_min_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -637,11 +713,8 @@ class CommandHandlers:
         except ValueError:
             await safe_send(context.bot, user_id, "❌ قيمة غير صالحة، أدخل رقماً")
 
-    # ========== ✅ أمر منح اشتراك مجاني (للمطور فقط) ==========
-
     @staticmethod
     async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """منح اشتراك مجاني لمستخدم (للمطور فقط)"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             lang = await DB.get_user_language(user_id)
@@ -660,21 +733,17 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ قيم غير صالحة")
             return
 
-        # ✅ حد أقصى 365 يوم
         if days < 1 or days > 365:
             await safe_send(context.bot, user_id, "❌ عدد الأيام يجب أن يكون بين 1 و 365")
             return
 
-        # التحقق من أن المستخدم موجود
         user_row = await DB.fetchone("SELECT user_id FROM users WHERE user_id=?", (target_id,))
         if not user_row:
             await safe_send(context.bot, user_id, "❌ المستخدم غير موجود في قاعدة البيانات")
             return
 
-        # البحث عن خطة الهدية أولاً
         plan_row = await DB.fetchone("SELECT id FROM plans WHERE is_gift=1 LIMIT 1")
         if not plan_row:
-            # استخدام أي خطة نشطة كبديل
             plan_row = await DB.fetchone("SELECT id FROM plans WHERE is_active=1 AND is_gift=0 LIMIT 1")
         plan_id = plan_row[0] if plan_row else None
 
@@ -684,11 +753,10 @@ class CommandHandlers:
         else:
             await safe_send(context.bot, user_id, "❌ فشل المنح - تحقق من السجلات")
 
-    # ========== أوامر الهدايا (Gift Codes) ==========
+    # ========== أوامر الهدايا ==========
 
     @staticmethod
     async def gift_plans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض خطط الهدايا المتاحة"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
         
@@ -716,7 +784,6 @@ class CommandHandlers:
 
     @staticmethod
     async def redeem_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """استخدام كود هدية"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
         
@@ -773,7 +840,6 @@ class CallbackHandlers:
         logger.info(f"Callback data: {data} (base: {base_data})")
 
         try:
-            # ========== زر الحالة فقط (status_only) ==========
             if base_data == "status_only":
                 try:
                     await query.answer("لا تغيير")
@@ -781,12 +847,12 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ========== الأزرار الأساسية ==========
             if base_data in [CB.MAIN, CB.BACK]:
                 try:
                     await query.answer()
                 except BadRequest:
                     pass
+                context.args = []
                 await CommandHandlers.start(update, context)
                 return
 
@@ -855,6 +921,7 @@ class CallbackHandlers:
                     await query.answer()
                 except BadRequest:
                     pass
+                context.args = []
                 await CommandHandlers.start(update, context)
                 return
 
@@ -905,7 +972,6 @@ class CallbackHandlers:
                 )
                 return
 
-            # ========== الباقات ==========
             if base_data == CB.PLANS:
                 kb = KeyboardFactory.build("plans", lang=lang)
                 await query.edit_message_text(await get_text(lang, 'plan_selector'), reply_markup=kb)
@@ -915,7 +981,6 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ========== عرض خطط الهدايا ==========
             if base_data == "gift_plans":
                 try:
                     await query.answer()
@@ -945,7 +1010,6 @@ class CallbackHandlers:
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
                 return
 
-            # ========== استخدام كود هدية (من الزر) ==========
             if base_data == "redeem_gift":
                 try:
                     await query.answer()
@@ -994,6 +1058,7 @@ class CallbackHandlers:
                         currency="XTR",
                         prices=[LabeledPrice(plan['name'], plan['price'])]
                     )
+                    await query.answer("✅ تم إرسال الفاتورة")
                     await query.message.delete()
                 except Exception as e:
                     logger.error(f"❌ فشل إرسال الفاتورة: {e}")
@@ -1023,7 +1088,6 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ========== الإحالات ==========
             if base_data == CB.REFERRAL:
                 try:
                     await query.answer()
@@ -1055,7 +1119,6 @@ class CallbackHandlers:
                 await query.edit_message_text(text)
                 return
 
-            # ========== التذكيرات ==========
             if base_data in [CB.REM_TOGGLE_SUB, CB.REM_TOGGLE_DAILY, CB.REM_TOGGLE_WEEKLY]:
                 try:
                     await query.answer("🔄 جارٍ التحديث...")
@@ -1116,7 +1179,6 @@ class CallbackHandlers:
                 await query.edit_message_text(f"✅ تم تعيين لغة التذكير: {lang_set}")
                 return
 
-            # ========== الترجمة ==========
             if base_data == CB.TRANSLATION:
                 try:
                     await query.answer()
@@ -1136,7 +1198,7 @@ class CallbackHandlers:
                     pass
                 return
 
-            if data.startswith(CB.TRANS_SET):
+            if data.startswith(CB.TRANS_SET + ":"):
                 lang_set = data.split(":")[-1]
                 await DB.set_user_language(user_id, lang_set)
                 await query.edit_message_text(f"✅ تم تعيين: {lang_set}")
@@ -1146,7 +1208,6 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ========== المسابقات ==========
             if base_data == CB.CONTESTS:
                 try:
                     await query.answer()
@@ -1174,7 +1235,7 @@ class CallbackHandlers:
                     pass
                 return
 
-            if data.startswith(CB.CONTEST_JOIN):
+            if data.startswith(CB.CONTEST_JOIN + ":"):
                 cid = int(data.split(":")[-1])
                 StateManager.set(user_id, UserState.WAIT_CONTEST_ANSWER)
                 context.user_data['contest_join'] = cid
@@ -1185,7 +1246,6 @@ class CallbackHandlers:
                 await safe_send(context.bot, user_id, "📝 أرسل إجابتك:")
                 return
 
-            # ========== الدعم ==========
             if base_data == CB.SUPPORT_TICKET:
                 StateManager.set(user_id, UserState.SUPPORT_MODE)
                 try:
@@ -1195,7 +1255,6 @@ class CallbackHandlers:
                 await safe_send(context.bot, user_id, "📞 أرسل رسالتك:")
                 return
 
-            # ========== القنوات ==========
             if base_data == CB.CH_ADD:
                 StateManager.set(user_id, UserState.WAIT_CHANNEL)
                 await query.edit_message_text("📡 أرسل معرف القناة:")
@@ -1250,7 +1309,6 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ========== المنشورات ==========
             if base_data == CB.POST_ADD:
                 if not await DB.has_active_subscription(user_id):
                     try:
@@ -1266,11 +1324,13 @@ class CallbackHandlers:
                     except BadRequest:
                         pass
                     return
-                # ✅ التحقق من الحد الأقصى قبل بدء الإضافة
+                # ✅ فرض حد max_posts من الخطة
+                active_plan = await DB.get_active_plan(user_id)
+                limit = active_plan['max_posts'] if active_plan else CONFIG.MAX_POSTS_PER_CHANNEL
                 row = await DB.fetchone("SELECT COUNT(*) FROM posts WHERE channel_db_id=?", (active,))
                 total_posts = row[0] if row else 0
-                if total_posts >= 30:
-                    await query.answer("❌ وصلت للحد الأقصى (30 منشور) في هذه القناة.", show_alert=True)
+                if total_posts >= limit:
+                    await query.answer(f"❌ وصلت للحد الأقصى ({limit} منشور) في هذه القناة.", show_alert=True)
                     return
                 StateManager.set(user_id, UserState.ADDING_POSTS)
                 await query.edit_message_text(
@@ -1297,8 +1357,12 @@ class CallbackHandlers:
                 ch_info = await DB.get_channel_info(active)
                 if not ch_info:
                     return
-                await CallbackHandlers._publish_single(context.bot, active, ch_info['channel_id'], post)
-                await query.edit_message_text("✅ تم النشر!")
+                try:
+                    await CallbackHandlers._publish_single(context.bot, active, ch_info['channel_id'], post)
+                    await query.edit_message_text("✅ تم النشر!")
+                except Exception as e:
+                    logger.error(f"❌ فشل النشر: {e}")
+                    await query.edit_message_text("❌ فشل النشر، تحقق من صلاحيات البوت.")
                 return
 
             if base_data == CB.POST_LIST:
@@ -1399,7 +1463,6 @@ class CallbackHandlers:
                 await CallbackHandlers._show_post_list(update, context, query, user_id, lang)
                 return
 
-            # ========== المجموعات ==========
             if base_data == CB.GROUPS:
                 try:
                     await query.answer()
@@ -1439,7 +1502,8 @@ class CallbackHandlers:
                         pass
                     return
                 settings = await DB.get_security_settings(chat_id)
-                text = await KeyboardFactory._format_security_text(settings)
+                # ✅ بدون await
+                text = KeyboardFactory._format_security_text(settings)
                 kb = KeyboardFactory.build("security", chat_id, lang=lang)
                 await query.edit_message_text(text, reply_markup=kb)
                 try:
@@ -1463,7 +1527,6 @@ class CallbackHandlers:
                         pass
                 return
 
-            # ========== ✅ زر منح اشتراك مجاني (للمطور فقط) ==========
             if data == "admin_grant_free":
                 if not CONFIG.is_developer(user_id):
                     try:
@@ -1479,7 +1542,6 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ========== أزرار لوحة المجموعة ==========
             if data.startswith(CB.PANEL_LOCK + ":"):
                 chat_id = int(data.split(":")[-1])
                 if not await is_authorized_in_group(context.bot, chat_id, user_id):
@@ -1524,12 +1586,10 @@ class CallbackHandlers:
                     pass
                 return
 
-            # ========== ✅ معالج مستقل لزر كلمات محظورة ==========
             if data.startswith("sec_banned_words") or base_data == "sec_banned_words":
                 await CallbackHandlers._handle_banned_words_direct(update, context, query, user_id, None, lang)
                 return
 
-            # ========== الأزرار الفرعية ==========
             if data.startswith("sec_") or base_data.startswith("sec_"):
                 await CallbackHandlers._handle_security(update, context, query, user_id, lang)
                 return
@@ -1545,7 +1605,6 @@ class CallbackHandlers:
 
             if data.startswith("sched_open:"):
                 ch_id = int(data.split(":")[-1])
-                # ✅ فحص الملكية قبل عرض الجدولة
                 row = await DB.fetchone("SELECT user_id FROM user_channels WHERE id=?", (ch_id,))
                 if not row or row[0] != user_id:
                     try:
@@ -1580,7 +1639,7 @@ class CallbackHandlers:
                 await CallbackHandlers._handle_penalty(update, context, query, user_id)
                 return
 
-            if data.startswith("contest_") or data.startswith(CB.DECLARE_WINNER_SEL):
+            if data.startswith("contest_") or data.startswith(CB.DECLARE_WINNER_SEL + ":"):
                 await CallbackHandlers._handle_contests(update, context, query, user_id)
                 return
 
@@ -1595,10 +1654,10 @@ class CallbackHandlers:
                     await query.answer(f"✅ {lang_set}")
                 except BadRequest:
                     pass
+                context.args = []
                 await CommandHandlers.start(update, context)
                 return
 
-            # ========== شراء كود هدية ==========
             if data.startswith("buy_gift:"):
                 try:
                     await query.answer("🔄 جارٍ التحضير...")
@@ -1642,6 +1701,7 @@ class CallbackHandlers:
                         currency="XTR",
                         prices=[LabeledPrice(f"{plan['days']} يوم", plan['price'])]
                     )
+                    await query.answer("✅ تم إرسال الفاتورة")
                     await query.message.delete()
                 except Exception as e:
                     logger.error(f"❌ فشل إرسال الفاتورة: {e}")
@@ -1679,11 +1739,14 @@ class CallbackHandlers:
             else:
                 await bot.send_message(ch_tele, post['text'][:4096] if post['text'] else ".")
             await DB.mark_post_published(post['id'])
+            # ✅ تحديث وقت آخر نشر قبل حساب الموعد التالي
+            await DB.update_last_publish(ch_db_id)
             await DB.update_next_publish(ch_db_id)
             await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"❌ فشل النشر التلقائي: {e}")
             await DB.increment_post_fail(post['id'])
+            raise  # ✅ إعادة رمي الاستثناء ليلتقطه المستدعي
 
     @staticmethod
     async def _show_channel_list(update, context, query, user_id, lang=None):
@@ -1814,7 +1877,8 @@ class CallbackHandlers:
             new_val = 1 - (current[0] if current else 0)
             await DB.execute(f"UPDATE group_security SET {col}=? WHERE chat_id=?", (new_val, chat_id))
             settings = await DB.get_security_settings(chat_id)
-            text = await KeyboardFactory._format_security_text(settings)
+            # ✅ بدون await
+            text = KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id, lang=lang)
             try:
                 await query.edit_message_text(text, reply_markup=kb)
@@ -1830,7 +1894,8 @@ class CallbackHandlers:
             for f in field_map.values():
                 await DB.execute(f"UPDATE group_security SET {f}=1 WHERE chat_id=?", (chat_id,))
             settings = await DB.get_security_settings(chat_id)
-            text = await KeyboardFactory._format_security_text(settings)
+            # ✅ بدون await
+            text = KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id, lang=lang)
             try:
                 await query.edit_message_text(text, reply_markup=kb)
@@ -1846,7 +1911,8 @@ class CallbackHandlers:
             for f in field_map.values():
                 await DB.execute(f"UPDATE group_security SET {f}=0 WHERE chat_id=?", (chat_id,))
             settings = await DB.get_security_settings(chat_id)
-            text = await KeyboardFactory._format_security_text(settings)
+            # ✅ بدون await
+            text = KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id, lang=lang)
             try:
                 await query.edit_message_text(text, reply_markup=kb)
@@ -2001,6 +2067,66 @@ class CallbackHandlers:
                 pass
             return
 
+        # ✅ إدارة عقوبات المخالفات
+        if action == "violation_penalties":
+            kb = []
+            violation_names = {
+                "links": "الروابط",
+                "mentions": "المنشنات",
+                "banned_words": "الكلمات المحظورة",
+                "flood": "التكرار",
+                "max_len": "الطول الزائد",
+                "service": "رسائل الخدمة",
+                "videos": "الفيديو",
+                "audio": "الصوت",
+                "documents": "المستندات",
+                "stickers": "الملصقات",
+                "forwarded": "المعاد توجيهه",
+                "polls": "الاستطلاعات",
+                "games": "الألعاب",
+                "voice": "البصمات الصوتية",
+                "video_note": "رسائل الفيديو",
+            }
+            for v_type, v_name in violation_names.items():
+                rule = await DB.get_violation_penalty(chat_id, v_type)
+                if rule:
+                    p_type = rule['penalty_type']
+                    dur = rule['duration_seconds'] // 60
+                    status = f"{p_type} ({dur} دقيقة)" if p_type in ('ban', 'mute', 'restrict') else f"إنذار"
+                else:
+                    status = "غير محدد"
+                kb.append([InlineKeyboardButton(
+                    f"{v_name}: {status}",
+                    callback_data=f"sec_violation:{chat_id}:{v_type}"
+                )])
+            kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")])
+            await query.edit_message_text("⚖️ **عقوبات المخالفات**\nاختر نوع المخالفة لضبط عقوبتها", reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        if action == "violation":
+            if len(parts) >= 3:
+                v_type = parts[2]
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔨 حظر", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:ban"),
+                     InlineKeyboardButton("🔇 كتم", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:mute"),
+                     InlineKeyboardButton("⚠️ إنذار", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:warn")],
+                    [InlineKeyboardButton("🔒 تقييد", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:restrict")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data=f"sec_violation_penalties:{chat_id}")]
+                ])
+                await query.edit_message_text("اختر نوع العقوبة:", reply_markup=kb)
+            return
+
+        if action == "violation_pen":
+            if len(parts) >= 4:
+                v_type = parts[2]
+                p_type = parts[3]
+                StateManager.set(user_id, UserState.WAIT_PENALTY_DURATION)
+                context.user_data['penalty_chat'] = chat_id
+                context.user_data['penalty_vtype'] = v_type
+                context.user_data['penalty_ptype'] = p_type
+                await query.edit_message_text("⏱️ أرسل المدة بالدقائق (1-1440) أو 0 للدائم:")
+            return
+
         try:
             await query.answer()
         except BadRequest:
@@ -2011,13 +2137,11 @@ class CallbackHandlers:
         if not lang:
             lang = await DB.get_user_language(user_id)
 
-        # إذا لم يتم تمرير chat_id، حاول استخراجه من البيانات
         if chat_id is None:
             data = query.data
             parts = data.split(":")
             chat_id = int(parts[1]) if len(parts) > 1 else -1
 
-        # تحقق من الصلاحية فقط إذا كانت مجموعة حقيقية (وليس لوحة الأدمن)
         if chat_id != -1:
             if not await is_authorized_in_group(context.bot, chat_id, user_id):
                 try:
@@ -2026,7 +2150,6 @@ class CallbackHandlers:
                     pass
                 return
         else:
-            # لوحة الأدمن: يجب أن يكون المستخدم مطورًا
             if not CONFIG.is_developer(user_id):
                 try:
                     await query.answer("❌ غير مصرح", show_alert=True)
@@ -2125,7 +2248,6 @@ class CallbackHandlers:
 
         elif data == CB.ADMIN_BACKUP:
             try:
-                # ✅ إنشاء مجلد النسخ الاحتياطي إذا لم يكن موجودًا
                 PATHS.BACKUPS.mkdir(parents=True, exist_ok=True)
                 backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
                 shutil.copy2(PATHS.DB, backup_file)
@@ -2208,7 +2330,7 @@ class CallbackHandlers:
             await query.edit_message_text("📝 أرسل الكلمة:")
 
         elif data == CB.ADMIN_LIST_REPLIES:
-            replies = await DB.fetchall("SELECT keyword, usage_count FROM auto_replies WHERE chat_id=0 LIMIT 20")
+            replies = await DB.fetchall("SELECT keyword, usage_count FROM auto_replies WHERE chat_id=-1 LIMIT 20")
             text = "📋 **الردود**\n\n" + "\n".join(f"• {r[0]} ({r[1]})" for r in replies)
             await query.edit_message_text(text if replies else "📭 لا يوجد")
 
@@ -2218,7 +2340,6 @@ class CallbackHandlers:
             await query.edit_message_text("🗑️ أرسل الكلمة:")
 
         elif data == CB.ADMIN_BANNED_WORDS:
-            # ✅ استدعاء قائمة إدارة الكلمات المحظورة العامة
             await CallbackHandlers._handle_banned_words_direct(update, context, query, user_id, -1, lang)
 
         elif data == CB.ADMIN_ADD_BANNED:
@@ -2406,12 +2527,8 @@ class CallbackHandlers:
         ])
         await query.edit_message_text("📝 **إدارة الردود التلقائية**", reply_markup=kb)
 
-    # =====================================================================
-    # ✅ _handle_schedule مع التحقق من الحد الأدنى
-    # =====================================================================
-
     @staticmethod
-    async def _handle_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE, query, user_id):
+    async def _handle_schedule(update, context, query, user_id):
         data = query.data
         parts = data.split(":")
         if len(parts) < 2:
@@ -2422,7 +2539,6 @@ class CallbackHandlers:
         except:
             return
 
-        # ✅ فحص ملكية القناة
         row = await DB.fetchone("SELECT user_id FROM user_channels WHERE id=?", (ch_id,))
         if not row or row[0] != user_id:
             try:
@@ -2479,9 +2595,7 @@ class CallbackHandlers:
         except:
             return
 
-        # 🔹 التحقق من الصلاحية حسب نوع القائمة (عامة أو مجموعة)
         if chat_id == -1:
-            # الكلمات العامة: تخص لوحة الأدمن → صلاحية المطور فقط
             if not CONFIG.is_developer(user_id):
                 try:
                     await query.answer("❌ غير مصرح", show_alert=True)
@@ -2489,7 +2603,6 @@ class CallbackHandlers:
                     pass
                 return
         else:
-            # كلمات مجموعة → صلاحية مشرف المجموعة
             try:
                 if not await is_authorized_in_group(context.bot, chat_id, user_id):
                     lang = await DB.get_user_language(user_id)
@@ -2569,11 +2682,11 @@ class CallbackHandlers:
             return
 
         actions = {
-            "ban": (UserState.WAIT_BAN, "🚫 أرسل معرف المستخدم:"),
-            "mute": (UserState.WAIT_MUTE, "🔇 أرسل معرف المستخدم:"),
+            "ban": (UserState.WAIT_BAN, "🚫 أرسل معرف المستخدم والمدة بالدقائق (مثال: 123456 30)\nاترك المدة فارغة لاستخدام 60 ثانية افتراضية"),
+            "mute": (UserState.WAIT_MUTE, "🔇 أرسل معرف المستخدم والمدة بالدقائق (مثال: 123456 30)\nاترك المدة فارغة لاستخدام 60 ثانية افتراضية"),
             "warn": (UserState.WAIT_WARN, "⚠️ أرسل معرف المستخدم:"),
             "kick": (UserState.WAIT_KICK, "👢 أرسل معرف المستخدم:"),
-            "restrict": (UserState.WAIT_RESTRICT, "🔒 أرسل معرف المستخدم:"),
+            "restrict": (UserState.WAIT_RESTRICT, "🔒 أرسل معرف المستخدم والمدة بالدقائق (مثال: 123456 30)\nاترك المدة فارغة لاستخدام 60 ثانية افتراضية"),
             "unban": (UserState.WAIT_UNBAN, "🔓 أرسل معرف المستخدم:"),
             "pin": (UserState.WAIT_PIN, "📌 أرسل معرف الرسالة أو رد عليها:"),
         }
@@ -2652,7 +2765,6 @@ class CallbackHandlers:
                     pass
                 return
             cid = int(data.split(":")[-1])
-            # ✅ التحقق من أن المسابقة نشطة
             row = await DB.fetchone("SELECT status FROM contests WHERE id=?", (cid,))
             if not row or row[0] != 'active':
                 try:
@@ -2763,6 +2875,13 @@ class MessageHandlers:
                     StateManager.clear(user_id)
                     return
 
+                # ✅ التحقق من صلاحية المستخدم في القناة
+                user_member = await context.bot.get_chat_member(chat.id, user_id)
+                if user_member.status not in ['creator', 'administrator']:
+                    await safe_send(context.bot, user_id, "❌ يجب أن تكون مشرفًا في القناة لإضافتها.")
+                    StateManager.clear(user_id)
+                    return
+
                 existing_channel = await DB.get_channel_by_user(user_id, chat.id)
                 if existing_channel:
                     await safe_send(context.bot, user_id, "⚠️ هذه القناة مضافة مسبقاً")
@@ -2775,6 +2894,19 @@ class MessageHandlers:
                         await safe_send(context.bot, user_id, "❌ يجب أن يكون لديك اشتراك نشط لإضافة قناة")
                         StateManager.clear(user_id)
                         return
+
+                    # ✅ فرض حد max_channels
+                    active_plan = await DB.get_active_plan(user_id)
+                    if active_plan:
+                        current_channels = len(await DB.get_user_channels(user_id))
+                        if current_channels >= active_plan['max_channels']:
+                            await safe_send(
+                                context.bot,
+                                user_id,
+                                f"❌ لقد وصلت للحد الأقصى ({active_plan['max_channels']} قنوات) في خطتك."
+                            )
+                            StateManager.clear(user_id)
+                            return
 
                 result = await DB.add_channel(user_id, chat.id, chat.title or "قناة")
                 if result:
@@ -2817,17 +2949,19 @@ class MessageHandlers:
 
             active = await DB.get_active_channel(user_id)
             if active:
-                # ✅ التحقق من عدم تجاوز الحد الأقصى (30 منشور)
+                # ✅ فرض حد max_posts من الخطة
+                active_plan = await DB.get_active_plan(user_id)
+                limit = active_plan['max_posts'] if active_plan else CONFIG.MAX_POSTS_PER_CHANNEL
                 row = await DB.fetchone("SELECT COUNT(*) FROM posts WHERE channel_db_id=?", (active,))
                 total_posts = row[0] if row else 0
-                if total_posts >= 30:
+                if total_posts >= limit:
                     await safe_send(
                         context.bot,
                         user_id,
-                        "❌ وصلت للحد الأقصى (30 منشور) في هذه القناة.\n"
+                        f"❌ وصلت للحد الأقصى ({limit} منشور) في هذه القناة.\n"
                         "احذف بعض المنشورات أو استخدم قناة أخرى."
                     )
-                    StateManager.clear(user_id)  # إنهاء وضع الإضافة
+                    StateManager.clear(user_id)
                     return
 
                 added = await DB.add_posts(active, [(content, media_type, media_file_id)])
@@ -2840,26 +2974,30 @@ class MessageHandlers:
             return
 
         if state == UserState.WAIT_BROADCAST:
-            try:
+            async def broadcast():
                 offset = 0
                 sent = 0
-                while True:
-                    users = await DB.fetchall("SELECT user_id, banned FROM users LIMIT 5000 OFFSET ?", (offset,))
-                    if not users:
-                        break
-                    for uid, banned in users:
-                        if not banned:
-                            try:
-                                await safe_send(context.bot, uid, text)
-                                sent += 1
-                                await asyncio.sleep(0.05)
-                            except:
-                                pass
-                    offset += 5000
-                await safe_send(context.bot, user_id, f"✅ {sent}")
-            except Exception as e:
-                logger.error(f"❌ فشل البث: {e}")
-                await safe_send(context.bot, user_id, "❌ فشل البث")
+                try:
+                    while True:
+                        users = await DB.fetchall("SELECT user_id, banned FROM users LIMIT 5000 OFFSET ?", (offset,))
+                        if not users:
+                            break
+                        for uid, banned in users:
+                            if not banned:
+                                try:
+                                    await safe_send(context.bot, uid, text)
+                                    sent += 1
+                                    await asyncio.sleep(0.05)
+                                except:
+                                    pass
+                        offset += 5000
+                    await safe_send(context.bot, user_id, f"✅ {sent}")
+                except Exception as e:
+                    logger.error(f"❌ فشل البث: {e}")
+                    await safe_send(context.bot, user_id, "❌ فشل البث")
+
+            asyncio.create_task(broadcast())
+            await safe_send(context.bot, user_id, "⏳ جاري البث...")
             StateManager.clear(user_id)
             return
 
@@ -2999,7 +3137,8 @@ class MessageHandlers:
                      UserState.WAIT_KICK, UserState.WAIT_RESTRICT, UserState.WAIT_UNBAN):
             chat_id_adv = context.user_data.get('adv_chat')
             try:
-                target = int(text.split()[0])
+                parts = text.split()
+                target = int(parts[0])
                 action_map = {
                     UserState.WAIT_BAN: "ban", UserState.WAIT_MUTE: "mute",
                     UserState.WAIT_WARN: "warn", UserState.WAIT_KICK: "kick",
@@ -3009,9 +3148,19 @@ class MessageHandlers:
                 if action and chat_id_adv:
                     if action == 'unban':
                         await context.bot.unban_chat_member(chat_id_adv, target)
+                        # ✅ إزالة العقوبة من قاعدة البيانات
+                        await DB.remove_penalties_for_user(target, chat_id_adv, penalty_type='ban')
                         await safe_send(context.bot, user_id, f"✅ تم إلغاء حظر `{target}`")
                     else:
-                        success, msg = await apply_penalty(context.bot, chat_id_adv, target, action, 60)
+                        duration_seconds = 60
+                        if len(parts) > 1 and action in ('ban', 'mute', 'restrict'):
+                            try:
+                                minutes = int(parts[1])
+                                if minutes > 0:
+                                    duration_seconds = minutes * 60
+                            except ValueError:
+                                pass
+                        success, msg = await apply_penalty(context.bot, chat_id_adv, target, action, duration_seconds)
                         await safe_send(context.bot, user_id, msg)
             except ValueError:
                 await safe_send(context.bot, user_id, "❌ معرف غير صالح")
@@ -3222,9 +3371,28 @@ class MessageHandlers:
         if state == UserState.WAIT_REPLY:
             keyword = context.user_data.get('keyword')
             if keyword:
-                await DB.add_auto_reply(0, keyword, text)
+                await DB.add_auto_reply(-1, keyword, text)
                 _auto_reply_cache.invalidate()
                 await safe_send(context.bot, user_id, f"✅ تم إضافة الرد للكلمة: {keyword}")
+            StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_PENALTY_DURATION:
+            try:
+                dur_minutes = int(text)
+                if dur_minutes < 0 or dur_minutes > 1440:
+                    await safe_send(context.bot, user_id, "❌ المدة غير صالحة (0-1440 دقيقة)")
+                    StateManager.clear(user_id)
+                    return
+                chat_id_pen = context.user_data.get('penalty_chat')
+                v_type = context.user_data.get('penalty_vtype')
+                p_type = context.user_data.get('penalty_ptype')
+                if chat_id_pen and v_type and p_type:
+                    duration_seconds = dur_minutes * 60 if dur_minutes > 0 else 0
+                    await DB.set_violation_penalty(chat_id_pen, v_type, p_type, duration_seconds)
+                    await safe_send(context.bot, user_id, "✅ تم حفظ العقوبة بنجاح")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
             StateManager.clear(user_id)
             return
 
@@ -3244,55 +3412,68 @@ class MessageHandlers:
         
         locked = await DB.fetchone("SELECT locked FROM chat_locks WHERE chat_id=?", (chat_id,))
         if locked and locked[0] == 1:
-            try:
-                await update.message.delete()
-            except:
-                pass
-            return
+            if not await is_authorized_in_group(context.bot, chat_id, update.effective_user.id):
+                try:
+                    await update.message.delete()
+                except:
+                    pass
+                return
 
         settings = await DB.get_security_settings(chat_id)
         perms = await check_bot_permissions(context.bot, chat_id)
         can_delete = perms.get('can_act', False)
-        
-        try:
-            if settings.get('delete_links', False) and TextUtils.contains_link(text):
-                if can_delete:
-                    try:
-                        await update.message.delete()
-                    except:
-                        pass
-                return
-        except Exception:
-            pass
-            
-        try:
-            if settings.get('mentions', False) and TextUtils.contains_mention(text):
-                if can_delete:
-                    try:
-                        await update.message.delete()
-                    except:
-                        pass
-                return
-        except Exception:
-            pass
-            
-        if settings.get('delete_banned_words', False):
-            banned_words = await get_banned_words_cached(chat_id)
-            for word in banned_words:
-                if word in text.lower():
-                    if can_delete:
+
+        # ✅ استثناء المشرفين من العقوبات التلقائية
+        if await is_authorized_in_group(context.bot, chat_id, update.effective_user.id):
+            # معالجة الردود التلقائية للمشرفين (إذا كانت مسموحة)
+            ars = await DB.get_auto_reply_settings(chat_id)
+            if ars.get('enabled', False):
+                if ars.get('only_admins', False) or True:  # يمكن للمشرفين استخدام الردود دائمًا
+                    reply = get_reply_from_file(text.lower().strip())
+                    if not reply:
+                        reply_data = await DB.get_auto_reply(text.lower().strip(), chat_id)
+                        if reply_data:
+                            reply = reply_data.get('reply')
+                    if reply:
                         try:
-                            await update.message.delete()
+                            await update.message.reply_text(reply)
+                            await _increment_usage_async(chat_id, text.lower().strip())
                         except:
                             pass
-                    return
-                    
+            return
+
+        if settings.get('delete_links', False) and TextUtils.contains_link(text):
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except:
+                    pass
+            await apply_violation_penalty(context, chat_id, update.effective_user.id, 'links', "مخالفة روابط")
+            return
+
+        if settings.get('mentions', False) and TextUtils.contains_mention(text):
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except:
+                    pass
+            await apply_violation_penalty(context, chat_id, update.effective_user.id, 'mentions', "مخالفة منشن")
+            return
+
+        if settings.get('delete_banned_words', False):
+            banned_words = await get_banned_words_cached(chat_id)
+            if any(word in text.lower() for word in banned_words):
+                if can_delete:
+                    try:
+                        await update.message.delete()
+                    except:
+                        pass
+                await apply_violation_penalty(context, chat_id, update.effective_user.id, 'banned_words', "كلمة محظورة")
+                return
+
+        # الردود التلقائية
         ars = await DB.get_auto_reply_settings(chat_id)
         if ars.get('enabled', False):
-            if ars.get('only_admins', False):
-                if not await is_authorized_in_group(context.bot, chat_id, update.effective_user.id):
-                    return
-            
             reply = get_reply_from_file(text.lower().strip())
             if not reply:
                 reply_data = await DB.get_auto_reply(text.lower().strip(), chat_id)
@@ -3317,6 +3498,9 @@ class MessageHandlers:
                 await update.message.delete()
             except:
                 pass
+            user_id = update.message.from_user.id if update.message.from_user else None
+            if user_id:
+                await apply_violation_penalty(context, chat_id, user_id, 'service', "رسالة خدمة")
                 
         if settings.get('welcome_enabled', False) and update.message.new_chat_members:
             for member in update.message.new_chat_members:
@@ -3358,3 +3542,53 @@ class MessageHandlers:
                 await join_request.decline()
             except:
                 pass
+
+
+# =====================================================================
+# دالة تطبيق العقوبة المخصصة
+# =====================================================================
+
+async def apply_violation_penalty(context, chat_id, user_id, violation_type, reason="مخالفة"):
+    # ✅ استثناء المشرفين من العقوبات
+    if await is_authorized_in_group(context.bot, chat_id, user_id):
+        return
+
+    rule = await DB.get_violation_penalty(chat_id, violation_type)
+    if not rule:
+        return
+
+    penalty_type = rule['penalty_type']
+    duration_seconds = rule['duration_seconds']
+
+    until_date = TimeUtils.utc_now() + timedelta(seconds=duration_seconds) if duration_seconds > 0 else None
+
+    try:
+        if penalty_type == 'ban':
+            await context.bot.ban_chat_member(chat_id, user_id, until_date=until_date)
+        elif penalty_type == 'mute':
+            await context.bot.restrict_chat_member(
+                chat_id, user_id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until_date
+            )
+        elif penalty_type == 'restrict':
+            await context.bot.restrict_chat_member(
+                chat_id, user_id,
+                permissions=ChatPermissions(can_send_messages=False, can_send_media_messages=False),
+                until_date=until_date
+            )
+        elif penalty_type == 'warn':
+            success, msg = await apply_penalty(context.bot, chat_id, user_id, 'warn', duration_seconds, reason)
+
+        if penalty_type in ('ban', 'mute', 'restrict'):
+            await DB.add_penalty(
+                user_id=user_id,
+                chat_id=chat_id,
+                penalty_type=penalty_type,
+                duration=max(1, int(duration_seconds / 60)),
+                reason=reason,
+                issued_by=context.bot.id
+            )
+    except Exception as e:
+        logger.error(f"❌ فشل تطبيق عقوبة {penalty_type} على {user_id}: {e}")
+

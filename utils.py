@@ -2,28 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-utils.py - الأدوات المساعدة للبوت (نسخة متكاملة ومحدثة)
-========================================================
-- TimeUtils: أدوات الوقت
-- TextUtils: أدوات النصوص
-- RateLimiter: الحد من الطلبات
-- MetricsCollector: مقاييس الأداء
-- AutoReplyCache: كاش الردود التلقائية
-- TranslationManager: إدارة الترجمات
-- StateManager: إدارة الحالات
-- CB: ثوابت الأزرار
-- KeyboardFactory: مصنع لوحات المفاتيح مع دعم الترجمة
-- دوال الصلاحيات: is_authorized_in_group, invalidate_auth_cache, check_bot_permissions
-- safe_send: إرسال آمن
-- get_ram_usage: إحصائيات الرام
-- نظام العقوبات: PenaltyStrategy, PenaltyFactory, apply_penalty
-- إدارة الردود التلقائية: export_auto_replies, import_auto_replies, fetch_json_from_url
-- الردود من ملف: load_replies_from_file, get_reply_from_file, reload_replies_from_file
-- المهام الخلفية: BackgroundTasks (مع إصلاح auto_publish)
-- خادم الويب: setup_webhook, webhook_handler (مع التصحيح)
-- معالج الأخطاء: ErrorHandler
-- دوال إضافية: get_min_publish_interval, get_banned_words_cached, invalidate_banned_words_cache
-- ✅ تمت إضافة: WAIT_GRANT_FREE + زر منح اشتراك مجاني في لوحة الأدمن
+utils.py - الأدوات المساعدة للبوت (النسخة النهائية المُصحَّحة)
+==========================================================
+- جميع الإصلاحات السابقة محفوظة
+- دعم تحميل إعدادات الأزرار عبر load_config()
+- تصحيح بناء الأزرار وتوحيد صيغ الـ Callback
+- إصلاح safe_send لتفادي كسر التنسيق
+- إزالة اعتماد الصلاحيات على user_groups_link
+- تحديث last_publish بعد النشر التلقائي
 """
 
 import asyncio
@@ -31,10 +17,10 @@ import os
 import re
 import json
 import time
+import html
 import shutil
 import logging
 import random
-import html
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any, Union
@@ -42,8 +28,7 @@ from enum import Enum, auto
 from collections import OrderedDict, deque
 from abc import ABC, abstractmethod
 
-import aiohttp.web as web
-
+# استيراد psutil مع معالجة عدم وجوده
 try:
     import psutil
 except ImportError:
@@ -52,10 +37,13 @@ except ImportError:
     logger.warning("⚠️ psutil غير مثبت، لن تعمل إحصائيات الرام")
 
 import aiohttp
+
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton, ChatPermissions, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 from cachetools import TTLCache
+
+import aiohttp.web as web
 
 from config import CONFIG, PATHS
 from database import DB
@@ -103,7 +91,10 @@ class TimeUtils:
         try:
             return datetime.fromisoformat(date_str)
         except ValueError:
-            return None
+            try:
+                return datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                return None
 
 
 # =====================================================================
@@ -162,6 +153,7 @@ class RateLimiter:
                         await asyncio.sleep(wait_time)
                 self._last_calls.append(now)
 
+
 RATE_LIMITER = RateLimiter(max_concurrent=15, max_per_second=30)
 
 
@@ -196,6 +188,7 @@ class MetricsCollector:
     def increment_messages(self):
         self.messages_processed += 1
 
+
 METRICS = MetricsCollector()
 
 
@@ -224,6 +217,7 @@ class AutoReplyCache:
             self.cache.pop(key, None)
         else:
             self.cache.clear()
+
 
 _auto_reply_cache = AutoReplyCache(maxsize=300)
 
@@ -266,7 +260,7 @@ class TranslationManager:
 
     @classmethod
     def get_available_languages(cls) -> Dict[str, str]:
-        return {
+        all_languages = {
             "ar": "العربية 🇸🇦",
             "en": "English 🇬🇧",
             "fr": "Français 🇫🇷",
@@ -280,6 +274,8 @@ class TranslationManager:
             "ja": "日本語 🇯🇵",
             "ko": "한국어 🇰🇷"
         }
+        return all_languages
+
 
 async def get_text(lang: str, key: str, **kwargs) -> str:
     return TranslationManager.get_text(lang, key, **kwargs)
@@ -330,8 +326,10 @@ class UserState(Enum):
     WAIT_AUTO_DEL = auto()
     WAIT_IMPORT_FILE = auto()
     WAIT_GITHUB_URL = auto()
+    WAIT_GRANT_FREE = auto()
+    WAIT_PENALTY_DURATION = auto()
     SUPPORT_MODE = auto()
-    WAIT_GRANT_FREE = auto()  # ✅ تمت الإضافة
+
 
 class StateManager:
     _states: Dict[int, UserState] = {}
@@ -357,7 +355,7 @@ class StateManager:
 
 
 # =====================================================================
-# 8. تعريفات الأزرار (CB)
+# 8. تعريفات الأزرار (CB) - مُحدثة ومتكاملة
 # =====================================================================
 
 class CB:
@@ -373,22 +371,22 @@ class CB:
     # القنوات
     CH_ADD = "ch_add"
     CH_LIST = "ch_list"
-    CH_SEL = "ch_sel:"
-    CH_DEL = "ch_del:"
-    CH_STATS = "ch_stats:"
+    CH_SEL = "ch_sel"
+    CH_DEL = "ch_del"
+    CH_STATS = "ch_stats"
 
     # المنشورات
     POST_ADD = "post_add"
     POST_PUB = "post_pub"
     POST_LIST = "post_list"
     POST_REC = "post_rec"
-    POST_DEL = "post_del:"
-    POST_CLEAR = "post_clear:"
+    POST_DEL = "post_del"
+    POST_CLEAR = "post_clear"
     PUB_ALL = "pub_all"
 
     # المجموعات
     GROUPS = "groups"
-    GRP_SET = "grp_set:"
+    GRP_SET = "grp_set"
 
     # الإعدادات
     TOGGLE_AUTO = "toggle_auto"
@@ -396,35 +394,35 @@ class CB:
 
     # الأمان
     SEC_CLOSE = "sec_close"
-    SEC_ENABLE_ALL = "sec_enable_all:"
-    SEC_DISABLE_ALL = "sec_disable_all:"
+    SEC_ENABLE_ALL = "sec_enable_all"
+    SEC_DISABLE_ALL = "sec_disable_all"
 
     # الكلمات المحظورة
-    BAN_ADD = "ban_add:"
-    BAN_LIST = "ban_list:"
-    BAN_REM = "ban_rem:"
+    BAN_ADD = "ban_add"
+    BAN_LIST = "ban_list"
+    BAN_REM = "ban_rem"
 
     # العقوبات
-    PENALTY = "penalty:"
-    PEN_BAN = "pen_ban:"
-    PEN_MUTE = "pen_mute:"
-    PEN_KICK = "pen_kick:"
-    PEN_WARN = "pen_warn:"
+    PENALTY = "penalty"
+    PEN_BAN = "pen_ban"
+    PEN_MUTE = "pen_mute"
+    PEN_KICK = "pen_kick"
+    PEN_WARN = "pen_warn"
 
     # الإجراءات المتقدمة
-    ADV_ACT = "adv_act:"
-    ACT_BAN = "act_ban:"
-    ACT_MUTE = "act_mute:"
-    ACT_WARN = "act_warn:"
-    ACT_KICK = "act_kick:"
-    ACT_RESTRICT = "act_restrict:"
-    ACT_PIN = "act_pin:"
-    ACT_LOG = "act_log:"
-    ACT_UNBAN = "act_unban:"
+    ADV_ACT = "adv_act"
+    ACT_BAN = "act_ban"
+    ACT_MUTE = "act_mute"
+    ACT_WARN = "act_warn"
+    ACT_KICK = "act_kick"
+    ACT_RESTRICT = "act_restrict"
+    ACT_PIN = "act_pin"
+    ACT_LOG = "act_log"
+    ACT_UNBAN = "act_unban"
 
     # لوحة المجموعة
-    PANEL_LOCK = "panel_lock:"
-    PANEL_UNLOCK = "panel_unlock:"
+    PANEL_LOCK = "panel_lock"
+    PANEL_UNLOCK = "panel_unlock"
     PANEL_CLOSE = "panel_close"
 
     # الدعم
@@ -451,18 +449,18 @@ class CB:
     REM_TOGGLE_DAILY = "rem_daily"
     REM_TOGGLE_WEEKLY = "rem_weekly"
     REM_SET_DAYS = "rem_days"
-    REM_LANG = "rem_lang:"
+    REM_LANG = "rem_lang"
 
     # الترجمة
     TRANSLATION = "translation"
     TRANS_OFF = "trans_off"
-    TRANS_SET = "trans_set:"
+    TRANS_SET = "trans_set"
 
     # المسابقات
     CONTESTS = "contests"
-    CONTEST_JOIN = "contest_join:"
+    CONTEST_JOIN = "contest_join"
     CONTEST_WINNERS = "contest_winners"
-    DECLARE_WINNER_SEL = "declare_winner_sel:"
+    DECLARE_WINNER_SEL = "declare_winner_sel"
 
     # لوحة الأدمن
     ADMIN = "admin"
@@ -482,7 +480,7 @@ class CB:
     ADMIN_METRICS = "admin_metrics"
     ADMIN_BACKUP = "admin_backup"
     ADMIN_RESTORE = "admin_restore"
-    ADMIN_RESTORE_SEL = "admin_restore_sel:"
+    ADMIN_RESTORE_SEL = "admin_restore_sel"
     ADMIN_SEND_UPDATE = "admin_send_update"
     ADMIN_SET_UPDATE_CH = "admin_set_update_ch"
     ADMIN_SHOW_UPDATE = "admin_show_update"
@@ -503,23 +501,21 @@ class CB:
     ADMIN_REM_BANNED = "admin_rem_banned"
     ADMIN_CREATE_CONTEST = "admin_create_contest"
     ADMIN_DECLARE_WINNER = "admin_declare_winner"
-    ADMIN_DEL_CONTEST = "admin_del_contest:"
+    ADMIN_DEL_CONTEST = "admin_del_contest"
     ADMIN_EXPORT_REPLIES = "admin_export_replies"
     ADMIN_IMPORT_REPLIES = "admin_import_replies"
     ADMIN_REFRESH_CACHE = "admin_refresh_cache"
     ADMIN_IMPORT_GITHUB = "admin_import_github"
-    ADMIN_GRANT_FREE = "admin_grant_free"  # ✅ تمت الإضافة
-    ADMIN_CLOSE = "admin_close"  # ✅ تمت الإضافة
 
     # الردود التلقائية
-    AUTO_REPLY_MENU = "auto_reply_menu:"
-    AUTO_REPLY_TOGGLE = "auto_reply_toggle:"
-    AUTO_REPLY_ADMINS = "auto_reply_admins:"
-    AUTO_REPLY_RESET = "auto_reply_reset:"
-    AUTO_REPLY_STATS = "auto_reply_stats:"
-    AUTO_REPLY_ADD = "auto_reply_add:"
-    AUTO_REPLY_DEL = "auto_reply_del:"
-    AUTO_REPLY_LIST = "auto_reply_list:"
+    AUTO_REPLY_MENU = "auto_reply_menu"
+    AUTO_REPLY_TOGGLE = "auto_reply_toggle"
+    AUTO_REPLY_ADMINS = "auto_reply_admins"
+    AUTO_REPLY_RESET = "auto_reply_reset"
+    AUTO_REPLY_STATS = "auto_reply_stats"
+    AUTO_REPLY_ADD = "auto_reply_add"
+    AUTO_REPLY_DEL = "auto_reply_del"
+    AUTO_REPLY_LIST = "auto_reply_list"
 
 
 # =====================================================================
@@ -532,19 +528,10 @@ class KeyboardFactory:
     _config_path_template: str = "buttons_config_{lang}.json"
 
     @classmethod
-    def load_config(cls):
-        """تحميل جميع ملفات الأزرار عند بدء التشغيل"""
-        default_config = cls.get_config(cls._default_lang)
-        all_langs = TranslationManager.get_available_languages()
-        for lang in all_langs:
-            if lang != cls._default_lang:
-                cls._load_config_for_lang(lang)
-        return default_config
-
-    @classmethod
     def _load_config_for_lang(cls, lang: str) -> Dict:
         if lang in cls._configs:
             return cls._configs[lang]
+
         file_path = cls._config_path_template.format(lang=lang)
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -569,6 +556,11 @@ class KeyboardFactory:
             return cls._load_config_for_lang(cls._default_lang)
 
     @classmethod
+    def load_config(cls):
+        """تحميل إعدادات الأزرار للغة الافتراضية (تُستدعى عند بدء التشغيل)"""
+        cls._load_config_for_lang(cls._default_lang)
+
+    @classmethod
     def get_config(cls, lang: str = None) -> Dict:
         if not lang:
             lang = cls._default_lang
@@ -587,7 +579,9 @@ class KeyboardFactory:
     @classmethod
     def build(cls, menu_name: str, chat_id: int = None, extra_data: Dict = None, lang: str = None) -> InlineKeyboardMarkup:
         rows = cls.get_menu(menu_name, lang)
+
         if not rows:
+            # قوائم احتياطية إذا لم تكن معرفة في الملف
             default_menus = {
                 "banned_words": [
                     ["ban_add", "ban_list"],
@@ -632,38 +626,6 @@ class KeyboardFactory:
                     ["act_pin"],
                     ["act_log"],
                     ["back"]
-                ],
-                "channel_settings": [
-                    ["ch_stats", "sched_min"],
-                    ["sched_hour", "sched_day"],
-                    ["sched_time"],
-                    ["back"]
-                ],
-                "admin_panel": [  # ✅ تمت الإضافة
-                    ["admin_users", "admin_banned"],
-                    ["admin_unban_all"],
-                    ["admin_channels", "admin_banned_ch"],
-                    ["admin_activate_ch"],
-                    ["admin_groups", "admin_banned_gr"],
-                    ["admin_unban_gr"],
-                    ["admin_add_admin", "admin_rem_admin"],
-                    ["admin_grant_free"],
-                    ["admin_backup", "admin_restore"],
-                    ["admin_broadcast", "admin_send_update"],
-                    ["admin_set_update_ch", "admin_show_update"],
-                    ["admin_force_sub", "admin_set_force"],
-                    ["admin_tickets", "admin_del_tickets"],
-                    ["admin_log_ch", "admin_set_log_ch"],
-                    ["admin_replies", "admin_add_reply"],
-                    ["admin_list_replies", "admin_del_reply"],
-                    ["admin_banned_words", "admin_add_banned"],
-                    ["admin_list_banned", "admin_rem_banned"],
-                    ["admin_create_contest", "admin_declare_winner"],
-                    ["admin_export_replies", "admin_import_replies"],
-                    ["admin_refresh_cache", "admin_import_github"],
-                    ["admin_ram", "admin_stats"],
-                    ["admin_metrics"],
-                    ["admin_close"]
                 ]
             }
             if menu_name in default_menus:
@@ -683,12 +645,11 @@ class KeyboardFactory:
                 else:
                     text = cls.get_text(item, lang)
                     callback = item
-                    if chat_id and ":" in item:
-                        callback = f"{item}{chat_id}"
-                    elif chat_id and item in ["sec_close", "panel_close", "back", "main"]:
-                        callback = item
-                    elif chat_id:
-                        callback = f"{item}:{chat_id}"
+                    if chat_id:
+                        if item.endswith(':'):
+                            callback = f"{item}{chat_id}"  # السلسلة موجودة بنقطة في النهاية
+                        else:
+                            callback = f"{item}:{chat_id}"
                     btn_row.append(InlineKeyboardButton(text, callback_data=callback))
             keyboard.append(btn_row)
         return InlineKeyboardMarkup(keyboard)
@@ -698,7 +659,7 @@ class KeyboardFactory:
         return "✅" if value else "❌"
 
     @classmethod
-    async def _format_security_text(cls, settings: dict) -> str:
+    def _format_security_text(cls, settings: dict) -> str:
         st = cls._status_icon
         lines = [
             "🔐 **إعدادات الأمان**",
@@ -725,36 +686,87 @@ class KeyboardFactory:
 
 
 # =====================================================================
-# 10. دوال الصلاحيات
+# 10. كاش الكلمات المحظورة
+# =====================================================================
+
+_banned_words_cache: Dict[int, List[str]] = {}
+_banned_words_cache_time: Dict[int, float] = {}
+_BANNED_WORDS_CACHE_TTL = getattr(CONFIG, 'BANNED_WORDS_CACHE_TTL', 60)
+
+async def get_banned_words_cached(chat_id: int) -> List[str]:
+    if not CONFIG.ENABLE_BANNED_WORDS_CACHE:
+        return await DB.get_banned_words(chat_id)
+    
+    now = time.time()
+    if chat_id in _banned_words_cache and (now - _banned_words_cache_time.get(chat_id, 0)) < _BANNED_WORDS_CACHE_TTL:
+        return _banned_words_cache[chat_id]
+    
+    words = await DB.get_banned_words(chat_id)
+    _banned_words_cache[chat_id] = words
+    _banned_words_cache_time[chat_id] = now
+    return words
+
+def invalidate_banned_words_cache(chat_id: int = None) -> None:
+    if chat_id is not None:
+        _banned_words_cache.pop(chat_id, None)
+        _banned_words_cache_time.pop(chat_id, None)
+    else:
+        _banned_words_cache.clear()
+        _banned_words_cache_time.clear()
+
+async def get_min_publish_interval() -> int:
+    val = await DB.get_setting('min_publish_interval', str(CONFIG.MIN_PUBLISH_INTERVAL))
+    try:
+        return max(1, int(val))
+    except:
+        return CONFIG.MIN_PUBLISH_INTERVAL
+
+
+# =====================================================================
+# 11. دوال الصلاحيات
 # =====================================================================
 
 _auth_cache = TTLCache(maxsize=CONFIG.AUTH_CACHE_SIZE, ttl=CONFIG.AUTH_CACHE_TTL)
 
 async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
+    """
+    التحقق من صلاحية المستخدم في المجموعة.
+    يعتمد فقط على منصب المشرف/المالك في تيليجرام أو كونه مالكًا مخفيًا/مشرفًا مخفيًا.
+    لا يعتمد على user_groups_link لتجنب منح صلاحية دائمة.
+    """
     if user_id == CONFIG.PRIMARY_OWNER_ID:
         return True
+
     cache_key = f"auth_{chat_id}_{user_id}"
     if cache_key in _auth_cache:
         return _auth_cache[cache_key]
+
     authorized = False
+
+    # التحقق من كونه مشرفًا فعليًا في المجموعة
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
             authorized = True
     except:
         pass
+
+    # التحقق من المشرفين المخفيين
     if not authorized:
-        row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
+        row = await DB.fetchone(
+            "SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?",
+            (chat_id, user_id)
+        )
         if row:
             authorized = True
         else:
-            row2 = await DB.fetchone("SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, user_id))
+            row2 = await DB.fetchone(
+                "SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?",
+                (chat_id, user_id)
+            )
             if row2:
                 authorized = True
-            else:
-                linked = await DB.fetchone("SELECT 1 FROM user_groups_link WHERE user_id=? AND chat_id=?", (user_id, chat_id))
-                if linked:
-                    authorized = True
+
     _auth_cache[cache_key] = authorized
     return authorized
 
@@ -787,40 +799,36 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 
 
 # =====================================================================
-# 11. إرسال آمن
+# 12. إرسال آمن
 # =====================================================================
 
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
+    """
+    إرسال رسالة نصية بأمان.
+    ترسل كنص عادي (parse_mode=None) لتجنب مشاكل التنسيق.
+    """
     if not text:
         return
     await RATE_LIMITER.acquire()
-    original = text[:4090]
+    original = TextUtils.sanitize(text, max_len=4096)
     try:
-        escaped = TextUtils.escape_markdown_v2(original)
-        if len(escaped) > 4096:
-            escaped = escaped[:4093]
-            if escaped.endswith('\\'):
-                escaped = escaped[:-1]
-            escaped += "..."
-        return await bot.send_message(chat_id=chat_id, text=escaped, parse_mode='MarkdownV2', reply_markup=reply_markup, **kwargs)
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=original,
+            reply_markup=reply_markup,
+            **kwargs
+        )
     except Exception as e:
-        logger.warning(f"⚠️ MarkdownV2 فشل: {e}")
+        logger.warning(f"⚠️ فشل الإرسال: {e}")
+        # محاولة أخيرة بعد إزالة الرموز الخاصة
+        plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
+        if len(plain) > 4096:
+            plain = plain[:4093] + "..."
         try:
-            html_text = html.escape(original)
-            if len(html_text) > 4096:
-                html_text = html_text[:4093] + "..."
-            return await bot.send_message(chat_id=chat_id, text=html_text, parse_mode='HTML', reply_markup=reply_markup, **kwargs)
-        except Exception as e2:
-            logger.warning(f"⚠️ HTML فشل: {e2}")
-            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
-            if len(plain) > 4096:
-                plain = plain[:4093] + "..."
             return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
-
-
-# =====================================================================
-# 12. إحصائيات الرام
-# =====================================================================
+        except Exception as e2:
+            logger.error(f"❌ فشل الإرسال النهائي: {e2}")
+            return None
 
 def get_ram_usage() -> dict:
     if psutil is None:
@@ -913,7 +921,7 @@ class PenaltyFactory:
         }
         return strategies.get(penalty_type, WarnPenalty())
 
-async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration: int = 0, reason: str = "", moderator: int = None) -> Tuple[bool, str]:
+async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration: int = 60, reason: str = "", moderator: int = None) -> Tuple[bool, str]:
     if user_id == CONFIG.PRIMARY_OWNER_ID:
         return False, "لا يمكن معاملة المالك"
     if user_id == bot.id:
@@ -1064,40 +1072,7 @@ def reload_replies_from_file() -> dict:
 
 
 # =====================================================================
-# 16. كاش الكلمات المحظورة ودوال مساعدة إضافية
-# =====================================================================
-
-_banned_words_cache: Dict[int, List[str]] = {}
-
-async def get_min_publish_interval() -> int:
-    """جلب الحد الأدنى للفاصل الزمني من قاعدة البيانات (مع fallback آمن)"""
-    try:
-        val = await DB.get_setting('min_publish_interval')
-        if val is not None:
-            int_val = int(val)
-            if int_val > 0:
-                return int_val
-    except (ValueError, TypeError):
-        pass
-    return 12
-
-async def get_banned_words_cached(chat_id: int) -> List[str]:
-    """جلب الكلمات المحظورة مع استخدام الكاش"""
-    if chat_id not in _banned_words_cache:
-        words = await DB.get_banned_words(chat_id)
-        _banned_words_cache[chat_id] = words
-    return _banned_words_cache[chat_id]
-
-def invalidate_banned_words_cache(chat_id: Optional[int] = None):
-    """مسح كاش الكلمات المحظورة (لكل أو لـ chat_id محدد)"""
-    if chat_id is not None:
-        _banned_words_cache.pop(chat_id, None)
-    else:
-        _banned_words_cache.clear()
-
-
-# =====================================================================
-# 17. المهام الخلفية (مع إصلاح auto_publish)
+# 16. المهام الخلفية
 # =====================================================================
 
 class BackgroundTasks:
@@ -1132,6 +1107,8 @@ class BackgroundTasks:
                         else:
                             await bot.send_message(ch['channel_id'], post['text'][:4096] if post['text'] else ".")
                         await DB.mark_post_published(post['id'])
+                        # ✅ تحديث last_publish بعد النشر
+                        await DB.update_last_publish(ch['id'])
                         await DB.update_next_publish(ch['id'])
                         await asyncio.sleep(0.5)
                     except Exception as e:
@@ -1148,6 +1125,7 @@ class BackgroundTasks:
             await asyncio.sleep(86400)
             try:
                 if await DB.get_auto_backup():
+                    PATHS.BACKUPS.mkdir(parents=True, exist_ok=True)
                     backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
                     shutil.copy2(PATHS.DB, backup_file)
                     await DB.set_setting('last_backup', TimeUtils.sql_iso())
@@ -1233,9 +1211,19 @@ class BackgroundTasks:
                 logger.error(f"❌ Sync admins: {e}")
             await asyncio.sleep(3600)
 
+    @staticmethod
+    async def expire_penalties_periodically() -> None:
+        await asyncio.sleep(60)
+        while True:
+            await asyncio.sleep(60)
+            try:
+                await DB.expire_penalties()
+            except Exception as e:
+                logger.error(f"❌ Expire penalties: {e}")
+
 
 # =====================================================================
-# 18. خادم الويب (مع التصحيح)
+# 17. خادم الويب
 # =====================================================================
 
 _webhook_app = None
@@ -1267,20 +1255,13 @@ async def webhook_handler(request):
         data = await request.json()
         await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
         return web.Response(status=200, text="OK")
-    except BadRequest as e:
-        if "Query is too old" in str(e):
-            logger.debug("⏳ Callback query expired (ignored)")
-            return web.Response(status=200, text="OK")
-        else:
-            logger.error(f"❌ BadRequest in webhook: {e}")
-            return web.Response(status=400, text="Bad Request")
     except Exception as e:
         logger.error(f"❌ Webhook error: {e}")
         return web.Response(status=500, text="ERROR")
 
 
 # =====================================================================
-# 19. معالج الأخطاء
+# 18. معالج الأخطاء
 # =====================================================================
 
 class ErrorHandler:

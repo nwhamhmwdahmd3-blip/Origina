@@ -1,11 +1,11 @@
 {
-  "main_menu": "👋 مرحباً {user_id}!\n\n📊 مجموعاتي: {groups}\n💎 الاشتراك: {sub}\n📡 القناة النشطة: {channel}\n📝 المنشورات المعلقة: {pending}\n📤 النشر التلقائي: {auto}\n♻️ إعادة التدوير: {recycle}\n\n🤖 {bot_name} في خدمتك!",
-  "help_text": "📚 **قائمة المساعدة**\n\n/start – القائمة الرئيسية\n/help – هذه الرسالة\n/trial – تجربة مجانية\n/subscribe – الاشتراكات\n/support – الدعم الفني\n/language – تغيير اللغة\n/developer – معلومات المطور\n\n🔹 للمجموعات:\n/syncgroup – تفعيل البوت\n/security – إعدادات الأمان\n/panel – لوحة التحكم\n\n🔹 للمشرفين:\n/ban, /mute, /warn, /kick, /restrict, /unban, /pin",
-  "trial_used": "❌ لقد استخدمت فترة التجربة مسبقاً.",
-  "trial_activated": "🎁 تم تفعيل {days} يوم تجريبي! استمتع بالمميزات.",
-  "plan_selector": "💎 **اختر الباقة المناسبة لك**\n\nالباقات المتاحة:",
-  "send_support_message": "📞 **الدعم الفني**\n\nأرسل رسالتك وسنرد عليك في أقرب وقت.",
-  "developer_info": "👨‍💻 **معلومات المطور**\n\n📌 المعرف: `{owner_id}`\n👤 البوت: {bot_name}\n🔗 المعرف: @{bot_username}\n\n📞 **للتواصل:** @RelaxMgr\n\n━━━━━━━━━━━━━━━━━━━━\n\n📚 **شرح البوت:**\n\n🆓 **مجاني:**\n• حماية المجموعات\n• الردود التلقائية\n• المسابقات\n• الترحيب والوداع\n\n💎 **مدفوع:**\n• إدارة القنوات\n• النشر التلقائي\n• إعادة التدوير",
-  "unauthorized": "❌ غير مصرح",
-  "reminder_subscription_expires": "⚠️ اشتراكك سينتهي بعد {days} يوم"
+  "main_menu": "🌿 مرحباً {user_id}\n\n👥 مجموعاتي: {groups}\n💎 الاشتراك: {sub}\n📡 القناة النشطة: {channel}\n📥 منشورات معلقة: {pending}\n📤 النشر التلقائي: {auto}\n♻️ التدوير: {recycle}\n\n🤖 {bot_name}",
+  "help_text": "📚 الأوامر المتاحة:\n\n/start - القائمة الرئيسية\n/trial - تفعيل التجربة\n/subscribe - عرض الباقات\n/support - الدعم الفني\n/language - تغيير اللغة\n/contests - المسابقات\n\n👥 للمجموعات:\n/security - إعدادات الأمان\n/panel - لوحة التحكم\n/syncgroup - تفعيل المجموعة",
+  "trial_used": "❌ لقد استخدمت التجربة المجانية مسبقًا.",
+  "trial_activated": "🎉 تم تفعيل التجربة المجانية لمدة {days} يوم.",
+  "plan_selector": "💎 اختر الباقة المناسبة:",
+  "send_support_message": "📞 أرسل رسالتك الآن وسيتم التواصل معك.",
+  "developer_info": "👨‍💻 المطور\n\nالمالك: {owner_id}\nالبوت: {bot_name}\nالمعرف: @{bot_username}",
+  "unauthorized": "❌ غير مصرح لك باستخدام هذا الأمر.",
+  "reminder_subscription_expires": "⚠️ اشتراكك سينتهي بعد {days} يوم."
 }

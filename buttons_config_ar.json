@@ -13,6 +13,8 @@
     "ch_sel": "📌 اختيار",
     "sched_btn": "📅 الجدولة",
     "groups": "👥 مجموعاتي",
+    "add_group_button": "➕ إضافة مجموعة",
+    "security_button": "🛡️ الإعدادات",
     "post_add": "📥 إضافة منشورات",
     "post_pub": "📤 نشر منشور",
     "post_list": "📋 منشوراتي",
@@ -40,9 +42,6 @@
     "admin_unban_gr": "🔓 إلغاء حظر المجموعات",
     "admin_add_admin": "➕ إضافة مشرف",
     "admin_rem_admin": "➖ إزالة مشرف",
-    "admin_grant_free": "🎁 منح اشتراك مجاني",
-    "admin_del_user": "🗑️ حذف مستخدم",
-    "admin_close": "❌ إغلاق اللوحة",
     "admin_ram": "🖥️ استخدام الرام",
     "admin_stats": "📊 الإحصائيات",
     "admin_metrics": "📈 مقاييس الأداء",
@@ -138,8 +137,6 @@
     "sec_voice": "🎤 صوتي",
     "sec_videonote": "🎥 فيديو ملاحظة",
     "sec_banned_words": "🚫 كلمات محظورة",
-    "sec_toggle_banned": "🔄 حذف الكلمات المحظورة",
-    "sec_mute_duration": "⏱️ مدة الكتم",
     "sec_welcome": "🎯 ترحيب",
     "sec_goodbye": "👋 وداع",
     "sec_night": "🌙 ليلي",
@@ -156,18 +153,7 @@
     "sec_auto_reply_menu": "📝 الردود",
     "sec_enable_all": "✅ تفعيل الكل",
     "sec_disable_all": "❌ تعطيل الكل",
-    "sec_close": "❌ إغلاق",
-    "status_only": "📊 الحالة",
-    "security_button": "🛡️ إعدادات {name}",
-    "add_group_button": "➕ إضافة مجموعة",
-    "sched_min": "📅 دقائق",
-    "sched_hour": "📅 ساعات",
-    "sched_day": "📅 أيام",
-    "sched_time": "🕐 وقت النشر",
-    "unauthorized": "❌ غير مصرح",
-    "gift_plans": "🎁 شراء كود هدية",
-    "redeem_gift": "🎟️ استخدام كود هدية",
-    "my_gifts": "📋 أكوادي"
+    "sec_close": "❌ إغلاق"
   },
   "menus": {
     "main_menu": {
@@ -177,7 +163,6 @@
         ["post_list", "post_rec"],
         ["pub_all"],
         ["plans", "subscribe"],
-        ["gift_plans", "redeem_gift"],
         ["support", "developer"],
         ["help", "language"],
         ["trial", "contests"],
@@ -209,15 +194,18 @@
       "rows": [
         ["admin_users", "admin_banned"],
         ["admin_unban_all"],
-        ["admin_add_admin", "admin_rem_admin"],
-        ["admin_grant_free", "admin_del_user"],
         ["admin_channels", "admin_banned_ch"],
         ["admin_activate_ch"],
         ["admin_groups", "admin_banned_gr"],
         ["admin_unban_gr"],
-        ["admin_broadcast", "admin_send_update"],
-        ["admin_set_update_ch", "admin_show_update"],
+        ["admin_add_admin", "admin_rem_admin"],
+        ["admin_ram", "admin_stats"],
+        ["admin_metrics"],
+        ["admin_backup", "admin_restore"],
+        ["admin_send_update", "admin_set_update_ch"],
+        ["admin_show_update"],
         ["admin_force_sub", "admin_set_force"],
+        ["admin_broadcast"],
         ["admin_tickets", "admin_del_tickets"],
         ["admin_log_ch", "admin_set_log_ch"],
         ["admin_replies"],
@@ -228,11 +216,8 @@
         ["admin_create_contest", "admin_declare_winner"],
         ["admin_export_replies", "admin_import_replies"],
         ["admin_import_github"],
-        ["admin_ram", "admin_stats"],
-        ["admin_metrics"],
-        ["admin_backup", "admin_restore"],
         ["admin_refresh_cache"],
-        ["admin_close"]
+        ["back"]
       ]
     },
     "security": {
@@ -253,16 +238,7 @@
         ["sec_adv_act", "sec_act_log"],
         ["sec_auto_reply_menu"],
         ["sec_enable_all", "sec_disable_all"],
-        ["sec_toggle_banned", "sec_mute_duration"],
         ["sec_close"]
-      ]
-    },
-    "channel_settings": {
-      "rows": [
-        ["ch_stats", "sched_min"],
-        ["sched_hour", "sched_day"],
-        ["sched_time"],
-        ["back"]
       ]
     },
     "banned_words": {
