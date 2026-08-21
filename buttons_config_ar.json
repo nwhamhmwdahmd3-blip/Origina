@@ -11,7 +11,6 @@
     "ch_stats": "📊 إحصائيات",
     "ch_del": "🗑️ حذف",
     "ch_sel": "📌 اختيار",
-    "sched_btn": "📅 الجدولة",
     "groups": "👥 مجموعاتي",
     "post_add": "📥 إضافة منشورات",
     "post_pub": "📤 نشر منشور",
@@ -40,6 +39,7 @@
     "admin_unban_gr": "🔓 إلغاء حظر المجموعات",
     "admin_add_admin": "➕ إضافة مشرف",
     "admin_rem_admin": "➖ إزالة مشرف",
+    "admin_list_admins": "👑 قائمة المشرفين",
     "admin_ram": "🖥️ استخدام الرام",
     "admin_stats": "📊 الإحصائيات",
     "admin_metrics": "📈 مقاييس الأداء",
@@ -72,6 +72,8 @@
     "admin_import_replies": "📥 استيراد ردود",
     "admin_import_github": "🐙 استيراد من GitHub",
     "admin_refresh_cache": "🔄 تحديث الكاش",
+    "admin_invoices": "🧾 الفواتير",
+    "admin_payment_logs": "📊 سجلات الدفع",
     "contest_winners": "🏆 الفائزون",
     "contests": "🏆 المسابقات",
     "contest_join": "✍️ المشاركة",
@@ -92,6 +94,7 @@
     "buy_sub_7": "🗓️ أسبوع",
     "buy_sub_30": "🗓️ شهر",
     "buy_sub_90": "🗓️ 3 أشهر",
+    "buy_sub_365": "🗓️ سنة",
     "auto_reply_add": "➕ إضافة رد",
     "auto_reply_del": "🗑️ حذف رد",
     "auto_reply_list": "📋 قائمة الردود",
@@ -122,6 +125,7 @@
     "sec_links": "🔗 الروابط",
     "sec_mentions": "👤 المعرفات",
     "sec_slow": "🐌 الوضع البطيء",
+    "sec_slow_mode_seconds": "⏱️ مدة الوضع البطيء",
     "sec_flood": "🌊 الفيضان",
     "sec_video": "🎬 فيديو",
     "sec_audio": "🎵 موسيقى",
@@ -135,12 +139,14 @@
     "sec_voice": "🎤 صوتي",
     "sec_videonote": "🎥 فيديو ملاحظة",
     "sec_banned_words": "🚫 كلمات محظورة",
-    "sec_toggle_banned": "🔄 حذف الكلمات المحظورة",
     "sec_welcome": "🎯 ترحيب",
+    "sec_welcome_text": "📝 نص الترحيب",
     "sec_goodbye": "👋 وداع",
+    "sec_goodbye_text": "📝 نص الوداع",
     "sec_night": "🌙 ليلي",
     "sec_approve_join": "✅ موافقة الانضمام",
     "sec_reject_join": "❌ رفض الانضمام",
+    "sec_nsfw": "🔞 NSFW",
     "sec_maxlen": "📏 الحد الأقصى للطول",
     "sec_warn": "⚠️ تحذيرات",
     "sec_warn_count": "🔢 عدد التحذيرات",
@@ -150,21 +156,14 @@
     "sec_adv_act": "🛠️ إجراءات متقدمة",
     "sec_act_log": "📜 السجل",
     "sec_auto_reply_menu": "📝 الردود",
+    "sec_antiflood_settings": "🌊 إعدادات الفيضان",
+    "sec_night_settings": "🌙 إعدادات الليل",
+    "sec_penalty_durations": "⏳ مدد العقوبات",
     "sec_enable_all": "✅ تفعيل الكل",
     "sec_disable_all": "❌ تعطيل الكل",
     "sec_close": "❌ إغلاق",
-    "sec_penalty": "⚖️ العقوبات",
     "status_only": "📊 الحالة",
-    "security_button": "🛡️ إعدادات {name}",
-    "add_group_button": "➕ إضافة مجموعة",
-    "sched_min": "📅 دقائق",
-    "sched_hour": "📅 ساعات",
-    "sched_day": "📅 أيام",
-    "sched_time": "🕐 وقت النشر",
-    "unauthorized": "❌ غير مصرح",
-    "gift_plans": "🎁 شراء كود هدية",
-    "redeem_gift": "🎟️ استخدام كود هدية",
-    "my_gifts": "📋 أكوادي"
+    "reminder_subscription_expires": "⚠️ اشتراكك سينتهي بعد {days} يوم"
   },
   "menus": {
     "main_menu": {
@@ -174,8 +173,6 @@
         ["post_list", "post_rec"],
         ["pub_all"],
         ["plans", "subscribe"],
-        ["gift_plans", "redeem_gift"],
-        ["my_gifts"],
         ["support", "developer"],
         ["help", "language"],
         ["trial", "contests"],
@@ -194,6 +191,7 @@
       "rows": [
         ["buy_sub_1", "buy_sub_7"],
         ["buy_sub_30", "buy_sub_90"],
+        ["buy_sub_365"],
         ["back"]
       ]
     },
@@ -212,6 +210,7 @@
         ["admin_groups", "admin_banned_gr"],
         ["admin_unban_gr"],
         ["admin_add_admin", "admin_rem_admin"],
+        ["admin_list_admins"],
         ["admin_ram", "admin_stats"],
         ["admin_metrics"],
         ["admin_backup", "admin_restore"],
@@ -230,37 +229,33 @@
         ["admin_export_replies", "admin_import_replies"],
         ["admin_import_github"],
         ["admin_refresh_cache"],
+        ["admin_invoices", "admin_payment_logs"],
         ["back"]
       ]
     },
     "security": {
       "rows": [
         ["sec_links", "sec_mentions"],
-        ["sec_slow", "sec_flood"],
+        ["sec_slow", "sec_slow_mode_seconds"],
+        ["sec_flood", "sec_antiflood_settings"],
         ["sec_video", "sec_audio"],
         ["sec_anim", "sec_service"],
         ["sec_doc", "sec_sticker"],
         ["sec_forward", "sec_poll"],
         ["sec_game", "sec_voice"],
         ["sec_videonote", "sec_banned_words"],
-        ["sec_toggle_banned"],
-        ["sec_welcome", "sec_goodbye"],
-        ["sec_night", "sec_approve_join"],
-        ["sec_reject_join"],
+        ["sec_welcome", "sec_welcome_text"],
+        ["sec_goodbye", "sec_goodbye_text"],
+        ["sec_night", "sec_night_settings"],
+        ["sec_approve_join", "sec_reject_join"],
+        ["sec_nsfw"],
         ["sec_maxlen", "sec_warn"],
         ["sec_penalty", "sec_del_pen"],
+        ["sec_penalty_durations"],
         ["sec_adv_act", "sec_act_log"],
         ["sec_auto_reply_menu"],
         ["sec_enable_all", "sec_disable_all"],
         ["sec_close"]
-      ]
-    },
-    "channel_settings": {
-      "rows": [
-        ["ch_stats", "sched_min"],
-        ["sched_hour", "sched_day"],
-        ["sched_time"],
-        ["back"]
       ]
     },
     "banned_words": {
@@ -325,11 +320,6 @@
       "rows": [
         ["panel_lock", "panel_unlock"],
         ["panel_close"]
-      ]
-    },
-    "admin_restore": {
-      "rows": [
-        ["back"]
       ]
     }
   }

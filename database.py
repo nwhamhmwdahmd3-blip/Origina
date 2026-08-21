@@ -29,6 +29,12 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ تحسين register_user لعدم مسح البيانات
 - ✅ تقييد update_penalty_settings لأعمدة العقوبات
 - ✅ التحقق من نوع العقوبة في set_violation_penalty
+- ✅ إصلاح استعلام التذكيرات (عدد المعاملات)
+- ✅ إضافة قفل على redeem_gift_code
+- ✅ إضافة قفل على add_channel و add_posts
+- ✅ تحويل backup_auto_replies إلى غير متزامن
+- ✅ إضافة دوال الدفع الذرية وتوليد أكواد الهدايا
+- ✅ تحسين create_contest لتخزين التاريخ بصيغة SQLite
 """
 
 import sqlite3
@@ -904,12 +910,12 @@ class Database:
                         new_end = trial_end
                         days_granted = 30
 
-                    await conn.execute(
-                        "UPDATE users SET trial_used=1, subscription_end=? WHERE user_id=?",
-                        (new_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
-                    )
-
+                    # تحديث trial_used فقط إذا مُنحت أيام جديدة
                     if days_granted > 0:
+                        await conn.execute(
+                            "UPDATE users SET trial_used=1, subscription_end=? WHERE user_id=?",
+                            (new_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
+                        )
                         await conn.execute(
                             """INSERT INTO subscriptions 
                                (user_id, plan_id, status, start_date, end_date, provider, created_at, updated_at)
@@ -917,6 +923,12 @@ class Database:
                             (user_id, 1, 'active', TimeUtils.sql_iso(),
                              new_end.strftime('%Y-%m-%d %H:%M:%S'), 'trial',
                              TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                        )
+                    else:
+                        # لا تغيير، لكن نحدّث فقط subscription_end لضمان الاتساق
+                        await conn.execute(
+                            "UPDATE users SET subscription_end=? WHERE user_id=?",
+                            (current_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
                         )
                     await conn.commit()
                 return days_granted
@@ -981,74 +993,75 @@ class Database:
     async def add_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
         try:
             channel_id = int(channel_id)
-            async with self._get_connection() as conn:
-                # 1. التحقق من وجود اشتراك نشط (أفضل اشتراك)
-                plan_row = await conn.execute("""
-                    SELECT p.max_channels
-                    FROM subscriptions s
-                    JOIN plans p ON s.plan_id = p.id
-                    WHERE s.user_id = ? AND s.status = 'active' AND s.end_date > datetime('now')
-                    ORDER BY p.max_channels DESC, p.max_posts DESC, s.end_date DESC
-                    LIMIT 1
-                """, (user_id,))
-                plan_row = await plan_row.fetchone()
-                if not plan_row:
-                    return None  # لا يوجد اشتراك نشط
+            async with self._lock:
+                async with self._get_connection() as conn:
+                    # 1. التحقق من وجود اشتراك نشط (أفضل اشتراك)
+                    plan_row = await conn.execute("""
+                        SELECT p.max_channels
+                        FROM subscriptions s
+                        JOIN plans p ON s.plan_id = p.id
+                        WHERE s.user_id = ? AND s.status = 'active' AND s.end_date > datetime('now')
+                        ORDER BY p.max_channels DESC, p.max_posts DESC, s.end_date DESC
+                        LIMIT 1
+                    """, (user_id,))
+                    plan_row = await plan_row.fetchone()
+                    if not plan_row:
+                        return None  # لا يوجد اشتراك نشط
 
-                # 2. التحقق من حدود القنوات
-                if plan_row['max_channels'] is not None:
-                    count_row = await conn.execute(
-                        "SELECT COUNT(*) FROM user_channels WHERE user_id = ? AND banned = 0",
-                        (user_id,)
+                    # 2. التحقق من حدود القنوات
+                    if plan_row['max_channels'] is not None:
+                        count_row = await conn.execute(
+                            "SELECT COUNT(*) FROM user_channels WHERE user_id = ? AND banned = 0",
+                            (user_id,)
+                        )
+                        count_row = await count_row.fetchone()
+                        if count_row[0] >= plan_row['max_channels']:
+                            return None
+
+                    # 3. التحقق من وجود القناة مسبقاً
+                    existing = await conn.execute(
+                        "SELECT id FROM user_channels WHERE user_id = ? AND channel_id = ?",
+                        (user_id, channel_id)
                     )
-                    count_row = await count_row.fetchone()
-                    if count_row[0] >= plan_row['max_channels']:
-                        return None
+                    existing = await existing.fetchone()
+                    is_new = existing is None
 
-                # 3. التحقق من وجود القناة مسبقاً
-                existing = await conn.execute(
-                    "SELECT id FROM user_channels WHERE user_id = ? AND channel_id = ?",
-                    (user_id, channel_id)
-                )
-                existing = await existing.fetchone()
-                is_new = existing is None
+                    # 4. إدراج أو تحديث القناة
+                    if is_new:
+                        cur = await conn.execute(
+                            """INSERT INTO user_channels (user_id, channel_id, channel_name, created_at)
+                               VALUES (?,?,?,?)""",
+                            (user_id, channel_id, channel_name, TimeUtils.sql_iso())
+                        )
+                        ch_db_id = cur.lastrowid
+                    else:
+                        ch_db_id = existing['id']
+                        await conn.execute(
+                            "UPDATE user_channels SET channel_name = ?, banned = 0 WHERE id = ?",
+                            (channel_name, ch_db_id)
+                        )
 
-                # 4. إدراج أو تحديث القناة
-                if is_new:
-                    cur = await conn.execute(
-                        """INSERT INTO user_channels (user_id, channel_id, channel_name, created_at)
-                           VALUES (?,?,?,?)""",
-                        (user_id, channel_id, channel_name, TimeUtils.sql_iso())
-                    )
-                    ch_db_id = cur.lastrowid
-                else:
-                    ch_db_id = existing['id']
+                    # 5. إدراج جدولة افتراضية إذا لم توجد
                     await conn.execute(
-                        "UPDATE user_channels SET channel_name = ?, banned = 0 WHERE id = ?",
-                        (channel_name, ch_db_id)
+                        """INSERT INTO schedule (channel_db_id, schedule_type, interval_minutes, next_publish_date)
+                           VALUES (?, 'interval_minutes', 12, ?)
+                           ON CONFLICT(channel_db_id) DO NOTHING""",
+                        (ch_db_id, (TimeUtils.utc_now() + timedelta(seconds=720)).strftime('%Y-%m-%d %H:%M:%S'))
                     )
 
-                # 5. إدراج جدولة افتراضية إذا لم توجد
-                await conn.execute(
-                    """INSERT INTO schedule (channel_db_id, schedule_type, interval_minutes, next_publish_date)
-                       VALUES (?, 'interval_minutes', 12, ?)
-                       ON CONFLICT(channel_db_id) DO NOTHING""",
-                    (ch_db_id, (TimeUtils.utc_now() + timedelta(seconds=720)).strftime('%Y-%m-%d %H:%M:%S'))
-                )
+                    # 6. منح النقاط فقط إذا كانت القناة جديدة
+                    if is_new:
+                        await conn.execute(
+                            """INSERT INTO user_points (user_id, points, last_updated)
+                               VALUES (?, 10, ?)
+                               ON CONFLICT(user_id) DO UPDATE SET
+                                   points = points + 10,
+                                   last_updated = ?""",
+                            (user_id, TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                        )
 
-                # 6. منح النقاط فقط إذا كانت القناة جديدة
-                if is_new:
-                    await conn.execute(
-                        """INSERT INTO user_points (user_id, points, last_updated)
-                           VALUES (?, 10, ?)
-                           ON CONFLICT(user_id) DO UPDATE SET
-                               points = points + 10,
-                               last_updated = ?""",
-                        (user_id, TimeUtils.sql_iso(), TimeUtils.sql_iso())
-                    )
-
-                await conn.commit()
-                return ch_db_id
+                    await conn.commit()
+                    return ch_db_id
         except Exception as e:
             logger.error(f"❌ Error in add_channel: {e}", exc_info=True)
             return None
@@ -1157,51 +1170,52 @@ class Database:
     # ========= دوال المنشورات =========
     async def add_posts(self, user_id: int, channel_db_id: int, posts: List[Tuple[str, str, str]]) -> int:
         try:
-            async with self._get_connection() as conn:
-                # التحقق من ملكية القناة وأنها غير محظورة
-                row = await conn.execute(
-                    "SELECT 1 FROM user_channels WHERE id = ? AND user_id = ? AND banned = 0",
-                    (channel_db_id, user_id)
-                )
-                row = await row.fetchone()
-                if not row:
-                    return 0
-
-                # التحقق من وجود اشتراك نشط (أفضل اشتراك)
-                plan_row = await conn.execute("""
-                    SELECT p.max_posts
-                    FROM subscriptions s
-                    JOIN plans p ON s.plan_id = p.id
-                    WHERE s.user_id = ? AND s.status = 'active' AND s.end_date > datetime('now')
-                    ORDER BY p.max_channels DESC, p.max_posts DESC, s.end_date DESC
-                    LIMIT 1
-                """, (user_id,))
-                plan_row = await plan_row.fetchone()
-                if not plan_row:
-                    return 0
-
-                # التحقق من حد max_posts (إجمالي المنشورات في القناة)
-                if plan_row['max_posts'] is not None:
-                    count_row = await conn.execute(
-                        "SELECT COUNT(*) FROM posts WHERE channel_db_id = ?",
-                        (channel_db_id,)
+            async with self._lock:
+                async with self._get_connection() as conn:
+                    # التحقق من ملكية القناة وأنها غير محظورة
+                    row = await conn.execute(
+                        "SELECT 1 FROM user_channels WHERE id = ? AND user_id = ? AND banned = 0",
+                        (channel_db_id, user_id)
                     )
-                    count_row = await count_row.fetchone()
-                    if count_row[0] + len(posts) > plan_row['max_posts']:
+                    row = await row.fetchone()
+                    if not row:
                         return 0
 
-                # الإدراج على دفعات
-                total = 0
-                for i in range(0, len(posts), 100):
-                    batch = posts[i:i+100]
-                    vals = [(channel_db_id, (t or "")[:4096], m, f, TimeUtils.sql_iso()) for t, m, f in batch]
-                    await conn.executemany(
-                        "INSERT INTO posts (channel_db_id, text, media_type, media_file_id, created_at) VALUES (?,?,?,?,?)",
-                        vals
-                    )
-                    total += len(vals)
-                await conn.commit()
-                return total
+                    # التحقق من وجود اشتراك نشط (أفضل اشتراك)
+                    plan_row = await conn.execute("""
+                        SELECT p.max_posts
+                        FROM subscriptions s
+                        JOIN plans p ON s.plan_id = p.id
+                        WHERE s.user_id = ? AND s.status = 'active' AND s.end_date > datetime('now')
+                        ORDER BY p.max_channels DESC, p.max_posts DESC, s.end_date DESC
+                        LIMIT 1
+                    """, (user_id,))
+                    plan_row = await plan_row.fetchone()
+                    if not plan_row:
+                        return 0
+
+                    # التحقق من حد max_posts (إجمالي المنشورات في القناة)
+                    if plan_row['max_posts'] is not None:
+                        count_row = await conn.execute(
+                            "SELECT COUNT(*) FROM posts WHERE channel_db_id = ?",
+                            (channel_db_id,)
+                        )
+                        count_row = await count_row.fetchone()
+                        if count_row[0] + len(posts) > plan_row['max_posts']:
+                            return 0
+
+                    # الإدراج على دفعات
+                    total = 0
+                    for i in range(0, len(posts), 100):
+                        batch = posts[i:i+100]
+                        vals = [(channel_db_id, (t or "")[:4096], m, f, TimeUtils.sql_iso()) for t, m, f in batch]
+                        await conn.executemany(
+                            "INSERT INTO posts (channel_db_id, text, media_type, media_file_id, created_at) VALUES (?,?,?,?,?)",
+                            vals
+                        )
+                        total += len(vals)
+                    await conn.commit()
+                    return total
         except Exception as e:
             logger.error(f"❌ Error in add_posts: {e}", exc_info=True)
             return 0
@@ -1985,11 +1999,12 @@ class Database:
             return False
 
     async def get_users_for_reminder(self) -> List[Dict]:
+        """🔧 إصلاح عدد المعاملات في الاستعلام"""
         try:
             now_sql = TimeUtils.sql_iso()
             rows = await self.fetchall("""
                 SELECT u.user_id, u.language, r.reminder_days_before,
-                       julianday(MAX(s.end_date)) - julianday(?) as days_left,
+                       CAST(julianday(MAX(s.end_date)) - julianday(?) AS INTEGER) as days_left,
                        r.last_reminder_sent
                 FROM users u
                 JOIN user_reminder_settings r ON u.user_id = r.user_id
@@ -1999,7 +2014,7 @@ class Database:
                 HAVING days_left <= r.reminder_days_before
                    AND days_left > 0
                    AND (r.last_reminder_sent IS NULL OR julianday(?) - julianday(r.last_reminder_sent) >= 1)
-            """, (now_sql, now_sql, now_sql))
+            """, (now_sql, now_sql))
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"❌ Error in get_users_for_reminder: {e}", exc_info=True)
@@ -2009,9 +2024,12 @@ class Database:
     async def create_contest(self, creator_id: int, title: str, description: str,
                              prize: str, end_date: str) -> int:
         try:
-            # التحقق من صحة تاريخ الانتهاء
+            # تحويل التاريخ إلى صيغة SQLite (UTC naive)
             try:
-                datetime.fromisoformat(end_date)
+                dt = datetime.fromisoformat(end_date)
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                end_date_sql = dt.strftime('%Y-%m-%d %H:%M:%S')
             except (ValueError, TypeError):
                 logger.error(f"❌ Invalid end_date format: {end_date}")
                 return 0
@@ -2021,7 +2039,7 @@ class Database:
                     """INSERT INTO contests (creator_id, title, description, prize, end_date, created_at)
                        VALUES (?,?,?,?,?,?)
                     """,
-                    (creator_id, title, description, prize, end_date, TimeUtils.sql_iso())
+                    (creator_id, title, description, prize, end_date_sql, TimeUtils.sql_iso())
                 )
                 contest_id = cur.lastrowid
                 await conn.commit()
@@ -2231,52 +2249,53 @@ class Database:
     async def redeem_gift_code(self, user_id: int, code: str) -> tuple:
         try:
             code = code.strip()
-            async with self._get_connection() as conn:
-                row = await conn.execute("SELECT * FROM gift_codes WHERE code = ?", (code,))
-                row = await row.fetchone()
-                if not row:
-                    return False, 0
-                if row['used_by']:
-                    return False, 0
-                if row['creator_id'] == user_id:
-                    return False, -1
+            async with self._lock:
+                async with self._get_connection() as conn:
+                    row = await conn.execute("SELECT * FROM gift_codes WHERE code = ?", (code,))
+                    row = await row.fetchone()
+                    if not row:
+                        return False, 0
+                    if row['used_by']:
+                        return False, 0
+                    if row['creator_id'] == user_id:
+                        return False, -1
 
-                plan = await conn.execute(
-                    "SELECT id, name, description, price, duration_days AS days FROM plans WHERE id = ? AND is_gift = 1 AND is_active = 1",
-                    (row['plan_id'],)
-                )
-                plan = await plan.fetchone()
-                if not plan:
-                    return False, 0
+                    plan = await conn.execute(
+                        "SELECT id, name, description, price, duration_days AS days FROM plans WHERE id = ? AND is_gift = 1 AND is_active = 1",
+                        (row['plan_id'],)
+                    )
+                    plan = await plan.fetchone()
+                    if not plan:
+                        return False, 0
 
-                await conn.execute(
-                    "UPDATE gift_codes SET used_by = ?, used_at = ? WHERE id = ?",
-                    (user_id, TimeUtils.sql_iso(), row['id'])
-                )
+                    await conn.execute(
+                        "UPDATE gift_codes SET used_by = ?, used_at = ? WHERE id = ?",
+                        (user_id, TimeUtils.sql_iso(), row['id'])
+                    )
 
-                # حساب تاريخ الانتهاء الجديد
-                sub_row = await conn.execute(
-                    "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
-                    (user_id,)
-                )
-                sub_row = await sub_row.fetchone()
-                current_end = TimeUtils.safe_parse_iso(sub_row[0]) if sub_row and sub_row[0] else None
-                now = TimeUtils.utc_now()
-                base = current_end if current_end and current_end > now else now
-                new_end = base + timedelta(days=plan['days'])
+                    # حساب تاريخ الانتهاء الجديد
+                    sub_row = await conn.execute(
+                        "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
+                        (user_id,)
+                    )
+                    sub_row = await sub_row.fetchone()
+                    current_end = TimeUtils.safe_parse_iso(sub_row[0]) if sub_row and sub_row[0] else None
+                    now = TimeUtils.utc_now()
+                    base = current_end if current_end and current_end > now else now
+                    new_end = base + timedelta(days=plan['days'])
 
-                await conn.execute(
-                    """INSERT INTO subscriptions 
-                       (user_id, plan_id, status, start_date, end_date, provider, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?)
-                    """,
-                    (user_id, row['plan_id'], 'active', TimeUtils.sql_iso(),
-                     new_end.strftime('%Y-%m-%d %H:%M:%S'), 'gift',
-                     TimeUtils.sql_iso(), TimeUtils.sql_iso())
-                )
-                await self._refresh_user_subscription_end_in_conn(conn, user_id)
-                await conn.commit()
-                return True, plan['days']
+                    await conn.execute(
+                        """INSERT INTO subscriptions 
+                           (user_id, plan_id, status, start_date, end_date, provider, created_at, updated_at)
+                           VALUES (?,?,?,?,?,?,?,?)
+                        """,
+                        (user_id, row['plan_id'], 'active', TimeUtils.sql_iso(),
+                         new_end.strftime('%Y-%m-%d %H:%M:%S'), 'gift',
+                         TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                    )
+                    await self._refresh_user_subscription_end_in_conn(conn, user_id)
+                    await conn.commit()
+                    return True, plan['days']
         except Exception as e:
             logger.error(f"❌ Error in redeem_gift_code: {e}", exc_info=True)
             return False, 0
@@ -2436,6 +2455,94 @@ class Database:
             )
         except Exception as e:
             logger.error(f"❌ Error in add_payment_log: {e}", exc_info=True)
+
+    # ========= دوال جديدة للدفع الذري وتوليد أكواد الهدايا =========
+    async def activate_subscription_with_payment(self, user_id: int, invoice_number: str, payment_id: str, plan_id: int) -> bool:
+        """
+        تنفيذ عملية تفعيل الاشتراك بعد الدفع بشكل ذرّي:
+        - التحقق من الفاتورة وتطابقها مع المستخدم والخطة
+        - تحديث حالة الفاتورة إلى مدفوعة
+        - إنشاء اشتراك جديد مع تمديد المدة
+        - تحديث users.subscription_end
+        """
+        try:
+            async with self._lock:
+                async with self._get_connection() as conn:
+                    invoice = await conn.execute(
+                        "SELECT * FROM invoices WHERE number=? AND user_id=? AND status='pending'",
+                        (invoice_number, user_id)
+                    )
+                    invoice = await invoice.fetchone()
+                    if not invoice:
+                        logger.error(f"❌ Invoice not found or not pending: {invoice_number}")
+                        return False
+
+                    if invoice['plan_id'] != plan_id:
+                        logger.error(f"❌ Plan mismatch: invoice plan {invoice['plan_id']} vs {plan_id}")
+                        return False
+
+                    plan = await conn.execute(
+                        "SELECT * FROM plans WHERE id=? AND is_active=1",
+                        (plan_id,)
+                    )
+                    plan = await plan.fetchone()
+                    if not plan:
+                        return False
+
+                    # تحديث الفاتورة
+                    await conn.execute(
+                        "UPDATE invoices SET status='paid', provider_payment_id=?, paid_at=? WHERE number=?",
+                        (payment_id, TimeUtils.sql_iso(), invoice_number)
+                    )
+
+                    # حساب التاريخ الجديد
+                    sub_row = await conn.execute(
+                        "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
+                        (user_id,)
+                    )
+                    sub_row = await sub_row.fetchone()
+                    current_end = TimeUtils.safe_parse_iso(sub_row[0]) if sub_row and sub_row[0] else None
+                    now = TimeUtils.utc_now()
+                    base = current_end if current_end and current_end > now else now
+                    new_end = base + timedelta(days=plan['duration_days'])
+
+                    # إنشاء اشتراك
+                    cur = await conn.execute(
+                        """INSERT INTO subscriptions 
+                           (user_id, plan_id, status, start_date, end_date, auto_renew, provider, provider_subscription_id, created_at, updated_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (user_id, plan_id, 'active', TimeUtils.sql_iso(),
+                         new_end.strftime('%Y-%m-%d %H:%M:%S'), 0,
+                         'xtr', payment_id, TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                    )
+
+                    # تحديث users.subscription_end
+                    await self._refresh_user_subscription_end_in_conn(conn, user_id)
+
+                    await conn.commit()
+                    return True
+        except Exception as e:
+            logger.error(f"❌ Error in activate_subscription_with_payment: {e}", exc_info=True)
+            return False
+
+    async def create_gift_code(self, plan_id: int, creator_id: int) -> Optional[str]:
+        """
+        توليد كود هدية جديد بعد دفع ناجح لخطة هدية.
+        """
+        try:
+            code = secrets.token_urlsafe(6)
+            async with self._get_connection() as conn:
+                await conn.execute(
+                    """INSERT INTO gift_codes (code, plan_id, creator_id, created_at)
+                       VALUES (?,?,?,?)""",
+                    (code, plan_id, creator_id, TimeUtils.sql_iso())
+                )
+                await conn.commit()
+                return code
+        except Exception as e:
+            logger.error(f"❌ Error in create_gift_code: {e}", exc_info=True)
+            return None
 
     # ========= دوال العقوبات =========
     async def add_penalty(self, user_id: int, chat_id: int, penalty_type: str,
@@ -2710,8 +2817,13 @@ class Database:
             timestamp = TimeUtils.utc_now().strftime('%Y%m%d_%H%M%S')
             backup_file = PATHS.BACKUPS / f"auto_replies_backup_{timestamp}.json"
             backup_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(backup_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            # كتابة الملف بشكل غير متزامن (في Executor)
+            def _write_json():
+                with open(backup_file, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+
+            await asyncio.get_event_loop().run_in_executor(None, _write_json)
             return len(data)
         except Exception as e:
             logger.error(f"❌ Error in backup_auto_replies: {e}", exc_info=True)

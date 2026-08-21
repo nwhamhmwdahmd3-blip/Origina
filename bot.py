@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – البوت الرئيسي (نسخة مصححة)
-- إصلاحات أمنية في معالجة الدفع
+🌿 Relax Manager – البوت الرئيسي (نسخة مصححة ومحسّنة)
+- إصلاحات أمنية في معالجة الدفع (الاشتراكات والهدايا)
 - تحسينات في المعاملات والتحقق من الفواتير
 - تحديد allowed_updates
 - إعادة تشغيل المهام الخلفية عند الفشل
+- تشغيل مهمة expire_penalties_periodically
+- معالجة أكواد الهدايا بشكل صحيح
 """
 
 import asyncio
@@ -66,13 +68,14 @@ async def _validate_invoice_for_payment(user_id: int, payload: str):
     if not invoice or invoice['user_id'] != user_id or invoice['status'] != 'pending':
         return None, None, None
 
-    # التحقق من نوع العملية (اشتراك عادي)
-    if data.get('type') != 'subscription':
+    # التحقق من نوع العملية
+    payment_type = data.get('type')
+    if payment_type not in ('subscription', 'gift'):
         return None, None, None
 
-    plan_id = data.get('plan_id')
-    plan = await DB.get_plan(plan_id)
-    if not plan or not plan.get('is_active'):
+    plan_id = data.get('plan_id') or data.get('gift_plan_id')
+    plan = await DB.get_plan(plan_id) if payment_type == 'subscription' else await DB.get_gift_plan(plan_id)
+    if not plan:
         return None, None, None
 
     return invoice, plan, data
@@ -98,8 +101,16 @@ async def pre_checkout(update, context):
             logger.error(f"❌ Error answering pre_checkout: {e}")
         return
 
-    # التحقق من تطابق المبلغ (في حال توفر total_amount)
-    # ملاحظة: pre_checkout_query لا يحتوي على total_amount في بعض الأحيان، لذا التحقق الإضافي في successful_payment
+    # التحقق من تطابق المبلغ (إذا كان total_amount متاحًا)
+    if hasattr(query, 'total_amount'):
+        expected_amount = plan.get('price')
+        if expected_amount is not None and query.total_amount != expected_amount:
+            try:
+                await query.answer(ok=False, error_message="المبلغ غير مطابق لسعر الخطة.")
+            except Exception as e:
+                logger.error(f"❌ Error answering pre_checkout: {e}")
+            return
+
     try:
         await query.answer(ok=True)
         logger.info(f"✅ Pre-checkout success: {query.id}")
@@ -117,6 +128,8 @@ async def successful_payment(update, context):
     payment = update.message.successful_payment
     payload = payment.invoice_payload
     total_amount = payment.total_amount
+    telegram_payment_charge_id = payment.telegram_payment_charge_id
+    provider_payment_charge_id = payment.provider_payment_charge_id
 
     invoice, plan, data = await _validate_invoice_for_payment(user_id, payload)
 
@@ -131,30 +144,50 @@ async def successful_payment(update, context):
         await safe_send(context.bot, user_id, "❌ المبلغ المدفوع غير مطابق لسعر الخطة، يرجى التواصل مع الدعم.")
         return
 
-    # معالجة الاشتراك بشكل ذري (أفضل: دالة واحدة في DB)
-    try:
-        invoice_number = invoice['number']
-        provider_payment_id = payment.provider_payment_charge_id
+    payment_type = data.get('type')
+    payment_id = telegram_payment_charge_id or provider_payment_charge_id
 
-        # استخدم دالة جديدة في DB: activate_subscription_with_payment
-        # سنفترض وجودها، أو سنقوم بالعملية هنا مع معالجة الأخطاء
-        # البديل: استدعاء mark_invoice_paid ثم create_subscription داخل معاملة واحدة
-        # لكن لعدم تعديل database.py الآن سنستخدم DB.execute مع معاملة يدوية إذا أمكن
-        # سنكتفي بمحاولة العملية مع التراجع اليدوي
-        await DB.mark_invoice_paid(invoice_number, provider_payment_id)
-        await DB.create_subscription(user_id, plan['id'], 'xtr', provider_payment_id)
+    if payment_type == 'subscription':
+        # تفعيل الاشتراك بشكل ذري
+        success = await DB.activate_subscription_with_payment(
+            user_id=user_id,
+            invoice_number=invoice['number'],
+            payment_id=payment_id,
+            plan_id=plan['id']
+        )
+        if success:
+            await DB.add_payment_log(user_id, 'xtr', 'subscription_paid', {'invoice': invoice['number'], 'plan_id': plan['id'], 'amount': total_amount})
+            await safe_send(context.bot, user_id, f"✅ تم تفعيل اشتراك {plan['name']} بنجاح!")
+            logger.info(f"✅ Subscription activated for user {user_id}, plan {plan['id']}, invoice {invoice['number']}")
+        else:
+            # محاولة الرجوع عن تعليم الفاتورة إذا فشلت العملية الذرية
+            await DB.execute("UPDATE invoices SET status='pending' WHERE number=?", (invoice['number'],))
+            await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع، يرجى التواصل مع الدعم.")
+            logger.error(f"❌ Failed to activate subscription for user {user_id}, invoice {invoice['number']}")
 
-        await safe_send(context.bot, user_id, f"✅ تم تفعيل اشتراك {plan['name']} بنجاح!")
-        logger.info(f"✅ Subscription activated for user {user_id}, plan {plan['id']}, invoice {invoice_number}")
+    elif payment_type == 'gift':
+        # توليد كود هدية وإرساله
+        code = await DB.create_gift_code(plan_id=plan['id'], creator_id=user_id)
+        if code:
+            # تعليم الفاتورة مدفوعة
+            await DB.mark_invoice_paid(invoice['number'], payment_id)
+            await DB.add_payment_log(user_id, 'xtr', 'gift_paid', {'invoice': invoice['number'], 'gift_plan_id': plan['id'], 'amount': total_amount})
+            await safe_send(
+                context.bot,
+                user_id,
+                f"🎉 **تم شراء كود الهدية بنجاح!**\n\n"
+                f"🎁 الكود: `{code}`\n"
+                f"📅 المدة: {plan['days']} يوم\n\n"
+                f"يمكنك إرسال هذا الكود لأي شخص لاستخدامه."
+            )
+            logger.info(f"✅ Gift code {code} created for user {user_id}, invoice {invoice['number']}")
+        else:
+            await safe_send(context.bot, user_id, "❌ حدث خطأ في توليد كود الهدية، يرجى التواصل مع الدعم.")
+            logger.error(f"❌ Failed to create gift code for user {user_id}, invoice {invoice['number']}")
 
-    except Exception as e:
-        logger.error(f"❌ Error processing successful payment: {e}", exc_info=True)
-        # محاولة الرجوع عن تعليم الفاتورة مدفوعة (يفضل في DB أن تكون ذرية)
-        try:
-            await DB.execute("UPDATE invoices SET status='pending' WHERE number=?", (invoice_number,))
-        except:
-            pass
-        await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع، يرجى التواصل مع الدعم.")
+    else:
+        logger.error(f"❌ Unknown payment type: {payment_type}")
+        await safe_send(context.bot, user_id, "❌ نوع دفع غير معروف.")
 
 
 # =====================================================================
@@ -297,6 +330,7 @@ async def main():
         asyncio.create_task(run_task_with_retry(BackgroundTasks.flush_usage_periodically, task_name="flush_usage")),
         asyncio.create_task(run_task_with_retry(BackgroundTasks.expire_subscriptions, task_name="expire_subscriptions")),
         asyncio.create_task(run_task_with_retry(BackgroundTasks.sync_admins_periodically, app.bot, task_name="sync_admins")),
+        asyncio.create_task(run_task_with_retry(BackgroundTasks.expire_penalties_periodically, task_name="expire_penalties")),
     ]
 
     # ========== تشغيل Webhook أو Polling ==========

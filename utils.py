@@ -2,18 +2,15 @@
 # -*- coding: utf-8 -*-
 
 """
-utils.py - الأدوات المساعدة للبوت (النسخة النهائية المُصحَّحة)
+utils.py - الأدوات المساعدة للبوت (النسخة النهائية المُحدّثة)
 ==========================================================
-- جميع الإصلاحات السابقة محفوظة
-- دعم تحميل إعدادات الأزرار عبر load_config()
-- تصحيح بناء الأزرار وتوحيد صيغ الـ Callback
-- إصلاح safe_send لتفادي كسر التنسيق
-- إزالة اعتماد الصلاحيات على user_groups_link
-- تحديث last_publish بعد النشر التلقائي
-- إضافة حالات WAIT_VIOLATION_STRIKES و WAIT_VIOLATION_DURATION
-- استثناءات للأزرار التي لا تحتاج chat_id في build()
-- استخدام get_min_publish_interval في auto_publish
-- تحسين safe_send مع try/except شامل
+- إصلاح خلط وحدات الوقت (دقائق ↔ ثوانٍ)
+- دعم كامل لأنواع الوسائط في النشر التلقائي
+- تسجيل العقوبات اليدوية في قاعدة البيانات
+- إصلاح reload_replies_from_file
+- تحسين safe_send
+- تحسين النسخ الاحتياطي
+- إضافة حالات جديدة للإعدادات الأمنية المتقدمة
 """
 
 import asyncio
@@ -25,6 +22,7 @@ import html
 import shutil
 import logging
 import random
+import importlib
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any, Union
@@ -37,8 +35,6 @@ try:
     import psutil
 except ImportError:
     psutil = None
-    logger = logging.getLogger(__name__)
-    logger.warning("⚠️ psutil غير مثبت، لن تعمل إحصائيات الرام")
 
 import aiohttp
 
@@ -286,7 +282,7 @@ async def get_text(lang: str, key: str, **kwargs) -> str:
 
 
 # =====================================================================
-# 7. إدارة الحالات
+# 7. إدارة الحالات (تمت إضافة الحالات الجديدة)
 # =====================================================================
 
 class UserState(Enum):
@@ -335,6 +331,15 @@ class UserState(Enum):
     WAIT_VIOLATION_STRIKES = auto()
     WAIT_VIOLATION_DURATION = auto()
     SUPPORT_MODE = auto()
+    # ✅ الحالات الجديدة للإعدادات الأمنية المتقدمة
+    WAIT_ANTIFLOOD_MESSAGES = auto()
+    WAIT_ANTIFLOOD_SECONDS = auto()
+    WAIT_NIGHT_START = auto()
+    WAIT_NIGHT_END = auto()
+    WAIT_WELCOME_TEXT = auto()
+    WAIT_GOODBYE_TEXT = auto()
+    WAIT_SLOW_MODE_SECONDS = auto()
+    WAIT_PENALTY_DEFAULT_DURATION = auto()
 
 
 class StateManager:
@@ -361,7 +366,7 @@ class StateManager:
 
 
 # =====================================================================
-# 8. تعريفات الأزرار (CB) - مُحدثة ومتكاملة
+# 8. تعريفات الأزرار (CB) - تبقى كما هي مع إضافات
 # =====================================================================
 
 class CB:
@@ -481,6 +486,7 @@ class CB:
     ADMIN_UNBAN_GR = "admin_unban_gr"
     ADMIN_ADD_ADMIN = "admin_add_admin"
     ADMIN_REM_ADMIN = "admin_rem_admin"
+    ADMIN_LIST_ADMINS = "admin_list_admins"  # ✅ إضافة
     ADMIN_RAM = "admin_ram"
     ADMIN_STATS = "admin_stats"
     ADMIN_METRICS = "admin_metrics"
@@ -512,6 +518,8 @@ class CB:
     ADMIN_IMPORT_REPLIES = "admin_import_replies"
     ADMIN_REFRESH_CACHE = "admin_refresh_cache"
     ADMIN_IMPORT_GITHUB = "admin_import_github"
+    ADMIN_INVOICES = "admin_invoices"  # ✅ إضافة
+    ADMIN_PAYMENT_LOGS = "admin_payment_logs"  # ✅ إضافة
 
     # الردود التلقائية
     AUTO_REPLY_MENU = "auto_reply_menu"
@@ -525,7 +533,7 @@ class CB:
 
 
 # =====================================================================
-# 9. مصنع الكيبوردات (مع دعم اللغات والاستثناءات)
+# 9. مصنع الكيبوردات
 # =====================================================================
 
 class KeyboardFactory:
@@ -533,7 +541,6 @@ class KeyboardFactory:
     _default_lang: str = "ar"
     _config_path_template: str = "buttons_config_{lang}.json"
 
-    # ✅ أزرار لا تحتاج إلى chat_id في callback
     _NO_CHAT_ID_BUTTONS = {
         "sec_close", "panel_close", "back", "main", "cancel",
         "help", "settings", "language", "check_sub",
@@ -543,7 +550,9 @@ class KeyboardFactory:
         "ref_list", "reminder", "rem_sub", "rem_daily",
         "rem_weekly", "rem_days", "translation", "trans_off",
         "invoices", "groups", "admin", "panel_close",
-        "pub_all", "post_add", "post_pub", "post_list", "post_rec"
+        "pub_all", "post_add", "post_pub", "post_list", "post_rec",
+        "sec_antiflood_settings", "sec_night_settings",
+        "sec_penalty_durations", "sec_close"
     }
 
     @classmethod
@@ -576,7 +585,6 @@ class KeyboardFactory:
 
     @classmethod
     def load_config(cls):
-        """تحميل إعدادات الأزرار للغة الافتراضية (تُستدعى عند بدء التشغيل)"""
         cls._load_config_for_lang(cls._default_lang)
 
     @classmethod
@@ -600,7 +608,6 @@ class KeyboardFactory:
         rows = cls.get_menu(menu_name, lang)
 
         if not rows:
-            # قوائم احتياطية إذا لم تكن معرفة في الملف
             default_menus = {
                 "banned_words": [
                     ["ban_add", "ban_list"],
@@ -625,11 +632,13 @@ class KeyboardFactory:
                     ["sec_videonote", "sec_banned_words"],
                     ["sec_welcome", "sec_goodbye"],
                     ["sec_night", "sec_approve_join"],
-                    ["sec_reject_join"],
+                    ["sec_reject_join", "sec_nsfw"],
                     ["sec_maxlen", "sec_warn"],
                     ["sec_penalty", "sec_del_pen"],
                     ["sec_adv_act", "sec_act_log"],
                     ["sec_auto_reply_menu"],
+                    ["sec_antiflood_settings", "sec_night_settings"],
+                    ["sec_penalty_durations"],
                     ["sec_enable_all", "sec_disable_all"],
                     ["sec_close"]
                 ],
@@ -664,7 +673,6 @@ class KeyboardFactory:
                 else:
                     text = cls.get_text(item, lang)
                     callback = item
-                    # ✅ استثناءات الأزرار التي لا تحتاج chat_id
                     if chat_id and item not in cls._NO_CHAT_ID_BUTTONS:
                         callback = f"{item}:{chat_id}"
                     btn_row.append(InlineKeyboardButton(text, callback_data=callback))
@@ -684,7 +692,8 @@ class KeyboardFactory:
             "🛡️ **الحماية**",
             f"🔗 الروابط: {st(settings.get('delete_links', 0))}",
             f"👤 المعرفات: {st(settings.get('mentions', 0))}",
-            f"🌊 الفيضان: {st(settings.get('antiflood_enabled', 0))}\n",
+            f"🌊 الفيضان: {st(settings.get('antiflood_enabled', 0))}",
+            f"🌙 الوضع الليلي: {st(settings.get('night_mode_enabled', 0))}\n",
             "🎬 **المحتوى**",
             f"🎬 فيديو: {st(settings.get('delete_videos', 0))}",
             f"🎵 موسيقى: {st(settings.get('delete_audio', 0))}",
@@ -713,11 +722,11 @@ _BANNED_WORDS_CACHE_TTL = getattr(CONFIG, 'BANNED_WORDS_CACHE_TTL', 60)
 async def get_banned_words_cached(chat_id: int) -> List[str]:
     if not CONFIG.ENABLE_BANNED_WORDS_CACHE:
         return await DB.get_banned_words(chat_id)
-    
+
     now = time.time()
     if chat_id in _banned_words_cache and (now - _banned_words_cache_time.get(chat_id, 0)) < _BANNED_WORDS_CACHE_TTL:
         return _banned_words_cache[chat_id]
-    
+
     words = await DB.get_banned_words(chat_id)
     _banned_words_cache[chat_id] = words
     _banned_words_cache_time[chat_id] = now
@@ -746,11 +755,6 @@ async def get_min_publish_interval() -> int:
 _auth_cache = TTLCache(maxsize=CONFIG.AUTH_CACHE_SIZE, ttl=CONFIG.AUTH_CACHE_TTL)
 
 async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
-    """
-    التحقق من صلاحية المستخدم في المجموعة.
-    يعتمد فقط على منصب المشرف/المالك في تيليجرام أو كونه مالكًا مخفيًا/مشرفًا مخفيًا.
-    لا يعتمد على user_groups_link لتجنب منح صلاحية دائمة.
-    """
     if user_id == CONFIG.PRIMARY_OWNER_ID:
         return True
 
@@ -759,8 +763,6 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
         return _auth_cache[cache_key]
 
     authorized = False
-
-    # التحقق من كونه مشرفًا فعليًا في المجموعة
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
@@ -768,7 +770,6 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
     except:
         pass
 
-    # التحقق من المشرفين المخفيين
     if not authorized:
         row = await DB.fetchone(
             "SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?",
@@ -820,41 +821,33 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 # =====================================================================
 
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
-    """
-    إرسال رسالة نصية بأمان.
-    ترسل كنص عادي (parse_mode=None) لتجنب مشاكل التنسيق.
-    """
     if not text:
         return
     await RATE_LIMITER.acquire()
-    original = TextUtils.sanitize(text, max_len=4096)
+    text = TextUtils.sanitize(text, max_len=4096)
     try:
         return await bot.send_message(
             chat_id=chat_id,
-            text=original,
+            text=text,
             reply_markup=reply_markup,
+            parse_mode=None,
             **kwargs
         )
     except Exception as e:
         logger.warning(f"⚠️ فشل الإرسال: {e}")
-        # محاولة بإزالة الرموز الخاصة
-        plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', original)
-        if len(plain) > 4096:
-            plain = plain[:4093] + "..."
-        try:
-            return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, **kwargs)
-        except Exception as e2:
-            logger.error(f"❌ فشل الإرسال النهائي: {e2}")
-            # محاولة أخيرة بدون أي تنسيق
+        if "can't parse entities" in str(e).lower() or "parse" in str(e).lower():
+            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', text)
+            if len(plain) > 4096:
+                plain = plain[:4093] + "..."
             try:
-                return await bot.send_message(chat_id=chat_id, text=original[:4000], reply_markup=reply_markup, **kwargs)
-            except Exception as e3:
-                logger.error(f"❌ فشل كامل: {e3}")
-                return None
+                return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, parse_mode=None, **kwargs)
+            except Exception as e2:
+                logger.error(f"❌ فشل الإرسال النهائي: {e2}")
+        return None
+
 
 def get_ram_usage() -> dict:
     if psutil is None:
-        logger.warning("⚠️ psutil غير مثبت، لن تعمل إحصائيات الرام")
         return {'total': 0, 'used': 0, 'percent': 0}
     try:
         mem = psutil.virtual_memory()
@@ -865,7 +858,7 @@ def get_ram_usage() -> dict:
 
 
 # =====================================================================
-# 13. نظام العقوبات
+# 13. نظام العقوبات (مُصحَّح)
 # =====================================================================
 
 class PenaltyStrategy(ABC):
@@ -877,8 +870,10 @@ class BanPenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         if user_id == bot.id:
             return False, "لا يمكن حظر البوت"
+        duration = kwargs.get('duration', 0)  # ثوانٍ
+        until_date = TimeUtils.utc_now() + timedelta(seconds=duration) if duration > 0 else None
         try:
-            await bot.ban_chat_member(chat_id, user_id)
+            await bot.ban_chat_member(chat_id, user_id, until_date=until_date)
             return True, "✅ تم الحظر"
         except Exception as e:
             return False, str(e)[:100]
@@ -887,11 +882,15 @@ class MutePenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         if user_id == bot.id:
             return False, "لا يمكن كتم البوت"
-        duration = kwargs.get('duration', 60)
-        until = TimeUtils.utc_now() + timedelta(minutes=duration) if duration else None
+        duration = kwargs.get('duration', 60)  # ثوانٍ
+        until_date = TimeUtils.utc_now() + timedelta(seconds=duration) if duration > 0 else None
         try:
-            await bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=False), until_date=until)
-            return True, f"✅ تم الكتم {duration} دقيقة"
+            await bot.restrict_chat_member(
+                chat_id, user_id,
+                ChatPermissions(can_send_messages=False),
+                until_date=until_date
+            )
+            return True, f"✅ تم الكتم"
         except Exception as e:
             return False, str(e)[:100]
 
@@ -920,8 +919,14 @@ class RestrictPenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         if user_id == bot.id:
             return False, "لا يمكن تقييد البوت"
+        duration = kwargs.get('duration', 0)  # ثوانٍ
+        until_date = TimeUtils.utc_now() + timedelta(seconds=duration) if duration > 0 else None
         try:
-            await bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=True, can_send_media_messages=False))
+            await bot.restrict_chat_member(
+                chat_id, user_id,
+                ChatPermissions(can_send_messages=True, can_send_media_messages=False),
+                until_date=until_date
+            )
             return True, "✅ تم التقييد"
         except Exception as e:
             return False, str(e)[:100]
@@ -955,8 +960,18 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
         return False, "الصلاحيات غير كافية"
     strategy = PenaltyFactory.get_strategy(penalty)
     success, msg = await strategy.apply(bot, chat_id, user_id, duration=duration)
-    if success and moderator:
-        await DB.add_admin_log(chat_id, moderator, penalty, user_id, reason)
+    if success:
+        if penalty in DB.VALID_PENALTY_TYPES:
+            await DB.add_penalty(
+                user_id=user_id,
+                chat_id=chat_id,
+                penalty_type=penalty,
+                duration=duration,
+                reason=reason,
+                issued_by=moderator
+            )
+        if moderator:
+            await DB.add_admin_log(chat_id, moderator, penalty, user_id, reason)
     return success, msg
 
 
@@ -1005,8 +1020,10 @@ async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
     data = [dict(row) for row in rows]
     if file_path is None:
         file_path = f"auto_replies_{chat_id}.json"
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    def _write():
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    await asyncio.get_event_loop().run_in_executor(None, _write)
     return len(data)
 
 async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[Dict]], overwrite: bool = False) -> int:
@@ -1018,7 +1035,6 @@ async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[D
             data = file_path_or_data
 
         if not isinstance(data, list):
-            logger.warning("⚠️ البيانات المستوردة ليست قائمة")
             return 0
 
         count = 0
@@ -1059,9 +1075,9 @@ async def fetch_json_from_url(url: str) -> Optional[Union[list, dict]]:
 
 def load_replies_from_file() -> dict:
     try:
-        from replies import REPLIES
-        logger.info("✅ تم تحميل الردود من replies.py")
-        return REPLIES
+        import replies
+        importlib.reload(replies)
+        return replies.REPLIES
     except ImportError:
         logger.info("ℹ️ لا يوجد replies.py")
         return {}
@@ -1094,23 +1110,56 @@ def reload_replies_from_file() -> dict:
 
 
 # =====================================================================
-# 16. المهام الخلفية
+# 16. المهام الخلفية (مُصحَّحة)
 # =====================================================================
 
 class BackgroundTasks:
     @staticmethod
+    async def _publish_post(bot, channel_id: int, post: dict) -> bool:
+        try:
+            text = post.get('text', '')
+            media_type = post.get('media_type')
+            media_file_id = post.get('media_file_id')
+
+            caption = text[:1024] if text else None
+
+            if media_type == 'photo' and media_file_id:
+                await bot.send_photo(channel_id, media_file_id, caption=caption)
+            elif media_type == 'video' and media_file_id:
+                await bot.send_video(channel_id, media_file_id, caption=caption)
+            elif media_type == 'document' and media_file_id:
+                await bot.send_document(channel_id, media_file_id, caption=caption)
+            elif media_type == 'audio' and media_file_id:
+                await bot.send_audio(channel_id, media_file_id, caption=caption)
+            elif media_type == 'voice' and media_file_id:
+                await bot.send_voice(channel_id, media_file_id, caption=caption)
+            elif media_type == 'animation' and media_file_id:
+                await bot.send_animation(channel_id, media_file_id, caption=caption)
+            elif media_type == 'sticker' and media_file_id:
+                await bot.send_sticker(channel_id, media_file_id)
+            elif media_type == 'video_note' and media_file_id:
+                await bot.send_video_note(channel_id, media_file_id)
+            else:
+                await bot.send_message(channel_id, text[:4096] if text else ".")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Publish error: {e}")
+            return False
+
+    @staticmethod
     async def auto_publish(bot) -> None:
         await asyncio.sleep(10)
         max_channels = getattr(CONFIG, 'MAX_CHANNELS_PER_CYCLE', 20)
-        # ✅ الحصول على الحد الأدنى للفاصل الزمني
-        min_interval = await get_min_publish_interval()
-        
+        min_interval_minutes = await get_min_publish_interval()
+        sleep_seconds = max(1, min_interval_minutes * 60)
+
         while True:
             try:
                 channels = await DB.get_channels_to_publish(max_channels)
                 if not channels:
                     await asyncio.sleep(60)
                     continue
+
                 for ch in channels:
                     if not await DB.has_active_subscription(ch['user_id']):
                         continue
@@ -1118,26 +1167,19 @@ class BackgroundTasks:
                     if not post:
                         auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
                         if auto_recycle:
-                            await DB.reset_posts(ch['id'])
+                            await DB.reset_posts(ch['user_id'], ch['id'])
                             post = await DB.get_next_post(ch['id'])
                             if not post:
                                 continue
                         else:
                             continue
-                    try:
-                        if post['media_type'] == 'photo' and post['media_file_id']:
-                            await bot.send_photo(ch['channel_id'], post['media_file_id'], caption=post['text'][:1024] if post['text'] else None)
-                        elif post['media_type'] == 'video' and post['media_file_id']:
-                            await bot.send_video(ch['channel_id'], post['media_file_id'], caption=post['text'][:1024] if post['text'] else None)
-                        else:
-                            await bot.send_message(ch['channel_id'], post['text'][:4096] if post['text'] else ".")
+                    success = await BackgroundTasks._publish_post(bot, ch['channel_id'], post)
+                    if success:
                         await DB.mark_post_published(post['id'])
                         await DB.update_last_publish(ch['id'])
                         await DB.update_next_publish(ch['id'])
-                        # ✅ استخدام min_interval كحد أدنى للفاصل الزمني
-                        await asyncio.sleep(max(0.5, min_interval))
-                    except Exception as e:
-                        logger.error(f"❌ Publish error: {e}")
+                        await asyncio.sleep(sleep_seconds)
+                    else:
                         await DB.increment_post_fail(post['id'])
                 await asyncio.sleep(60)
             except Exception as e:
@@ -1152,7 +1194,17 @@ class BackgroundTasks:
                 if await DB.get_auto_backup():
                     PATHS.BACKUPS.mkdir(parents=True, exist_ok=True)
                     backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
-                    shutil.copy2(PATHS.DB, backup_file)
+
+                    def _backup():
+                        import sqlite3 as sqlite3_sync
+                        source = sqlite3_sync.connect(str(PATHS.DB))
+                        dest = sqlite3_sync.connect(str(backup_file))
+                        with dest:
+                            source.backup(dest)
+                        dest.close()
+                        source.close()
+
+                    await asyncio.get_event_loop().run_in_executor(None, _backup)
                     await DB.set_setting('last_backup', TimeUtils.sql_iso())
                     backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
                     for old in backups[CONFIG.MAX_BACKUPS:]:
@@ -1220,12 +1272,7 @@ class BackgroundTasks:
             try:
                 groups = await DB.fetchall("SELECT chat_id FROM bot_groups WHERE banned=0")
                 for group in groups:
-                    if isinstance(group, dict):
-                        chat_id = group['chat_id']
-                    elif hasattr(group, 'chat_id'):
-                        chat_id = group.chat_id
-                    else:
-                        chat_id = group[0]
+                    chat_id = group['chat_id'] if isinstance(group, dict) else group[0]
                     try:
                         admins = await bot.get_chat_administrators(chat_id)
                         admin_ids = [a.user.id for a in admins if a.user and not a.user.is_bot]
