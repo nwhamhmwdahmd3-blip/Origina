@@ -10,6 +10,7 @@ handlers.py - جميع معالجات البوت (النسخة النهائية 
 - نظام عقوبات مخصصة لكل مخالفة مع مراحل (إنذار ثم حظر)
 - فرض حدود الخطة (max_channels, max_posts)
 - إصلاح شامل لجميع الأخطاء الحرجة
+- معالجة زر start_btn
 """
 
 import asyncio
@@ -696,12 +697,12 @@ class CommandHandlers:
             lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
-        
+
         args = context.args or []
         if not args:
             await safe_send(context.bot, user_id, "📝 /set_min_interval <دقائق>\nمثال: /set_min_interval 15")
             return
-        
+
         try:
             val = int(args[0])
             if val < 1:
@@ -758,12 +759,12 @@ class CommandHandlers:
     async def gift_plans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
-        
+
         plans = await DB.get_gift_plans()
         if not plans:
             await safe_send(context.bot, user_id, "📭 لا توجد خطط متاحة حالياً.")
             return
-        
+
         kb = []
         for plan in plans:
             days = plan['days']
@@ -773,27 +774,27 @@ class CommandHandlers:
                 callback_data=f"buy_gift:{plan['id']}"
             )])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
-        
+
         text = "💎 **شراء كود هدية**\n\nاختر المدة المناسبة:\n\n"
         text += "• بعد الدفع، ستحصل على كود فريد.\n"
         text += "• يمكنك إرسال الكود لأي شخص.\n"
         text += "• الشخص الذي يستخدم الكود يحصل على اشتراك مجاني."
-        
+
         await safe_send(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(kb))
 
     @staticmethod
     async def redeem_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id)
-        
+
         args = context.args or []
         if not args:
             await safe_send(context.bot, user_id, "📝 أرسل الكود: `/redeem_gift <الكود>`")
             return
-        
+
         code = args[0].strip()
         success, days = await DB.redeem_gift_code(user_id, code)
-        
+
         if success and days > 0:
             await safe_send(context.bot, user_id, f"🎉 **تم تفعيل الاشتراك بنجاح!**\n\n✅ {days} يوم اشتراك مجاني.")
         elif days == -1:
@@ -844,6 +845,15 @@ class CallbackHandlers:
                     await query.answer("لا تغيير")
                 except BadRequest:
                     pass
+                return
+
+            if base_data == "start_btn":
+                try:
+                    await query.answer()
+                except BadRequest:
+                    pass
+                context.args = []
+                await CommandHandlers.start(update, context)
                 return
 
             if base_data in [CB.MAIN, CB.BACK]:
@@ -985,12 +995,12 @@ class CallbackHandlers:
                     await query.answer()
                 except BadRequest:
                     pass
-                
+
                 plans = await DB.get_gift_plans()
                 if not plans:
                     await query.edit_message_text("📭 لا توجد خطط متاحة حالياً.")
                     return
-                
+
                 kb = []
                 for plan in plans:
                     days = plan['days']
@@ -1000,12 +1010,12 @@ class CallbackHandlers:
                         callback_data=f"buy_gift:{plan['id']}"
                     )])
                 kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
-                
+
                 text = "💎 **شراء كود هدية**\n\nاختر المدة المناسبة:\n\n"
                 text += "• بعد الدفع، ستحصل على كود فريد.\n"
                 text += "• يمكنك إرسال الكود لأي شخص.\n"
                 text += "• الشخص الذي يستخدم الكود يحصل على اشتراك مجاني."
-                
+
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
                 return
 
@@ -1123,7 +1133,7 @@ class CallbackHandlers:
                     await query.answer("🔄 جارٍ التحديث...")
                 except BadRequest:
                     pass
-                
+
                 if base_data == CB.REM_TOGGLE_SUB:
                     s = await DB.get_reminder_settings(user_id)
                     await DB.update_reminder_settings(user_id, subscription_reminder=not s.get('subscription_reminder', False))
@@ -1133,7 +1143,7 @@ class CallbackHandlers:
                 elif base_data == CB.REM_TOGGLE_WEEKLY:
                     s = await DB.get_reminder_settings(user_id)
                     await DB.update_reminder_settings(user_id, weekly_report=not s.get('weekly_report', False))
-                
+
                 settings = await DB.get_reminder_settings(user_id)
                 text = f"⏰ **التذكيرات**\n\n"
                 text += f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder', False) else '❌'}\n"
@@ -1385,7 +1395,7 @@ class CallbackHandlers:
                     except BadRequest:
                         pass
                     return
-                
+
                 channels = await DB.get_user_channels(user_id)
                 if not channels:
                     await query.edit_message_text("❌ لا توجد قنوات للنشر")
@@ -1394,7 +1404,7 @@ class CallbackHandlers:
                     except BadRequest:
                         pass
                     return
-                
+
                 published_count = 0
                 failed_count = 0
                 await query.edit_message_text("⏳ جاري النشر...")
@@ -1402,7 +1412,7 @@ class CallbackHandlers:
                     await query.answer()
                 except BadRequest:
                     pass
-                
+
                 for ch in channels:
                     post = await DB.get_next_post(ch['id'])
                     if not post:
@@ -1416,7 +1426,7 @@ class CallbackHandlers:
                     except Exception as e:
                         logger.error(f"❌ فشل النشر في القناة {ch['channel_id']}: {e}")
                         failed_count += 1
-                
+
                 if published_count > 0 and failed_count == 0:
                     await query.edit_message_text(f"✅ تم نشر {published_count} منشور (منشور واحد في كل قناة)")
                 elif published_count > 0 and failed_count > 0:
@@ -1660,7 +1670,7 @@ class CallbackHandlers:
                     await query.answer("🔄 جارٍ التحضير...")
                 except BadRequest:
                     pass
-                
+
                 plan_id = int(data.split(":")[-1])
                 plan = await DB.get_gift_plan(plan_id)
                 if not plan:
@@ -1669,7 +1679,7 @@ class CallbackHandlers:
                     except BadRequest:
                         pass
                     return
-                
+
                 invoice_number = await DB.create_invoice(
                     user_id, 
                     plan_id, 
@@ -1683,7 +1693,7 @@ class CallbackHandlers:
                     except BadRequest:
                         pass
                     return
-                
+
                 try:
                     await context.bot.send_invoice(
                         chat_id=user_id,
@@ -3334,15 +3344,15 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ قيم غير صالحة")
                 StateManager.clear(user_id)
                 return
-            
+
             if days < 1 or days > 365:
                 await safe_send(context.bot, user_id, "❌ عدد الأيام يجب أن يكون بين 1 و 365")
                 StateManager.clear(user_id)
                 return
-            
+
             gift_plan = await DB.fetchone("SELECT id FROM plans WHERE is_gift=1 LIMIT 1")
             plan_id = gift_plan[0] if gift_plan else None
-            
+
             success = await DB.grant_subscription_days(target_id, days, plan_id=plan_id, provider='manual')
             if success:
                 await safe_send(context.bot, user_id, f"✅ تم منح {days} يوم للمستخدم `{target_id}`")
@@ -3527,7 +3537,7 @@ class MessageHandlers:
         text = update.message.text or ""
         if update.effective_user.is_bot:
             return
-        
+
         locked = await DB.fetchone("SELECT locked FROM chat_locks WHERE chat_id=?", (chat_id,))
         if locked and locked[0] == 1:
             if not await is_authorized_in_group(context.bot, chat_id, update.effective_user.id):
@@ -3607,7 +3617,7 @@ class MessageHandlers:
             return
         chat_id = update.effective_chat.id
         settings = await DB.get_security_settings(chat_id)
-        
+
         if settings.get('delete_service', False):
             try:
                 await update.message.delete()
@@ -3616,7 +3626,7 @@ class MessageHandlers:
             user_id = update.message.from_user.id if update.message.from_user else None
             if user_id:
                 await apply_violation_penalty(context, chat_id, user_id, 'service', "رسالة خدمة")
-                
+
         if settings.get('welcome_enabled', False) and update.message.new_chat_members:
             for member in update.message.new_chat_members:
                 if member.id != context.bot.id:
@@ -3626,7 +3636,7 @@ class MessageHandlers:
                         await context.bot.send_message(chat_id, text)
                     except:
                         pass
-                        
+
         if settings.get('goodbye_enabled', False) and update.message.left_chat_member:
             member = update.message.left_chat_member
             if member.id != context.bot.id:
@@ -3642,7 +3652,7 @@ class MessageHandlers:
         join_request = update.chat_join_request
         chat_id = update.effective_chat.id
         settings = await DB.get_security_settings(chat_id)
-        
+
         if settings.get('auto_approve_join', False):
             try:
                 await join_request.approve()
@@ -3651,7 +3661,7 @@ class MessageHandlers:
             except:
                 pass
             return
-            
+
         if settings.get('auto_reject_join', False):
             try:
                 await join_request.decline()
