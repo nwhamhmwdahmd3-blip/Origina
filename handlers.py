@@ -8,6 +8,7 @@ handlers.py - جميع معالجات البوت (نسخة مصححة شاملة
 - مسح الحالة عند الرجوع
 - تجاهل الأرقام أثناء وضع الإضافة
 - معالجة جميع أزرار الأمان بما فيها الفيضان والوضع الليلي ومدد العقوبات
+- إصلاح مشكلة أزرار لا تحتوي على chat_id (مثل مدد العقوبات)
 """
 
 import asyncio
@@ -264,6 +265,8 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
         lang = await DB.get_user_language(user_id)
+        # ✅ تخزين معرف الدردشة لاستخدامه لاحقًا في الأزرار التي لا تحمل chat_id
+        context.user_data['security_chat_id'] = chat_id
         settings = await DB.get_security_settings(chat_id)
         text = KeyboardFactory._format_security_text(settings)
         kb = KeyboardFactory.build("security", chat_id, lang=lang)
@@ -1461,6 +1464,8 @@ class CallbackHandlers:
 
             if data.startswith(CB.GRP_SET + ":"):
                 chat_id = int(data.split(":")[-1])
+                # ✅ تخزين معرف الدردشة لاستخدامه لاحقًا
+                context.user_data['security_chat_id'] = chat_id
                 if not await is_authorized_in_group(context.bot, chat_id, user_id):
                     try:
                         await query.answer("❌ لا صلاحية", show_alert=True)
@@ -1858,13 +1863,18 @@ class CallbackHandlers:
             lang = await DB.get_user_language(user_id)
         data = query.data
         parts = data.split(":")
-        if len(parts) < 2:
-            return
-        action = parts[0].replace("sec_", "")
-        try:
+        if len(parts) >= 2 and parts[1].isdigit():
             chat_id = int(parts[1])
-        except:
+        else:
+            # ✅ إذا لم يوجد chat_id في البيانات، نأخذه من السياق المخزن
+            chat_id = context.user_data.get('security_chat_id')
+            if not chat_id and update.effective_chat and update.effective_chat.type in ['group', 'supergroup']:
+                chat_id = update.effective_chat.id
+
+        if chat_id is None:
             return
+
+        action = parts[0].replace("sec_", "")
 
         logger.info(f"🔍 _handle_security: action={action}, chat_id={chat_id}, data={data}")
 
