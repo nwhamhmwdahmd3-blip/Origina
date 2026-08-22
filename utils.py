@@ -4,15 +4,13 @@
 """
 utils.py - الأدوات المساعدة للبوت (النسخة النهائية المُحدّثة)
 ==========================================================
-- إصلاح خلط وحدات الوقت (دقائق ↔ ثوانٍ)
-- دعم كامل لأنواع الوسائط في النشر التلقائي
-- تسجيل العقوبات اليدوية في قاعدة البيانات
-- إصلاح reload_replies_from_file
-- تحسين safe_send
-- تحسين النسخ الاحتياطي
-- إضافة حالات جديدة للإعدادات الأمنية المتقدمة
-- إصلاح RecursionError في تحميل ملف الأزرار
-- إصلاح مسار ملف الأزرار إلى مسار مطلق
+- إصلاح RateLimiter (استخدام self.max_per_second)
+- إضافة تأخير عند فشل النشر
+- نسخة احتياطية أولية مبكرة
+- دعم parse_mode في safe_send
+- استخدام asyncio.to_thread
+- معالجة غير معروفة في PenaltyFactory
+- تحسينات عامة
 """
 
 import asyncio
@@ -142,6 +140,7 @@ class RateLimiter:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._last_calls = deque(maxlen=max_per_second * 2)
         self._lock = asyncio.Lock()
+        self.max_per_second = max_per_second  # ✅ إضافة تخزين القيمة
 
     async def acquire(self):
         async with self.semaphore:
@@ -149,7 +148,7 @@ class RateLimiter:
                 now = time.time()
                 while self._last_calls and now - self._last_calls[0] > 1:
                     self._last_calls.popleft()
-                if len(self._last_calls) >= 30:
+                if len(self._last_calls) >= self.max_per_second:  # ✅ استخدام self.max_per_second
                     wait_time = 1 - (now - self._last_calls[0])
                     if wait_time > 0:
                         await asyncio.sleep(wait_time)
@@ -733,6 +732,9 @@ def invalidate_banned_words_cache(chat_id: int = None) -> None:
         _banned_words_cache_time.clear()
 
 async def get_min_publish_interval() -> int:
+    """
+    يُرجع الحد الأدنى للفاصل الزمني بين المنشورات بالدقائق.
+    """
     val = await DB.get_setting('min_publish_interval', str(CONFIG.MIN_PUBLISH_INTERVAL))
     try:
         return max(1, int(val))
@@ -812,7 +814,11 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 # 12. إرسال آمن
 # =====================================================================
 
-async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
+async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode: str = None, **kwargs):
+    """
+    إرسال رسالة بشكل آمن مع معالجة الأخطاء.
+    يمكن تمرير parse_mode اختياريًا.
+    """
     if not text:
         return
     await RATE_LIMITER.acquire()
@@ -822,7 +828,7 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, **kwargs):
             chat_id=chat_id,
             text=text,
             reply_markup=reply_markup,
-            parse_mode=None,
+            parse_mode=parse_mode,
             **kwargs
         )
     except Exception as e:
@@ -938,7 +944,7 @@ class PenaltyFactory:
             'ban': BanPenalty(), 'mute': MutePenalty(), 'kick': KickPenalty(),
             'warn': WarnPenalty(), 'restrict': RestrictPenalty(), 'unban': UnbanPenalty()
         }
-        return strategies.get(penalty_type, WarnPenalty())
+        return strategies.get(penalty_type)  # ✅ يُرجع None إذا غير معروف
 
 async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration: int = 60, reason: str = "", moderator: int = None) -> Tuple[bool, str]:
     if user_id == CONFIG.PRIMARY_OWNER_ID:
@@ -951,6 +957,8 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
     if not perms['can_act']:
         return False, "الصلاحيات غير كافية"
     strategy = PenaltyFactory.get_strategy(penalty)
+    if not strategy:
+        return False, "نوع عقوبة غير معروف"
     success, msg = await strategy.apply(bot, chat_id, user_id, duration=duration)
     if success:
         if penalty in DB.VALID_PENALTY_TYPES:
@@ -1015,7 +1023,7 @@ async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
     def _write():
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-    await asyncio.get_event_loop().run_in_executor(None, _write)
+    await asyncio.to_thread(_write)  # ✅ استخدام asyncio.to_thread
     return len(data)
 
 async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[Dict]], overwrite: bool = False) -> int:
@@ -1051,10 +1059,10 @@ async def fetch_json_from_url(url: str) -> Optional[Union[list, dict]]:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=30) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if isinstance(data, (list, dict)):
-                        return data
+                response.raise_for_status()  # ✅ إضافة فحص حالة HTTP
+                data = await response.json()
+                if isinstance(data, (list, dict)):
+                    return data
         return None
     except Exception as e:
         logger.error(f"❌ Fetch JSON error: {e}")
@@ -1173,6 +1181,7 @@ class BackgroundTasks:
                         await asyncio.sleep(sleep_seconds)
                     else:
                         await DB.increment_post_fail(post['id'])
+                        await asyncio.sleep(1)  # ✅ تأخير قصير بعد الفشل
                 await asyncio.sleep(60)
             except Exception as e:
                 logger.error(f"❌ Auto publish: {e}")
@@ -1180,29 +1189,40 @@ class BackgroundTasks:
 
     @staticmethod
     async def auto_backup() -> None:
+        # ✅ نسخة أولية بعد 60 ثانية
+        await asyncio.sleep(60)
+        try:
+            await BackgroundTasks._do_backup()
+        except Exception as e:
+            logger.error(f"❌ Initial backup failed: {e}")
+
         while True:
             await asyncio.sleep(86400)
             try:
-                if await DB.get_auto_backup():
-                    PATHS.BACKUPS.mkdir(parents=True, exist_ok=True)
-                    backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
-
-                    def _backup():
-                        import sqlite3 as sqlite3_sync
-                        source = sqlite3_sync.connect(str(PATHS.DB))
-                        dest = sqlite3_sync.connect(str(backup_file))
-                        with dest:
-                            source.backup(dest)
-                        dest.close()
-                        source.close()
-
-                    await asyncio.get_event_loop().run_in_executor(None, _backup)
-                    await DB.set_setting('last_backup', TimeUtils.sql_iso())
-                    backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
-                    for old in backups[CONFIG.MAX_BACKUPS:]:
-                        old.unlink()
+                await BackgroundTasks._do_backup()
             except Exception as e:
                 logger.error(f"❌ Backup error: {e}")
+
+    @staticmethod
+    async def _do_backup() -> None:
+        if await DB.get_auto_backup():
+            PATHS.BACKUPS.mkdir(parents=True, exist_ok=True)
+            backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+
+            def _backup():
+                import sqlite3 as sqlite3_sync
+                source = sqlite3_sync.connect(str(PATHS.DB))
+                dest = sqlite3_sync.connect(str(backup_file))
+                with dest:
+                    source.backup(dest)
+                dest.close()
+                source.close()
+
+            await asyncio.to_thread(_backup)  # ✅ استخدام asyncio.to_thread
+            await DB.set_setting('last_backup', TimeUtils.sql_iso())
+            backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
+            for old in backups[CONFIG.MAX_BACKUPS:]:
+                old.unlink()
 
     @staticmethod
     async def reminders(bot) -> None:
@@ -1212,7 +1232,11 @@ class BackgroundTasks:
                 users = await DB.get_users_for_reminder()
                 for u in users:
                     try:
-                        days = int(u['days_left'])
+                        # ✅ معالجة أخطاء التحويل
+                        try:
+                            days = int(u['days_left'])
+                        except (ValueError, TypeError):
+                            continue
                         lang = u.get('language', 'ar')
                         text = await get_text(lang, 'reminder_subscription_expires', days=days)
                         if text == 'reminder_subscription_expires':

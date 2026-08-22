@@ -11,6 +11,9 @@
     "ch_stats": "📊 إحصائيات",
     "ch_del": "🗑️ حذف",
     "ch_sel": "📌 اختيار",
+    "sched_btn": "📅 الجدولة",
+    "add_group_button": "➕ إضافة مجموعة",
+    "security_button": "🛡️ الأمان",
     "groups": "👥 مجموعاتي",
     "post_add": "📥 إضافة منشورات",
     "post_pub": "📤 نشر منشور",
@@ -154,6 +157,7 @@
     "sec_warn_count": "🔢 عدد التحذيرات",
     "sec_warn_penalty": "⚖️ عقوبة التحذير",
     "sec_set_warn_penalty": "⚖️ تعيين العقوبة",
+    "sec_penalty": "⚖️ العقوبات",
     "sec_del_pen": "⚖️ عقوبة الحذف",
     "sec_adv_act": "🛠️ إجراءات متقدمة",
     "sec_act_log": "📜 السجل",
@@ -165,7 +169,11 @@
     "sec_disable_all": "❌ تعطيل الكل",
     "sec_close": "❌ إغلاق",
     "status_only": "📊 الحالة",
-    "reminder_subscription_expires": "⚠️ اشتراكك سينتهي بعد {days} يوم"
+    "reminder_subscription_expires": "⚠️ اشتراكك سينتهي بعد {days} يوم",
+    "sched_min": "⏱️ بالدقائق",
+    "sched_hour": "🕐 بالساعات",
+    "sched_day": "📅 بالأيام",
+    "sched_time": "🕒 وقت محدد"
   },
   "menus": {
     "main_menu": {
@@ -323,6 +331,13 @@
       "rows": [
         ["panel_lock", "panel_unlock"],
         ["panel_close"]
+      ]
+    },
+    "channel_settings": {
+      "rows": [
+        ["sched_min", "sched_hour"],
+        ["sched_day", "sched_time"],
+        ["back"]
       ]
     }
   }

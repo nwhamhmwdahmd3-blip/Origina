@@ -4,11 +4,12 @@
 """
 🌿 Relax Manager – البوت الرئيسي (نسخة مصححة ومحسّنة)
 - إصلاحات أمنية في معالجة الدفع (الاشتراكات والهدايا)
-- تحسينات في المعاملات والتحقق من الفواتير
+- تسجيل جميع الأوامر المطلوبة
+- إضافة دعم video_note في الرسائل الخاصة
+- معالجة فشل توليد كود الهدية
+- استدعاء CONFIG.validate()
 - تحديد allowed_updates
 - إعادة تشغيل المهام الخلفية عند الفشل
-- تشغيل مهمة expire_penalties_periodically
-- معالجة أكواد الهدايا بشكل صحيح
 """
 
 import asyncio
@@ -160,7 +161,7 @@ async def successful_payment(update, context):
             await safe_send(context.bot, user_id, f"✅ تم تفعيل اشتراك {plan['name']} بنجاح!")
             logger.info(f"✅ Subscription activated for user {user_id}, plan {plan['id']}, invoice {invoice['number']}")
         else:
-            # محاولة الرجوع عن تعليم الفاتورة إذا فشلت العملية الذرية
+            # إذا فشلت العملية الذرية، نحاول التراجع عن حالة الفاتورة
             await DB.execute("UPDATE invoices SET status='pending' WHERE number=?", (invoice['number'],))
             await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع، يرجى التواصل مع الدعم.")
             logger.error(f"❌ Failed to activate subscription for user {user_id}, invoice {invoice['number']}")
@@ -169,7 +170,6 @@ async def successful_payment(update, context):
         # توليد كود هدية وإرساله
         code = await DB.create_gift_code(plan_id=plan['id'], creator_id=user_id)
         if code:
-            # تعليم الفاتورة مدفوعة
             await DB.mark_invoice_paid(invoice['number'], payment_id)
             await DB.add_payment_log(user_id, 'xtr', 'gift_paid', {'invoice': invoice['number'], 'gift_plan_id': plan['id'], 'amount': total_amount})
             await safe_send(
@@ -182,7 +182,14 @@ async def successful_payment(update, context):
             )
             logger.info(f"✅ Gift code {code} created for user {user_id}, invoice {invoice['number']}")
         else:
-            await safe_send(context.bot, user_id, "❌ حدث خطأ في توليد كود الهدية، يرجى التواصل مع الدعم.")
+            # في حال فشل توليد الكود، نعلّم الفاتورة كمدفوعة ونحفظ سجلًا للمراجعة
+            await DB.mark_invoice_paid(invoice['number'], payment_id)
+            await DB.add_payment_log(user_id, 'xtr', 'gift_generation_failed', {'invoice': invoice['number'], 'gift_plan_id': plan['id'], 'amount': total_amount})
+            await safe_send(
+                context.bot,
+                user_id,
+                "❌ حدث خطأ في توليد كود الهدية. تم تسجيل الدفع بنجاح، يرجى التواصل مع الدعم لاستلام الكود."
+            )
             logger.error(f"❌ Failed to create gift code for user {user_id}, invoice {invoice['number']}")
 
     else:
@@ -196,6 +203,13 @@ async def successful_payment(update, context):
 
 async def main():
     global app
+
+    # ✅ التحقق من الإعدادات قبل بدء التشغيل
+    try:
+        CONFIG.validate()
+    except ValueError as e:
+        logger.error(f"❌ {e}")
+        raise SystemExit(1)
 
     logger.info(f"🌿 {CONFIG.BOT_NAME}")
     logger.info(f"👨‍💼 المالك: {CONFIG.PRIMARY_OWNER_ID}")
@@ -237,6 +251,10 @@ async def main():
         ("contests", "🏆 المسابقات"),
         ("stats", "📊 الإحصائيات"),
         ("replies", "💬 الردود التلقائية"),
+        ("grant", "🎁 منح اشتراك يدوي"),
+        ("set_min_interval", "⏱️ تعيين الحد الأدنى للفاصل"),
+        ("gift_plans", "🎁 خطط الهدايا"),
+        ("redeem_gift", "🎟️ استرداد كود هدية"),
     ])
 
     # ========== الأوامر الأساسية ==========
@@ -250,6 +268,12 @@ async def main():
     app.add_handler(CommandHandler("language", CommandHandlers.language))
     app.add_handler(CommandHandler("contests", CommandHandlers.contests))
     app.add_handler(CommandHandler("replies", CommandHandlers.replies_command))
+
+    # ========== أوامر إضافية (منح، فاصل زمني، هدايا) ==========
+    app.add_handler(CommandHandler("grant", CommandHandlers.grant))
+    app.add_handler(CommandHandler("set_min_interval", CommandHandlers.set_min_interval))
+    app.add_handler(CommandHandler("gift_plans", CommandHandlers.gift_plans))
+    app.add_handler(CommandHandler("redeem_gift", CommandHandlers.redeem_gift))
 
     # ========== أوامر المجموعة ==========
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
@@ -281,10 +305,11 @@ async def main():
     # ========== الكولباك ==========
     app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
 
-    # ========== الرسائل الخاصة ==========
+    # ========== الرسائل الخاصة (تشمل video_note) ==========
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
-         filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL) &
+         filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL |
+         filters.VIDEO_NOTE) &
         filters.ChatType.PRIVATE & ~filters.COMMAND,
         MessageHandlers.handle_private
     ))
@@ -292,7 +317,8 @@ async def main():
     # ========== رسائل المجموعات ==========
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
-         filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL) &
+         filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL |
+         filters.VIDEO_NOTE) &
         filters.ChatType.GROUPS & ~filters.COMMAND,
         MessageHandlers.handle_group
     ))

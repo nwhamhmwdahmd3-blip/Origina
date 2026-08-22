@@ -7,7 +7,8 @@ config.py - إعدادات البوت الأساسية (نسخة مُصحَّح�
 - تحويل آمن للأرقام من متغيرات البيئة
 - تحميل .env من المسار الصحيح
 - إنشاء مجلدات وملف السجل تلقائيًا
-- جميع المتغيرات المطلوبة للمشروع
+- توحيد وحدات الوقت إلى دقائق
+- استدعاء validate() تلقائيًا
 """
 
 import os
@@ -23,7 +24,6 @@ load_dotenv(BASE_DIR / ".env")
 
 logger = logging.getLogger(__name__)
 
-# دالة تحويل آمنة للأرقام
 def safe_int(value: str, default: int = 0) -> int:
     """تحويل قيمة نصية إلى رقم صحيح مع إرجاع القيمة الافتراضية عند الخطأ"""
     try:
@@ -54,12 +54,13 @@ class AppConfig:
     MAX_BACKUPS: int = 20
 
     # ========== النشر التلقائي ==========
-    DEFAULT_PUBLISH_INTERVAL: int = 720          # الثواني الافتراضية بين المنشورات
-    MAX_CHANNELS_PER_CYCLE: int = 20             # عدد القنوات في كل دورة نشر
-    PUBLISH_RETRY_DELAY: int = 300               # تأخير إعادة المحاولة بعد الفشل
-    MAX_UNPUBLISHED_POSTS: int = 1000            # الحد الأقصى للمنشورات غير المنشورة للقناة
-    MAX_POSTS_PER_CHANNEL: int = 30              # حد افتراضي إذا لم توجد خطة
-    MIN_PUBLISH_INTERVAL: int = 5                # الحد الأدنى للفاصل الزمني (دقائق)
+    # الوحدات موحدة إلى دقائق
+    DEFAULT_PUBLISH_INTERVAL: int = 12      # الدقائق الافتراضية بين المنشورات
+    MAX_CHANNELS_PER_CYCLE: int = 20        # عدد القنوات في كل دورة نشر
+    PUBLISH_RETRY_DELAY: int = 5            # تأخير إعادة المحاولة بعد الفشل (بالدقائق)
+    MAX_UNPUBLISHED_POSTS: int = 1000       # الحد الأقصى للمنشورات غير المنشورة للقناة
+    MAX_POSTS_PER_CHANNEL: int = 30         # حد افتراضي إذا لم توجد خطة
+    MIN_PUBLISH_INTERVAL: int = 5           # الحد الأدنى للفاصل الزمني (بالدقائق)
 
     # ========== قاعدة البيانات ==========
     DB_TIMEOUT: int = 30
@@ -135,11 +136,12 @@ class PathManager:
 CONFIG = AppConfig()
 PATHS = PathManager()
 
-# تحذيرات مبكرة
-if not CONFIG.TOKEN:
-    logger.warning("⚠️ BOT_TOKEN غير محدد في .env")
-if CONFIG.PRIMARY_OWNER_ID == 0:
-    logger.warning("⚠️ MAIN_ADMIN_ID غير محدد في .env")
+# استدعاء التحقق من الإعدادات
+try:
+    CONFIG.validate()
+except ValueError as e:
+    logger.error(f"❌ {e}")
+    raise SystemExit(1)
 
 logger.info(f"✅ تم تحميل الإعدادات: {CONFIG.BOT_NAME} (@{CONFIG.BOT_USERNAME})")
 logger.info(f"📁 قاعدة البيانات: {PATHS.DB}")

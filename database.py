@@ -3,38 +3,11 @@
 
 """
 database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية بعد جميع الإصلاحات)
+- توحيد وحدات الوقت إلى دقائق في الإعدادات
+- إضافة حد يومي للإحالات
+- إضافة حد أقصى للكلمات المحظورة العامة
+- تحسينات في الأداء (استخدام asyncio.to_thread)
 - جميع الجداول والدوال الأساسية
-- دعم العقوبات المؤقتة والدائمة (كتم، حظر، إنذار، تقييد)
-- تسجيل العقوبات في قاعدة البيانات مع المدة والسبب
-- رفع العقوبات تلقائياً عند انتهاء المدة
-- إعدادات العقوبات لكل مجموعة على حدة
-- ✅ إصلاح activate_trial لاستخدام MAX بدلاً من استبدال الاشتراك
-- ✅ توحيد وحدات مدة العقوبات إلى ثوانٍ
-- ✅ تصفية get_all_plans لإظهار باقات الاشتراك فقط
-- ✅ إضافة get_user_subscription
-- ✅ إضافة get_bot_stats
-- ✅ إضافة نظام نقاط المستخدمين
-- ✅ إضافة نظام مستويات
-- ✅ إضافة نسخ احتياطي للردود
-- ✅ إضافة refresh_user_subscription_end لتوحيد مصدر الاشتراكات
-- ✅ إضافة فحوصات الملكية في الدوال الحساسة
-- ✅ معالجة السباقات باستخدام الأقفال والمعاملات الذرية
-- ✅ فحص حدود الباقة في get_channels_to_publish
-- ✅ اختيار أفضل اشتراك نشط بدل الأطول زمنياً (إصلاح خفض الصلاحيات)
-- ✅ جعل claim_referral_reward ذرية
-- ✅ تصحيح حساب max_posts (إجمالي المنشورات وليس غير المنشورة فقط)
-- ✅ إعادة تعيين fail_count في reset_posts
-- ✅ منح النقاط في add_channel بشكل موثوق
-- ✅ فرض اشتراك نشط لإضافة قنوات/منشورات
-- ✅ تحسين register_user لعدم مسح البيانات
-- ✅ تقييد update_penalty_settings لأعمدة العقوبات
-- ✅ التحقق من نوع العقوبة في set_violation_penalty
-- ✅ إصلاح استعلام التذكيرات (عدد المعاملات)
-- ✅ إضافة قفل على redeem_gift_code
-- ✅ إضافة قفل على add_channel و add_posts
-- ✅ تحويل backup_auto_replies إلى غير متزامن
-- ✅ إضافة دوال الدفع الذرية وتوليد أكواد الهدايا
-- ✅ تحسين create_contest لتخزين التاريخ بصيغة SQLite
 """
 
 import sqlite3
@@ -389,7 +362,8 @@ class Database:
                 value TEXT
             )
         """)
-        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('publish_interval', '720')")
+        # ✅ تغيير القيمة الافتراضية لـ publish_interval إلى دقائق (12 دقيقة)
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('publish_interval', '12')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_backup', '1')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_ticket_number', '0')")
         await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_backup', '')")
@@ -740,7 +714,6 @@ class Database:
                     (user_id, TimeUtils.sql_iso())
                 )
                 await conn.commit()
-            logger.info(f"✅ تم تسجيل/تحديث مستخدم {user_id}")
             return True
         except Exception as e:
             logger.error(f"❌ Error in register_user: {e}", exc_info=True)
@@ -1046,7 +1019,7 @@ class Database:
                         """INSERT INTO schedule (channel_db_id, schedule_type, interval_minutes, next_publish_date)
                            VALUES (?, 'interval_minutes', 12, ?)
                            ON CONFLICT(channel_db_id) DO NOTHING""",
-                        (ch_db_id, (TimeUtils.utc_now() + timedelta(seconds=720)).strftime('%Y-%m-%d %H:%M:%S'))
+                        (ch_db_id, (TimeUtils.utc_now() + timedelta(minutes=12)).strftime('%Y-%m-%d %H:%M:%S'))
                     )
 
                     # 6. منح النقاط فقط إذا كانت القناة جديدة
@@ -1493,6 +1466,11 @@ class Database:
     async def add_banned_word(self, word: str, chat_id: int, added_by: int) -> Tuple[bool, bool]:
         try:
             word = word.strip().lower()
+            # إذا كانت كلمة عامة، تحقق من الحد الأقصى
+            if chat_id == -1:
+                count = await self.fetchval("SELECT COUNT(*) FROM banned_words WHERE chat_id=-1")
+                if count is not None and count >= CONFIG.MAX_GLOBAL_BANNED_WORDS:
+                    return False, False
             await self.execute(
                 "INSERT INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)",
                 (word, chat_id, added_by, TimeUtils.sql_iso())
@@ -1854,6 +1832,17 @@ class Database:
             return False
         try:
             async with self._get_connection() as conn:
+                # ✅ فحص الحد اليومي للإحالات
+                today = TimeUtils.utc_now().strftime('%Y-%m-%d')
+                count_row = await conn.execute(
+                    "SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND date(created_at)=?",
+                    (referrer_id, today)
+                )
+                count = (await count_row.fetchone())[0]
+                if count >= CONFIG.MAX_DAILY_REFERRALS:
+                    logger.warning(f"⚠️ User {referrer_id} reached daily referral limit")
+                    return False
+
                 cur = await conn.execute(
                     "INSERT INTO referrals (referrer_id, referred_id, created_at) VALUES (?,?,?)",
                     (referrer_id, referred_id, TimeUtils.sql_iso())
@@ -2182,12 +2171,13 @@ class Database:
         return await self.get_setting('log_channel_id')
 
     async def get_publish_interval(self) -> int:
+        """إرجاع الفاصل الزمني بالدقائق"""
         try:
-            v = await self.get_setting('publish_interval', '720')
+            v = await self.get_setting('publish_interval', '12')
             interval = int(v)
             return max(1, interval)
         except:
-            return 720
+            return 12
 
     async def get_auto_backup(self) -> bool:
         try:
@@ -2818,12 +2808,12 @@ class Database:
             backup_file = PATHS.BACKUPS / f"auto_replies_backup_{timestamp}.json"
             backup_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # كتابة الملف بشكل غير متزامن (في Executor)
+            # كتابة الملف بشكل غير متزامن (استخدام asyncio.to_thread بدلاً من get_event_loop)
             def _write_json():
                 with open(backup_file, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
 
-            await asyncio.get_event_loop().run_in_executor(None, _write_json)
+            await asyncio.to_thread(_write_json)
             return len(data)
         except Exception as e:
             logger.error(f"❌ Error in backup_auto_replies: {e}", exc_info=True)
