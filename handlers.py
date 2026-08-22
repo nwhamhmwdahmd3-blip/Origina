@@ -3,7 +3,7 @@
 
 """
 handlers.py - جميع معالجات البوت (نسخة نهائية مصححة)
-- إصلاح مشكلة حفظ القناة
+- إصلاح مشكلة "Member list is inaccessible" عند إضافة قناة
 - إصلاح مشكلة بقاء حالة ADDING_POSTS
 - معالجة جميع أزرار الأمان واللوحة
 - مدد جاهزة للعقوبات (افتراضية ومخالفات)
@@ -3288,13 +3288,42 @@ class MessageHandlers:
                     await safe_send(context.bot, user_id, "❌ ليس قناة!")
                     StateManager.clear(user_id)
                     return
-                bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+
+                # ✅ التحقق من البوت مشرف مع معالجة "Member list is inaccessible"
+                try:
+                    bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+                except Exception as e:
+                    if "Member list is inaccessible" in str(e):
+                        await safe_send(
+                            context.bot, user_id,
+                            "⚠️ **البوت ليس مشرفًا في هذه القناة.**\n"
+                            "يرجى إضافة البوت كمشرف في القناة أولاً ثم حاول مجددًا."
+                        )
+                    else:
+                        await safe_send(context.bot, user_id, f"❌ خطأ: {str(e)[:50]}")
+                    StateManager.clear(user_id)
+                    return
+
                 if bot_member.status != 'administrator':
                     await safe_send(context.bot, user_id, "❌ البوت ليس مشرفاً!")
                     StateManager.clear(user_id)
                     return
 
-                user_member = await context.bot.get_chat_member(chat.id, user_id)
+                # ✅ التحقق من صلاحية المستخدم
+                try:
+                    user_member = await context.bot.get_chat_member(chat.id, user_id)
+                except Exception as e:
+                    if "Member list is inaccessible" in str(e):
+                        await safe_send(
+                            context.bot, user_id,
+                            "⚠️ **تعذر التحقق من صلاحياتك.**\n"
+                            "تأكد من أنك مشرف في القناة وأن البوت لديه صلاحية الوصول لقائمة الأعضاء."
+                        )
+                    else:
+                        await safe_send(context.bot, user_id, f"❌ خطأ: {str(e)[:50]}")
+                    StateManager.clear(user_id)
+                    return
+
                 if user_member.status not in ['creator', 'administrator']:
                     await safe_send(context.bot, user_id, "❌ يجب أن تكون مشرفًا في القناة لإضافتها.")
                     StateManager.clear(user_id)
