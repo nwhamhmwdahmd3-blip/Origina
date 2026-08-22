@@ -11,6 +11,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - تحسين safe_send
 - تحسين النسخ الاحتياطي
 - إضافة حالات جديدة للإعدادات الأمنية المتقدمة
+- إصلاح RecursionError في تحميل ملف الأزرار
 """
 
 import asyncio
@@ -228,7 +229,7 @@ _auto_reply_cache = AutoReplyCache(maxsize=300)
 
 class TranslationManager:
     _translations: Dict[str, Dict] = {}
-    _locales_dir: str = "locales"
+    _locales_dir: str = str(Path(__file__).resolve().parent / "locales")
     _default_lang: str = "ar"
 
     @classmethod
@@ -282,7 +283,7 @@ async def get_text(lang: str, key: str, **kwargs) -> str:
 
 
 # =====================================================================
-# 7. إدارة الحالات (تمت إضافة الحالات الجديدة)
+# 7. إدارة الحالات
 # =====================================================================
 
 class UserState(Enum):
@@ -331,7 +332,7 @@ class UserState(Enum):
     WAIT_VIOLATION_STRIKES = auto()
     WAIT_VIOLATION_DURATION = auto()
     SUPPORT_MODE = auto()
-    # ✅ الحالات الجديدة للإعدادات الأمنية المتقدمة
+    WAIT_REDEEM_GIFT = auto()
     WAIT_ANTIFLOOD_MESSAGES = auto()
     WAIT_ANTIFLOOD_SECONDS = auto()
     WAIT_NIGHT_START = auto()
@@ -366,11 +367,10 @@ class StateManager:
 
 
 # =====================================================================
-# 8. تعريفات الأزرار (CB) - تبقى كما هي مع إضافات
+# 8. تعريفات الأزرار (CB)
 # =====================================================================
 
 class CB:
-    # الأزرار الأساسية
     MAIN = "main"
     BACK = "back"
     CANCEL = "cancel"
@@ -379,14 +379,12 @@ class CB:
     LANGUAGE = "language"
     CHECK_SUB = "check_sub"
 
-    # القنوات
     CH_ADD = "ch_add"
     CH_LIST = "ch_list"
     CH_SEL = "ch_sel"
     CH_DEL = "ch_del"
     CH_STATS = "ch_stats"
 
-    # المنشورات
     POST_ADD = "post_add"
     POST_PUB = "post_pub"
     POST_LIST = "post_list"
@@ -395,32 +393,26 @@ class CB:
     POST_CLEAR = "post_clear"
     PUB_ALL = "pub_all"
 
-    # المجموعات
     GROUPS = "groups"
     GRP_SET = "grp_set"
 
-    # الإعدادات
     TOGGLE_AUTO = "toggle_auto"
     TOGGLE_REC = "toggle_rec"
 
-    # الأمان
     SEC_CLOSE = "sec_close"
     SEC_ENABLE_ALL = "sec_enable_all"
     SEC_DISABLE_ALL = "sec_disable_all"
 
-    # الكلمات المحظورة
     BAN_ADD = "ban_add"
     BAN_LIST = "ban_list"
     BAN_REM = "ban_rem"
 
-    # العقوبات
     PENALTY = "penalty"
     PEN_BAN = "pen_ban"
     PEN_MUTE = "pen_mute"
     PEN_KICK = "pen_kick"
     PEN_WARN = "pen_warn"
 
-    # الإجراءات المتقدمة
     ADV_ACT = "adv_act"
     ACT_BAN = "act_ban"
     ACT_MUTE = "act_mute"
@@ -431,30 +423,24 @@ class CB:
     ACT_LOG = "act_log"
     ACT_UNBAN = "act_unban"
 
-    # لوحة المجموعة
     PANEL_LOCK = "panel_lock"
     PANEL_UNLOCK = "panel_unlock"
     PANEL_CLOSE = "panel_close"
 
-    # الدعم
     SUPPORT = "support"
     SUPPORT_TICKET = "support_ticket"
 
-    # الباقات والاشتراكات
     TRIAL = "trial"
     SUBSCRIBE = "subscribe"
     PLANS = "plans"
     INVOICES = "invoices"
 
-    # المطور
     DEVELOPER = "developer"
 
-    # الإحالات
     REFERRAL = "referral"
     REF_CLAIM = "ref_claim"
     REF_LIST = "ref_list"
 
-    # التذكيرات
     REMINDER = "reminder"
     REM_TOGGLE_SUB = "rem_sub"
     REM_TOGGLE_DAILY = "rem_daily"
@@ -462,18 +448,15 @@ class CB:
     REM_SET_DAYS = "rem_days"
     REM_LANG = "rem_lang"
 
-    # الترجمة
     TRANSLATION = "translation"
     TRANS_OFF = "trans_off"
     TRANS_SET = "trans_set"
 
-    # المسابقات
     CONTESTS = "contests"
     CONTEST_JOIN = "contest_join"
     CONTEST_WINNERS = "contest_winners"
     DECLARE_WINNER_SEL = "declare_winner_sel"
 
-    # لوحة الأدمن
     ADMIN = "admin"
     ADMIN_USERS = "admin_users"
     ADMIN_BANNED = "admin_banned"
@@ -486,7 +469,7 @@ class CB:
     ADMIN_UNBAN_GR = "admin_unban_gr"
     ADMIN_ADD_ADMIN = "admin_add_admin"
     ADMIN_REM_ADMIN = "admin_rem_admin"
-    ADMIN_LIST_ADMINS = "admin_list_admins"  # ✅ إضافة
+    ADMIN_LIST_ADMINS = "admin_list_admins"
     ADMIN_RAM = "admin_ram"
     ADMIN_STATS = "admin_stats"
     ADMIN_METRICS = "admin_metrics"
@@ -518,10 +501,9 @@ class CB:
     ADMIN_IMPORT_REPLIES = "admin_import_replies"
     ADMIN_REFRESH_CACHE = "admin_refresh_cache"
     ADMIN_IMPORT_GITHUB = "admin_import_github"
-    ADMIN_INVOICES = "admin_invoices"  # ✅ إضافة
-    ADMIN_PAYMENT_LOGS = "admin_payment_logs"  # ✅ إضافة
+    ADMIN_INVOICES = "admin_invoices"
+    ADMIN_PAYMENT_LOGS = "admin_payment_logs"
 
-    # الردود التلقائية
     AUTO_REPLY_MENU = "auto_reply_menu"
     AUTO_REPLY_TOGGLE = "auto_reply_toggle"
     AUTO_REPLY_ADMINS = "auto_reply_admins"
@@ -572,16 +554,25 @@ class KeyboardFactory:
                 logger.warning(f"⚠️ ملف buttons_config_{lang}.json غير موجود، سيتم استخدام اللغة الافتراضية")
                 return cls._load_config_for_lang(cls._default_lang)
             else:
+                logger.warning("⚠️ buttons_config_ar.json غير موجود، سيتم استخدام إعدادات افتراضية")
                 default_config = {
                     "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
                     "menus": {}
                 }
                 cls._configs[cls._default_lang] = default_config
-                logger.warning("⚠️ buttons_config_ar.json غير موجود، تم إنشاء إعدادات افتراضية")
                 return default_config
         except Exception as e:
             logger.error(f"❌ خطأ في قراءة buttons_config_{lang}.json: {e}")
-            return cls._load_config_for_lang(cls._default_lang)
+            if lang != cls._default_lang:
+                return cls._load_config_for_lang(cls._default_lang)
+            else:
+                # لا تستدعي نفسها مرة أخرى
+                default_config = {
+                    "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
+                    "menus": {}
+                }
+                cls._configs[cls._default_lang] = default_config
+                return default_config
 
     @classmethod
     def load_config(cls):
@@ -858,7 +849,7 @@ def get_ram_usage() -> dict:
 
 
 # =====================================================================
-# 13. نظام العقوبات (مُصحَّح)
+# 13. نظام العقوبات
 # =====================================================================
 
 class PenaltyStrategy(ABC):
@@ -1110,7 +1101,7 @@ def reload_replies_from_file() -> dict:
 
 
 # =====================================================================
-# 16. المهام الخلفية (مُصحَّحة)
+# 16. المهام الخلفية
 # =====================================================================
 
 class BackgroundTasks:
