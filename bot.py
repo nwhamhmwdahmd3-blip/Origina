@@ -10,6 +10,7 @@
 - استدعاء CONFIG.validate()
 - تحديد allowed_updates
 - إعادة تشغيل المهام الخلفية عند الفشل
+- ✅ إصلاح ظهور الأوامر في المجموعات والخاص
 """
 
 import asyncio
@@ -18,6 +19,10 @@ import logging
 import traceback
 import json
 
+from telegram import (
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeAllGroupChats
+)
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, ChatJoinRequestHandler, filters,
@@ -239,8 +244,8 @@ async def main():
     app = Application.builder().token(CONFIG.TOKEN).build()
     await app.initialize()
 
-    # ========== تسجيل الأوامر في قائمة تيليجرام ==========
-    await app.bot.set_my_commands([
+    # ========== تسجيل الأوامر في القائمة (خاص + مجموعات) ==========
+    commands = [
         ("start", "🏠 القائمة الرئيسية"),
         ("help", "📚 المساعدة"),
         ("trial", "🎁 تجربة مجانية"),
@@ -267,7 +272,19 @@ async def main():
         ("restrict", "🔒 تقييد مستخدم"),
         ("unban", "🔓 إلغاء حظر"),
         ("pin", "📌 تثبيت رسالة"),
-    ])
+    ]
+
+    # للأوامر في المحادثة الخاصة
+    await app.bot.set_my_commands(
+        commands,
+        scope=BotCommandScopeAllPrivateChats()
+    )
+
+    # للأوامر في المجموعات
+    await app.bot.set_my_commands(
+        commands,
+        scope=BotCommandScopeAllGroupChats()
+    )
 
     # ========== الأوامر الأساسية ==========
     app.add_handler(CommandHandler("start", CommandHandlers.start))
