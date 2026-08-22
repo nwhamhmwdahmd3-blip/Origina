@@ -12,6 +12,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - تحسين النسخ الاحتياطي
 - إضافة حالات جديدة للإعدادات الأمنية المتقدمة
 - إصلاح RecursionError في تحميل ملف الأزرار
+- إصلاح مسار ملف الأزرار إلى مسار مطلق
 """
 
 import asyncio
@@ -521,7 +522,7 @@ class CB:
 class KeyboardFactory:
     _configs: Dict[str, Dict] = {}
     _default_lang: str = "ar"
-    _config_path_template: str = "buttons_config_{lang}.json"
+    _config_path_template: str = str(Path(__file__).resolve().parent / "buttons_config_{lang}.json")
 
     _NO_CHAT_ID_BUTTONS = {
         "sec_close", "panel_close", "back", "main", "cancel",
