@@ -6,7 +6,7 @@ handlers.py - جميع معالجات البوت (نسخة نهائية مصحح
 - إصلاح أزرار المخالفات (تعريف valid_violations)
 - إصلاح مشكلة بقاء حالة ADDING_POSTS
 - معالجة جميع أزرار الأمان واللوحة
-- مدد جاهزة للعقوبات
+- مدد جاهزة للعقوبات (افتراضية ومخالفات)
 - الفواتير وسجلات الدفع
 """
 
@@ -2342,6 +2342,7 @@ class CallbackHandlers:
                 await query.edit_message_text("اختر نوع العقوبة:", reply_markup=kb)
             return
 
+        # ✅ عرض قائمة مدد جاهزة لعقوبات المخالفات
         if action == "violation_pen":
             if len(parts) >= 4:
                 v_type = parts[2]
@@ -2352,11 +2353,44 @@ class CallbackHandlers:
                     except BadRequest:
                         pass
                     return
-                StateManager.set(user_id, UserState.WAIT_PENALTY_DURATION)
-                context.user_data['penalty_chat'] = chat_id
-                context.user_data['penalty_vtype'] = v_type
-                context.user_data['penalty_ptype'] = p_type
-                await query.edit_message_text("⏱️ أرسل المدة بالدقائق (0 للدائم):")
+
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("دقيقة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:60"),
+                     InlineKeyboardButton("10 دقائق", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:600")],
+                    [InlineKeyboardButton("نص ساعة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:1800"),
+                     InlineKeyboardButton("ساعة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:3600")],
+                    [InlineKeyboardButton("يوم", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:86400"),
+                     InlineKeyboardButton("أسبوع", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:604800")],
+                    [InlineKeyboardButton("10 أيام", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:864000"),
+                     InlineKeyboardButton("15 يوم", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:1296000")],
+                    [InlineKeyboardButton("شهر", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:2592000"),
+                     InlineKeyboardButton("سنة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:31536000")],
+                    [InlineKeyboardButton("دائم", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:0")],
+                    [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_violation_penalties:{chat_id}")]
+                ])
+                await query.edit_message_text(f"⏱️ اختر مدة عقوبة {p_type} لمخالفة {v_type}:", reply_markup=kb)
+            return
+
+        # ✅ تطبيق المدة المختارة على عقوبة المخالفة
+        if action == "violation_dur":
+            if len(parts) >= 5:
+                v_type = parts[2]
+                p_type = parts[3]
+                try:
+                    duration_seconds = int(parts[4])
+                except:
+                    return
+                if v_type not in valid_violations or p_type not in DB.VALID_PENALTY_TYPES:
+                    try:
+                        await query.answer("❌ بيانات غير صالحة", show_alert=True)
+                    except BadRequest:
+                        pass
+                    return
+                await DB.set_violation_penalty(chat_id, v_type, p_type, duration_seconds)
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_violation_penalties:{chat_id}")
+                ]])
+                await query.edit_message_text(f"✅ تم حفظ عقوبة {v_type}: {p_type} ({duration_seconds} ثانية)", reply_markup=kb)
             return
 
         try:
