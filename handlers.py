@@ -8,7 +8,8 @@ handlers.py - جميع معالجات البوت (نسخة مصححة شاملة
 - مسح الحالة عند الرجوع
 - تجاهل الأرقام أثناء وضع الإضافة
 - معالجة جميع أزرار الأمان بما فيها الفيضان والوضع الليلي ومدد العقوبات
-- إصلاح مشكلة أزرار لا تحتوي على chat_id (مثل مدد العقوبات)
+- إصلاح مشكلة أزرار لا تحتوي على chat_id
+- إضافة مدد جاهزة للعقوبات (دقيقة، ساعة، يوم، أسبوع، 10 أيام، 15 يوم، شهر، سنة، دائم)
 """
 
 import asyncio
@@ -265,7 +266,6 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
         lang = await DB.get_user_language(user_id)
-        # ✅ تخزين معرف الدردشة لاستخدامه لاحقًا في الأزرار التي لا تحمل chat_id
         context.user_data['security_chat_id'] = chat_id
         settings = await DB.get_security_settings(chat_id)
         text = KeyboardFactory._format_security_text(settings)
@@ -801,7 +801,6 @@ class CallbackHandlers:
                     await query.answer()
                 except BadRequest:
                     pass
-                # ✅ مسح الحالة قبل العودة للقائمة الرئيسية
                 StateManager.clear(user_id)
                 context.args = []
                 await CommandHandlers.start(update, context)
@@ -1464,7 +1463,6 @@ class CallbackHandlers:
 
             if data.startswith(CB.GRP_SET + ":"):
                 chat_id = int(data.split(":")[-1])
-                # ✅ تخزين معرف الدردشة لاستخدامه لاحقًا
                 context.user_data['security_chat_id'] = chat_id
                 if not await is_authorized_in_group(context.bot, chat_id, user_id):
                     try:
@@ -1866,7 +1864,6 @@ class CallbackHandlers:
         if len(parts) >= 2 and parts[1].isdigit():
             chat_id = int(parts[1])
         else:
-            # ✅ إذا لم يوجد chat_id في البيانات، نأخذه من السياق المخزن
             chat_id = context.user_data.get('security_chat_id')
             if not chat_id and update.effective_chat and update.effective_chat.type in ['group', 'supergroup']:
                 chat_id = update.effective_chat.id
@@ -2241,32 +2238,53 @@ class CallbackHandlers:
                 await CallbackHandlers._handle_night_settings(update, context, query, chat_id, user_id, lang)
             return
 
-        # ✅ مدد العقوبات الفرعية
-        if action == "penalty_mute":
-            StateManager.set(user_id, UserState.WAIT_PENALTY_DEFAULT_DURATION)
-            context.user_data['penalty_chat'] = chat_id
-            context.user_data['penalty_type'] = 'mute'
-            await query.edit_message_text("⏱️ أرسل مدة الكتم الافتراضية بالدقائق (0 للدائم):")
-            try: await query.answer()
-            except BadRequest: pass
+        # ✅ مدد العقوبات الفرعية - عرض قائمة مدد جاهزة
+        if action in ("penalty_mute", "penalty_ban", "penalty_restrict"):
+            ptype = action.replace("penalty_", "")
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("دقيقة", callback_data=f"sec_pen_set:{chat_id}:{ptype}:60"),
+                 InlineKeyboardButton("10 دقائق", callback_data=f"sec_pen_set:{chat_id}:{ptype}:600")],
+                [InlineKeyboardButton("ساعة", callback_data=f"sec_pen_set:{chat_id}:{ptype}:3600"),
+                 InlineKeyboardButton("يوم", callback_data=f"sec_pen_set:{chat_id}:{ptype}:86400")],
+                [InlineKeyboardButton("أسبوع", callback_data=f"sec_pen_set:{chat_id}:{ptype}:604800"),
+                 InlineKeyboardButton("10 أيام", callback_data=f"sec_pen_set:{chat_id}:{ptype}:864000")],
+                [InlineKeyboardButton("15 يوم", callback_data=f"sec_pen_set:{chat_id}:{ptype}:1296000"),
+                 InlineKeyboardButton("شهر", callback_data=f"sec_pen_set:{chat_id}:{ptype}:2592000")],
+                [InlineKeyboardButton("سنة", callback_data=f"sec_pen_set:{chat_id}:{ptype}:31536000"),
+                 InlineKeyboardButton("دائم", callback_data=f"sec_pen_set:{chat_id}:{ptype}:0")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_penalty_durations:{chat_id}")]
+            ])
+            await query.edit_message_text(f"⏱️ اختر مدة {ptype} الافتراضية:", reply_markup=kb)
+            try:
+                await query.answer()
+            except BadRequest:
+                pass
             return
 
-        if action == "penalty_ban":
-            StateManager.set(user_id, UserState.WAIT_PENALTY_DEFAULT_DURATION)
-            context.user_data['penalty_chat'] = chat_id
-            context.user_data['penalty_type'] = 'ban'
-            await query.edit_message_text("⏱️ أرسل مدة الحظر الافتراضية بالدقائق (0 للدائم):")
-            try: await query.answer()
-            except BadRequest: pass
-            return
-
-        if action == "penalty_restrict":
-            StateManager.set(user_id, UserState.WAIT_PENALTY_DEFAULT_DURATION)
-            context.user_data['penalty_chat'] = chat_id
-            context.user_data['penalty_type'] = 'restrict'
-            await query.edit_message_text("⏱️ أرسل مدة التقييد الافتراضية بالدقائق (0 للدائم):")
-            try: await query.answer()
-            except BadRequest: pass
+        # ✅ تطبيق المدة المختارة على العقوبة الافتراضية
+        if action == "pen_set":
+            if len(parts) >= 4:
+                ptype = parts[2]
+                try:
+                    duration_seconds = int(parts[3])
+                except:
+                    return
+                if ptype not in DB.VALID_PENALTY_TYPES:
+                    try:
+                        await query.answer("❌ نوع غير صالح", show_alert=True)
+                    except BadRequest:
+                        pass
+                    return
+                col_map = {
+                    'mute': 'mute_default_duration',
+                    'ban': 'ban_default_duration',
+                    'restrict': 'restrict_default_duration'
+                }
+                col = col_map.get(ptype)
+                if col:
+                    await DB.execute(f"UPDATE group_security SET {col}=? WHERE chat_id=?", (duration_seconds, chat_id))
+                    await query.edit_message_text(f"✅ تم تعيين مدة {ptype} الافتراضية إلى {duration_seconds} ثانية")
+                    await CallbackHandlers._handle_penalty_durations(update, context, query, chat_id, user_id, lang)
             return
 
         # ✅ إدارة عقوبات المخالفات
@@ -3263,7 +3281,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "✅ تم إنهاء إضافة المنشورات.")
                 return
 
-            # ✅ تجاهل الأرقام أثناء وضع الإضافة
             if text.strip().isdigit():
                 await safe_send(
                     context.bot, user_id,
