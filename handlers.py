@@ -1019,7 +1019,8 @@ class CallbackHandlers:
 
             if base_data == "redeem_gift":
                 await safe_answer_query(query)
-                await CommandHandlers.redeem_gift(update, context)
+                StateManager.set(user_id, UserState.WAIT_REDEEM_GIFT)
+                await safe_send(context.bot, user_id, "🎟️ أرسل كود الهدية الآن:")
                 return
 
             if data.startswith("buy_sub_"):
@@ -2776,7 +2777,755 @@ class MessageHandlers:
         text = msg.text.strip() if msg.text else ""
         state = StateManager.get(user_id)
 
-        # (معظم الكود السابق يبقى كما هو، مع إضافة حالات جديدة)
+        # ✅ إضافة معالجة حالة استخدام كود الهدية
+        if state == UserState.WAIT_REDEEM_GIFT:
+            try:
+                code = text.strip()
+                if not code:
+                    await safe_send(context.bot, user_id, "❌ يرجى إرسال كود الهدية.")
+                    return
+                success, days = await DB.redeem_gift_code(user_id, code)
+                if success and days > 0:
+                    await safe_send(context.bot, user_id, f"🎉 **تم تفعيل الاشتراك بنجاح!**\n\n✅ {days} يوم اشتراك مجاني.")
+                elif days == -1:
+                    await safe_send(context.bot, user_id, "❌ لا يمكنك استخدام كود هدية قمت بإنشائه بنفسك.")
+                else:
+                    await safe_send(context.bot, user_id, "❌ كود غير صالح أو مستخدم مسبقاً.")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        # بقية الحالات كما هي ...
+
+        if state == UserState.WAIT_IMPORT_FILE:
+            try:
+                if not msg.document:
+                    await safe_send(context.bot, user_id, "❌ أرسل ملف JSON")
+                    return
+                file = msg.document
+                if not file.file_name.endswith('.json'):
+                    await safe_send(context.bot, user_id, "❌ الملف يجب أن يكون JSON")
+                    return
+                try:
+                    file_obj = await context.bot.get_file(file.file_id)
+                    temp_path = f"/tmp/import_{user_id}.json"
+                    await file_obj.download_to_drive(temp_path)
+                    import_chat_id = context.user_data.get('import_chat_id', -1)
+                    count = await import_auto_replies(import_chat_id, temp_path, overwrite=True)
+                    _auto_reply_cache.invalidate()
+                    await safe_send(context.bot, user_id, f"✅ تم استيراد {count} رد")
+                    Path(temp_path).unlink(missing_ok=True)
+                except Exception as e:
+                    logger.error(f"❌ فشل الاستيراد: {e}")
+                    await safe_send(context.bot, user_id, "❌ فشل الاستيراد")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_GITHUB_URL:
+            try:
+                url = text.strip()
+                if not url.startswith('http'):
+                    await safe_send(context.bot, user_id, "❌ رابط غير صالح")
+                    return
+                json_data = await fetch_json_from_url(url)
+                if not json_data:
+                    await safe_send(context.bot, user_id, "❌ فشل التحميل")
+                    return
+                count = await import_auto_replies(-1, json_data, overwrite=True)
+                _auto_reply_cache.invalidate()
+                await safe_send(context.bot, user_id, f"✅ تم استيراد {count} رد")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_CHANNEL:
+            try:
+                # ✅ فحص الاشتراك أولاً (لغير المالك)
+                if user_id != CONFIG.PRIMARY_OWNER_ID:
+                    if not await DB.has_active_subscription(user_id):
+                        await safe_send(context.bot, user_id, "❌ **يجب أن يكون لديك اشتراك نشط لإضافة قناة**\n\nاشترك أولاً من /subscribe أو فعّل التجربة /trial")
+                        StateManager.clear(user_id)
+                        return
+
+                if not text:
+                    await safe_send(context.bot, user_id, "❌ أرسل معرف القناة أو رابطها")
+                    return
+                try:
+                    chat = await context.bot.get_chat(text)
+                except Exception as e:
+                    await safe_send(context.bot, user_id, "❌ تعذر العثور على القناة")
+                    return
+                if chat.type != 'channel':
+                    await safe_send(context.bot, user_id, "❌ ليس قناة!")
+                    return
+                try:
+                    bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+                except Exception:
+                    await safe_send(context.bot, user_id, "❌ البوت ليس مشرفاً!")
+                    return
+                if bot_member.status != 'administrator':
+                    await safe_send(context.bot, user_id, "❌ البوت ليس مشرفاً!")
+                    return
+
+                try:
+                    user_member = await context.bot.get_chat_member(chat.id, user_id)
+                except Exception:
+                    await safe_send(context.bot, user_id, "❌ يجب أن تكون مشرفًا في القناة لإضافتها.")
+                    return
+                if user_member.status not in ['creator', 'administrator']:
+                    await safe_send(context.bot, user_id, "❌ يجب أن تكون مشرفًا في القناة لإضافتها.")
+                    return
+
+                existing_channel = await DB.get_channel_by_user(user_id, chat.id)
+                if existing_channel:
+                    await safe_send(context.bot, user_id, "⚠️ هذه القناة مضافة مسبقاً")
+                    return
+
+                if user_id != CONFIG.PRIMARY_OWNER_ID:
+                    active_plan = await DB.get_active_plan(user_id)
+                    if active_plan:
+                        current_channels = len(await DB.get_user_channels(user_id))
+                        if current_channels >= active_plan['max_channels']:
+                            await safe_send(
+                                context.bot,
+                                user_id,
+                                f"❌ لقد وصلت للحد الأقصى ({active_plan['max_channels']} قنوات) في خطتك."
+                            )
+                            return
+
+                result = await DB.add_channel(user_id, chat.id, chat.title or "قناة")
+                if result:
+                    await DB.set_active_channel(user_id, result)
+                    await safe_send(context.bot, user_id, f"✅ تمت إضافة {chat.title}!")
+                else:
+                    active_plan = await DB.get_active_plan(user_id)
+                    if active_plan:
+                        current_channels = len(await DB.get_user_channels(user_id))
+                        if current_channels >= active_plan['max_channels']:
+                            await safe_send(context.bot, user_id, f"❌ لقد وصلت للحد الأقصى ({active_plan['max_channels']} قنوات) في خطتك.")
+                        else:
+                            await safe_send(context.bot, user_id, "❌ فشلت الإضافة (ربما تجاوزت حد القنوات المسموح)")
+                    else:
+                        await safe_send(context.bot, user_id, "❌ يجب أن يكون لديك اشتراك نشط لإضافة قناة")
+            except Exception as e:
+                logger.error(f"❌ فشل إضافة القناة: {e}")
+                await safe_send(context.bot, user_id, f"❌ فشل إضافة القناة: {str(e)[:80]}")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.ADDING_POSTS:
+            try:
+                if text.strip().lower() == "/done":
+                    await safe_send(context.bot, user_id, "✅ تم إنهاء إضافة المنشورات.")
+                    return
+
+                media_type = 'text'
+                media_file_id = None
+                if msg.photo:
+                    media_type = 'photo'
+                    media_file_id = msg.photo[-1].file_id
+                elif msg.video:
+                    media_type = 'video'
+                    media_file_id = msg.video.file_id
+                elif msg.document:
+                    media_type = 'document'
+                    media_file_id = msg.document.file_id
+                elif msg.audio:
+                    media_type = 'audio'
+                    media_file_id = msg.audio.file_id
+                elif msg.voice:
+                    media_type = 'voice'
+                    media_file_id = msg.voice.file_id
+                elif msg.animation:
+                    media_type = 'animation'
+                    media_file_id = msg.animation.file_id
+                elif msg.sticker:
+                    media_type = 'sticker'
+                    media_file_id = msg.sticker.file_id
+                elif msg.video_note:
+                    media_type = 'video_note'
+                    media_file_id = msg.video_note.file_id
+                content = (msg.caption or "") if media_type != 'text' else text
+
+                active = await DB.get_active_channel(user_id)
+                if active:
+                    if user_id != CONFIG.PRIMARY_OWNER_ID:
+                        if not await DB.has_active_subscription(user_id):
+                            await safe_send(context.bot, user_id, "❌ يجب أن يكون لديك اشتراك نشط لإضافة منشورات")
+                            return
+                        active_plan = await DB.get_active_plan(user_id)
+                        limit = active_plan['max_posts'] if active_plan else CONFIG.MAX_POSTS_PER_CHANNEL
+                        row = await DB.fetchone("SELECT COUNT(*) FROM posts WHERE channel_db_id=?", (active,))
+                        total_posts = row[0] if row else 0
+                        if total_posts >= limit:
+                            await safe_send(
+                                context.bot,
+                                user_id,
+                                f"❌ وصلت للحد الأقصى ({limit} منشور) في هذه القناة.\n"
+                                "احذف بعض المنشورات أو استخدم قناة أخرى."
+                            )
+                            return
+
+                    added = await DB.add_posts(user_id, active, [(content, media_type, media_file_id)])
+                    if added > 0:
+                        await safe_send(context.bot, user_id, "✅ تم حفظ المنشور!\nأرسل منشورًا آخر أو /done للإنهاء.")
+                    else:
+                        await safe_send(context.bot, user_id, "❌ فشل حفظ المنشور (ربما تجاوزت الحد المسموح).")
+                else:
+                    await safe_send(context.bot, user_id, "❌ لا توجد قناة نشطة.")
+            finally:
+                pass
+            return
+
+        if state == UserState.WAIT_BROADCAST:
+            try:
+                if not text:
+                    await safe_send(context.bot, user_id, "❌ يجب إرسال نص الرسالة")
+                    return
+                async def broadcast():
+                    offset = 0
+                    sent = 0
+                    try:
+                        while True:
+                            users = await DB.fetchall("SELECT user_id, banned FROM users ORDER BY user_id LIMIT 5000 OFFSET ?", (offset,))
+                            if not users:
+                                break
+                            for uid, banned in users:
+                                if not banned:
+                                    try:
+                                        await safe_send(context.bot, uid, text)
+                                        sent += 1
+                                        await asyncio.sleep(0.05)
+                                    except:
+                                        pass
+                            offset += 5000
+                        await safe_send(context.bot, user_id, f"✅ {sent}")
+                    except Exception as e:
+                        logger.error(f"❌ فشل البث: {e}")
+                        await safe_send(context.bot, user_id, "❌ فشل البث")
+
+                asyncio.create_task(broadcast())
+                await safe_send(context.bot, user_id, "⏳ جاري البث...")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_AUTO_KEY:
+            try:
+                context.user_data['auto_key'] = text.strip().lower()
+                StateManager.set(user_id, UserState.WAIT_AUTO_REPLY)
+                await safe_send(context.bot, user_id, "📝 الرد:")
+                return
+            finally:
+                pass
+            return
+
+        if state == UserState.WAIT_AUTO_REPLY:
+            try:
+                chat_id_auto = context.user_data.get('auto_chat')
+                keyword = context.user_data.get('auto_key')
+                if chat_id_auto is not None and keyword:
+                    await DB.add_auto_reply(chat_id_auto, keyword, text)
+                    _auto_reply_cache.invalidate()
+                    await safe_send(context.bot, user_id, "✅ تمت إضافة الرد")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_AUTO_DEL:
+            try:
+                chat_id_auto = context.user_data.get('auto_chat')
+                if chat_id_auto is not None:
+                    await DB.remove_auto_reply(chat_id_auto, text.strip().lower())
+                    _auto_reply_cache.invalidate()
+                    await safe_send(context.bot, user_id, "✅ تم حذف الرد")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_GLOBAL_BAN:
+            try:
+                word = text.strip().lower()
+                if len(word) >= 2:
+                    await DB.add_banned_word(word, -1, user_id)
+                    invalidate_banned_words_cache()
+                    await safe_send(context.bot, user_id, "✅ تمت الإضافة")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_REM_GLOBAL_BAN:
+            try:
+                await DB.remove_banned_word(text.strip().lower(), -1)
+                invalidate_banned_words_cache()
+                await safe_send(context.bot, user_id, "✅ تم الحذف")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.SUPPORT_MODE:
+            try:
+                content = msg.text or msg.caption or ""
+                ticket_num = await DB.create_ticket(user_id, update.effective_user.username or "", content)
+                await safe_send(context.bot, user_id, f"✅ #{ticket_num}")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_MIN:
+            try:
+                val = int(text)
+                min_val = await get_min_publish_interval()
+                if val < min_val:
+                    await safe_send(context.bot, user_id,
+                                    f"❌ الحد الأدنى للفاصل الزمني هو {min_val} دقيقة")
+                    return
+                if 1 <= val <= 1440:
+                    ch = context.user_data.get('schedule_ch')
+                    if ch:
+                        await DB.update_schedule(ch, schedule_type='interval_minutes',
+                                                 interval_minutes=val)
+                        await safe_send(context.bot, user_id, f"✅ تم التحديث إلى {val} دقيقة")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-1440)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            except Exception as e:
+                logger.error(f"❌ خطأ في WAIT_MIN: {e}")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_HOUR:
+            try:
+                val = int(text)
+                if 1 <= val <= 168:
+                    ch = context.user_data.get('schedule_ch')
+                    if ch:
+                        await DB.update_schedule(ch, schedule_type='interval_hours', interval_hours=val)
+                        await safe_send(context.bot, user_id, f"✅ تم التحديث إلى {val} ساعة")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-168)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_DAY:
+            try:
+                val = int(text)
+                if 1 <= val <= 365:
+                    ch = context.user_data.get('schedule_ch')
+                    if ch:
+                        await DB.update_schedule(ch, schedule_type='interval_days', interval_days=val)
+                        await safe_send(context.bot, user_id, f"✅ تم التحديث إلى {val} يوم")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-365)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_PUB_TIME:
+            try:
+                if re.match(r'^\d{2}:\d{2}$', text):
+                    parts_time = text.split(":")
+                    hour = int(parts_time[0])
+                    minute = int(parts_time[1])
+                    if 0 <= hour <= 23 and 0 <= minute <= 59:
+                        ch = context.user_data.get('schedule_ch')
+                        if ch:
+                            await DB.update_schedule(ch, publish_time=text)
+                            await safe_send(context.bot, user_id, f"✅ تم التحديث إلى {text}")
+                    else:
+                        await safe_send(context.bot, user_id, "❌ الوقت غير صالح، استخدم تنسيق HH:MM (ساعات 00-23، دقائق 00-59)")
+                else:
+                    await safe_send(context.bot, user_id, "❌ الصيغة غير صالحة، استخدم HH:MM")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_GROUP_BAN:
+            try:
+                chat_id_ban = context.user_data.get('ban_chat')
+                word = text.strip().lower()
+                if chat_id_ban and len(word) >= 2:
+                    await DB.add_banned_word(word, chat_id_ban, user_id)
+                    invalidate_banned_words_cache(chat_id_ban)
+                    await safe_send(context.bot, user_id, f"✅ تمت إضافة: {word}")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_REM_GROUP_BAN:
+            try:
+                chat_id_ban = context.user_data.get('ban_chat')
+                if chat_id_ban:
+                    await DB.remove_banned_word(text.strip().lower(), chat_id_ban)
+                    invalidate_banned_words_cache(chat_id_ban)
+                    await safe_send(context.bot, user_id, f"✅ تم حذف: {text}")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state in (UserState.WAIT_BAN, UserState.WAIT_MUTE, UserState.WAIT_WARN,
+                     UserState.WAIT_KICK, UserState.WAIT_RESTRICT, UserState.WAIT_UNBAN):
+            try:
+                chat_id_adv = context.user_data.get('adv_chat')
+                if not text:
+                    await safe_send(context.bot, user_id, "❌ أرسل معرف المستخدم")
+                    return
+                parts = text.split()
+                if not parts:
+                    await safe_send(context.bot, user_id, "❌ أرسل معرف المستخدم")
+                    return
+                try:
+                    target = int(parts[0])
+                except ValueError:
+                    await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+                    return
+                if target <= 0:
+                    await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+                    return
+                action_map = {
+                    UserState.WAIT_BAN: "ban", UserState.WAIT_MUTE: "mute",
+                    UserState.WAIT_WARN: "warn", UserState.WAIT_KICK: "kick",
+                    UserState.WAIT_RESTRICT: "restrict", UserState.WAIT_UNBAN: "unban"
+                }
+                action = action_map.get(state)
+                if action and chat_id_adv:
+                    if action == 'unban':
+                        await context.bot.unban_chat_member(chat_id_adv, target)
+                        await DB.remove_penalties_for_user(target, chat_id_adv, penalty_type='ban')
+                        await safe_send(context.bot, user_id, f"✅ تم إلغاء حظر `{target}`")
+                    else:
+                        duration_seconds = 60
+                        if len(parts) > 1 and action in ('ban', 'mute', 'restrict'):
+                            try:
+                                minutes = int(parts[1])
+                                if minutes <= 0:
+                                    await safe_send(context.bot, user_id, "❌ المدة يجب أن تكون رقمًا موجبًا")
+                                    return
+                                duration_seconds = minutes * 60
+                            except ValueError:
+                                pass
+                        success, msg = await apply_penalty(context.bot, chat_id_adv, target, action, duration_seconds)
+                        await safe_send(context.bot, user_id, msg)
+            except Exception as e:
+                logger.error(f"❌ خطأ في الإجراء: {e}")
+                await safe_send(context.bot, user_id, "❌ حدث خطأ أثناء تنفيذ الإجراء")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_PIN:
+            try:
+                chat_id_adv = context.user_data.get('adv_chat')
+                if update.message.reply_to_message:
+                    msg_id = update.message.reply_to_message.message_id
+                else:
+                    try:
+                        msg_id = int(text)
+                    except ValueError:
+                        await safe_send(context.bot, user_id, "❌ معرف غير صالح أو رد على رسالة")
+                        return
+                await context.bot.pin_chat_message(chat_id_adv, msg_id)
+                await safe_send(context.bot, user_id, f"📌 تم تثبيت الرسالة {msg_id}")
+            except Exception as e:
+                logger.error(f"❌ فشل التثبيت: {e}")
+                await safe_send(context.bot, user_id, "❌ فشل التثبيت")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_CONTEST_TITLE:
+            try:
+                context.user_data['contest_title'] = text
+                StateManager.set(user_id, UserState.WAIT_CONTEST_DESC)
+                await safe_send(context.bot, user_id, "📝 الوصف:")
+                return
+            finally:
+                pass
+            return
+
+        if state == UserState.WAIT_CONTEST_DESC:
+            try:
+                context.user_data['contest_desc'] = text
+                StateManager.set(user_id, UserState.WAIT_CONTEST_PRIZE)
+                await safe_send(context.bot, user_id, "🎁 الجائزة:")
+                return
+            finally:
+                pass
+            return
+
+        if state == UserState.WAIT_CONTEST_PRIZE:
+            try:
+                context.user_data['contest_prize'] = text
+                StateManager.set(user_id, UserState.WAIT_CONTEST_DATE)
+                await safe_send(context.bot, user_id, "📅 التاريخ (YYYY-MM-DD HH:MM):")
+                return
+            finally:
+                pass
+            return
+
+        if state == UserState.WAIT_CONTEST_DATE:
+            try:
+                end_date = datetime.strptime(text, "%Y-%m-%d %H:%M")
+                cid = await DB.create_contest(
+                    user_id,
+                    context.user_data.pop('contest_title', ''),
+                    context.user_data.pop('contest_desc', ''),
+                    context.user_data.pop('contest_prize', ''),
+                    TimeUtils.mecca_to_utc(end_date).strftime('%Y-%m-%d %H:%M:%S')
+                )
+                await safe_send(context.bot, user_id, f"✅ مسابقة #{cid}")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ صيغة غير صالحة، استخدم YYYY-MM-DD HH:MM")
+            except Exception as e:
+                logger.error(f"❌ فشل إنشاء المسابقة: {e}")
+                await safe_send(context.bot, user_id, "❌ فشل إنشاء المسابقة")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_CONTEST_ANSWER:
+            try:
+                cid = context.user_data.get('contest_join')
+                if cid:
+                    success = await DB.join_contest(cid, user_id, text)
+                    if success:
+                        await safe_send(context.bot, user_id, "✅ تم المشاركة!")
+                    else:
+                        await safe_send(context.bot, user_id, "❌ فشل المشاركة (ربما انتهت المسابقة أو شاركت مسبقًا)")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_ADMIN_ADD:
+            try:
+                target = int(text)
+                if target <= 0:
+                    await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+                else:
+                    await DB.execute("INSERT OR IGNORE INTO bot_admins (user_id, added_by, added_at) VALUES (?,?,?)",
+                                     (target, user_id, TimeUtils.sql_iso()))
+                    await safe_send(context.bot, user_id, f"✅ تم إضافة `{target}` كمشرف")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_ADMIN_REM:
+            try:
+                target = int(text)
+                if target <= 0:
+                    await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+                else:
+                    await DB.execute("DELETE FROM bot_admins WHERE user_id=?", (target,))
+                    await safe_send(context.bot, user_id, f"✅ تم إزالة `{target}`")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_GRANT_FREE:
+            try:
+                if not text:
+                    await safe_send(context.bot, user_id, "❌ أرسل المعرف والأيام هكذا: `123456789 365`")
+                    return
+                parts = text.split()
+                if len(parts) < 2:
+                    await safe_send(context.bot, user_id, "❌ أرسل المعرف والأيام هكذا: `123456789 365`")
+                    return
+                try:
+                    target_id = int(parts[0])
+                    days = int(parts[1])
+                except ValueError:
+                    await safe_send(context.bot, user_id, "❌ قيم غير صالحة")
+                    return
+
+                if days < 1 or days > 365:
+                    await safe_send(context.bot, user_id, "❌ عدد الأيام يجب أن يكون بين 1 و 365")
+                    return
+
+                gift_plan = await DB.fetchone("SELECT id FROM plans WHERE is_gift=1 LIMIT 1")
+                plan_id = gift_plan[0] if gift_plan else None
+                if plan_id is None:
+                    await safe_send(context.bot, user_id, "❌ لا توجد خطة هدية متاحة")
+                    return
+
+                success = await DB.grant_subscription_days(target_id, days, plan_id=plan_id, provider='manual')
+                if success:
+                    await safe_send(context.bot, user_id, f"✅ تم منح {days} يوم للمستخدم `{target_id}`")
+                else:
+                    await safe_send(context.bot, user_id, "❌ فشل المنح")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_UPDATE:
+            try:
+                if not text:
+                    await safe_send(context.bot, user_id, "❌ يجب إرسال نص التحديث")
+                    return
+                ch = await DB.get_updates_channel()
+                if ch:
+                    try:
+                        if ch.lstrip('-').isdigit():
+                            await context.bot.send_message(int(ch), f"📢 {text}")
+                        else:
+                            await context.bot.send_message(f"@{ch}", f"📢 {text}")
+                        await safe_send(context.bot, user_id, "✅ تم الإرسال")
+                    except Exception as e:
+                        await safe_send(context.bot, user_id, f"❌ فشل الإرسال: {str(e)[:50]}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ لا توجد قناة تحديثات")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_UPDATE_CH:
+            try:
+                await DB.set_setting('updates_channel', text.replace('@', ''))
+                await safe_send(context.bot, user_id, f"✅ تم تعيين قناة التحديثات: {text}")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_FORCE:
+            try:
+                await DB.set_setting('force_subscribe_channel', text.replace('@', ''))
+                await safe_send(context.bot, user_id, f"✅ تم تعيين الاشتراك الإجباري: {text}")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_REM_DAYS:
+            try:
+                val = int(text)
+                if 1 <= val <= 30:
+                    await DB.update_reminder_settings(user_id, reminder_days_before=val)
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين الأيام إلى {val}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-30)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_MAX_LEN:
+            try:
+                val = int(text)
+                chat_id_sec = context.user_data.get('sec_chat')
+                if chat_id_sec and val >= 0:
+                    await DB.execute("UPDATE group_security SET max_message_length=? WHERE chat_id=?", (val, chat_id_sec))
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين الحد الأقصى إلى {val}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ قيمة غير صالحة")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_WARN_COUNT:
+            try:
+                val = int(text)
+                chat_id_sec = context.user_data.get('sec_chat')
+                if chat_id_sec and 1 <= val <= 10:
+                    await DB.execute("UPDATE group_security SET max_warnings=? WHERE chat_id=?", (val, chat_id_sec))
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين عدد التحذيرات إلى {val}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ القيمة غير صالحة (1-10)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_LOG_CH:
+            try:
+                chat = await context.bot.get_chat(text)
+                if chat.type == 'channel':
+                    await DB.set_setting('log_channel_id', str(chat.id))
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين قناة السجلات: {text}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ هذه ليست قناة")
+            except Exception as e:
+                await safe_send(context.bot, user_id, f"❌ فشل التعيين: {str(e)[:50]}")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_KEYWORD:
+            try:
+                context.user_data['keyword'] = text.strip().lower()
+                StateManager.set(user_id, UserState.WAIT_REPLY)
+                await safe_send(context.bot, user_id, "📝 الرد:")
+                return
+            finally:
+                pass
+            return
+
+        if state == UserState.WAIT_REPLY:
+            try:
+                keyword = context.user_data.get('keyword')
+                if keyword:
+                    await DB.add_auto_reply(-1, keyword, text)
+                    _auto_reply_cache.invalidate()
+                    await safe_send(context.bot, user_id, f"✅ تم إضافة الرد للكلمة: {keyword}")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_PENALTY_DURATION:
+            try:
+                dur_minutes = int(text)
+                if dur_minutes < 0 or dur_minutes > 1440:
+                    await safe_send(context.bot, user_id, "❌ المدة غير صالحة (0-1440 دقيقة)")
+                    return
+                chat_id_pen = context.user_data.get('penalty_chat')
+                v_type = context.user_data.get('penalty_vtype')
+                p_type = context.user_data.get('penalty_ptype')
+                if chat_id_pen and v_type and p_type:
+                    duration_seconds = dur_minutes * 60 if dur_minutes > 0 else 0
+                    await DB.set_violation_penalty(chat_id_pen, v_type, p_type, duration_seconds)
+                    await safe_send(context.bot, user_id, "✅ تم حفظ العقوبة بنجاح")
+                else:
+                    await safe_send(context.bot, user_id, "❌ بيانات غير مكتملة")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            finally:
+                StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_PENALTY_DEFAULT_DURATION:
+            try:
+                dur_minutes = int(text)
+                if dur_minutes < 0 or dur_minutes > 1440:
+                    await safe_send(context.bot, user_id, "❌ المدة غير صالحة (0-1440 دقيقة)")
+                    return
+                chat_id_pen = context.user_data.get('penalty_chat')
+                penalty_type = context.user_data.get('penalty_type')
+                if chat_id_pen and penalty_type:
+                    duration_seconds = dur_minutes * 60 if dur_minutes > 0 else 0
+                    column = f"{penalty_type}_default_duration"
+                    await DB.execute(f"UPDATE group_security SET {column}=? WHERE chat_id=?", (duration_seconds, chat_id_pen))
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين المدة الافتراضية لـ {penalty_type} إلى {dur_minutes} دقيقة")
+                else:
+                    await safe_send(context.bot, user_id, "❌ بيانات غير مكتملة")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            finally:
+                StateManager.clear(user_id)
+            return
 
         if state == UserState.WAIT_ANTIFLOOD_MESSAGES:
             try:
@@ -2880,53 +3629,6 @@ class MessageHandlers:
             finally:
                 StateManager.clear(user_id)
             return
-
-        # معالجة المدة الافتراضية للعقوبات
-        if state == UserState.WAIT_PENALTY_DEFAULT_DURATION:
-            try:
-                dur_minutes = int(text)
-                if dur_minutes < 0 or dur_minutes > 1440:
-                    await safe_send(context.bot, user_id, "❌ المدة غير صالحة (0-1440 دقيقة)")
-                    return
-                chat_id_pen = context.user_data.get('penalty_chat')
-                penalty_type = context.user_data.get('penalty_type')
-                if chat_id_pen and penalty_type:
-                    duration_seconds = dur_minutes * 60 if dur_minutes > 0 else 0
-                    column = f"{penalty_type}_default_duration"
-                    await DB.execute(f"UPDATE group_security SET {column}=? WHERE chat_id=?", (duration_seconds, chat_id_pen))
-                    await safe_send(context.bot, user_id, f"✅ تم تعيين المدة الافتراضية لـ {penalty_type} إلى {dur_minutes} دقيقة")
-                else:
-                    await safe_send(context.bot, user_id, "❌ بيانات غير مكتملة")
-            except ValueError:
-                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
-            finally:
-                StateManager.clear(user_id)
-            return
-
-        # معالجة مدة عقوبة المخالفة
-        if state == UserState.WAIT_PENALTY_DURATION:
-            try:
-                dur_minutes = int(text)
-                if dur_minutes < 0 or dur_minutes > 1440:
-                    await safe_send(context.bot, user_id, "❌ المدة غير صالحة (0-1440 دقيقة)")
-                    return
-                chat_id_pen = context.user_data.get('penalty_chat')
-                v_type = context.user_data.get('penalty_vtype')
-                p_type = context.user_data.get('penalty_ptype')
-                if chat_id_pen and v_type and p_type:
-                    duration_seconds = dur_minutes * 60 if dur_minutes > 0 else 0
-                    await DB.set_violation_penalty(chat_id_pen, v_type, p_type, duration_seconds)
-                    await safe_send(context.bot, user_id, "✅ تم حفظ العقوبة بنجاح")
-                else:
-                    await safe_send(context.bot, user_id, "❌ بيانات غير مكتملة")
-            except ValueError:
-                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
-            finally:
-                StateManager.clear(user_id)
-            return
-
-        # (باقي معالجات الحالات كما في السابق)
-        # ...
 
         # الرسالة الافتراضية
         await CommandHandlers.start(update, context)
