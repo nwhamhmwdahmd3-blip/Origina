@@ -2,14 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers.py - جميع معالجات البوت (نسخة مصححة شاملة)
+handlers.py - جميع معالجات البوت (نسخة نهائية مصححة)
+- إصلاح أزرار المخالفات (تعريف valid_violations)
 - إصلاح مشكلة بقاء حالة ADDING_POSTS
-- إضافة زر إنهاء الإضافة
-- مسح الحالة عند الرجوع
-- تجاهل الأرقام أثناء وضع الإضافة
-- معالجة جميع أزرار الأمان بما فيها الفيضان والوضع الليلي ومدد العقوبات
-- إصلاح مشكلة أزرار لا تحتوي على chat_id
-- إضافة مدد جاهزة للعقوبات (دقيقة، ساعة، يوم، أسبوع، 10 أيام، 15 يوم، شهر، سنة، دائم)
+- معالجة جميع أزرار الأمان واللوحة
+- مدد جاهزة للعقوبات
+- الفواتير وسجلات الدفع
 """
 
 import asyncio
@@ -598,7 +596,7 @@ class CommandHandlers:
             return
 
         reason_parts = []
-        duration_seconds = 60  # افتراضي 60 ثانية
+        duration_seconds = 60
         if len(args) > 1:
             try:
                 minutes = int(args[1])
@@ -1871,6 +1869,9 @@ class CallbackHandlers:
         if chat_id is None:
             return
 
+        # ✅ تعريف valid_violations هنا ليكون متاحًا لجميع الفروع
+        valid_violations = {"links","mentions","banned_words","flood","max_len","service","videos","audio","documents","stickers","forwarded","polls","games","voice","video_note"}
+
         action = parts[0].replace("sec_", "")
 
         logger.info(f"🔍 _handle_security: action={action}, chat_id={chat_id}, data={data}")
@@ -2326,7 +2327,6 @@ class CallbackHandlers:
         if action == "violation":
             if len(parts) >= 3:
                 v_type = parts[2]
-                valid_violations = {"links","mentions","banned_words","flood","max_len","service","videos","audio","documents","stickers","forwarded","polls","games","voice","video_note"}
                 if v_type not in valid_violations:
                     try:
                         await query.answer("❌ نوع مخالفة غير صالح", show_alert=True)
@@ -2713,6 +2713,41 @@ class CallbackHandlers:
 
         elif data in (CB.ADMIN_IMPORT_REPLIES, CB.ADMIN_IMPORT_GITHUB):
             await CallbackHandlers._handle_import(update, context, query, user_id)
+
+        # ✅ أزرار الفواتير وسجلات الدفع
+        elif data == CB.ADMIN_INVOICES:
+            invoices = await DB.fetchall(
+                "SELECT number, user_id, plan_id, amount, status, created_at FROM invoices ORDER BY id DESC LIMIT 20"
+            )
+            if not invoices:
+                await query.edit_message_text("📭 لا توجد فواتير")
+            else:
+                text = "🧾 **آخر الفواتير**\n\n"
+                for inv in invoices:
+                    text += (
+                        f"• `{inv['number']}`\n"
+                        f"  👤 المستخدم: `{inv['user_id']}`\n"
+                        f"  💰 المبلغ: {inv['amount']} ⭐\n"
+                        f"  📌 الحالة: {inv['status']}\n"
+                        f"  🕒 {inv['created_at']}\n\n"
+                    )
+                await query.edit_message_text(text)
+
+        elif data == CB.ADMIN_PAYMENT_LOGS:
+            logs = await DB.fetchall(
+                "SELECT user_id, event_type, data, created_at FROM payment_logs ORDER BY id DESC LIMIT 20"
+            )
+            if not logs:
+                await query.edit_message_text("📭 لا توجد سجلات دفع")
+            else:
+                text = "📊 **سجلات الدفع**\n\n"
+                for log in logs:
+                    text += (
+                        f"• 👤 `{log['user_id']}`\n"
+                        f"  🎯 الحدث: {log['event_type']}\n"
+                        f"  🕒 {log['created_at']}\n\n"
+                    )
+                await query.edit_message_text(text)
 
         else:
             try:
