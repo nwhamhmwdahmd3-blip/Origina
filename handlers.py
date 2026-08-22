@@ -3,6 +3,11 @@
 
 """
 handlers.py - جميع معالجات البوت (نسخة مصححة شاملة)
+- إصلاح مشكلة بقاء حالة ADDING_POSTS
+- إضافة زر إنهاء الإضافة
+- مسح الحالة عند الرجوع
+- تجاهل الأرقام أثناء وضع الإضافة
+- معالجة جميع أزرار الأمان بما فيها الفيضان والوضع الليلي ومدد العقوبات
 """
 
 import asyncio
@@ -63,7 +68,6 @@ class CommandHandlers:
                 existing = await DB.fetchone("SELECT 1 FROM referrals WHERE referred_id=?", (user_id,))
                 if not existing:
                     if await DB.add_referral(referrer, user_id):
-                        # لا نصرف المكافأة تلقائياً، بل نرسل إشعاراً فقط
                         reward = await DB.get_referral_stats(referrer)
                         await safe_send(update.effective_chat.bot, referrer,
                                         f"🎁 تمت إحالة `{user_id}`. لديك {reward['available']} يوم متاح للصرف.")
@@ -92,7 +96,7 @@ class CommandHandlers:
                         kb = InlineKeyboardMarkup([[
                             InlineKeyboardButton("✅ تحقق", callback_data=CB.CHECK_SUB)
                         ]])
-                    await safe_send(context.bot, user_id, f"⚠️ اشترك في القناة أولاً", reply_markup=kb)
+                    await safe_send(context.bot, user_id, "⚠️ اشترك في القناة أولاً", reply_markup=kb)
                     return
             except Exception as e:
                 logger.error(f"❌ خطأ في التحقق من الاشتراك الإجباري: {e}")
@@ -671,7 +675,6 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ المستخدم غير موجود في قاعدة البيانات")
             return
 
-        # استخدام خطة هدية افتراضية (أو خطة أولى)
         plan_row = await DB.fetchone("SELECT id FROM plans WHERE is_gift=1 LIMIT 1")
         if not plan_row:
             plan_row = await DB.fetchone("SELECT id FROM plans WHERE is_active=1 AND is_gift=0 LIMIT 1")
@@ -795,6 +798,8 @@ class CallbackHandlers:
                     await query.answer()
                 except BadRequest:
                     pass
+                # ✅ مسح الحالة قبل العودة للقائمة الرئيسية
+                StateManager.clear(user_id)
                 context.args = []
                 await CommandHandlers.start(update, context)
                 return
@@ -1005,7 +1010,6 @@ class CallbackHandlers:
                     await query.message.delete()
                 except Exception as e:
                     logger.error(f"❌ فشل إرسال الفاتورة: {e}")
-                    # إلغاء الفاتورة المعلقة
                     await DB.execute("UPDATE invoices SET status='cancelled' WHERE number=?", (invoice_number,))
                     try:
                         await query.answer(f"❌ {str(e)[:50]}", show_alert=True)
@@ -1215,7 +1219,6 @@ class CallbackHandlers:
 
             if data.startswith(CB.CH_SEL + ":"):
                 ch_id = int(data.split(":")[-1])
-                # ✅ التحقق من الملكية
                 success = await DB.set_active_channel(user_id, ch_id)
                 if success:
                     await query.edit_message_text("✅ تم تحديد القناة!")
@@ -1230,7 +1233,6 @@ class CallbackHandlers:
 
             if data.startswith(CB.CH_DEL + ":"):
                 ch_id = int(data.split(":")[-1])
-                # ✅ التحقق من الملكية
                 success = await DB.delete_channel(user_id, ch_id)
                 if success:
                     try:
@@ -1245,7 +1247,6 @@ class CallbackHandlers:
 
             if data.startswith(CB.CH_STATS + ":"):
                 ch_id = int(data.split(":")[-1])
-                # ✅ التحقق من الملكية بشكل صريح
                 row = await DB.fetchone("SELECT 1 FROM user_channels WHERE id=? AND user_id=?", (ch_id, user_id))
                 if not row:
                     await query.answer("❌ هذه القناة ليست لك", show_alert=True)
@@ -1279,17 +1280,29 @@ class CallbackHandlers:
                     return
                 active_plan = await DB.get_active_plan(user_id)
                 limit = active_plan['max_posts'] if active_plan else CONFIG.MAX_POSTS_PER_CHANNEL
-                # ✅ استعلام مباشر للحصول على عدد المنشورات الحالي في القناة
                 row = await DB.fetchone("SELECT COUNT(*) FROM posts WHERE channel_db_id=?", (active,))
                 total_posts = row[0] if row else 0
                 if total_posts >= limit and user_id != CONFIG.PRIMARY_OWNER_ID:
                     await query.answer(f"❌ وصلت للحد الأقصى ({limit} منشور) في هذه القناة.", show_alert=True)
                     return
                 StateManager.set(user_id, UserState.ADDING_POSTS)
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ إنهاء الإضافة", callback_data="finish_posts")
+                ]])
                 await query.edit_message_text(
                     "📥 أرسل المنشورات الآن (واحد تلو الآخر).\n"
-                    "عند الانتهاء أرسل /done"
+                    "عند الانتهاء اضغط الزر أدناه أو أرسل /done",
+                    reply_markup=kb
                 )
+                return
+
+            if base_data == "finish_posts":
+                StateManager.clear(user_id)
+                try:
+                    await query.answer("✅ تم إنهاء الإضافة")
+                except BadRequest:
+                    pass
+                await query.edit_message_text("✅ تم إنهاء إضافة المنشورات.")
                 return
 
             if base_data == CB.POST_PUB:
@@ -1566,7 +1579,7 @@ class CallbackHandlers:
                     return
                 kb = KeyboardFactory.build("channel_settings", chat_id=ch_id, lang=lang)
                 await query.edit_message_text(
-                    f"📅 **جدولة القناة**\nيمكنك ضبط الفاصل الزمني للنشر:",
+                    "📅 **جدولة القناة**\nيمكنك ضبط الفاصل الزمني للنشر:",
                     reply_markup=kb
                 )
                 try:
@@ -1664,7 +1677,6 @@ class CallbackHandlers:
                         pass
                 return
 
-            # ========== أكواد الهدايا الخاصة بالمستخدم ==========
             if base_data == "my_gifts":
                 try:
                     await query.answer()
@@ -1752,7 +1764,6 @@ class CallbackHandlers:
             elif media_type == 'video_note' and media_file_id:
                 await bot.send_video_note(chat_id=ch_tele, video_note=media_file_id)
             else:
-                # نص فقط
                 await bot.send_message(chat_id=ch_tele, text=post['text'][:4096] if post['text'] else ".")
             await DB.mark_post_published(post['id'])
             await DB.update_last_publish(ch_db_id)
@@ -1784,7 +1795,6 @@ class CallbackHandlers:
         for ch in channels:
             st = "✅" if not ch['banned'] else "🚫"
             text += f"{st} {ch['channel_name']} (`{ch['channel_id']}`)\n"
-            # تقسيم الأزرار إلى صفين للعرض الأفضل
             kb.append([
                 InlineKeyboardButton(
                     f"📌 {ch['channel_name'][:20]}",
@@ -1908,7 +1918,6 @@ class CallbackHandlers:
             return
 
         if action == "enable_all":
-            # استخدام معاملة واحدة
             async with DB._get_connection() as conn:
                 for f in field_map.values():
                     await conn.execute(f"UPDATE group_security SET {f}=1 WHERE chat_id=?", (chat_id,))
@@ -2093,6 +2102,163 @@ class CallbackHandlers:
                 pass
             return
 
+        # ✅ معالجة إعدادات الفيضان
+        if action == "antiflood_settings":
+            await CallbackHandlers._handle_antiflood_settings(update, context, query, chat_id, user_id, lang)
+            return
+
+        # ✅ معالجة إعدادات الوضع الليلي
+        if action == "night_settings":
+            await CallbackHandlers._handle_night_settings(update, context, query, chat_id, user_id, lang)
+            return
+
+        # ✅ معالجة نصوص الترحيب والوداع
+        if action == "welcome_text":
+            StateManager.set(user_id, UserState.WAIT_WELCOME_TEXT)
+            context.user_data['sec_chat'] = chat_id
+            await query.edit_message_text("👋 أرسل نص الترحيب:")
+            try:
+                await query.answer()
+            except BadRequest:
+                pass
+            return
+
+        if action == "goodbye_text":
+            StateManager.set(user_id, UserState.WAIT_GOODBYE_TEXT)
+            context.user_data['sec_chat'] = chat_id
+            await query.edit_message_text("👋 أرسل نص الوداع:")
+            try:
+                await query.answer()
+            except BadRequest:
+                pass
+            return
+
+        # ✅ معالجة مدة الوضع البطيء
+        if action == "slow_mode_seconds":
+            StateManager.set(user_id, UserState.WAIT_SLOW_MODE_SECONDS)
+            context.user_data['sec_chat'] = chat_id
+            await query.edit_message_text("⏱️ أرسل مدة الوضع البطيء بالثواني (0-3600):")
+            try:
+                await query.answer()
+            except BadRequest:
+                pass
+            return
+
+        # ✅ معالجة مدد العقوبات
+        if action == "penalty_durations":
+            await CallbackHandlers._handle_penalty_durations(update, context, query, chat_id, user_id, lang)
+            return
+
+        # ✅ معالجة إعدادات الفيضان الفرعية
+        if action == "antiflood_messages":
+            StateManager.set(user_id, UserState.WAIT_ANTIFLOOD_MESSAGES)
+            context.user_data['sec_chat'] = chat_id
+            await query.edit_message_text("📝 أرسل عدد الرسائل المسموح بها قبل تفعيل الحماية (1-100):")
+            try: await query.answer()
+            except BadRequest: pass
+            return
+
+        if action == "antiflood_seconds":
+            StateManager.set(user_id, UserState.WAIT_ANTIFLOOD_SECONDS)
+            context.user_data['sec_chat'] = chat_id
+            await query.edit_message_text("⏱️ أرسل الفترة الزمنية بالثواني (1-3600):")
+            try: await query.answer()
+            except BadRequest: pass
+            return
+
+        if action == "antiflood_penalty":
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔇 كتم", callback_data=f"sec_antiflood_pen_set:{chat_id}:mute"),
+                 InlineKeyboardButton("🚫 حظر", callback_data=f"sec_antiflood_pen_set:{chat_id}:ban"),
+                 InlineKeyboardButton("🔒 تقييد", callback_data=f"sec_antiflood_pen_set:{chat_id}:restrict")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_antiflood_settings:{chat_id}")]
+            ])
+            await query.edit_message_text("اختر عقوبة الفيضان:", reply_markup=kb)
+            try: await query.answer()
+            except BadRequest: pass
+            return
+
+        if action == "antiflood_pen_set":
+            if len(parts) >= 3:
+                penalty = parts[2]
+                if penalty not in DB.VALID_PENALTY_TYPES:
+                    try: await query.answer("❌ نوع غير صالح", show_alert=True)
+                    except BadRequest: pass
+                    return
+                await DB.execute("UPDATE group_security SET antiflood_penalty=? WHERE chat_id=?", (penalty, chat_id))
+                await query.edit_message_text(f"✅ تم تعيين عقوبة الفيضان: {penalty}")
+                await CallbackHandlers._handle_antiflood_settings(update, context, query, chat_id, user_id, lang)
+            return
+
+        # ✅ إعدادات الوضع الليلي الفرعية
+        if action == "night_start":
+            StateManager.set(user_id, UserState.WAIT_NIGHT_START)
+            context.user_data['sec_chat'] = chat_id
+            await query.edit_message_text("🌙 أرسل وقت بدء الوضع الليلي (HH:MM):")
+            try: await query.answer()
+            except BadRequest: pass
+            return
+
+        if action == "night_end":
+            StateManager.set(user_id, UserState.WAIT_NIGHT_END)
+            context.user_data['sec_chat'] = chat_id
+            await query.edit_message_text("🌙 أرسل وقت نهاية الوضع الليلي (HH:MM):")
+            try: await query.answer()
+            except BadRequest: pass
+            return
+
+        if action == "night_action":
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔇 كتم", callback_data=f"sec_night_action_set:{chat_id}:mute"),
+                 InlineKeyboardButton("🚫 حظر", callback_data=f"sec_night_action_set:{chat_id}:ban"),
+                 InlineKeyboardButton("🔒 تقييد", callback_data=f"sec_night_action_set:{chat_id}:restrict")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_night_settings:{chat_id}")]
+            ])
+            await query.edit_message_text("اختر إجراء الوضع الليلي:", reply_markup=kb)
+            try: await query.answer()
+            except BadRequest: pass
+            return
+
+        if action == "night_action_set":
+            if len(parts) >= 3:
+                penalty = parts[2]
+                if penalty not in DB.VALID_PENALTY_TYPES:
+                    try: await query.answer("❌ نوع غير صالح", show_alert=True)
+                    except BadRequest: pass
+                    return
+                await DB.execute("UPDATE group_security SET night_mode_action=? WHERE chat_id=?", (penalty, chat_id))
+                await query.edit_message_text(f"✅ تم تعيين إجراء الليل: {penalty}")
+                await CallbackHandlers._handle_night_settings(update, context, query, chat_id, user_id, lang)
+            return
+
+        # ✅ مدد العقوبات الفرعية
+        if action == "penalty_mute":
+            StateManager.set(user_id, UserState.WAIT_PENALTY_DEFAULT_DURATION)
+            context.user_data['penalty_chat'] = chat_id
+            context.user_data['penalty_type'] = 'mute'
+            await query.edit_message_text("⏱️ أرسل مدة الكتم الافتراضية بالدقائق (0 للدائم):")
+            try: await query.answer()
+            except BadRequest: pass
+            return
+
+        if action == "penalty_ban":
+            StateManager.set(user_id, UserState.WAIT_PENALTY_DEFAULT_DURATION)
+            context.user_data['penalty_chat'] = chat_id
+            context.user_data['penalty_type'] = 'ban'
+            await query.edit_message_text("⏱️ أرسل مدة الحظر الافتراضية بالدقائق (0 للدائم):")
+            try: await query.answer()
+            except BadRequest: pass
+            return
+
+        if action == "penalty_restrict":
+            StateManager.set(user_id, UserState.WAIT_PENALTY_DEFAULT_DURATION)
+            context.user_data['penalty_chat'] = chat_id
+            context.user_data['penalty_type'] = 'restrict'
+            await query.edit_message_text("⏱️ أرسل مدة التقييد الافتراضية بالدقائق (0 للدائم):")
+            try: await query.answer()
+            except BadRequest: pass
+            return
+
         # ✅ إدارة عقوبات المخالفات
         if action == "violation_penalties":
             kb = []
@@ -2132,7 +2298,6 @@ class CallbackHandlers:
         if action == "violation":
             if len(parts) >= 3:
                 v_type = parts[2]
-                # تأكد من أن نوع المخالفة معروف
                 valid_violations = {"links","mentions","banned_words","flood","max_len","service","videos","audio","documents","stickers","forwarded","polls","games","voice","video_note"}
                 if v_type not in valid_violations:
                     try:
@@ -2166,6 +2331,97 @@ class CallbackHandlers:
                 await query.edit_message_text("⏱️ أرسل المدة بالدقائق (0 للدائم):")
             return
 
+        try:
+            await query.answer()
+        except BadRequest:
+            pass
+
+    # ✅ دوال جديدة لمعالجة إعدادات الأمان
+    @staticmethod
+    async def _handle_antiflood_settings(update, context, query, chat_id, user_id, lang):
+        settings = await DB.get_security_settings(chat_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"عدد الرسائل: {settings.get('antiflood_messages', 5)}",
+                callback_data=f"sec_antiflood_messages:{chat_id}"
+            )],
+            [InlineKeyboardButton(
+                f"الفترة بالثواني: {settings.get('antiflood_seconds', 10)}",
+                callback_data=f"sec_antiflood_seconds:{chat_id}"
+            )],
+            [InlineKeyboardButton(
+                f"العقوبة: {settings.get('antiflood_penalty', 'mute')}",
+                callback_data=f"sec_antiflood_penalty:{chat_id}"
+            )],
+            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")]
+        ])
+        await query.edit_message_text(
+            f"🌊 **إعدادات الفيضان**\n\n"
+            f"الحد: {settings.get('antiflood_messages', 5)} رسالة\n"
+            f"الفترة: {settings.get('antiflood_seconds', 10)} ثانية\n"
+            f"العقوبة: {settings.get('antiflood_penalty', 'mute')}",
+            reply_markup=kb
+        )
+        try:
+            await query.answer()
+        except BadRequest:
+            pass
+
+    @staticmethod
+    async def _handle_night_settings(update, context, query, chat_id, user_id, lang):
+        settings = await DB.get_security_settings(chat_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"وقت البداية: {settings.get('night_mode_start', '23:00')}",
+                callback_data=f"sec_night_start:{chat_id}"
+            )],
+            [InlineKeyboardButton(
+                f"وقت النهاية: {settings.get('night_mode_end', '06:00')}",
+                callback_data=f"sec_night_end:{chat_id}"
+            )],
+            [InlineKeyboardButton(
+                f"الإجراء: {settings.get('night_mode_action', 'mute')}",
+                callback_data=f"sec_night_action:{chat_id}"
+            )],
+            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")]
+        ])
+        await query.edit_message_text(
+            f"🌙 **إعدادات الوضع الليلي**\n\n"
+            f"البداية: {settings.get('night_mode_start', '23:00')}\n"
+            f"النهاية: {settings.get('night_mode_end', '06:00')}\n"
+            f"الإجراء: {settings.get('night_mode_action', 'mute')}",
+            reply_markup=kb
+        )
+        try:
+            await query.answer()
+        except BadRequest:
+            pass
+
+    @staticmethod
+    async def _handle_penalty_durations(update, context, query, chat_id, user_id, lang):
+        settings = await DB.get_security_settings(chat_id)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"كتم: {settings.get('mute_default_duration', 3600)//60} دقيقة",
+                callback_data=f"sec_penalty_mute:{chat_id}"
+            )],
+            [InlineKeyboardButton(
+                f"حظر: {settings.get('ban_default_duration', 0)//60} دقيقة",
+                callback_data=f"sec_penalty_ban:{chat_id}"
+            )],
+            [InlineKeyboardButton(
+                f"تقييد: {settings.get('restrict_default_duration', 1800)//60} دقيقة",
+                callback_data=f"sec_penalty_restrict:{chat_id}"
+            )],
+            [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")]
+        ])
+        await query.edit_message_text(
+            f"⏳ **مدد العقوبات الافتراضية**\n\n"
+            f"كتم: {settings.get('mute_default_duration', 3600)//60} دقيقة\n"
+            f"حظر: {settings.get('ban_default_duration', 0)//60} دقيقة (0 = دائم)\n"
+            f"تقييد: {settings.get('restrict_default_duration', 1800)//60} دقيقة",
+            reply_markup=kb
+        )
         try:
             await query.answer()
         except BadRequest:
@@ -2313,8 +2569,6 @@ class CallbackHandlers:
             filename = data.split(":")[-1]
             filepath = PATHS.BACKUPS / filename
             if filepath.exists():
-                # لا يمكن استبدال قاعدة البيانات بأمان أثناء التشغيل، لكننا سننفذ كحل مؤقت
-                # يُفضل إيقاف البوت أولاً، لكن للبساطة ننسخ الملف مع تحذير
                 try:
                     shutil.copy2(filepath, PATHS.DB)
                     await query.edit_message_text("✅ تمت الاستعادة (قد تحتاج إعادة تشغيل)")
@@ -2596,6 +2850,9 @@ class CallbackHandlers:
                 pass
             return
 
+        # ✅ مسح الحالة السابقة قبل تعيين حالة جديدة
+        StateManager.clear(user_id)
+
         if action == "min":
             StateManager.set(user_id, UserState.WAIT_MIN)
             context.user_data['schedule_ch'] = ch_id
@@ -2834,7 +3091,6 @@ class CallbackHandlers:
                 success = await DB.declare_winner(cid, winner[0])
                 if success:
                     await query.edit_message_text(f"✅ الفائز: `{winner[0]}`")
-                    # إشعار الفائز
                     try:
                         await context.bot.send_message(winner[0], f"🎉 مبروك! لقد فزت بالمسابقة!")
                     except Exception as e:
@@ -2977,7 +3233,6 @@ class MessageHandlers:
                     await DB.set_active_channel(user_id, result)
                     await safe_send(context.bot, user_id, f"✅ تمت إضافة {chat.title}!")
                 else:
-                    # تحسين رسالة الخطأ
                     active_plan = await DB.get_active_plan(user_id)
                     if active_plan:
                         current_channels = len(await DB.get_user_channels(user_id))
@@ -2996,6 +3251,15 @@ class MessageHandlers:
             if text.strip().lower() == "/done":
                 StateManager.clear(user_id)
                 await safe_send(context.bot, user_id, "✅ تم إنهاء إضافة المنشورات.")
+                return
+
+            # ✅ تجاهل الأرقام أثناء وضع الإضافة
+            if text.strip().isdigit():
+                await safe_send(
+                    context.bot, user_id,
+                    "⚠️ أنت في وضع إضافة المنشورات.\n"
+                    "إذا أردت ضبط الجدولة فاضغط زر «القائمة الرئيسية» أولاً أو أرسل /done."
+                )
                 return
 
             media_type = 'text'
@@ -3490,6 +3754,111 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        if state == UserState.WAIT_WELCOME_TEXT:
+            chat_id_sec = context.user_data.get('sec_chat')
+            if chat_id_sec:
+                await DB.execute("UPDATE group_security SET welcome_text=? WHERE chat_id=?", (text, chat_id_sec))
+                await safe_send(context.bot, user_id, "✅ تم تعيين نص الترحيب")
+            StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_GOODBYE_TEXT:
+            chat_id_sec = context.user_data.get('sec_chat')
+            if chat_id_sec:
+                await DB.execute("UPDATE group_security SET goodbye_text=? WHERE chat_id=?", (text, chat_id_sec))
+                await safe_send(context.bot, user_id, "✅ تم تعيين نص الوداع")
+            StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_SLOW_MODE_SECONDS:
+            try:
+                val = int(text)
+                chat_id_sec = context.user_data.get('sec_chat')
+                if chat_id_sec and 0 <= val <= 3600:
+                    await DB.execute("UPDATE group_security SET slow_mode_seconds=? WHERE chat_id=?", (val, chat_id_sec))
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين مدة الوضع البطيء إلى {val} ثانية")
+                else:
+                    await safe_send(context.bot, user_id, "❌ قيمة غير صالحة (0-3600)")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_ANTIFLOOD_MESSAGES:
+            try:
+                val = int(text)
+                chat_id_sec = context.user_data.get('sec_chat')
+                if chat_id_sec and val >= 1:
+                    await DB.execute("UPDATE group_security SET antiflood_messages=? WHERE chat_id=?", (val, chat_id_sec))
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين عدد الرسائل إلى {val}")
+                else:
+                    await safe_send(context.bot, user_id, "❌ قيمة غير صالحة")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_ANTIFLOOD_SECONDS:
+            try:
+                val = int(text)
+                chat_id_sec = context.user_data.get('sec_chat')
+                if chat_id_sec and val >= 1:
+                    await DB.execute("UPDATE group_security SET antiflood_seconds=? WHERE chat_id=?", (val, chat_id_sec))
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين الفترة إلى {val} ثانية")
+                else:
+                    await safe_send(context.bot, user_id, "❌ قيمة غير صالحة")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_NIGHT_START:
+            if re.match(r'^\d{2}:\d{2}$', text):
+                chat_id_sec = context.user_data.get('sec_chat')
+                if chat_id_sec:
+                    await DB.execute("UPDATE group_security SET night_mode_start=? WHERE chat_id=?", (text, chat_id_sec))
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين وقت البداية إلى {text}")
+            else:
+                await safe_send(context.bot, user_id, "❌ الصيغة غير صالحة (HH:MM)")
+            StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_NIGHT_END:
+            if re.match(r'^\d{2}:\d{2}$', text):
+                chat_id_sec = context.user_data.get('sec_chat')
+                if chat_id_sec:
+                    await DB.execute("UPDATE group_security SET night_mode_end=? WHERE chat_id=?", (text, chat_id_sec))
+                    await safe_send(context.bot, user_id, f"✅ تم تعيين وقت النهاية إلى {text}")
+            else:
+                await safe_send(context.bot, user_id, "❌ الصيغة غير صالحة (HH:MM)")
+            StateManager.clear(user_id)
+            return
+
+        if state == UserState.WAIT_PENALTY_DEFAULT_DURATION:
+            try:
+                dur_minutes = int(text)
+                if dur_minutes < 0:
+                    await safe_send(context.bot, user_id, "❌ المدة غير صالحة")
+                    StateManager.clear(user_id)
+                    return
+                chat_id_pen = context.user_data.get('penalty_chat')
+                p_type = context.user_data.get('penalty_type')
+                if chat_id_pen and p_type:
+                    duration_seconds = dur_minutes * 60 if dur_minutes > 0 else 0
+                    col_map = {
+                        'mute': 'mute_default_duration',
+                        'ban': 'ban_default_duration',
+                        'restrict': 'restrict_default_duration'
+                    }
+                    col = col_map.get(p_type)
+                    if col:
+                        await DB.execute(f"UPDATE group_security SET {col}=? WHERE chat_id=?", (duration_seconds, chat_id_pen))
+                        await safe_send(context.bot, user_id, f"✅ تم تعيين {p_type} إلى {dur_minutes} دقيقة")
+            except ValueError:
+                await safe_send(context.bot, user_id, "❌ يرجى إدخال رقم صحيح")
+            StateManager.clear(user_id)
+            return
+
         # الرسالة الافتراضية
         await CommandHandlers.start(update, context)
 
@@ -3699,7 +4068,6 @@ async def apply_violation_penalty(context, chat_id, user_id, violation_type, rea
             # إعادة تعيين التحذيرات بعد العقوبة
             await DB.reset_user_warnings(user_id, chat_id)
         else:
-            # نوع عقوبة غير معروف
             logger.error(f"❌ نوع عقوبة غير صالح في apply_violation_penalty: {penalty_type}")
     except Exception as e:
         logger.error(f"❌ فشل تطبيق عقوبة {penalty_type} على {user_id}: {e}")
