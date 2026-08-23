@@ -79,6 +79,7 @@
     "admin_refresh_cache": "🔄 تحديث الكاش",
     "admin_invoices": "🧾 الفواتير",
     "admin_payment_logs": "📊 سجلات الدفع",
+    "admin_grant_free": "🎁 منح اشتراك مجاني",
     "contest_winners": "🏆 الفائزون",
     "contests": "🏆 المسابقات",
     "contest_join": "✍️ المشاركة",
@@ -242,6 +243,7 @@
         ["admin_import_github"],
         ["admin_refresh_cache"],
         ["admin_invoices", "admin_payment_logs"],
+        ["admin_grant_free"],
         ["back"]
       ]
     },
