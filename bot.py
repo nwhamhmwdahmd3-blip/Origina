@@ -2,15 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – البوت الرئيسي (نسخة مصححة ومحسّنة)
+🌿 Relax Manager – البوت الرئيسي (نسخة نهائية مصححة)
 - إصلاحات أمنية في معالجة الدفع (الاشتراكات والهدايا)
-- تسجيل جميع الأوامر المطلوبة بما فيها أوامر المجموعة
-- إضافة دعم video_note في الرسائل الخاصة
-- معالجة فشل توليد كود الهدية
+- تسجيل جميع الأوامر في القوائم (الخاص + المجموعات)
+- دعم video_note في الرسائل
 - استدعاء CONFIG.validate()
-- تحديد allowed_updates
-- إعادة تشغيل المهام الخلفية عند الفشل
-- ✅ إصلاح ظهور الأوامر في المجموعات والخاص
+- المهام الخلفية مع إعادة تشغيل عند الفشل
+- دعم webhook و polling
 """
 
 import asyncio
@@ -74,7 +72,6 @@ async def _validate_invoice_for_payment(user_id: int, payload: str):
     if not invoice or invoice['user_id'] != user_id or invoice['status'] != 'pending':
         return None, None, None
 
-    # التحقق من نوع العملية
     payment_type = data.get('type')
     if payment_type not in ('subscription', 'gift'):
         return None, None, None
@@ -92,7 +89,6 @@ async def _validate_invoice_for_payment(user_id: int, payload: str):
 # =====================================================================
 
 async def pre_checkout(update, context):
-    """معالجة ما قبل الدفع (التحقق من صحة الفاتورة)"""
     query = update.pre_checkout_query
     user_id = query.from_user.id
     payload = query.invoice_payload
@@ -107,7 +103,6 @@ async def pre_checkout(update, context):
             logger.error(f"❌ Error answering pre_checkout: {e}")
         return
 
-    # التحقق من تطابق المبلغ (إذا كان total_amount متاحًا)
     if hasattr(query, 'total_amount'):
         expected_amount = plan.get('price')
         if expected_amount is not None and query.total_amount != expected_amount:
@@ -129,7 +124,6 @@ async def pre_checkout(update, context):
 
 
 async def successful_payment(update, context):
-    """معالجة الدفع الناجح"""
     user_id = update.effective_user.id
     payment = update.message.successful_payment
     payload = payment.invoice_payload
@@ -144,7 +138,6 @@ async def successful_payment(update, context):
         await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع، يرجى التواصل مع الدعم.")
         return
 
-    # التحقق من تطابق المبلغ المدفوع مع سعر الخطة
     if plan.get('price') != total_amount:
         logger.error(f"❌ Payment amount mismatch for user {user_id}: paid={total_amount}, expected={plan.get('price')}")
         await safe_send(context.bot, user_id, "❌ المبلغ المدفوع غير مطابق لسعر الخطة، يرجى التواصل مع الدعم.")
@@ -154,7 +147,6 @@ async def successful_payment(update, context):
     payment_id = telegram_payment_charge_id or provider_payment_charge_id
 
     if payment_type == 'subscription':
-        # تفعيل الاشتراك بشكل ذري
         success = await DB.activate_subscription_with_payment(
             user_id=user_id,
             invoice_number=invoice['number'],
@@ -166,20 +158,17 @@ async def successful_payment(update, context):
             await safe_send(context.bot, user_id, f"✅ تم تفعيل اشتراك {plan['name']} بنجاح!")
             logger.info(f"✅ Subscription activated for user {user_id}, plan {plan['id']}, invoice {invoice['number']}")
         else:
-            # إذا فشلت العملية الذرية، نحاول التراجع عن حالة الفاتورة
             await DB.execute("UPDATE invoices SET status='pending' WHERE number=?", (invoice['number'],))
             await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع، يرجى التواصل مع الدعم.")
             logger.error(f"❌ Failed to activate subscription for user {user_id}, invoice {invoice['number']}")
 
     elif payment_type == 'gift':
-        # توليد كود هدية وإرساله
         code = await DB.create_gift_code(plan_id=plan['id'], creator_id=user_id)
         if code:
             await DB.mark_invoice_paid(invoice['number'], payment_id)
             await DB.add_payment_log(user_id, 'xtr', 'gift_paid', {'invoice': invoice['number'], 'gift_plan_id': plan['id'], 'amount': total_amount})
             await safe_send(
-                context.bot,
-                user_id,
+                context.bot, user_id,
                 f"🎉 **تم شراء كود الهدية بنجاح!**\n\n"
                 f"🎁 الكود: `{code}`\n"
                 f"📅 المدة: {plan['days']} يوم\n\n"
@@ -187,14 +176,9 @@ async def successful_payment(update, context):
             )
             logger.info(f"✅ Gift code {code} created for user {user_id}, invoice {invoice['number']}")
         else:
-            # في حال فشل توليد الكود، نعلّم الفاتورة كمدفوعة ونحفظ سجلًا للمراجعة
             await DB.mark_invoice_paid(invoice['number'], payment_id)
             await DB.add_payment_log(user_id, 'xtr', 'gift_generation_failed', {'invoice': invoice['number'], 'gift_plan_id': plan['id'], 'amount': total_amount})
-            await safe_send(
-                context.bot,
-                user_id,
-                "❌ حدث خطأ في توليد كود الهدية. تم تسجيل الدفع بنجاح، يرجى التواصل مع الدعم لاستلام الكود."
-            )
+            await safe_send(context.bot, user_id, "❌ حدث خطأ في توليد كود الهدية. تم تسجيل الدفع بنجاح، يرجى التواصل مع الدعم.")
             logger.error(f"❌ Failed to create gift code for user {user_id}, invoice {invoice['number']}")
 
     else:
@@ -209,7 +193,7 @@ async def successful_payment(update, context):
 async def main():
     global app
 
-    # ✅ التحقق من الإعدادات قبل بدء التشغيل
+    # التحقق من الإعدادات
     try:
         CONFIG.validate()
     except ValueError as e:
@@ -226,7 +210,7 @@ async def main():
         await DB.register_user(dev_id)
     await DB.register_user(CONFIG.PRIMARY_OWNER_ID)
 
-    # تحميل الإعدادات
+    # تحميل الإعدادات والترجمات
     KeyboardFactory.load_config()
     available_langs = TranslationManager.get_available_languages()
     for lang in available_langs:
@@ -244,7 +228,7 @@ async def main():
     app = Application.builder().token(CONFIG.TOKEN).build()
     await app.initialize()
 
-    # ========== تسجيل الأوامر في القائمة (خاص + مجموعات) ==========
+    # ========== تسجيل الأوامر في القوائم (خاص + مجموعات) ==========
     commands = [
         ("start", "🏠 القائمة الرئيسية"),
         ("help", "📚 المساعدة"),
@@ -274,17 +258,8 @@ async def main():
         ("pin", "📌 تثبيت رسالة"),
     ]
 
-    # للأوامر في المحادثة الخاصة
-    await app.bot.set_my_commands(
-        commands,
-        scope=BotCommandScopeAllPrivateChats()
-    )
-
-    # للأوامر في المجموعات
-    await app.bot.set_my_commands(
-        commands,
-        scope=BotCommandScopeAllGroupChats()
-    )
+    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
+    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
 
     # ========== الأوامر الأساسية ==========
     app.add_handler(CommandHandler("start", CommandHandlers.start))
@@ -298,7 +273,7 @@ async def main():
     app.add_handler(CommandHandler("contests", CommandHandlers.contests))
     app.add_handler(CommandHandler("replies", CommandHandlers.replies_command))
 
-    # ========== أوامر إضافية (منح، فاصل زمني، هدايا) ==========
+    # ========== أوامر إضافية ==========
     app.add_handler(CommandHandler("grant", CommandHandlers.grant))
     app.add_handler(CommandHandler("set_min_interval", CommandHandlers.set_min_interval))
     app.add_handler(CommandHandler("gift_plans", CommandHandlers.gift_plans))
@@ -364,9 +339,8 @@ async def main():
     # ========== معالج الأخطاء ==========
     app.add_error_handler(ErrorHandler.handle_error)
 
-    # ========== المهام الخلفية (مع إعادة تشغيل عند الفشل) ==========
+    # ========== المهام الخلفية ==========
     async def run_task_with_retry(task_func, *args, task_name=""):
-        """تشغيل مهمة خلفية مع إعادة المحاولة عند حدوث استثناء غير متوقع."""
         while True:
             try:
                 await task_func(*args)
@@ -412,7 +386,6 @@ async def main():
                 allowed_updates=ALLOWED_UPDATES
             )
     finally:
-        # إلغاء المهام
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
