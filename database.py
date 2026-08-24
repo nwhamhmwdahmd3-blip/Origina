@@ -2,19 +2,18 @@
 # -*- coding: utf-8 -*-
 
 """
-database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية الكاملة)
-- جميع الإصلاحات الأمنية
-- تحسينات الأداء
-- قيم افتراضية لـ CONFIG
-- التحقق من صحة البيانات
-- ✅ activate_trial بالنمط الأصلي (تمنح 30 يوم أو تحتفظ بالأطول)
+database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية بعد جميع الإصلاحات)
+- توحيد وحدات الوقت إلى دقائق في الإعدادات
+- إضافة حد يومي للإحالات
+- إضافة حد أقصى للكلمات المحظورة العامة
+- تحسينات في الأداء (استخدام asyncio.to_thread)
+- جميع الجداول والدوال الأساسية
 """
 
 import sqlite3
 import json
 import logging
 import secrets
-import string
 import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,16 +25,6 @@ import aiosqlite
 from config import PATHS, CONFIG
 
 logger = logging.getLogger(__name__)
-
-# قيم افتراضية
-MAX_GLOBAL_BANNED_WORDS = getattr(CONFIG, 'MAX_GLOBAL_BANNED_WORDS', 100)
-MAX_DAILY_REFERRALS = getattr(CONFIG, 'MAX_DAILY_REFERRALS', 10)
-
-
-def generate_referral_code(length: int = 8) -> str:
-    """توليد رمز إحالة آمن بدون أحرف خاصة"""
-    alphabet = string.ascii_uppercase + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
 class TimeUtils:
@@ -57,6 +46,7 @@ class TimeUtils:
 
     @staticmethod
     def sql_iso() -> str:
+        """صيغة متوافقة مع SQLite للمقارنات (YYYY-MM-DD HH:MM:SS)"""
         return TimeUtils.utc_now().strftime('%Y-%m-%d %H:%M:%S')
 
     @staticmethod
@@ -85,7 +75,7 @@ class TimeUtils:
 
 class Database:
     _instance = None
-    _lock = None
+    _lock = asyncio.Lock()
 
     VALID_PENALTY_TYPES = {'mute', 'ban', 'restrict'}
     VALID_REPLY_TYPES = {'text', 'photo', 'video', 'animation', 'document', 'sticker', 'voice', 'video_note'}
@@ -93,29 +83,20 @@ class Database:
     def __new__(cls) -> 'Database':
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._lock = asyncio.Lock()
         return cls._instance
 
     @asynccontextmanager
     async def _get_connection(self):
-        conn = await aiosqlite.connect(
+        async with aiosqlite.connect(
             str(PATHS.DB),
             timeout=60,
             check_same_thread=False
-        )
-        conn.row_factory = aiosqlite.Row
-        try:
+        ) as conn:
+            conn.row_factory = aiosqlite.Row
             await conn.execute("PRAGMA journal_mode=WAL")
             await conn.execute("PRAGMA synchronous=NORMAL")
             await conn.execute("PRAGMA foreign_keys=ON")
-            await conn.execute("PRAGMA busy_timeout=5000")
             yield conn
-            await conn.commit()
-        except Exception:
-            await conn.rollback()
-            raise
-        finally:
-            await conn.close()
 
     async def execute(self, query: str, params: tuple = ()) -> None:
         async with self._get_connection() as conn:
@@ -149,7 +130,6 @@ class Database:
             await self._create_indexes(conn)
             await self._init_default_data(conn)
             await self._import_banned_words(conn)
-            await conn.commit()
         logger.info("✅ تم تهيئة قاعدة البيانات بنجاح")
 
     async def _create_tables(self, conn) -> None:
@@ -607,59 +587,57 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )
         """)
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_user ON user_penalties(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_chat ON user_penalties(chat_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_status ON user_penalties(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_points_user ON user_points(user_id)")
+        await conn.commit()
 
     async def _create_indexes(self, conn) -> None:
-        indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_users_banned ON users(banned)",
-            "CREATE INDEX IF NOT EXISTS idx_users_language ON users(language)",
-            "CREATE INDEX IF NOT EXISTS idx_users_subscription ON users(subscription_end)",
-            "CREATE INDEX IF NOT EXISTS idx_users_updated ON users(updated_at)",
-            "CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_uc_active ON user_channels(banned)",
-            "CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)",
-            "CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)",
-            "CREATE INDEX IF NOT EXISTS idx_posts_fail ON posts(fail_count)",
-            "CREATE INDEX IF NOT EXISTS idx_sched_next ON schedule(next_publish_date)",
-            "CREATE INDEX IF NOT EXISTS idx_groups_banned ON bot_groups(banned)",
-            "CREATE INDEX IF NOT EXISTS idx_group_admins_user ON group_admins(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_group_admins_chat ON group_admins(chat_id)",
-            "CREATE INDEX IF NOT EXISTS idx_security_chat ON group_security(chat_id)",
-            "CREATE INDEX IF NOT EXISTS idx_banned_words_chat ON banned_words(chat_id)",
-            "CREATE INDEX IF NOT EXISTS idx_banned_words_word ON banned_words(word)",
-            "CREATE INDEX IF NOT EXISTS idx_user_warnings_user ON user_warnings(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_user_warnings_chat ON user_warnings(chat_id)",
-            "CREATE INDEX IF NOT EXISTS idx_admin_logs_chat ON admin_logs(chat_id)",
-            "CREATE INDEX IF NOT EXISTS idx_admin_logs_admin ON admin_logs(admin_id)",
-            "CREATE INDEX IF NOT EXISTS idx_admin_logs_created ON admin_logs(created_at)",
-            "CREATE INDEX IF NOT EXISTS idx_ar_chat ON auto_replies(chat_id)",
-            "CREATE INDEX IF NOT EXISTS idx_ar_keyword ON auto_replies(keyword)",
-            "CREATE INDEX IF NOT EXISTS idx_auto_replies_lookup ON auto_replies(chat_id, keyword, is_active)",
-            "CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)",
-            "CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_sub_status ON subscriptions(status)",
-            "CREATE INDEX IF NOT EXISTS idx_sub_end ON subscriptions(end_date)",
-            "CREATE INDEX IF NOT EXISTS idx_inv_user ON invoices(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_inv_status ON invoices(status)",
-            "CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)",
-            "CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)",
-            "CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status)",
-            "CREATE INDEX IF NOT EXISTS idx_contests_end ON contests(end_date)",
-            "CREATE INDEX IF NOT EXISTS idx_contest_participants_contest ON contest_participants(contest_id)",
-            "CREATE INDEX IF NOT EXISTS idx_contest_participants_user ON contest_participants(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_reminders_user ON user_reminder_settings(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_posts_channel_published ON posts(channel_db_id, published)",
-            "CREATE INDEX IF NOT EXISTS idx_sub_user_status_end ON subscriptions(user_id, status, end_date)",
-            "CREATE INDEX IF NOT EXISTS idx_penalties_user ON user_penalties(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_penalties_chat ON user_penalties(chat_id)",
-            "CREATE INDEX IF NOT EXISTS idx_penalties_status ON user_penalties(status)",
-            "CREATE INDEX IF NOT EXISTS idx_penalties_user_chat_status ON user_penalties(user_id, chat_id, status)",
-            "CREATE INDEX IF NOT EXISTS idx_penalties_chat_status ON user_penalties(chat_id, status)",
-            "CREATE INDEX IF NOT EXISTS idx_auto_replies_chat_key ON auto_replies(chat_id, keyword, is_active)",
-            "CREATE INDEX IF NOT EXISTS idx_points_user ON user_points(user_id)",
-        ]
-        for index in indexes:
-            await conn.execute(index)
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users(banned)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_language ON users(language)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_subscription ON users(subscription_end)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_updated ON users(updated_at)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_uc_active ON user_channels(banned)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_fail ON posts(fail_count)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_next ON schedule(next_publish_date)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_groups_banned ON bot_groups(banned)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_group_admins_user ON group_admins(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_group_admins_chat ON group_admins(chat_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_security_chat ON group_security(chat_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_banned_words_chat ON banned_words(chat_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_banned_words_word ON banned_words(word)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_warnings_user ON user_warnings(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_warnings_chat ON user_warnings(chat_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_logs_chat ON admin_logs(chat_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_logs_admin ON admin_logs(admin_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_logs_created ON admin_logs(created_at)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_chat ON auto_replies(chat_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_keyword ON auto_replies(keyword)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_replies_lookup ON auto_replies(chat_id, keyword, is_active)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_status ON subscriptions(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_end ON subscriptions(end_date)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_user ON invoices(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_status ON invoices(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_contests_end ON contests(end_date)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_contest_participants_contest ON contest_participants(contest_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_contest_participants_user ON contest_participants(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_user ON user_reminder_settings(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel_published ON posts(channel_db_id, published)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_user_status_end ON subscriptions(user_id, status, end_date)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_user_chat_status ON user_penalties(user_id, chat_id, status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_chat_status ON user_penalties(chat_id, status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_replies_chat_key ON auto_replies(chat_id, keyword, is_active)")
+        await conn.commit()
 
     async def _init_default_data(self, conn) -> None:
         default_plans = [
@@ -681,6 +659,7 @@ class Database:
                     plan["duration_days"], plan["max_channels"], plan["max_posts"],
                     plan["features"], 1, plan["is_gift"], TimeUtils.sql_iso()
                 ))
+        await conn.commit()
 
     async def _import_banned_words(self, conn) -> None:
         try:
@@ -697,6 +676,7 @@ class Database:
                     (word, -1, CONFIG.PRIMARY_OWNER_ID, TimeUtils.sql_iso())
                 )
                 imported += 1
+            await conn.commit()
             logger.info(f"✅ تم استيراد {imported} كلمة محظورة من ملف banned_words.py")
         except ImportError:
             logger.info("ℹ️ لا يوجد ملف banned_words.py، سيتم تخطي استيراد الكلمات المحظورة")
@@ -706,7 +686,7 @@ class Database:
     # ========= دوال المستخدمين =========
     async def register_user(self, user_id: int, username: str = "", first_name: str = "") -> bool:
         try:
-            code = generate_referral_code()
+            code = secrets.token_urlsafe(6)
             async with self._get_connection() as conn:
                 await conn.execute(
                     """INSERT INTO users 
@@ -735,7 +715,7 @@ class Database:
 
     async def get_user_language(self, user_id: int) -> str:
         row = await self.fetchone("SELECT language FROM users WHERE user_id=?", (user_id,))
-        return row['language'] if row else 'ar'
+        return row[0] if row else 'ar'
 
     async def set_user_language(self, user_id: int, lang: str) -> bool:
         await self.execute("UPDATE users SET language=? WHERE user_id=?", (lang, user_id))
@@ -743,7 +723,7 @@ class Database:
 
     async def get_auto_publish_status(self, user_id: int) -> bool:
         row = await self.fetchone("SELECT auto_publish FROM users WHERE user_id=?", (user_id,))
-        return row and row['auto_publish'] == 1
+        return row and row[0] == 1
 
     async def set_auto_publish(self, user_id: int, status: bool) -> bool:
         await self.execute("UPDATE users SET auto_publish=? WHERE user_id=?", (1 if status else 0, user_id))
@@ -751,7 +731,7 @@ class Database:
 
     async def get_auto_recycle_status(self, user_id: int) -> bool:
         row = await self.fetchone("SELECT auto_recycle FROM users WHERE user_id=?", (user_id,))
-        return row and row['auto_recycle'] == 1
+        return row and row[0] == 1
 
     async def set_auto_recycle(self, user_id: int, status: bool) -> bool:
         await self.execute("UPDATE users SET auto_recycle=? WHERE user_id=?", (1 if status else 0, user_id))
@@ -759,7 +739,7 @@ class Database:
 
     async def is_user_banned(self, user_id: int) -> bool:
         row = await self.fetchone("SELECT banned FROM users WHERE user_id=?", (user_id,))
-        return row and row['banned'] == 1
+        return row and row[0] == 1
 
     async def ban_user(self, user_id: int) -> bool:
         await self.execute("UPDATE users SET banned=1 WHERE user_id=?", (user_id,))
@@ -771,7 +751,7 @@ class Database:
 
     async def get_all_users(self) -> List[Tuple[int, int]]:
         rows = await self.fetchall("SELECT user_id, banned FROM users")
-        return [(row['user_id'], row['banned']) for row in rows]
+        return [(row[0], row[1]) for row in rows]
 
     async def get_user_stats(self) -> Dict:
         async with self._get_connection() as conn:
@@ -808,16 +788,13 @@ class Database:
 
     async def has_used_trial(self, user_id: int) -> bool:
         row = await self.fetchone("SELECT trial_used FROM users WHERE user_id=?", (user_id,))
-        return row and row['trial_used'] == 1
+        return row and row[0] == 1
 
-    # ✅ النسخة الأصلية من activate_trial
     async def activate_trial(self, user_id: int) -> int:
-        """تفعيل التجربة المجانية بذكاء: تمنح 30 يوماً أو تحتفظ بالاشتراك الأطول."""
         try:
             async with self._lock:
                 now = TimeUtils.utc_now()
                 trial_end = now + timedelta(days=30)
-
                 async with self._get_connection() as conn:
                     row = await conn.execute("""
                         SELECT MAX(end_date) FROM subscriptions
@@ -851,11 +828,6 @@ class Database:
                             "UPDATE users SET subscription_end=? WHERE user_id=?",
                             (current_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
                         )
-                        await conn.execute(
-                            "UPDATE users SET trial_used=1 WHERE user_id=?",
-                            (user_id,)
-                        )
-
                     await conn.commit()
                 return days_granted
         except Exception as e:
@@ -864,11 +836,11 @@ class Database:
 
     async def get_referral_code(self, user_id: int) -> str:
         row = await self.fetchone("SELECT referral_code FROM users WHERE user_id=?", (user_id,))
-        return row['referral_code'] if row else f"ref_{user_id}"
+        return row[0] if row else f"ref_{user_id}"
 
     async def get_user_by_referral_code(self, code: str) -> Optional[int]:
         row = await self.fetchone("SELECT user_id FROM users WHERE referral_code=?", (code,))
-        return row['user_id'] if row else None
+        return row[0] if row else None
 
     async def get_active_plan(self, user_id: int) -> Optional[Dict]:
         sub = await self.get_active_subscription(user_id)
@@ -878,8 +850,8 @@ class Database:
 
     async def get_subscription_end(self, user_id: int) -> Optional[datetime]:
         row = await self.fetchone("SELECT subscription_end FROM users WHERE user_id=?", (user_id,))
-        if row and row['subscription_end']:
-            return TimeUtils.safe_parse_iso(row['subscription_end'])
+        if row and row[0]:
+            return TimeUtils.safe_parse_iso(row[0])
         return None
 
     async def get_user_subscription(self, user_id: int) -> Optional[Dict]:
@@ -897,12 +869,6 @@ class Database:
     async def add_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
         try:
             channel_id = int(channel_id)
-            if channel_id <= 0:
-                return None
-        except (ValueError, TypeError):
-            return None
-
-        try:
             async with self._lock:
                 async with self._get_connection() as conn:
                     plan_row = await conn.execute("""
@@ -914,22 +880,16 @@ class Database:
                         LIMIT 1
                     """, (user_id,))
                     plan_row = await plan_row.fetchone()
-                    
                     if not plan_row:
-                        if user_id == CONFIG.PRIMARY_OWNER_ID:
-                            max_channels = 999999
-                        else:
-                            max_channels = 1
-                    else:
-                        max_channels = plan_row['max_channels']
+                        return None
 
-                    if max_channels is not None:
+                    if plan_row['max_channels'] is not None:
                         count_row = await conn.execute(
                             "SELECT COUNT(*) FROM user_channels WHERE user_id = ? AND banned = 0",
                             (user_id,)
                         )
                         count_row = await count_row.fetchone()
-                        if count_row[0] >= max_channels:
+                        if count_row[0] >= plan_row['max_channels']:
                             return None
 
                     existing = await conn.execute(
@@ -985,18 +945,18 @@ class Database:
 
     async def get_active_channel(self, user_id: int) -> Optional[int]:
         row = await self.fetchone("SELECT active_channel FROM users WHERE user_id=?", (user_id,))
-        if row and row['active_channel']:
+        if row and row[0]:
             banned = await self.fetchone(
                 "SELECT banned FROM user_channels WHERE id=? AND user_id=?",
-                (row['active_channel'], user_id)
+                (row[0], user_id)
             )
-            if banned and banned['banned'] == 0:
-                return row['active_channel']
+            if banned and banned[0] == 0:
+                return row[0]
         row2 = await self.fetchone(
             "SELECT id FROM user_channels WHERE user_id=? AND banned=0 ORDER BY id LIMIT 1",
             (user_id,)
         )
-        return row2['id'] if row2 else None
+        return row2[0] if row2 else None
 
     async def set_active_channel(self, user_id: int, channel_db_id: int) -> bool:
         row = await self.fetchone(
@@ -1070,22 +1030,16 @@ class Database:
                         LIMIT 1
                     """, (user_id,))
                     plan_row = await plan_row.fetchone()
-                    
                     if not plan_row:
-                        if user_id == CONFIG.PRIMARY_OWNER_ID:
-                            max_posts = 999999
-                        else:
-                            max_posts = 10
-                    else:
-                        max_posts = plan_row['max_posts']
+                        return 0
 
-                    if max_posts is not None:
+                    if plan_row['max_posts'] is not None:
                         count_row = await conn.execute(
                             "SELECT COUNT(*) FROM posts WHERE channel_db_id = ?",
                             (channel_db_id,)
                         )
                         count_row = await count_row.fetchone()
-                        if count_row[0] + len(posts) > max_posts:
+                        if count_row[0] + len(posts) > plan_row['max_posts']:
                             return 0
 
                     total = 0
@@ -1211,7 +1165,7 @@ class Database:
                 SELECT chat_id FROM bot_groups WHERE added_by = ?
             )
         """, (user_id, user_id, user_id, user_id, user_id))
-        return [(row['chat_id'], row['chat_name'], row['username'] or "", row['banned']) for row in rows]
+        return [(row[0], row[1], row[2] or "", row[3]) for row in rows]
 
     async def sync_group_admins(self, chat_id: int, admin_ids: List[int]) -> int:
         async with self._get_connection() as conn:
@@ -1298,14 +1252,14 @@ class Database:
             "SELECT word FROM banned_words WHERE chat_id=? OR chat_id=-1",
             (chat_id,)
         )
-        return [row['word'] for row in rows]
+        return [row[0] for row in rows]
 
     async def add_banned_word(self, word: str, chat_id: int, added_by: int) -> Tuple[bool, bool]:
         try:
             word = word.strip().lower()
             if chat_id == -1:
                 count = await self.fetchval("SELECT COUNT(*) FROM banned_words WHERE chat_id=-1")
-                if count is not None and count >= MAX_GLOBAL_BANNED_WORDS:
+                if count is not None and count >= CONFIG.MAX_GLOBAL_BANNED_WORDS:
                     return False, False
             await self.execute(
                 "INSERT INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)",
@@ -1330,7 +1284,7 @@ class Database:
 
     async def get_user_warnings(self, user_id: int, chat_id: int) -> int:
         row = await self.fetchone("SELECT warnings FROM user_warnings WHERE user_id=? AND chat_id=?", (user_id, chat_id))
-        return row['warnings'] if row else 0
+        return row[0] if row else 0
 
     async def add_user_warning(self, user_id: int, chat_id: int) -> int:
         await self.execute(
@@ -1436,7 +1390,7 @@ class Database:
             ORDER BY usage_count DESC
             LIMIT ?
         """, (chat_id, limit))
-        return [(row['keyword'], row['usage_count'], row['source']) for row in rows]
+        return [(row[0], row[1], row[2]) for row in rows]
 
     async def reset_auto_replies(self, chat_id: int) -> bool:
         await self.execute("DELETE FROM auto_replies WHERE chat_id=?", (chat_id,))
@@ -1468,7 +1422,7 @@ class Database:
     async def update_next_publish(self, channel_db_id: int) -> bool:
         sched = await self.get_schedule(channel_db_id)
         last_pub = await self.fetchone("SELECT last_publish_time FROM last_publish WHERE channel_db_id=?", (channel_db_id,))
-        last_time = TimeUtils.safe_parse_iso(last_pub['last_publish_time']) if last_pub and last_pub['last_publish_time'] else TimeUtils.utc_now()
+        last_time = TimeUtils.safe_parse_iso(last_pub[0]) if last_pub and last_pub[0] else TimeUtils.utc_now()
         st = sched.get('schedule_type', 'interval_minutes')
         if st == 'interval_minutes':
             interval = max(1, sched.get('interval_minutes', 12))
@@ -1505,40 +1459,46 @@ class Database:
         return True
 
     async def get_channels_to_publish(self, limit: int = 20) -> List[Dict]:
-        active_channels = await self.fetchall("""
-            SELECT DISTINCT uc.id, uc.channel_id, uc.user_id, u.auto_publish,
-                   COALESCE(s.next_publish_date, '1970-01-01 00:00:00') as next_date
+        rows = await self.fetchall("""
+            WITH active_subs AS (
+                SELECT s.user_id, s.plan_id, p.max_channels, p.max_posts
+                FROM subscriptions s
+                JOIN plans p ON s.plan_id = p.id
+                WHERE s.status = 'active' AND s.end_date > datetime('now')
+                AND s.id = (
+                    SELECT id FROM subscriptions
+                    WHERE user_id = s.user_id AND status='active' AND end_date > datetime('now')
+                    ORDER BY (SELECT max_channels FROM plans WHERE id = subscriptions.plan_id) DESC,
+                             (SELECT max_posts FROM plans WHERE id = subscriptions.plan_id) DESC,
+                             end_date DESC
+                    LIMIT 1
+                )
+            )
+            SELECT uc.id, uc.channel_id, uc.user_id, u.auto_publish
             FROM user_channels uc
             JOIN users u ON uc.user_id = u.user_id
             LEFT JOIN schedule s ON uc.id = s.channel_db_id
-            WHERE uc.banned = 0 
-              AND u.banned = 0 
-              AND u.auto_publish = 1
-              AND EXISTS (
-                  SELECT 1 FROM posts p
-                  WHERE p.channel_db_id = uc.id 
-                    AND p.published = 0
-                    AND (p.fail_count IS NULL OR p.fail_count < 3)
-              )
-              AND EXISTS (
-                  SELECT 1 FROM subscriptions sub
-                  WHERE sub.user_id = uc.user_id 
-                    AND sub.status = 'active' 
-                    AND sub.end_date > datetime('now')
-              )
-        """)
-
-        result = []
-        now = TimeUtils.utc_now()
-        for ch in active_channels:
-            ch_dict = dict(ch)
-            next_date = TimeUtils.safe_parse_iso(ch_dict.get('next_date'))
-            if next_date is None or next_date <= now:
-                result.append(ch_dict)
-                if len(result) >= limit:
-                    break
-
-        return result
+            LEFT JOIN active_subs a ON uc.user_id = a.user_id
+            WHERE uc.banned = 0 AND u.banned = 0 AND u.auto_publish = 1
+            AND (s.next_publish_date IS NULL OR s.next_publish_date <= ?)
+            AND EXISTS (
+                SELECT 1 FROM posts p
+                WHERE p.channel_db_id = uc.id AND p.published = 0
+                AND (p.fail_count IS NULL OR p.fail_count < 3)
+            )
+            AND a.user_id IS NOT NULL
+            AND (
+                a.max_channels IS NULL OR
+                (SELECT COUNT(*) FROM user_channels WHERE user_id = uc.user_id AND banned = 0) <= a.max_channels
+            )
+            AND (
+                a.max_posts IS NULL OR
+                (SELECT COUNT(*) FROM posts WHERE channel_db_id = uc.id) <= a.max_posts
+            )
+            ORDER BY COALESCE(s.next_publish_date, '1970-01-01 00:00:00') ASC
+            LIMIT ?
+        """, (TimeUtils.sql_iso(), limit))
+        return [dict(row) for row in rows]
 
     # ========= دوال التذاكر =========
     async def create_ticket(self, user_id: int, username: str, content: str,
@@ -1571,15 +1531,13 @@ class Database:
             return False
         try:
             async with self._get_connection() as conn:
-                start_of_day = TimeUtils.utc_now().replace(hour=0, minute=0, second=0, microsecond=0).strftime('%Y-%m-%d %H:%M:%S')
-                end_of_day = (TimeUtils.utc_now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-
+                today = TimeUtils.utc_now().strftime('%Y-%m-%d')
                 count_row = await conn.execute(
-                    "SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND created_at >= ? AND created_at < ?",
-                    (referrer_id, start_of_day, end_of_day)
+                    "SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND date(created_at)=?",
+                    (referrer_id, today)
                 )
                 count = (await count_row.fetchone())[0]
-                if count >= MAX_DAILY_REFERRALS:
+                if count >= CONFIG.MAX_DAILY_REFERRALS:
                     logger.warning(f"⚠️ User {referrer_id} reached daily referral limit")
                     return False
 
@@ -1615,18 +1573,15 @@ class Database:
         async with self._get_connection() as conn:
             total = (await (await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))).fetchone())[0]
             claimed = (await (await conn.execute("SELECT COALESCE(SUM(claimed_reward_days), 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
-            row = await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone()
-            total_reward = row[0] if row else 0
+            total_reward = (await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
         return {'total': total, 'claimed': claimed, 'available': total_reward - claimed}
 
     async def claim_referral_reward(self, user_id: int) -> int:
         try:
             async with self._lock:
                 async with self._get_connection() as conn:
-                    row = await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone()
-                    total_reward = row[0] if row else 0
-                    row = await (await conn.execute("SELECT COALESCE(claimed_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone()
-                    claimed = row[0] if row else 0
+                    total_reward = (await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
+                    claimed = (await (await conn.execute("SELECT COALESCE(claimed_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
                     available = total_reward - claimed
                     if available <= 0:
                         return 0
@@ -1665,7 +1620,7 @@ class Database:
 
     async def get_referrals_list(self, user_id: int) -> List[int]:
         rows = await self.fetchall("SELECT referred_id FROM referrals WHERE referrer_id=? ORDER BY created_at DESC", (user_id,))
-        return [row['referred_id'] for row in rows]
+        return [row[0] for row in rows]
 
     # ========= دوال التذكيرات =========
     async def get_reminder_settings(self, user_id: int) -> Dict:
@@ -1688,30 +1643,21 @@ class Database:
         return True
 
     async def get_users_for_reminder(self) -> List[Dict]:
-        active_users = await self.fetchall("""
-            SELECT DISTINCT s.user_id, MAX(s.end_date) as max_end_date
-            FROM subscriptions s
-            WHERE s.status = 'active' AND s.end_date > datetime('now')
-            GROUP BY s.user_id
-        """)
-
-        result = []
-        now = TimeUtils.utc_now()
-        for user in active_users:
-            user_dict = dict(user)
-            end_date = TimeUtils.safe_parse_iso(user_dict.get('max_end_date'))
-            if not end_date:
-                continue
-            days_left = (end_date - now).days
-            settings = await self.get_reminder_settings(user_dict['user_id'])
-            if settings.get('subscription_reminder', 1) and days_left <= settings.get('reminder_days_before', 3):
-                user_dict['days_left'] = days_left
-                user_dict['reminder_days_before'] = settings.get('reminder_days_before', 3)
-                user_dict['language'] = await self.get_user_language(user_dict['user_id'])
-                user_dict['last_reminder_sent'] = settings.get('last_reminder_sent')
-                result.append(user_dict)
-
-        return result
+        now_sql = TimeUtils.sql_iso()
+        rows = await self.fetchall("""
+            SELECT u.user_id, u.language, r.reminder_days_before,
+                   CAST(julianday(MAX(s.end_date)) - julianday(?) AS INTEGER) as days_left,
+                   r.last_reminder_sent
+            FROM users u
+            JOIN user_reminder_settings r ON u.user_id = r.user_id
+            JOIN subscriptions s ON u.user_id = s.user_id AND s.status = 'active' AND s.end_date > datetime('now')
+            WHERE r.subscription_reminder = 1
+            GROUP BY u.user_id, u.language, r.reminder_days_before, r.last_reminder_sent
+            HAVING days_left <= r.reminder_days_before
+               AND days_left > 0
+               AND (r.last_reminder_sent IS NULL OR julianday(?) - julianday(r.last_reminder_sent) >= 1)
+        """, (now_sql, now_sql))
+        return [dict(row) for row in rows]
 
     # ========= دوال المسابقات =========
     async def create_contest(self, creator_id: int, title: str, description: str,
@@ -1825,7 +1771,7 @@ class Database:
     # ========= دوال الإعدادات العامة =========
     async def get_setting(self, key: str, default: str = None) -> Optional[str]:
         row = await self.fetchone("SELECT value FROM settings WHERE key=?", (key,))
-        return row['value'] if row else default
+        return row[0] if row else default
 
     async def set_setting(self, key: str, value: str) -> bool:
         await self.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, value))
@@ -2037,11 +1983,6 @@ class Database:
     # ========= دوال الفواتير والدفع =========
     async def create_invoice(self, user_id: int, plan_id: int, amount: int,
                               currency: str = 'XTR', provider: str = 'xtr') -> str:
-        plan = await self.get_plan(plan_id)
-        if not plan:
-            logger.error(f"❌ Plan not found: {plan_id}")
-            return None
-
         number = f"INV-{TimeUtils.utc_now().strftime('%Y%m')}-{secrets.token_hex(4).upper()}"
         await self.execute(
             "INSERT INTO invoices (number, user_id, plan_id, amount, currency, status, provider, created_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -2131,7 +2072,7 @@ class Database:
 
     async def create_gift_code(self, plan_id: int, creator_id: int) -> Optional[str]:
         try:
-            code = generate_referral_code(12)
+            code = secrets.token_urlsafe(6)
             async with self._get_connection() as conn:
                 await conn.execute(
                     """INSERT INTO gift_codes (code, plan_id, creator_id, created_at)
@@ -2296,9 +2237,9 @@ class Database:
         )
         result = {}
         for row in rows:
-            result[row['violation_type']] = {
-                'penalty_type': row['penalty_type'],
-                'duration_seconds': row['duration_seconds']
+            result[row[0]] = {
+                'penalty_type': row[1],
+                'duration_seconds': row[2]
             }
         return result
 
@@ -2310,11 +2251,11 @@ class Database:
             (user_id, points, TimeUtils.sql_iso(), points, TimeUtils.sql_iso())
         )
         row = await self.fetchone("SELECT points FROM user_points WHERE user_id=?", (user_id,))
-        return row['points'] if row else 0
+        return row[0] if row else 0
 
     async def get_user_points(self, user_id: int) -> int:
         row = await self.fetchone("SELECT points FROM user_points WHERE user_id=?", (user_id,))
-        return row['points'] if row else 0
+        return row[0] if row else 0
 
     async def get_user_level(self, user_id: int) -> int:
         points = await self.get_user_points(user_id)
