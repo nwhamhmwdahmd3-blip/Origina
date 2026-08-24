@@ -809,19 +809,20 @@ class Database:
         row = await self.fetchone("SELECT trial_used FROM users WHERE user_id=?", (user_id,))
         return row and row['trial_used'] == 1
 
+    # ✅✅✅ الإصلاح الرئيسي - بدون قفل مزدوج ✅✅✅
     async def activate_trial(self, user_id: int) -> int:
         try:
-            async with self._lock:
-                if await self.has_used_trial(user_id):
-                    return 0
-
-                days = 30
-                success = await self.grant_subscription_days(user_id, days, provider='trial')
-
-                if success:
-                    await self.execute("UPDATE users SET trial_used=1 WHERE user_id=?", (user_id,))
-                    return days
+            # لا تستخدم القفل هنا - grant_subscription_days لديه قفل خاص به
+            if await self.has_used_trial(user_id):
                 return 0
+
+            days = 30
+            success = await self.grant_subscription_days(user_id, days, provider='trial')
+
+            if success:
+                await self.execute("UPDATE users SET trial_used=1 WHERE user_id=?", (user_id,))
+                return days
+            return 0
         except Exception as e:
             logger.error(f"❌ Error in activate_trial: {e}", exc_info=True)
             return 0
@@ -1989,7 +1990,6 @@ class Database:
     # ========= دوال الفواتير والدفع =========
     async def create_invoice(self, user_id: int, plan_id: int, amount: int,
                               currency: str = 'XTR', provider: str = 'xtr') -> str:
-        # التحقق من صحة الخطة
         plan = await self.get_plan(plan_id)
         if not plan:
             logger.error(f"❌ Plan not found: {plan_id}")
