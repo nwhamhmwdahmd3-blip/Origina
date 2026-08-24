@@ -98,11 +98,11 @@ def _is_command_cancel(text: str) -> bool:
 
 async def apply_violation_penalty(context, chat_id, user_id, violation_type, reason="مخالفة"):
     """تطبق عقوبة على مستخدم بناءً على نوع المخالفة"""
-    # ✅ لا تعاقب البوت نفسه
+    # لا تعاقب البوت نفسه
     if user_id == context.bot.id:
         return
     
-    # ✅ لا تعاقب البوتات
+    # لا تعاقب البوتات
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.user.is_bot:
@@ -234,7 +234,7 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ تم الإلغاء.")
                 return
 
-            # ✅ التحقق من الاشتراك أولاً
+            # التحقق من الاشتراك أولاً
             if user_id != CONFIG.PRIMARY_OWNER_ID:
                 has_sub = await DB.has_active_subscription(user_id)
                 if not has_sub:
@@ -325,7 +325,7 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "✅ تم إنهاء إضافة المنشورات.")
                 return
 
-            # ✅ السماح بإضافة أي محتوى (بدون حظر المحتوى الرقمي)
+            # السماح بإضافة أي محتوى (بدون حظر المحتوى الرقمي)
             media_type = 'text'
             media_file_id = None
             if msg.photo:
@@ -353,7 +353,7 @@ class MessageHandlers:
                 media_type = 'video_note'
                 media_file_id = msg.video_note.file_id
 
-            # ✅ إصلاح استخراج المحتوى
+            # إصلاح استخراج المحتوى
             content = text if media_type == 'text' else (msg.caption or "")
 
             active = await DB.get_active_channel(user_id)
@@ -388,7 +388,7 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ تم الإلغاء.")
                 return
 
-            # ✅ التحقق من صلاحية المطور
+            # التحقق من صلاحية المطور
             if not CONFIG.is_developer(user_id):
                 await safe_send(context.bot, user_id, "❌ غير مصرح لك بهذا الإجراء.")
                 StateManager.clear(user_id)
@@ -767,7 +767,6 @@ class MessageHandlers:
                 return
             try:
                 end_date = datetime.strptime(text, "%Y-%m-%d %H:%M")
-                # ✅ التحقق من أن التاريخ في المستقبل
                 if end_date <= datetime.now():
                     await safe_send(context.bot, user_id, "❌ التاريخ يجب أن يكون في المستقبل")
                     StateManager.clear(user_id)
@@ -1167,7 +1166,6 @@ class MessageHandlers:
                 p_type = context.user_data.get('penalty_type')
                 if chat_id_pen and p_type:
                     duration_seconds = dur_minutes * 60 if dur_minutes > 0 else 0
-                    # ✅ استعلامات ثابتة بدلاً من f-string
                     if p_type == 'mute':
                         await DB.execute("UPDATE group_security SET mute_default_duration=? WHERE chat_id=?", (duration_seconds, chat_id_pen))
                     elif p_type == 'ban':
@@ -1218,7 +1216,7 @@ class MessageHandlers:
         chat_id = chat.id
         text = update.message.text or ""
         
-        # ✅ تحديد طول الرسالة
+        # تحديد طول الرسالة
         if len(text) > MAX_MESSAGE_LENGTH:
             text = text[:MAX_MESSAGE_LENGTH]
         
@@ -1318,7 +1316,7 @@ class MessageHandlers:
         chat_id = update.effective_chat.id
         settings = await DB.get_security_settings(chat_id)
 
-        # ✅ إصلاح: لا معاقبة على رسائل الانضمام/المغادرة
+        # لا معاقبة على رسائل الانضمام/المغادرة
         is_join = bool(update.message.new_chat_members)
         is_leave = bool(update.message.left_chat_member)
 
