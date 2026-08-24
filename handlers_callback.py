@@ -932,8 +932,8 @@ class CallbackHandlers:
             await _safe_answer(query)
             return
 
-        # ✅ زر الكلمات المحظورة (إدارة)
-        if action == "banned":
+        # ✅ زر الكلمات المحظورة (فتح قائمة الإدارة)
+        if action in ("banned", "banned_words"):
             await CallbackHandlers._handle_banned_words_direct(update, context, query, user_id, chat_id, lang)
             return
 
@@ -1125,7 +1125,7 @@ class CallbackHandlers:
             "goodbye": "UPDATE group_security SET goodbye_enabled = 1 - goodbye_enabled WHERE chat_id=?",
             "flood": "UPDATE group_security SET antiflood_enabled = 1 - antiflood_enabled WHERE chat_id=?",
             "night": "UPDATE group_security SET night_mode_enabled = 1 - night_mode_enabled WHERE chat_id=?",
-            "banned_words": "UPDATE group_security SET delete_banned_words = 1 - delete_banned_words WHERE chat_id=?",
+            "toggle_banned_words": "UPDATE group_security SET delete_banned_words = 1 - delete_banned_words WHERE chat_id=?",
             "approve_join": "UPDATE group_security SET auto_approve_join = 1 - auto_approve_join WHERE chat_id=?",
             "reject_join": "UPDATE group_security SET auto_reject_join = 1 - auto_reject_join WHERE chat_id=?"
         }
