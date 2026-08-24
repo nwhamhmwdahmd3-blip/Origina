@@ -10,7 +10,9 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - دعم parse_mode في safe_send
 - استخدام asyncio.to_thread
 - معالجة غير معروفة في PenaltyFactory
-- تحسينات عامة
+- fetch_json_from_url مع raise_for_status
+- إصلاح reload_replies_from_file
+- تعريف _REPLIES_FROM_FILE
 """
 
 import asyncio
@@ -140,7 +142,7 @@ class RateLimiter:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._last_calls = deque(maxlen=max_per_second * 2)
         self._lock = asyncio.Lock()
-        self.max_per_second = max_per_second  # ✅ إضافة تخزين القيمة
+        self.max_per_second = max_per_second
 
     async def acquire(self):
         async with self.semaphore:
@@ -148,7 +150,7 @@ class RateLimiter:
                 now = time.time()
                 while self._last_calls and now - self._last_calls[0] > 1:
                     self._last_calls.popleft()
-                if len(self._last_calls) >= self.max_per_second:  # ✅ استخدام self.max_per_second
+                if len(self._last_calls) >= self.max_per_second:
                     wait_time = 1 - (now - self._last_calls[0])
                     if wait_time > 0:
                         await asyncio.sleep(wait_time)
@@ -566,7 +568,6 @@ class KeyboardFactory:
             if lang != cls._default_lang:
                 return cls._load_config_for_lang(cls._default_lang)
             else:
-                # لا تستدعي نفسها مرة أخرى
                 default_config = {
                     "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
                     "menus": {}
@@ -815,10 +816,6 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 # =====================================================================
 
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode: str = None, **kwargs):
-    """
-    إرسال رسالة بشكل آمن مع معالجة الأخطاء.
-    يمكن تمرير parse_mode اختياريًا.
-    """
     if not text:
         return
     await RATE_LIMITER.acquire()
@@ -868,7 +865,7 @@ class BanPenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         if user_id == bot.id:
             return False, "لا يمكن حظر البوت"
-        duration = kwargs.get('duration', 0)  # ثوانٍ
+        duration = kwargs.get('duration', 0)
         until_date = TimeUtils.utc_now() + timedelta(seconds=duration) if duration > 0 else None
         try:
             await bot.ban_chat_member(chat_id, user_id, until_date=until_date)
@@ -880,7 +877,7 @@ class MutePenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         if user_id == bot.id:
             return False, "لا يمكن كتم البوت"
-        duration = kwargs.get('duration', 60)  # ثوانٍ
+        duration = kwargs.get('duration', 60)
         until_date = TimeUtils.utc_now() + timedelta(seconds=duration) if duration > 0 else None
         try:
             await bot.restrict_chat_member(
@@ -917,7 +914,7 @@ class RestrictPenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         if user_id == bot.id:
             return False, "لا يمكن تقييد البوت"
-        duration = kwargs.get('duration', 0)  # ثوانٍ
+        duration = kwargs.get('duration', 0)
         until_date = TimeUtils.utc_now() + timedelta(seconds=duration) if duration > 0 else None
         try:
             await bot.restrict_chat_member(
@@ -944,7 +941,7 @@ class PenaltyFactory:
             'ban': BanPenalty(), 'mute': MutePenalty(), 'kick': KickPenalty(),
             'warn': WarnPenalty(), 'restrict': RestrictPenalty(), 'unban': UnbanPenalty()
         }
-        return strategies.get(penalty_type)  # ✅ يُرجع None إذا غير معروف
+        return strategies.get(penalty_type)
 
 async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration: int = 60, reason: str = "", moderator: int = None) -> Tuple[bool, str]:
     if user_id == CONFIG.PRIMARY_OWNER_ID:
@@ -1023,7 +1020,7 @@ async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
     def _write():
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-    await asyncio.to_thread(_write)  # ✅ استخدام asyncio.to_thread
+    await asyncio.to_thread(_write)
     return len(data)
 
 async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[Dict]], overwrite: bool = False) -> int:
@@ -1059,7 +1056,7 @@ async def fetch_json_from_url(url: str) -> Optional[Union[list, dict]]:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=30) as response:
-                response.raise_for_status()  # ✅ إضافة فحص حالة HTTP
+                response.raise_for_status()
                 data = await response.json()
                 if isinstance(data, (list, dict)):
                     return data
@@ -1181,7 +1178,7 @@ class BackgroundTasks:
                         await asyncio.sleep(sleep_seconds)
                     else:
                         await DB.increment_post_fail(post['id'])
-                        await asyncio.sleep(1)  # ✅ تأخير قصير بعد الفشل
+                        await asyncio.sleep(1)
                 await asyncio.sleep(60)
             except Exception as e:
                 logger.error(f"❌ Auto publish: {e}")
@@ -1189,7 +1186,6 @@ class BackgroundTasks:
 
     @staticmethod
     async def auto_backup() -> None:
-        # ✅ نسخة أولية بعد 60 ثانية
         await asyncio.sleep(60)
         try:
             await BackgroundTasks._do_backup()
@@ -1218,7 +1214,7 @@ class BackgroundTasks:
                 dest.close()
                 source.close()
 
-            await asyncio.to_thread(_backup)  # ✅ استخدام asyncio.to_thread
+            await asyncio.to_thread(_backup)
             await DB.set_setting('last_backup', TimeUtils.sql_iso())
             backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
             for old in backups[CONFIG.MAX_BACKUPS:]:
@@ -1232,7 +1228,6 @@ class BackgroundTasks:
                 users = await DB.get_users_for_reminder()
                 for u in users:
                     try:
-                        # ✅ معالجة أخطاء التحويل
                         try:
                             days = int(u['days_left'])
                         except (ValueError, TypeError):
