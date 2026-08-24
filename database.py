@@ -809,10 +809,9 @@ class Database:
         row = await self.fetchone("SELECT trial_used FROM users WHERE user_id=?", (user_id,))
         return row and row['trial_used'] == 1
 
-    # ✅✅✅ الإصلاح الرئيسي - بدون قفل مزدوج ✅✅✅
+    # ✅ الإصلاح: بدون قفل مزدوج
     async def activate_trial(self, user_id: int) -> int:
         try:
-            # لا تستخدم القفل هنا - grant_subscription_days لديه قفل خاص به
             if await self.has_used_trial(user_id):
                 return 0
 
@@ -879,16 +878,24 @@ class Database:
                         LIMIT 1
                     """, (user_id,))
                     plan_row = await plan_row.fetchone()
+                    
+                    # ✅ السماح للمستخدم الجديد أو المطور بإضافة قناة واحدة على الأقل
                     if not plan_row:
-                        return None
+                        if user_id == CONFIG.PRIMARY_OWNER_ID:
+                            max_channels = 999999
+                        else:
+                            # السماح بقناة واحدة مجانية للمستخدمين الجدد
+                            max_channels = 1
+                    else:
+                        max_channels = plan_row['max_channels']
 
-                    if plan_row['max_channels'] is not None:
+                    if max_channels is not None:
                         count_row = await conn.execute(
                             "SELECT COUNT(*) FROM user_channels WHERE user_id = ? AND banned = 0",
                             (user_id,)
                         )
                         count_row = await count_row.fetchone()
-                        if count_row[0] >= plan_row['max_channels']:
+                        if count_row[0] >= max_channels:
                             return None
 
                     existing = await conn.execute(
