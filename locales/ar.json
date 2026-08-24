@@ -1,11 +1,11 @@
 {
-  "main_menu": "🌿 **مرحباً {user_id}**\n\n👥 **مجموعاتي:** {groups}\n💎 **الاشتراك:** {sub}\n📡 **القناة النشطة:** {channel}\n📥 **منشورات معلقة:** {pending}\n📤 **النشر التلقائي:** {auto}\n♻️ **التدوير:** {recycle}\n\n🤖 **{bot_name}**",
-  "help_text": "📚 **أوامر البوت**\n\n🏠 /start - القائمة الرئيسية\n💎 /subscribe - الاشتراك في الباقات\n🎁 /trial - تفعيل التجربة المجانية\n📡 /syncgroup - تفعيل البوت في مجموعة\n🔐 /security - إعدادات الأمان للمجموعة\n👥 /panel - لوحة تحكم المجموعة\n🔨 /ban - حظر مستخدم\n🔇 /mute - كتم مستخدم\n⚠️ /warn - تحذير مستخدم\n👢 /kick - طرد مستخدم\n🔒 /restrict - تقييد مستخدم\n🔓 /unban - فك الحظر\n📌 /pin - تثبيت رسالة\n🎁 /gift_plans - شراء كود هدية\n🎟️ /redeem_gift - استخدام كود هدية\n📊 /stats - إحصائيات البوت (للمطور)\n🌐 /language - تغيير اللغة\n💬 /replies - الردود التلقائية\n🏆 /contests - المسابقات\n\nللاستفسار: /support",
-  "trial_used": "❌ لقد استخدمت التجربة المجانية من قبل.",
-  "trial_activated": "🎉 تم تفعيل التجربة المجانية!\n\n✅ {days} يوم مجاناً.",
-  "plan_selector": "💎 **اختر الباقة المناسبة**",
-  "send_support_message": "📞 أرسل رسالتك وسيتم الرد عليك في أقرب وقت.",
-  "developer_info": "👨‍💻 المطور: {owner_id}\n🤖 البوت: {bot_name}\n📎 يوزر البوت: @{bot_username}",
-  "unauthorized": "❌ غير مصرح لك.",
-  "reminder_subscription_expires": "⚠️ اشتراكك سينتهي بعد {days} يوم"
+  "main_menu": "🌿 **{bot_name}**\n\n👤 المستخدم: `{user_id}`\n👥 المجموعات: {groups}\n📡 القناة النشطة: {channel}\n📥 منشورات غير منشورة: {pending}\n📤 النشر التلقائي: {auto}\n♻️ إعادة التدوير: {recycle}\n💎 الاشتراك: {sub}\n\nاختر من القائمة:",
+  "help_text": "📚 **قائمة المساعدة**\n\n🏠 /start - القائمة الرئيسية\n💎 /subscribe - الاشتراك\n🎁 /trial - تجربة مجانية\n📞 /support - دعم فني\n🌐 /language - تغيير اللغة\n👨‍💻 /developer - معلومات المطور\n🏆 /contests - المسابقات\n📊 /stats - إحصائيات (للمطورين)\n💬 /replies - الردود التلقائية\n🔗 /syncgroup - تفعيل المجموعة\n🛡️ /security - إعدادات الأمان\n\nللمزيد تواصل مع الدعم.",
+  "trial_used": "❌ لقد استخدمت التجربة المجانية مسبقاً.",
+  "trial_activated": "🎉 تم تفعيل التجربة المجانية لمدة {days} يوم.",
+  "plan_selector": "💎 **اختر الباقة المناسبة:**",
+  "send_support_message": "📞 **الدعم الفني**\n\nأرسل رسالتك وسنرد عليك في أقرب وقت.",
+  "developer_info": "👨‍💻 **معلومات المطور**\n\nالمالك: `{owner_id}`\nالبوت: {bot_name}\nالمعرف: @{bot_username}",
+  "unauthorized": "⛔ هذا الأمر غير مصرح لك.",
+  "reminder_subscription_expires": "⚠️ اشتراكك سينتهي بعد {days} يوم."
 }
