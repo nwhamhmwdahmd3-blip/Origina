@@ -124,13 +124,28 @@ class CallbackHandlers:
                 await CommandHandlers.help_command(update, context)
                 return
 
+            # ✅ زر التجربة المجانية - تم إصلاحه
             if base_data == CB.TRIAL:
-                await _safe_answer(query)
+                try:
+                    await query.answer("🔄 جاري التفعيل...")
+                except BadRequest:
+                    pass
+
+                # التحقق من استخدام التجربة
                 if await DB.has_used_trial(user_id):
                     await query.edit_message_text(await get_text(lang, 'trial_used'))
                     return
+
+                # تفعيل التجربة
                 days = await DB.activate_trial(user_id)
-                await query.edit_message_text(await get_text(lang, 'trial_activated', days=days))
+
+                if days > 0:
+                    text = await get_text(lang, 'trial_activated', days=days)
+                else:
+                    text = "❌ تعذر تفعيل التجربة المجانية.\n\n"
+                    text += "قد يكون لديك اشتراك نشط بالفعل أو أن التجربة غير متاحة حاليًا."
+
+                await query.edit_message_text(text)
                 return
 
             if base_data == CB.DEVELOPER:
