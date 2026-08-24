@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers_command.py - معالجات الأوامر
+handlers_command.py - معالجات الأوامر (نسخة محسنة ومكتملة)
+===========================================================
+يتضمن جميع أوامر البوت مع تحسينات أمنية وديناميكية.
 """
 
 import asyncio
-import re
 import logging
 from datetime import datetime, timedelta
 
@@ -31,6 +32,38 @@ from utils import (
 
 logger = logging.getLogger(__name__)
 
+# =====================================================================
+# دوال مساعدة داخلية
+# =====================================================================
+
+async def _check_admin_and_bot(update: Update, context: ContextTypes.DEFAULT_TYPE, require_bot_perms: bool = True) -> bool:
+    """
+    تتحقق من صلاحية المستخدم (مشرف أو مالك مخفي) وصلاحية البوت في المجموعة.
+    تعيد False إذا لم يكن مخولاً، مع إرسال رسالة خطأ للمستخدم.
+    """
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    # 1. التحقق من صلاحية المستخدم
+    if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        lang = await DB.get_user_language(user_id)
+        await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+        return False
+
+    # 2. التحقق من صلاحيات البوت (إذا طُلب)
+    if require_bot_perms:
+        perms = await check_bot_permissions(context.bot, chat_id)
+        if not perms.get('can_act', False):
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'bot_no_perms', reason=perms.get('reason', '')))
+            return False
+
+    return True
+
+
+# =====================================================================
+# معالج الأوامر الرئيسي
+# =====================================================================
 
 class CommandHandlers:
     """جميع معالجات الأوامر"""
@@ -41,6 +74,9 @@ class CommandHandlers:
         username = update.effective_user.username or ""
         first_name = update.effective_user.first_name or ""
         await DB.register_user(user_id, username, first_name)
+
+        # تنظيف أي حالة سابقة
+        StateManager.clear(user_id)
 
         args = context.args or []
         if args and args[0].startswith('ref_'):
@@ -54,6 +90,7 @@ class CommandHandlers:
                         await safe_send(update.effective_chat.bot, referrer,
                                         f"🎁 تمت إحالة `{user_id}`. لديك {reward['available']} يوم متاح للصرف.")
 
+        # الاشتراك الإجباري
         force_ch = await DB.get_force_subscribe_channel()
         if force_ch and user_id != CONFIG.PRIMARY_OWNER_ID:
             try:
@@ -235,163 +272,327 @@ class CommandHandlers:
         kb = KeyboardFactory.build("contests", lang=lang)
         await safe_send(context.bot, user_id, text, reply_markup=kb)
 
+    # ========== أوامر الإدارة والأمان (تتطلب صلاحيات مشرف) ==========
+
     @staticmethod
     async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """عرض لوحة الأمان"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id)
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+
+        if not await _check_admin_and_bot(update, context, require_bot_perms=False):
             return
+
         lang = await DB.get_user_language(user_id)
         context.user_data['security_chat_id'] = chat_id
         settings = await DB.get_security_settings(chat_id)
         text = KeyboardFactory._format_security_text(settings)
-        kb = KeyboardFactory.build("security", chat_id, lang=lang)
+
+        # بناء الكيبورد ديناميكياً حسب صلاحيات المستخدم
+        kb = KeyboardFactory.build("security", chat_id=chat_id, user_id=user_id, lang=lang)
         await safe_send(context.bot, user_id, text, reply_markup=kb)
 
     @staticmethod
     async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """عرض لوحة تحكم المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id)
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+
+        if not await _check_admin_and_bot(update, context, require_bot_perms=False):
             return
+
         lang = await DB.get_user_language(user_id)
-        kb = KeyboardFactory.build("panel", chat_id, lang=lang)
+        kb = KeyboardFactory.build("panel", chat_id=chat_id, user_id=user_id, lang=lang)
         await safe_send(context.bot, user_id, "📋 لوحة تحكم المجموعة", reply_markup=kb)
 
     @staticmethod
     async def lock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """قفل المجموعة (منع الرسائل)"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+
+        if not await _check_admin_and_bot(update, context):
             return
-        await DB.execute("INSERT OR REPLACE INTO chat_locks (chat_id, locked, locked_at, locked_by) VALUES (?,1,?,?)",
-                         (chat_id, TimeUtils.sql_iso(), user_id))
-        await safe_send(context.bot, user_id, "🔒 تم القفل")
+
+        # تأكيد العملية
+        await safe_send(context.bot, user_id, "🔒 هل أنت متأكد من رغبتك في قفل المجموعة؟ (سيتم منع جميع الأعضاء من الإرسال)\nأرسل `تأكيد` خلال 30 ثانية.")
+        StateManager.set(user_id, UserState.WAIT_LOCK_CONFIRM)
+        # سيتم التعامل مع التأكيد في معالج الرسائل
 
     @staticmethod
     async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """فتح المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+
+        if not await _check_admin_and_bot(update, context):
             return
+
         await DB.execute("DELETE FROM chat_locks WHERE chat_id=?", (chat_id,))
-        await safe_send(context.bot, user_id, "🔓 تم الفتح")
+        lang = await DB.get_user_language(user_id)
+        await safe_send(context.bot, user_id, await get_text(lang, 'unlock_success'))
+
+    # ========== أوامر الإشراف (مع تطبيق العقوبات الموحد) ==========
+
+    @staticmethod
+    async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await CommandHandlers._moderation_command(update, context, "ban")
+
+    @staticmethod
+    async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await CommandHandlers._moderation_command(update, context, "mute")
+
+    @staticmethod
+    async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await CommandHandlers._moderation_command(update, context, "warn")
+
+    @staticmethod
+    async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await CommandHandlers._moderation_command(update, context, "kick")
+
+    @staticmethod
+    async def restrict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await CommandHandlers._moderation_command(update, context, "restrict")
+
+    @staticmethod
+    async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await CommandHandlers._moderation_command(update, context, "unban")
+
+    @staticmethod
+    async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """تثبيت رسالة"""
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+
+        if not await _check_admin_and_bot(update, context):
+            return
+
+        if not update.message.reply_to_message:
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'pin_no_reply'))
+            return
+
+        try:
+            await context.bot.pin_chat_message(chat_id, update.message.reply_to_message.message_id)
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'pin_success'))
+        except Exception as e:
+            logger.error(f"❌ فشل التثبيت: {e}")
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'pin_failed', error=str(e)))
+
+    @staticmethod
+    async def _moderation_command(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
+        """دالة مساعدة لأوامر الإشراف (تحقق الصلاحيات وتطبق العقوبة)"""
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+
+        # التحقق من صلاحية المستخدم والصلاحيات
+        if not await _check_admin_and_bot(update, context):
+            return
+
+        args = context.args or []
+        if not args:
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'moderation_usage', action=action))
+            return
+
+        try:
+            target = int(args[0])
+        except ValueError:
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'invalid_user_id'))
+            return
+
+        if target <= 0:
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'invalid_user_id'))
+            return
+
+        # منع معاقبة المالك أو المشرفين (يتم التحقق داخل apply_penalty أيضاً)
+        if await is_authorized_in_group(context.bot, chat_id, target):
+            lang = await DB.get_user_language(user_id)
+            await safe_send(context.bot, user_id, await get_text(lang, 'cannot_penalize_admin'))
+            return
+
+        # استخراج المدة والسبب
+        duration_minutes = 0
+        reason = ""
+        if len(args) > 1:
+            # محاولة استخراج المدة (إذا كانت رقماً)
+            try:
+                minutes = int(args[1])
+                if minutes > 0:
+                    duration_minutes = minutes
+                    reason = " ".join(args[2:]) if len(args) > 2 else ""
+                else:
+                    reason = " ".join(args[1:])
+            except ValueError:
+                reason = " ".join(args[1:])
+
+        duration_seconds = duration_minutes * 60
+
+        # تطبيق العقوبة باستخدام الدالة الموحدة
+        success, msg = await apply_penalty(
+            context.bot, chat_id, target,
+            penalty=action,
+            duration=duration_seconds,
+            reason=reason,
+            moderator=user_id
+        )
+
+        lang = await DB.get_user_language(user_id)
+        if success:
+            # رسالة نجاح مترجمة
+            success_msg = await get_text(lang, f'{action}_success', target=target, duration=duration_minutes, reason=reason)
+            await safe_send(context.bot, user_id, success_msg)
+        else:
+            await safe_send(context.bot, user_id, msg)
 
     # ========== أوامر المالكين والمشرفين المخفيين ==========
 
     @staticmethod
     async def register_hidden_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+
         if user_id != CONFIG.PRIMARY_OWNER_ID:
             lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
+
         if not context.args:
             await safe_send(context.bot, user_id, "📝 /register_hidden_owner <user_id>")
             return
+
         try:
             owner_id = int(context.args[0])
-        except:
+        except ValueError:
             await safe_send(context.bot, user_id, "⚠️ معرف غير صالح")
             return
-        chat_id = update.effective_chat.id
+
         await DB.execute("INSERT OR IGNORE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,1)", (chat_id, owner_id))
         invalidate_auth_cache(chat_id, owner_id)
-        await safe_send(context.bot, user_id, f"✅ تم تسجيل `{owner_id}` كمالك مخفي")
+        lang = await DB.get_user_language(user_id)
+        await safe_send(context.bot, user_id, await get_text(lang, 'hidden_owner_added', owner_id=owner_id))
 
     @staticmethod
     async def remove_hidden_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+
         if user_id != CONFIG.PRIMARY_OWNER_ID:
             return
+
         if not context.args:
             return
+
         try:
             owner_id = int(context.args[0])
-        except:
+        except ValueError:
             return
-        chat_id = update.effective_chat.id
+
         await DB.execute("DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, owner_id))
         invalidate_auth_cache(chat_id, owner_id)
-        await safe_send(context.bot, user_id, f"✅ تم إزالة `{owner_id}`")
+        lang = await DB.get_user_language(user_id)
+        await safe_send(context.bot, user_id, await get_text(lang, 'hidden_owner_removed', owner_id=owner_id))
 
     @staticmethod
     async def add_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
+
+        # التحقق من أن المستخدم مالك (أساسي أو مخفي)
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
         if not is_owner:
             row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
             is_owner = row is not None
+
         if not is_owner:
             lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
+
         if not context.args:
             return
+
         try:
             admin_id = int(context.args[0])
-        except:
+        except ValueError:
             return
+
         await DB.add_hidden_admin(chat_id, admin_id, user_id)
         invalidate_auth_cache(chat_id, admin_id)
-        await safe_send(context.bot, user_id, f"✅ تم إضافة `{admin_id}` كمشرف مخفي")
+        lang = await DB.get_user_language(user_id)
+        await safe_send(context.bot, user_id, await get_text(lang, 'hidden_admin_added', admin_id=admin_id))
 
     @staticmethod
     async def remove_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
+
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
         if not is_owner:
             row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
             is_owner = row is not None
+
         if not is_owner:
             return
+
         if not context.args:
             return
+
         try:
             admin_id = int(context.args[0])
-        except:
+        except ValueError:
             return
+
         await DB.execute("DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, admin_id))
         invalidate_auth_cache(chat_id, admin_id)
-        await safe_send(context.bot, user_id, f"✅ تم إزالة `{admin_id}`")
+        lang = await DB.get_user_language(user_id)
+        await safe_send(context.bot, user_id, await get_text(lang, 'hidden_admin_removed', admin_id=admin_id))
 
     @staticmethod
     async def list_hidden_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
+
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
         if not is_owner:
             row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
             is_owner = row is not None
+
         if not is_owner:
             return
+
         owners = await DB.fetchall("SELECT owner_id FROM hidden_owner_groups WHERE chat_id=?", (chat_id,))
         admins = await DB.fetchall("SELECT admin_id FROM hidden_admins WHERE chat_id=?", (chat_id,))
+
         text = "👤 **المخفيون**\n"
         for o in owners:
             text += f"👑 `{o[0]}`\n"
         for a in admins:
             text += f"🛡️ `{a[0]}`\n"
+
         await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد")
 
     # ========== تفعيل المجموعة ==========
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """تسجيل المجموعة وتفعيل البوت فيها"""
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
             await safe_send(context.bot, update.effective_user.id, "❌ هذا الأمر للمجموعات فقط")
             return
@@ -402,12 +603,13 @@ class CommandHandlers:
 
         logger.info(f"🔍 محاولة تسجيل المجموعة: chat_id={chat_id}, user_id={user_id}")
 
+        # 1. التحقق من صلاحية المستخدم (مشرف)
         try:
             all_admins = await context.bot.get_chat_administrators(chat_id)
             logger.info(f"🔍 عدد المشرفين: {len(all_admins)}")
         except Exception as e:
             logger.error(f"❌ فشل جلب المشرفين: {e}")
-            await safe_send(context.bot, user_id, "❌ فشل جلب المشرفين")
+            await safe_send(context.bot, user_id, "❌ فشل جلب المشرفين، تأكد من أن البوت مشرف ولديه صلاحيات كافية.")
             return
 
         creator_id = None
@@ -437,19 +639,22 @@ class CommandHandlers:
 
         logger.info(f"🔍 المستخدم مشرف: is_anonymous={is_anonymous}")
 
+        # 2. التحقق من صلاحيات البوت
+        bot_perms = await check_bot_permissions(context.bot, chat_id)
+        if not bot_perms.get('can_act', False):
+            await safe_send(context.bot, user_id, "⚠️ **البوت ليس مشرفاً أو لا يملك صلاحيات كافية!**")
+            return
+
+        # 3. تسجيل المجموعة في قاعدة البيانات
         try:
             await DB.register_group(chat_id, chat_name, creator_id or user_id, update.effective_chat.username)
             logger.info("✅ تم تسجيل المجموعة في bot_groups")
         except Exception as e:
             logger.error(f"❌ فشل تسجيل المجموعة في bot_groups: {e}")
-            await safe_send(context.bot, user_id, "❌ فشل تسجيل المجموعة")
+            await safe_send(context.bot, user_id, "❌ فشل تسجيل المجموعة في قاعدة البيانات")
             return
 
-        bot_perms = await check_bot_permissions(context.bot, chat_id)
-        if not bot_perms.get('can_act', False):
-            await safe_send(context.bot, user_id, "⚠️ **البوت ليس مشرفاً!**")
-            return
-
+        # 4. ربط المالك والمشرفين بالمجموعة
         try:
             if creator_id:
                 await DB.execute(
@@ -473,6 +678,7 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ فشل ربط المستخدم بالمجموعة")
             return
 
+        # 5. مزامنة المشرفين
         try:
             admin_ids = [a.user.id for a in all_admins if a.user and not a.user.is_bot]
             admin_count = await DB.sync_group_admins(chat_id, admin_ids)
@@ -481,6 +687,7 @@ class CommandHandlers:
             logger.error(f"❌ فشل مزامنة المشرفين: {e}")
             admin_count = 0
 
+        # 6. إرسال رسالة تأكيد
         msg = f"✅ **تم تفعيل المجموعة!**\n\n"
         msg += f"📌 {chat_name}\n"
         msg += f"🆔 `{chat_id}`\n"
@@ -497,6 +704,7 @@ class CommandHandlers:
             else:
                 logger.error(f"❌ فشل إرسال رسالة التأكيد: {e}")
 
+        # 7. إرسال رسالة ترحيب في المجموعة ثم حذفها
         sent_msg = await safe_send(context.bot, chat_id, "🤖 **تم تفعيل البوت!**")
         if sent_msg:
             try:
@@ -505,106 +713,7 @@ class CommandHandlers:
             except Exception as e:
                 logger.warning(f"⚠️ فشل حذف رسالة التفعيل: {e}")
 
-    # ========== أوامر الإشراف ==========
-
-    @staticmethod
-    async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "ban")
-
-    @staticmethod
-    async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "mute")
-
-    @staticmethod
-    async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "warn")
-
-    @staticmethod
-    async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "kick")
-
-    @staticmethod
-    async def restrict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "restrict")
-
-    @staticmethod
-    async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await CommandHandlers._moderation_command(update, context, "unban")
-
-    @staticmethod
-    async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_chat.type not in ['group', 'supergroup']:
-            return
-        chat_id = update.effective_chat.id
-        user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            return
-        if update.message.reply_to_message:
-            try:
-                await context.bot.pin_chat_message(chat_id, update.message.reply_to_message.message_id)
-                await safe_send(context.bot, user_id, "📌 تم التثبيت")
-            except Exception as e:
-                logger.error(f"❌ فشل التثبيت: {e}")
-
-    @staticmethod
-    async def _moderation_command(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
-        if update.effective_chat.type not in ['group', 'supergroup']:
-            return
-        chat_id = update.effective_chat.id
-        user_id = update.effective_user.id
-
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id)
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
-            return
-
-        args = context.args or []
-        if not args:
-            await safe_send(context.bot, user_id, f"📝 /{action} معرف_المستخدم [مدة_بالدقائق]")
-            return
-
-        try:
-            target = int(args[0])
-        except:
-            await safe_send(context.bot, user_id, "❌ معرف غير صالح")
-            return
-
-        if target <= 0:
-            await safe_send(context.bot, user_id, "❌ معرف غير صالح")
-            return
-
-        if await is_authorized_in_group(context.bot, chat_id, target):
-            await safe_send(context.bot, user_id, "❌ لا يمكن معاملة مشرف")
-            return
-
-        reason_parts = []
-        duration_seconds = 60
-        if len(args) > 1:
-            try:
-                minutes = int(args[1])
-                if minutes > 0:
-                    duration_seconds = minutes * 60
-                    reason_parts = args[2:]
-                else:
-                    reason_parts = args[1:]
-            except ValueError:
-                reason_parts = args[1:]
-
-        reason = " ".join(reason_parts)
-
-        if action == 'unban':
-            try:
-                await context.bot.unban_chat_member(chat_id, target)
-                await DB.remove_penalties_for_user(target, chat_id, penalty_type='ban')
-                await safe_send(context.bot, user_id, "✅ تم إلغاء الحظر")
-            except Exception as e:
-                logger.error(f"❌ فشل إلغاء الحظر: {e}")
-            return
-
-        success, msg = await apply_penalty(context.bot, chat_id, target, action, duration_seconds, reason, user_id)
-        await safe_send(context.bot, user_id, msg)
-
-    # ========== أمر منح اشتراك مجاني ==========
+    # ========== أوامر المطور ==========
 
     @staticmethod
     async def set_min_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -721,3 +830,27 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ لا يمكنك استخدام كود هدية قمت بإنشائه بنفسك.")
         else:
             await safe_send(context.bot, user_id, "❌ كود غير صالح أو مستخدم مسبقاً.")
+
+    # ========== أوامر إضافية للمشرفين ==========
+
+    @staticmethod
+    async def warn_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """عرض قائمة التحذيرات للمستخدمين"""
+        if update.effective_chat.type not in ['group', 'supergroup']:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+
+        if not await _check_admin_and_bot(update, context, require_bot_perms=False):
+            return
+
+        lang = await DB.get_user_language(user_id)
+        warnings = await DB.get_all_warnings(chat_id)
+        if not warnings:
+            await safe_send(context.bot, user_id, "📭 لا توجد تحذيرات.")
+            return
+
+        text = "⚠️ **قائمة التحذيرات**\n\n"
+        for w in warnings:
+            text += f"• `{w['user_id']}`: {w['count']} تحذيرات\n"
+        await safe_send(context.bot, user_id, text)
