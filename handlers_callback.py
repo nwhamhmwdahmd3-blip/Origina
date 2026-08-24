@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers_callback.py - معالجات الأزرار (الكولباك)
+handlers_callback.py - معالجات الأزرار (الكولباك) - كامل مع جميع المعالجات
 """
 
 import asyncio
@@ -588,18 +588,12 @@ class CallbackHandlers:
                     st = "✅" if not banned else "⛔"
                     text += f"{st} {name}\n"
                     security_text = KeyboardFactory.get_text("security_button", lang).replace("{name}", name[:15])
-                    kb.append([
-                        InlineKeyboardButton(
-                            security_text,
-                            callback_data=f"{CB.GRP_SET}:{gid}"
-                        )
-                    ])
+                    kb.append([InlineKeyboardButton(security_text, callback_data=f"{CB.GRP_SET}:{gid}")])
                 back_text = KeyboardFactory.get_text("back", lang)
                 kb.append([InlineKeyboardButton(back_text, callback_data=CB.BACK)])
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
                 return
 
-            # ✅ بدون user_id
             if data.startswith(CB.GRP_SET + ":"):
                 chat_id = int(data.split(":")[-1])
                 context.user_data['security_chat_id'] = chat_id
@@ -682,10 +676,7 @@ class CallbackHandlers:
                     await _safe_answer(query, "❌ غير مصرح", show_alert=True)
                     return
                 kb = KeyboardFactory.build("channel_settings", chat_id=ch_id, lang=lang)
-                await query.edit_message_text(
-                    "📅 **جدولة القناة**\nيمكنك ضبط الفاصل الزمني للنشر:",
-                    reply_markup=kb
-                )
+                await query.edit_message_text("📅 **جدولة القناة**", reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -728,9 +719,7 @@ class CallbackHandlers:
                 if not plan:
                     await _safe_answer(query, "❌ خطة غير موجودة", show_alert=True)
                     return
-                invoice_number = await DB.create_invoice(
-                    user_id, plan_id, plan['price'], currency='XTR', provider='xtr_gift'
-                )
+                invoice_number = await DB.create_invoice(user_id, plan_id, plan['price'], currency='XTR', provider='xtr_gift')
                 if not invoice_number:
                     await _safe_answer(query, "❌ فشل إنشاء الفاتورة", show_alert=True)
                     return
@@ -739,11 +728,7 @@ class CallbackHandlers:
                         chat_id=user_id,
                         title=f"🎁 كود هدية {plan['days']} يوم",
                         description=f"ستحصل على كود هدية لمدة {plan['days']} يوم يمكنك إرساله لأي شخص.",
-                        payload=json.dumps({
-                            'gift_plan_id': plan_id,
-                            'invoice': invoice_number,
-                            'type': 'gift'
-                        }),
+                        payload=json.dumps({'gift_plan_id': plan_id, 'invoice': invoice_number, 'type': 'gift'}),
                         provider_token="",
                         currency="XTR",
                         prices=[LabeledPrice(f"{plan['days']} يوم", plan['price'])]
@@ -759,36 +744,18 @@ class CallbackHandlers:
             if base_data == "my_gifts":
                 await _safe_answer(query)
                 try:
-                    codes = await DB.fetchall(
-                        "SELECT code, used_by, created_at FROM gift_codes WHERE creator_id=? ORDER BY created_at DESC LIMIT 20",
-                        (user_id,)
-                    )
+                    codes = await DB.fetchall("SELECT code, used_by, created_at FROM gift_codes WHERE creator_id=? ORDER BY created_at DESC LIMIT 20", (user_id,))
                     if not codes:
-                        await query.edit_message_text(
-                            "📋 **أكواد الهدايا الخاصة بك**\n\n"
-                            "🎁 لا توجد أكواد لديك بعد.\n\n"
-                            "يمكنك شراء كود هدية من قائمة الباقات.",
-                            reply_markup=InlineKeyboardMarkup([[
-                                InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)
-                            ]])
-                        )
+                        await query.edit_message_text("📋 **أكواد الهدايا الخاصة بك**\n\n🎁 لا توجد أكواد لديك بعد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)]]))
                         return
                     text = "🎁 **أكواد الهدايا الخاصة بك:**\n\n"
                     for c in codes:
-                        code_text = c['code']
-                        used_by = c['used_by']
-                        created_at = c['created_at']
-                        status = "🟢 متاح" if not used_by else "🔴 مستخدم"
-                        text += f"🎟️ `{code_text}`\n"
-                        text += f"📌 الحالة: {status}\n"
-                        text += f"📅 التاريخ: {created_at[:10] if created_at else '-'}\n\n"
-                    kb = InlineKeyboardMarkup([[
-                        InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)
-                    ]])
-                    await query.edit_message_text(text, reply_markup=kb)
+                        status = "🟢 متاح" if not c['used_by'] else "🔴 مستخدم"
+                        text += f"🎟️ `{c['code']}`\n📌 الحالة: {status}\n📅 التاريخ: {c['created_at'][:10] if c['created_at'] else '-'}\n\n"
+                    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)]]))
                 except Exception as e:
-                    logger.error(f"❌ خطأ في عرض أكواد الهدايا: {e}")
-                    await query.edit_message_text("❌ **تعذر عرض أكواد الهدايا.**\n\n🔁 حاول مرة أخرى لاحقًا.")
+                    logger.error(f"❌ خطأ: {e}")
+                    await query.edit_message_text("❌ **تعذر عرض أكواد الهدايا.**")
                 return
 
             await _safe_answer(query, "⚠️ غير متوفر", show_alert=True)
@@ -811,7 +778,6 @@ class CallbackHandlers:
             media_file_id = post.get('media_file_id')
             media_type = post.get('media_type')
             caption = text[:MAX_CAPTION_LENGTH] if text else None
-
             try:
                 if media_type == 'photo' and media_file_id:
                     await bot.send_photo(chat_id=ch_tele, photo=media_file_id, caption=caption)
@@ -835,18 +801,15 @@ class CallbackHandlers:
                 logger.error(f"❌ فشل إرسال المنشور {post['id']}: {e}")
                 await DB.increment_post_fail(post['id'])
                 raise
-
             try:
                 await DB.mark_post_published(post['id'])
                 await DB.update_last_publish(ch_db_id)
                 await DB.update_next_publish(ch_db_id)
             except Exception as e:
-                logger.error(f"❌ فشل تحديث قاعدة البيانات بعد نشر المنشور {post['id']}: {e}")
-
+                logger.error(f"❌ فشل تحديث قاعدة البيانات: {e}")
             await asyncio.sleep(0.5)
-
         except Exception as e:
-            logger.error(f"❌ فشل النشر التلقائي: {e}")
+            logger.error(f"❌ فشل النشر: {e}")
             raise
 
     @staticmethod
@@ -869,24 +832,12 @@ class CallbackHandlers:
             masked_channel_id = _mask_id(ch['channel_id'])
             text += f"{st} {ch['channel_name']} (`{masked_channel_id}`)\n"
             kb.append([
-                InlineKeyboardButton(
-                    f"📌 {ch['channel_name'][:20]}",
-                    callback_data=f"{CB.CH_SEL}:{ch['id']}"
-                ),
-                InlineKeyboardButton(
-                    KeyboardFactory.get_text("sched_btn", lang),
-                    callback_data=f"sched_open:{ch['id']}"
-                )
+                InlineKeyboardButton(f"📌 {ch['channel_name'][:20]}", callback_data=f"{CB.CH_SEL}:{ch['id']}"),
+                InlineKeyboardButton(KeyboardFactory.get_text("sched_btn", lang), callback_data=f"sched_open:{ch['id']}")
             ])
             kb.append([
-                InlineKeyboardButton(
-                    KeyboardFactory.get_text("ch_stats", lang),
-                    callback_data=f"{CB.CH_STATS}:{ch['id']}"
-                ),
-                InlineKeyboardButton(
-                    KeyboardFactory.get_text("ch_del", lang),
-                    callback_data=f"{CB.CH_DEL}:{ch['id']}"
-                )
+                InlineKeyboardButton(KeyboardFactory.get_text("ch_stats", lang), callback_data=f"{CB.CH_STATS}:{ch['id']}"),
+                InlineKeyboardButton(KeyboardFactory.get_text("ch_del", lang), callback_data=f"{CB.CH_DEL}:{ch['id']}")
             ])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
@@ -907,9 +858,7 @@ class CallbackHandlers:
         kb = []
         for p in posts:
             text += f"🆔 {p['id']}: {(p['text'] or '')[:30]}\n"
-            kb.append([
-                InlineKeyboardButton(f"🗑️ حذف {p['id']}", callback_data=f"{CB.POST_DEL}:{p['id']}")
-            ])
+            kb.append([InlineKeyboardButton(f"🗑️ حذف {p['id']}", callback_data=f"{CB.POST_DEL}:{p['id']}")])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("post_clear", lang), callback_data=f"{CB.POST_CLEAR}:{active}")])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("post_rec", lang), callback_data=CB.POST_REC)])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
@@ -933,12 +882,79 @@ class CallbackHandlers:
             return
 
         action = parts[0].replace("sec_", "")
-        logger.info(f"🔍 _handle_security: action={action}, chat_id={chat_id}, data={data}")
+        logger.info(f"🔍 _handle_security: action={action}, chat_id={chat_id}")
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             await _safe_answer(query, await get_text(lang, 'unauthorized'), show_alert=True)
             return
 
+        # ✅ جميع معالجات الأزرار
+        if action == "auto_reply_menu":
+            kb = KeyboardFactory.build("auto_reply_manage", chat_id=chat_id, lang=lang)
+            await query.edit_message_text("📝 **إدارة الردود التلقائية**", reply_markup=kb)
+            await _safe_answer(query)
+            return
+
+        if action == "adv_act":
+            kb = KeyboardFactory.build("advanced_actions", chat_id=chat_id, lang=lang)
+            await query.edit_message_text("🛠️ **إجراءات متقدمة**", reply_markup=kb)
+            await _safe_answer(query)
+            return
+
+        if action == "penalty":
+            kb = KeyboardFactory.build("penalty", chat_id=chat_id, lang=lang)
+            await query.edit_message_text("⚖️ **العقوبات**", reply_markup=kb)
+            await _safe_answer(query)
+            return
+
+        if action == "act_log":
+            logs = await DB.get_admin_logs(chat_id, 20)
+            if not logs:
+                await query.edit_message_text("📭 لا توجد سجلات")
+            else:
+                text = "📜 **السجل**\n\n"
+                for log in logs:
+                    text += f"• {log['action']} → {log['target_id'] or '-'}\n"
+                await query.edit_message_text(text)
+            await _safe_answer(query)
+            return
+
+        if action == "antiflood_settings":
+            await CallbackHandlers._handle_antiflood_settings(update, context, query, chat_id, user_id, lang)
+            return
+
+        if action == "night_settings":
+            await CallbackHandlers._handle_night_settings(update, context, query, chat_id, user_id, lang)
+            return
+
+        if action == "penalty_durations":
+            await CallbackHandlers._handle_penalty_durations(update, context, query, chat_id, user_id, lang)
+            return
+
+        if action == "violation_penalties":
+            kb = []
+            violation_names = {
+                "links": "الروابط", "mentions": "المنشنات", "banned_words": "الكلمات المحظورة",
+                "flood": "التكرار", "max_len": "الطول الزائد", "service": "رسائل الخدمة",
+                "videos": "الفيديو", "audio": "الصوت", "documents": "المستندات",
+                "stickers": "الملصقات", "forwarded": "المعاد توجيهه", "polls": "الاستطلاعات",
+                "games": "الألعاب", "voice": "البصمات الصوتية", "video_note": "رسائل الفيديو",
+            }
+            for v_type, v_name in violation_names.items():
+                rule = await DB.get_violation_penalty(chat_id, v_type)
+                if rule:
+                    p_type = rule['penalty_type']
+                    dur = rule['duration_seconds'] // 60
+                    status = f"{p_type} ({dur} دقيقة)" if dur > 0 else f"{p_type} (دائم)"
+                else:
+                    status = "غير محدد"
+                kb.append([InlineKeyboardButton(f"{v_name}: {status}", callback_data=f"sec_violation:{chat_id}:{v_type}")])
+            kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")])
+            await query.edit_message_text("⚖️ **عقوبات المخالفات**", reply_markup=InlineKeyboardMarkup(kb))
+            await _safe_answer(query)
+            return
+
+        # toggle_queries
         toggle_queries = {
             "links": "UPDATE group_security SET delete_links = 1 - delete_links WHERE chat_id=?",
             "mentions": "UPDATE group_security SET mentions = 1 - mentions WHERE chat_id=?",
@@ -1059,7 +1075,7 @@ class CallbackHandlers:
         if action == "antiflood_messages":
             StateManager.set(user_id, UserState.WAIT_ANTIFLOOD_MESSAGES)
             context.user_data['sec_chat'] = chat_id
-            await query.edit_message_text("📝 أرسل عدد الرسائل المسموح بها قبل تفعيل الحماية (1-100):")
+            await query.edit_message_text("📝 أرسل عدد الرسائل المسموح بها (1-100):")
             await _safe_answer(query)
             return
 
@@ -1092,18 +1108,6 @@ class CallbackHandlers:
             await _safe_answer(query)
             return
 
-        if action == "antiflood_settings":
-            await CallbackHandlers._handle_antiflood_settings(update, context, query, chat_id, user_id, lang)
-            return
-
-        if action == "night_settings":
-            await CallbackHandlers._handle_night_settings(update, context, query, chat_id, user_id, lang)
-            return
-
-        if action == "penalty_durations":
-            await CallbackHandlers._handle_penalty_durations(update, context, query, chat_id, user_id, lang)
-            return
-
         await _safe_answer(query)
 
     @staticmethod
@@ -1115,7 +1119,7 @@ class CallbackHandlers:
             [InlineKeyboardButton(f"العقوبة: {settings.get('antiflood_penalty', 'mute')}", callback_data=f"sec_antiflood_penalty:{chat_id}")],
             [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")]
         ])
-        await query.edit_message_text(f"🌊 **إعدادات الفيضان**\n\nالحد: {settings.get('antiflood_messages', 5)} رسالة\nالفترة: {settings.get('antiflood_seconds', 10)} ثانية\nالعقوبة: {settings.get('antiflood_penalty', 'mute')}", reply_markup=kb)
+        await query.edit_message_text(f"🌊 **إعدادات الفيضان**", reply_markup=kb)
         await _safe_answer(query)
 
     @staticmethod
@@ -1127,7 +1131,7 @@ class CallbackHandlers:
             [InlineKeyboardButton(f"الإجراء: {settings.get('night_mode_action', 'mute')}", callback_data=f"sec_night_action:{chat_id}")],
             [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")]
         ])
-        await query.edit_message_text(f"🌙 **إعدادات الوضع الليلي**\n\nالبداية: {settings.get('night_mode_start', '23:00')}\nالنهاية: {settings.get('night_mode_end', '06:00')}\nالإجراء: {settings.get('night_mode_action', 'mute')}", reply_markup=kb)
+        await query.edit_message_text(f"🌙 **إعدادات الوضع الليلي**", reply_markup=kb)
         await _safe_answer(query)
 
     @staticmethod
@@ -1139,7 +1143,7 @@ class CallbackHandlers:
             [InlineKeyboardButton(f"تقييد: {settings.get('restrict_default_duration', 1800)//60} دقيقة", callback_data=f"sec_penalty_restrict:{chat_id}")],
             [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")]
         ])
-        await query.edit_message_text(f"⏳ **مدد العقوبات الافتراضية**\n\nكتم: {settings.get('mute_default_duration', 3600)//60} دقيقة\nحظر: {settings.get('ban_default_duration', 0)//60} دقيقة (0 = دائم)\nتقييد: {settings.get('restrict_default_duration', 1800)//60} دقيقة", reply_markup=kb)
+        await query.edit_message_text(f"⏳ **مدد العقوبات الافتراضية**", reply_markup=kb)
         await _safe_answer(query)
 
     @staticmethod
@@ -1546,7 +1550,6 @@ class CallbackHandlers:
                     await _safe_answer(query, await get_text(lang, 'unauthorized'), show_alert=True)
                     return
             except Exception as e:
-                logger.warning(f"⚠️ فشل التحقق من الصلاحية: {e}")
                 await _safe_answer(query, "❌ تعذر التحقق من الصلاحية", show_alert=True)
                 return
         if action == "add":
@@ -1555,7 +1558,7 @@ class CallbackHandlers:
             text = "📝 أرسل الكلمة المحظورة:"
             try:
                 await query.edit_message_text(text)
-            except BadRequest as e:
+            except BadRequest:
                 await safe_send(context.bot, user_id, text)
             await _safe_answer(query)
         elif action == "list":
@@ -1563,7 +1566,7 @@ class CallbackHandlers:
             text = "📭 لا توجد كلمات محظورة" if not words else "🚫 **الكلمات المحظورة**\n\n" + "\n".join(f"• {w}" for w in words)
             try:
                 await query.edit_message_text(text)
-            except BadRequest as e:
+            except BadRequest:
                 await safe_send(context.bot, user_id, text)
             await _safe_answer(query)
         elif action == "rem":
@@ -1572,7 +1575,7 @@ class CallbackHandlers:
             text = "🗑️ أرسل الكلمة لحذفها:"
             try:
                 await query.edit_message_text(text)
-            except BadRequest as e:
+            except BadRequest:
                 await safe_send(context.bot, user_id, text)
             await _safe_answer(query)
 
@@ -1594,14 +1597,14 @@ class CallbackHandlers:
         perms = await check_bot_permissions(context.bot, chat_id)
         if not perms.get('can_act', False):
             lang = await DB.get_user_language(user_id) or 'ar'
-            await _safe_answer(query, await get_text(lang, 'bot_no_perms', reason=perms.get('reason', '')), show_alert=True)
+            await _safe_answer(query, await get_text(lang, 'bot_no_perms'), show_alert=True)
             return
         actions = {
-            "ban": (UserState.WAIT_BAN, "🚫 أرسل معرف المستخدم والمدة بالدقائق (مثال: 123456 30)\nاترك المدة فارغة لاستخدام 60 ثانية افتراضية"),
-            "mute": (UserState.WAIT_MUTE, "🔇 أرسل معرف المستخدم والمدة بالدقائق (مثال: 123456 30)\nاترك المدة فارغة لاستخدام 60 ثانية افتراضية"),
+            "ban": (UserState.WAIT_BAN, "🚫 أرسل معرف المستخدم والمدة بالدقائق"),
+            "mute": (UserState.WAIT_MUTE, "🔇 أرسل معرف المستخدم والمدة بالدقائق"),
             "warn": (UserState.WAIT_WARN, "⚠️ أرسل معرف المستخدم:"),
             "kick": (UserState.WAIT_KICK, "👢 أرسل معرف المستخدم:"),
-            "restrict": (UserState.WAIT_RESTRICT, "🔒 أرسل معرف المستخدم والمدة بالدقائق (مثال: 123456 30)\nاترك المدة فارغة لاستخدام 60 ثانية افتراضية"),
+            "restrict": (UserState.WAIT_RESTRICT, "🔒 أرسل معرف المستخدم والمدة بالدقائق"),
             "unban": (UserState.WAIT_UNBAN, "🔓 أرسل معرف المستخدم:"),
             "pin": (UserState.WAIT_PIN, "📌 أرسل معرف الرسالة أو رد عليها:"),
         }
