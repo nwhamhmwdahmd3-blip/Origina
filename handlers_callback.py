@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers_callback.py - معالجات الأزرار (الكولباك)
+handlers_callback.py - معالجات الأزرار (الكولباك) - نسخة محسنة ومكتملة
+=====================================================================
+يتضمن معالجة جميع أزرار الـ Inline مع تحسينات أمنية وديناميكية.
 """
 
 import asyncio
@@ -35,6 +37,47 @@ from handlers_command import CommandHandlers
 
 logger = logging.getLogger(__name__)
 
+
+# =====================================================================
+# دوال مساعدة داخلية
+# =====================================================================
+
+async def _check_admin_simple(bot, chat_id: int, user_id: int) -> bool:
+    """تتحقق ببساطة مما إذا كان المستخدم مشرفاً في المجموعة (أو مالكاً خفياً)."""
+    if user_id == CONFIG.PRIMARY_OWNER_ID:
+        return True
+    return await is_authorized_in_group(bot, chat_id, user_id)
+
+
+async def _get_penalty_info(chat_id: int, violation_type: str) -> dict:
+    """تسترجع معلومات العقوبة لنوع مخالفة معين."""
+    rule = await DB.get_violation_penalty(chat_id, violation_type)
+    if rule:
+        return {
+            'penalty_type': rule['penalty_type'],
+            'duration_seconds': rule['duration_seconds']
+        }
+    settings = await DB.get_security_settings(chat_id)
+    return {
+        'penalty_type': settings.get('warn_penalty', 'ban'),
+        'duration_seconds': 0
+    }
+
+
+def _is_command_cancel(text: str) -> bool:
+    """تتحقق مما إذا كان النص أمر إلغاء."""
+    return text and text.strip().lower() in ['/cancel', 'إلغاء', 'cancel']
+
+
+async def _reply_and_clear_state(bot, user_id: int, chat_id: int, text: str, reply_markup=None):
+    """ترسل رداً وتمسح حالة المستخدم."""
+    StateManager.clear(user_id)
+    await safe_send(bot, chat_id, text, reply_markup)
+
+
+# =====================================================================
+# المعالج الرئيسي
+# =====================================================================
 
 class CallbackHandlers:
     """جميع معالجات ضغطات الأزرار"""
@@ -753,7 +796,7 @@ class CallbackHandlers:
             if data.startswith(CB.GRP_SET + ":"):
                 chat_id = int(data.split(":")[-1])
                 context.user_data['security_chat_id'] = chat_id
-                if not await is_authorized_in_group(context.bot, chat_id, user_id):
+                if not await _check_admin_simple(context.bot, chat_id, user_id):
                     try:
                         await query.answer("❌ لا صلاحية", show_alert=True)
                     except BadRequest:
@@ -761,7 +804,7 @@ class CallbackHandlers:
                     return
                 settings = await DB.get_security_settings(chat_id)
                 text = KeyboardFactory._format_security_text(settings)
-                kb = KeyboardFactory.build("security", chat_id, lang=lang)
+                kb = KeyboardFactory.build("security", chat_id=chat_id, user_id=user_id, lang=lang)
                 await query.edit_message_text(text, reply_markup=kb)
                 try:
                     await query.answer()
@@ -801,7 +844,7 @@ class CallbackHandlers:
 
             if data.startswith(CB.PANEL_LOCK + ":"):
                 chat_id = int(data.split(":")[-1])
-                if not await is_authorized_in_group(context.bot, chat_id, user_id):
+                if not await _check_admin_simple(context.bot, chat_id, user_id):
                     try:
                         await query.answer("❌ لا صلاحية", show_alert=True)
                     except BadRequest:
@@ -818,7 +861,7 @@ class CallbackHandlers:
 
             if data.startswith(CB.PANEL_UNLOCK + ":"):
                 chat_id = int(data.split(":")[-1])
-                if not await is_authorized_in_group(context.bot, chat_id, user_id):
+                if not await _check_admin_simple(context.bot, chat_id, user_id):
                     try:
                         await query.answer("❌ لا صلاحية", show_alert=True)
                     except BadRequest:
@@ -931,10 +974,10 @@ class CallbackHandlers:
                     return
 
                 invoice_number = await DB.create_invoice(
-                    user_id, 
-                    plan_id, 
-                    plan['price'], 
-                    currency='XTR', 
+                    user_id,
+                    plan_id,
+                    plan['price'],
+                    currency='XTR',
                     provider='xtr_gift'
                 )
                 if not invoice_number:
@@ -950,8 +993,8 @@ class CallbackHandlers:
                         title=f"🎁 كود هدية {plan['days']} يوم",
                         description=f"ستحصل على كود هدية لمدة {plan['days']} يوم يمكنك إرساله لأي شخص.",
                         payload=json.dumps({
-                            'gift_plan_id': plan_id, 
-                            'invoice': invoice_number, 
+                            'gift_plan_id': plan_id,
+                            'invoice': invoice_number,
                             'type': 'gift'
                         }),
                         provider_token="",
@@ -1166,7 +1209,7 @@ class CallbackHandlers:
 
         logger.info(f"🔍 _handle_security: action={action}, chat_id={chat_id}, data={data}")
 
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        if not await _check_admin_simple(context.bot, chat_id, user_id):
             try:
                 await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
             except BadRequest:
@@ -1204,7 +1247,7 @@ class CallbackHandlers:
             await DB.execute(f"UPDATE group_security SET {col}=? WHERE chat_id=?", (new_val, chat_id))
             settings = await DB.get_security_settings(chat_id)
             text = KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id, lang=lang)
+            kb = KeyboardFactory.build("security", chat_id=chat_id, user_id=user_id, lang=lang)
             try:
                 await query.edit_message_text(text, reply_markup=kb)
             except BadRequest:
@@ -1216,13 +1259,22 @@ class CallbackHandlers:
             return
 
         if action == "enable_all":
+            # التحقق من صلاحية البوت لتغيير كل الإعدادات (يتطلب صلاحيات مشرف)
+            perms = await check_bot_permissions(context.bot, chat_id)
+            if not perms.get('can_act', False):
+                try:
+                    await query.answer(await get_text(lang, 'bot_no_perms', reason=perms.get('reason', '')), show_alert=True)
+                except BadRequest:
+                    pass
+                return
+
             async with DB._get_connection() as conn:
                 for f in field_map.values():
                     await conn.execute(f"UPDATE group_security SET {f}=1 WHERE chat_id=?", (chat_id,))
                 await conn.commit()
             settings = await DB.get_security_settings(chat_id)
             text = KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id, lang=lang)
+            kb = KeyboardFactory.build("security", chat_id=chat_id, user_id=user_id, lang=lang)
             try:
                 await query.edit_message_text(text, reply_markup=kb)
             except BadRequest:
@@ -1234,13 +1286,21 @@ class CallbackHandlers:
             return
 
         if action == "disable_all":
+            perms = await check_bot_permissions(context.bot, chat_id)
+            if not perms.get('can_act', False):
+                try:
+                    await query.answer(await get_text(lang, 'bot_no_perms', reason=perms.get('reason', '')), show_alert=True)
+                except BadRequest:
+                    pass
+                return
+
             async with DB._get_connection() as conn:
                 for f in field_map.values():
                     await conn.execute(f"UPDATE group_security SET {f}=0 WHERE chat_id=?", (chat_id,))
                 await conn.commit()
             settings = await DB.get_security_settings(chat_id)
             text = KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id, lang=lang)
+            kb = KeyboardFactory.build("security", chat_id=chat_id, user_id=user_id, lang=lang)
             try:
                 await query.edit_message_text(text, reply_markup=kb)
             except BadRequest:
@@ -1335,7 +1395,7 @@ class CallbackHandlers:
             return
 
         if action == "del_pen":
-            kb = KeyboardFactory.build("penalty", chat_id, lang=lang)
+            kb = KeyboardFactory.build("penalty", chat_id=chat_id, user_id=user_id, lang=lang)
             await query.edit_message_text("⚖️ عقوبة الحذف:", reply_markup=kb)
             try:
                 await query.answer()
@@ -1344,7 +1404,7 @@ class CallbackHandlers:
             return
 
         if action == "penalty":
-            kb = KeyboardFactory.build("penalty", chat_id, lang=lang)
+            kb = KeyboardFactory.build("penalty", chat_id=chat_id, user_id=user_id, lang=lang)
             await query.edit_message_text("⚖️ العقوبة:", reply_markup=kb)
             try:
                 await query.answer()
@@ -1353,7 +1413,7 @@ class CallbackHandlers:
             return
 
         if action == "adv_act":
-            kb = KeyboardFactory.build("advanced_actions", chat_id, lang=lang)
+            kb = KeyboardFactory.build("advanced_actions", chat_id=chat_id, user_id=user_id, lang=lang)
             await query.edit_message_text("🛠️ إجراءات:", reply_markup=kb)
             try:
                 await query.answer()
@@ -1381,7 +1441,7 @@ class CallbackHandlers:
             return
 
         if action == "auto_reply_menu":
-            kb = KeyboardFactory.build("auto_reply_manage", chat_id, lang=lang)
+            kb = KeyboardFactory.build("auto_reply_manage", chat_id=chat_id, user_id=user_id, lang=lang)
             await query.edit_message_text("📝 الردود:", reply_markup=kb)
             try:
                 await query.answer()
@@ -1777,7 +1837,7 @@ class CallbackHandlers:
             chat_id = int(parts[1]) if len(parts) > 1 else -1
 
         if chat_id != -1:
-            if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            if not await _check_admin_simple(context.bot, chat_id, user_id):
                 try:
                     await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
                 except BadRequest:
@@ -2092,7 +2152,7 @@ class CallbackHandlers:
         except:
             return
 
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        if not await _check_admin_simple(context.bot, chat_id, user_id):
             try:
                 await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
             except BadRequest:
@@ -2113,7 +2173,7 @@ class CallbackHandlers:
             status_text = "✅ **تم تفعيل الردود التلقائية!**" if new_enabled else "❌ **تم تعطيل الردود التلقائية!**"
             await query.edit_message_text(
                 status_text,
-                reply_markup=KeyboardFactory.build("auto_reply_manage", chat_id, lang=lang)
+                reply_markup=KeyboardFactory.build("auto_reply_manage", chat_id=chat_id, user_id=user_id, lang=lang)
             )
             return
 
@@ -2295,7 +2355,7 @@ class CallbackHandlers:
                 return
         else:
             try:
-                if not await is_authorized_in_group(context.bot, chat_id, user_id):
+                if not await _check_admin_simple(context.bot, chat_id, user_id):
                     lang = await DB.get_user_language(user_id)
                     try:
                         await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
@@ -2364,10 +2424,20 @@ class CallbackHandlers:
         except:
             return
 
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        if not await _check_admin_simple(context.bot, chat_id, user_id):
             lang = await DB.get_user_language(user_id)
             try:
                 await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
+            except BadRequest:
+                pass
+            return
+
+        # التحقق من صلاحيات البوت
+        perms = await check_bot_permissions(context.bot, chat_id)
+        if not perms.get('can_act', False):
+            lang = await DB.get_user_language(user_id)
+            try:
+                await query.answer(await get_text(lang, 'bot_no_perms', reason=perms.get('reason', '')), show_alert=True)
             except BadRequest:
                 pass
             return
@@ -2403,7 +2473,7 @@ class CallbackHandlers:
         except:
             return
 
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+        if not await _check_admin_simple(context.bot, chat_id, user_id):
             lang = await DB.get_user_language(user_id)
             try:
                 await query.answer(await get_text(lang, 'unauthorized'), show_alert=True)
