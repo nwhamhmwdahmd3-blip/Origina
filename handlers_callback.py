@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers_callback.py - معالجات الأزرار (الكولباك) - كامل مع جميع المعالجات
+handlers_callback.py - معالجات الأزرار (الكولباك)
 """
 
 import asyncio
@@ -888,25 +888,28 @@ class CallbackHandlers:
             await _safe_answer(query, await get_text(lang, 'unauthorized'), show_alert=True)
             return
 
-        # ✅ جميع معالجات الأزرار
+        # ✅ معالجة زر الردود التلقائية
         if action == "auto_reply_menu":
             kb = KeyboardFactory.build("auto_reply_manage", chat_id=chat_id, lang=lang)
             await query.edit_message_text("📝 **إدارة الردود التلقائية**", reply_markup=kb)
             await _safe_answer(query)
             return
 
+        # ✅ معالجة زر الإجراءات المتقدمة
         if action == "adv_act":
             kb = KeyboardFactory.build("advanced_actions", chat_id=chat_id, lang=lang)
             await query.edit_message_text("🛠️ **إجراءات متقدمة**", reply_markup=kb)
             await _safe_answer(query)
             return
 
+        # ✅ معالجة زر العقوبات
         if action == "penalty":
             kb = KeyboardFactory.build("penalty", chat_id=chat_id, lang=lang)
             await query.edit_message_text("⚖️ **العقوبات**", reply_markup=kb)
             await _safe_answer(query)
             return
 
+        # ✅ معالجة زر السجل
         if action == "act_log":
             logs = await DB.get_admin_logs(chat_id, 20)
             if not logs:
@@ -919,18 +922,7 @@ class CallbackHandlers:
             await _safe_answer(query)
             return
 
-        if action == "antiflood_settings":
-            await CallbackHandlers._handle_antiflood_settings(update, context, query, chat_id, user_id, lang)
-            return
-
-        if action == "night_settings":
-            await CallbackHandlers._handle_night_settings(update, context, query, chat_id, user_id, lang)
-            return
-
-        if action == "penalty_durations":
-            await CallbackHandlers._handle_penalty_durations(update, context, query, chat_id, user_id, lang)
-            return
-
+        # ✅ معالجة زر قائمة عقوبات المخالفات
         if action == "violation_penalties":
             kb = []
             violation_names = {
@@ -952,6 +944,54 @@ class CallbackHandlers:
             kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")])
             await query.edit_message_text("⚖️ **عقوبات المخالفات**", reply_markup=InlineKeyboardMarkup(kb))
             await _safe_answer(query)
+            return
+
+        # ✅ معالجة زر اختيار نوع المخالفة
+        if action == "violation":
+            if len(parts) >= 3:
+                v_type = parts[2]
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔨 حظر", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:ban"),
+                     InlineKeyboardButton("🔇 كتم", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:mute")],
+                    [InlineKeyboardButton("🔒 تقييد", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:restrict")],
+                    [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_violation_penalties:{chat_id}")]
+                ])
+                await query.edit_message_text("اختر نوع العقوبة:", reply_markup=kb)
+            return
+
+        # ✅ معالجة زر اختيار نوع العقوبة
+        if action == "violation_pen":
+            if len(parts) >= 4:
+                v_type = parts[2]
+                p_type = parts[3]
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("دقيقة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:60"),
+                     InlineKeyboardButton("10 دقائق", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:600")],
+                    [InlineKeyboardButton("نص ساعة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:1800"),
+                     InlineKeyboardButton("ساعة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:3600")],
+                    [InlineKeyboardButton("يوم", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:86400"),
+                     InlineKeyboardButton("أسبوع", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:604800")],
+                    [InlineKeyboardButton("شهر", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:2592000"),
+                     InlineKeyboardButton("دائم", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:0")],
+                    [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_violation_penalties:{chat_id}")]
+                ])
+                await query.edit_message_text("⏱️ اختر مدة العقوبة:", reply_markup=kb)
+            return
+
+        # ✅ معالجة زر حفظ مدة العقوبة
+        if action == "violation_dur":
+            if len(parts) >= 5:
+                v_type = parts[2]
+                p_type = parts[3]
+                try:
+                    duration_seconds = int(parts[4])
+                except:
+                    return
+                await DB.set_violation_penalty(chat_id, v_type, p_type, duration_seconds)
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_violation_penalties:{chat_id}")
+                ]])
+                await query.edit_message_text(f"✅ تم حفظ العقوبة", reply_markup=kb)
             return
 
         # toggle_queries
@@ -1037,6 +1077,18 @@ class CallbackHandlers:
             await _safe_answer(query)
             return
 
+        if action == "antiflood_settings":
+            await CallbackHandlers._handle_antiflood_settings(update, context, query, chat_id, user_id, lang)
+            return
+
+        if action == "night_settings":
+            await CallbackHandlers._handle_night_settings(update, context, query, chat_id, user_id, lang)
+            return
+
+        if action == "penalty_durations":
+            await CallbackHandlers._handle_penalty_durations(update, context, query, chat_id, user_id, lang)
+            return
+
         if action == "maxlen":
             StateManager.set(user_id, UserState.WAIT_MAX_LEN)
             context.user_data['sec_chat'] = chat_id
@@ -1098,62 +1150,6 @@ class CallbackHandlers:
             context.user_data['sec_chat'] = chat_id
             await query.edit_message_text("🌙 أرسل وقت نهاية الوضع الليلي (HH:MM):")
             await _safe_answer(query)
-            return
-
-
-        # ✅ معالجة زر اختيار نوع المخالفة
-        if action == "violation":
-            if len(parts) >= 3:
-                v_type = parts[2]
-                valid_violations = {"links","mentions","banned_words","flood","max_len","service","videos","audio","documents","stickers","forwarded","polls","games","voice","video_note"}
-                if v_type not in valid_violations:
-                    await _safe_answer(query, "❌ نوع مخالفة غير صالح", show_alert=True)
-                    return
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔨 حظر", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:ban"),
-                     InlineKeyboardButton("🔇 كتم", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:mute")],
-                    [InlineKeyboardButton("🔒 تقييد", callback_data=f"sec_violation_pen:{chat_id}:{v_type}:restrict")],
-                    [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_violation_penalties:{chat_id}")]
-                ])
-                await query.edit_message_text("اختر نوع العقوبة:", reply_markup=kb)
-            return
-
-        # ✅ معالجة زر اختيار نوع العقوبة للمخالفة
-        if action == "violation_pen":
-            if len(parts) >= 4:
-                v_type = parts[2]
-                p_type = parts[3]
-                if p_type not in DB.VALID_PENALTY_TYPES:
-                    await _safe_answer(query, "❌ نوع عقوبة غير صالح", show_alert=True)
-                    return
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("دقيقة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:60"),
-                     InlineKeyboardButton("10 دقائق", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:600")],
-                    [InlineKeyboardButton("نص ساعة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:1800"),
-                     InlineKeyboardButton("ساعة", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:3600")],
-                    [InlineKeyboardButton("يوم", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:86400"),
-                     InlineKeyboardButton("أسبوع", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:604800")],
-                    [InlineKeyboardButton("شهر", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:2592000"),
-                     InlineKeyboardButton("دائم", callback_data=f"sec_violation_dur:{chat_id}:{v_type}:{p_type}:0")],
-                    [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_violation_penalties:{chat_id}")]
-                ])
-                await query.edit_message_text(f"⏱️ اختر مدة عقوبة {p_type} لمخالفة {v_type}:", reply_markup=kb)
-            return
-
-        # ✅ معالجة زر حفظ مدة العقوبة
-        if action == "violation_dur":
-            if len(parts) >= 5:
-                v_type = parts[2]
-                p_type = parts[3]
-                try:
-                    duration_seconds = int(parts[4])
-                except:
-                    return
-                await DB.set_violation_penalty(chat_id, v_type, p_type, duration_seconds)
-                kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_violation_penalties:{chat_id}")
-                ]])
-                await query.edit_message_text(f"✅ تم حفظ عقوبة {v_type}: {p_type} ({duration_seconds} ثانية)", reply_markup=kb)
             return
 
         if action == "close":
