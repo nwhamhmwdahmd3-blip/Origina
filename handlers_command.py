@@ -2,21 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers_command.py - معالجات الأوامر (CommandHandlers) - النسخة النهائية الكاملة
-===================================================================================
-جميع الأوامر النصية للبوت مع التحسينات الأمنية والأداء.
-- التحقق من عضوية المستخدم في syncgroup
-- التحقق من طول الكود في redeem_gift
-- استخدام _mask_id لإخفاء المعرفات
+handlers_command.py - معالجات الأوامر (CommandHandlers)
+=====================================================
+جميع الأوامر النصية للبوت.
 """
 
 import asyncio
 import logging
-from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from telegram.error import BadRequest, TimedOut
+from telegram.error import BadRequest
 
 from config import CONFIG
 from database import DB
@@ -30,44 +26,16 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 
-async def _safe_answer(query, text=None, show_alert=False):
-    """دالة مساعدة للإجابة على الاستعلامات بأمان"""
-    try:
-        if text:
-            await query.answer(text, show_alert=show_alert)
-        else:
-            await query.answer()
-        return True
-    except (BadRequest, TimedOut) as e:
-        logger.debug(f"Query answer failed: {e}")
-        return False
-    except Exception as e:
-        logger.warning(f"⚠️ فشل query.answer: {e}")
-        return False
-
-
-def _mask_id(id_value, prefix=3, suffix=2):
-    """إخفاء جزء من المعرفات الحساسة"""
-    if id_value is None:
-        return "***"
-    s = str(id_value)
-    if len(s) <= 5:
-        return "***"
-    return s[:prefix] + "***" + s[-suffix:] if len(s) > prefix + suffix else s[:prefix] + "***"
-
-
 class CommandHandlers:
     """جميع معالجات الأوامر"""
 
     @staticmethod
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /start - القائمة الرئيسية"""
         user_id = update.effective_user.id
         username = update.effective_user.username or ""
         first_name = update.effective_user.first_name or ""
         await DB.register_user(user_id, username, first_name)
 
-        # معالجة الإحالات
         args = context.args or []
         if args and args[0].startswith('ref_'):
             ref_code = args[0][4:]
@@ -77,15 +45,9 @@ class CommandHandlers:
                 if not existing:
                     if await DB.add_referral(referrer, user_id):
                         reward = await DB.get_referral_stats(referrer)
-                        try:
-                            await context.bot.send_message(
-                                referrer,
-                                f"🎁 تمت إحالة `{_mask_id(user_id)}`. لديك {reward['available']} يوم متاح للصرف."
-                            )
-                        except Exception as e:
-                            logger.warning(f"⚠️ فشل إرسال إشعار الإحالة: {e}")
+                        await safe_send(update.effective_chat.bot, referrer,
+                                        f"🎁 تمت إحالة `{user_id}`. لديك {reward['available']} يوم متاح للصرف.")
 
-        # التحقق من الاشتراك الإجباري
         force_ch = await DB.get_force_subscribe_channel()
         if force_ch and user_id != CONFIG.PRIMARY_OWNER_ID:
             try:
@@ -117,8 +79,7 @@ class CommandHandlers:
                 await safe_send(context.bot, user_id, "❌ تعذر التحقق من الاشتراك الإجباري، حاول لاحقًا")
                 return
 
-        # جمع بيانات المستخدم
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         active = await DB.get_active_channel(user_id)
         cnt = 0
         ch_display = "لا توجد قنوات"
@@ -126,7 +87,7 @@ class CommandHandlers:
             cnt = await DB.get_unpublished_posts_count(user_id, active)
             ch_info = await DB.get_channel_info(user_id, active)
             if ch_info:
-                ch_display = ch_info['channel_name']
+                ch_display = f"{ch_info['channel_name']}"
 
         groups = len(await DB.get_user_groups(user_id))
         has_sub = await DB.has_active_subscription(user_id)
@@ -136,7 +97,6 @@ class CommandHandlers:
         recycle = await DB.get_auto_recycle_status(user_id)
         recycle_text = "مفعل" if recycle else "معطل"
 
-        # بناء لوحة المفاتيح
         kb_rows = KeyboardFactory.get_menu("main_menu", lang)
         keyboard = []
 
@@ -175,46 +135,38 @@ class CommandHandlers:
 
     @staticmethod
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /help - المساعدة"""
         user_id = update.effective_user.id
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         await safe_send(context.bot, user_id, await get_text(lang, 'help_text'))
 
     @staticmethod
     async def trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /trial - تفعيل التجربة المجانية"""
         user_id = update.effective_user.id
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         if await DB.has_used_trial(user_id):
             await safe_send(context.bot, user_id, await get_text(lang, 'trial_used'))
             return
         days = await DB.activate_trial(user_id)
-        if days > 0:
-            await safe_send(context.bot, user_id, await get_text(lang, 'trial_activated', days=days))
-        else:
-            await safe_send(context.bot, user_id, "❌ تعذر تفعيل التجربة")
+        await safe_send(context.bot, user_id, await get_text(lang, 'trial_activated', days=days))
 
     @staticmethod
     async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /subscribe - عرض الباقات"""
         user_id = update.effective_user.id
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         kb = KeyboardFactory.build("plans", lang=lang)
         await safe_send(context.bot, user_id, await get_text(lang, 'plan_selector'), reply_markup=kb)
 
     @staticmethod
     async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /support - الدعم الفني"""
         user_id = update.effective_user.id
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         kb = KeyboardFactory.build("support", lang=lang)
         await safe_send(context.bot, user_id, await get_text(lang, 'send_support_message'), reply_markup=kb)
 
     @staticmethod
     async def developer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /developer - معلومات المطور"""
         user_id = update.effective_user.id
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         text = await get_text(lang, 'developer_info',
                               owner_id=CONFIG.PRIMARY_OWNER_ID,
                               bot_name=CONFIG.BOT_NAME,
@@ -223,10 +175,9 @@ class CommandHandlers:
 
     @staticmethod
     async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /stats - إحصائيات البوت (للمطورين فقط)"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
+            lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
         stats = await DB.get_bot_stats()
@@ -241,9 +192,8 @@ class CommandHandlers:
 
     @staticmethod
     async def language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /language - تغيير اللغة"""
         user_id = update.effective_user.id
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         available = TranslationManager.get_available_languages()
         buttons = []
         row = []
@@ -261,14 +211,12 @@ class CommandHandlers:
 
     @staticmethod
     async def replies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /replies - الردود التلقائية"""
         await safe_send(context.bot, update.effective_user.id, "📚 الردود التلقائية تعمل!")
 
     @staticmethod
     async def contests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /contests - المسابقات النشطة"""
         user_id = update.effective_user.id
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         contests = await DB.get_active_contests(10)
         if not contests:
             await safe_send(context.bot, user_id, "📭 لا توجد مسابقات نشطة")
@@ -277,23 +225,21 @@ class CommandHandlers:
         for c in contests:
             text += f"• **{c['title']}**\n"
             text += f"  🎁 {c['prize']}\n"
-            text += f"  📅 {c['end_date'][:10]}\n"
-            text += f"  👥 المشاركون: {c.get('participants', 0)}\n\n"
+            text += f"  📅 {c['end_date'][:10]}\n\n"
         kb = KeyboardFactory.build("contests", lang=lang)
         await safe_send(context.bot, user_id, text, reply_markup=kb)
 
     @staticmethod
     async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /security - إعدادات الأمان للمجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
+            lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         context.user_data['security_chat_id'] = chat_id
         settings = await DB.get_security_settings(chat_id)
         text = KeyboardFactory._format_security_text(settings)
@@ -302,22 +248,20 @@ class CommandHandlers:
 
     @staticmethod
     async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /panel - لوحة تحكم المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
+            lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
         kb = KeyboardFactory.build("panel", chat_id=chat_id, user_id=user_id, lang=lang)
         await safe_send(context.bot, user_id, "📋 لوحة تحكم المجموعة", reply_markup=kb)
 
     @staticmethod
     async def lock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /lock - قفل المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -330,7 +274,6 @@ class CommandHandlers:
 
     @staticmethod
     async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /unlock - فتح المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -342,10 +285,9 @@ class CommandHandlers:
 
     @staticmethod
     async def register_hidden_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تسجيل مالك مخفي"""
         user_id = update.effective_user.id
         if user_id != CONFIG.PRIMARY_OWNER_ID:
-            lang = await DB.get_user_language(user_id) or 'ar'
+            lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
         if not context.args:
@@ -353,9 +295,7 @@ class CommandHandlers:
             return
         try:
             owner_id = int(context.args[0])
-            if owner_id <= 0:
-                raise ValueError
-        except (ValueError, TypeError):
+        except:
             await safe_send(context.bot, user_id, "⚠️ معرف غير صالح")
             return
         chat_id = update.effective_chat.id
@@ -365,7 +305,6 @@ class CommandHandlers:
 
     @staticmethod
     async def remove_hidden_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """إزالة مالك مخفي"""
         user_id = update.effective_user.id
         if user_id != CONFIG.PRIMARY_OWNER_ID:
             return
@@ -373,7 +312,7 @@ class CommandHandlers:
             return
         try:
             owner_id = int(context.args[0])
-        except (ValueError, TypeError):
+        except:
             return
         chat_id = update.effective_chat.id
         await DB.execute("DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, owner_id))
@@ -382,7 +321,6 @@ class CommandHandlers:
 
     @staticmethod
     async def add_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """إضافة مشرف مخفي"""
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
@@ -390,16 +328,14 @@ class CommandHandlers:
             row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
             is_owner = row is not None
         if not is_owner:
-            lang = await DB.get_user_language(user_id) or 'ar'
+            lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
         if not context.args:
             return
         try:
             admin_id = int(context.args[0])
-            if admin_id <= 0:
-                raise ValueError
-        except (ValueError, TypeError):
+        except:
             return
         await DB.add_hidden_admin(chat_id, admin_id, user_id)
         invalidate_auth_cache(chat_id, admin_id)
@@ -407,7 +343,6 @@ class CommandHandlers:
 
     @staticmethod
     async def remove_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """إزالة مشرف مخفي"""
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
@@ -420,7 +355,7 @@ class CommandHandlers:
             return
         try:
             admin_id = int(context.args[0])
-        except (ValueError, TypeError):
+        except:
             return
         await DB.execute("DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, admin_id))
         invalidate_auth_cache(chat_id, admin_id)
@@ -428,7 +363,6 @@ class CommandHandlers:
 
     @staticmethod
     async def list_hidden_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض المخفيين"""
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
@@ -441,14 +375,13 @@ class CommandHandlers:
         admins = await DB.fetchall("SELECT admin_id FROM hidden_admins WHERE chat_id=?", (chat_id,))
         text = "👤 **المخفيون**\n"
         for o in owners:
-            text += f"👑 `{o['owner_id']}`\n"
+            text += f"👑 `{o[0]}`\n"
         for a in admins:
-            text += f"🛡️ `{a['admin_id']}`\n"
+            text += f"🛡️ `{a[0]}`\n"
         await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد")
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """مزامنة المجموعة مع البوت"""
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
             await safe_send(context.bot, update.effective_user.id, "❌ هذا الأمر للمجموعات فقط")
             return
@@ -458,15 +391,6 @@ class CommandHandlers:
         user_id = update.effective_user.id
 
         logger.info(f"🔍 محاولة تسجيل المجموعة: chat_id={chat_id}, user_id={user_id}")
-
-        # ✅ التحقق من أن المستخدم عضو في المجموعة
-        try:
-            member = await context.bot.get_chat_member(chat_id, user_id)
-            if member.status in ['left', 'kicked']:
-                await safe_send(context.bot, user_id, "❌ أنت لست عضواً في هذه المجموعة")
-                return
-        except Exception as e:
-            logger.warning(f"⚠️ تعذر التحقق من عضوية المستخدم: {e}")
 
         try:
             all_admins = await context.bot.get_chat_administrators(chat_id)
@@ -597,7 +521,6 @@ class CommandHandlers:
 
     @staticmethod
     async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تثبيت رسالة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -605,10 +528,6 @@ class CommandHandlers:
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             return
         if update.message.reply_to_message:
-            perms = await check_bot_permissions(context.bot, chat_id)
-            if not perms.get('can_pin_messages', False):
-                await safe_send(context.bot, user_id, "❌ البوت لا يملك صلاحية تثبيت الرسائل.")
-                return
             try:
                 await context.bot.pin_chat_message(chat_id, update.message.reply_to_message.message_id)
                 await safe_send(context.bot, user_id, "📌 تم التثبيت")
@@ -617,14 +536,13 @@ class CommandHandlers:
 
     @staticmethod
     async def _moderation_command(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
-        """معالجة أوامر الإشراف"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
+            lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
 
@@ -635,9 +553,11 @@ class CommandHandlers:
 
         try:
             target = int(args[0])
-            if target <= 0:
-                raise ValueError
-        except (ValueError, TypeError):
+        except:
+            await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+            return
+
+        if target <= 0:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
             return
 
@@ -667,7 +587,6 @@ class CommandHandlers:
                 await safe_send(context.bot, user_id, "✅ تم إلغاء الحظر")
             except Exception as e:
                 logger.error(f"❌ فشل إلغاء الحظر: {e}")
-                await safe_send(context.bot, user_id, f"❌ فشل إلغاء الحظر: {str(e)[:50]}")
             return
 
         success, msg = await apply_penalty(context.bot, chat_id, target, action, duration_seconds, reason, user_id)
@@ -675,10 +594,9 @@ class CommandHandlers:
 
     @staticmethod
     async def set_min_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تعيين الحد الأدنى للفاصل الزمني (للمطورين)"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
+            lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
 
@@ -699,10 +617,9 @@ class CommandHandlers:
 
     @staticmethod
     async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """منح اشتراك (للمطورين)"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
+            lang = await DB.get_user_language(user_id)
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
 
@@ -714,10 +631,12 @@ class CommandHandlers:
         try:
             target_id = int(args[0])
             days = int(args[1])
-            if target_id <= 0 or days < 1 or days > 365:
-                raise ValueError
-        except (ValueError, TypeError):
+        except ValueError:
             await safe_send(context.bot, user_id, "❌ قيم غير صالحة")
+            return
+
+        if days < 1 or days > 365:
+            await safe_send(context.bot, user_id, "❌ عدد الأيام يجب أن يكون بين 1 و 365")
             return
 
         user_row = await DB.fetchone("SELECT user_id FROM users WHERE user_id=?", (target_id,))
@@ -728,7 +647,7 @@ class CommandHandlers:
         plan_row = await DB.fetchone("SELECT id FROM plans WHERE is_gift=1 LIMIT 1")
         if not plan_row:
             plan_row = await DB.fetchone("SELECT id FROM plans WHERE is_active=1 AND is_gift=0 LIMIT 1")
-        plan_id = plan_row['id'] if plan_row else None
+        plan_id = plan_row[0] if plan_row else None
 
         if plan_id is None:
             await safe_send(context.bot, user_id, "❌ لا توجد خطط متاحة للمنح")
@@ -736,15 +655,14 @@ class CommandHandlers:
 
         success = await DB.grant_subscription_days(target_id, days, plan_id=plan_id, provider='manual')
         if success:
-            await safe_send(context.bot, user_id, f"✅ تم منح {days} يوم للمستخدم `{_mask_id(target_id)}`")
+            await safe_send(context.bot, user_id, f"✅ تم منح {days} يوم للمستخدم `{target_id}`")
         else:
             await safe_send(context.bot, user_id, "❌ فشل المنح - تحقق من السجلات")
 
     @staticmethod
     async def gift_plans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض خطط الهدايا"""
         user_id = update.effective_user.id
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
 
         plans = await DB.get_gift_plans()
         if not plans:
@@ -753,8 +671,10 @@ class CommandHandlers:
 
         kb = []
         for plan in plans:
+            days = plan['days']
+            price = plan['price']
             kb.append([InlineKeyboardButton(
-                f"🎁 {plan['days']} يوم - {plan['price']} ⭐",
+                f"🎁 {days} يوم - {price} ⭐",
                 callback_data=f"buy_gift:{plan['id']}"
             )])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
@@ -768,9 +688,8 @@ class CommandHandlers:
 
     @staticmethod
     async def redeem_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """استخدام كود هدية"""
         user_id = update.effective_user.id
-        lang = await DB.get_user_language(user_id) or 'ar'
+        lang = await DB.get_user_language(user_id)
 
         args = context.args or []
         if not args:
@@ -778,12 +697,6 @@ class CommandHandlers:
             return
 
         code = args[0].strip()
-        
-        # ✅ التحقق من طول الكود
-        if len(code) < 4 or len(code) > 50:
-            await safe_send(context.bot, user_id, "❌ كود غير صالح")
-            return
-
         success, days = await DB.redeem_gift_code(user_id, code)
 
         if success and days > 0:
