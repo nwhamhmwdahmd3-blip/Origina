@@ -1009,6 +1009,45 @@ class CallbackHandlers:
                 await query.edit_message_text(f"✅ تم حفظ العقوبة", reply_markup=kb)
             return
 
+        # ✅ معالجة زر التحذيرات
+        if action == "warn":
+            await _safe_answer(query)
+            settings = await DB.get_security_settings(chat_id)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📝 العدد", callback_data=f"sec_warn_count:{chat_id}"),
+                 InlineKeyboardButton("⚖️ العقوبة", callback_data=f"sec_warn_penalty:{chat_id}")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_close:{chat_id}")]
+            ])
+            await query.edit_message_text(
+                f"⚠️ **التحذيرات**\n\n"
+                f"الحد الأقصى: {settings.get('max_warnings', 3)}\n"
+                f"العقوبة: {settings.get('warn_penalty', 'ban')}",
+                reply_markup=kb
+            )
+            return
+
+        # ✅ معالجة زر اختيار عقوبة التحذير
+        if action == "warn_penalty":
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛑 حظر", callback_data=f"sec_set_warn_penalty:{chat_id}:ban"),
+                 InlineKeyboardButton("🔇 كتم", callback_data=f"sec_set_warn_penalty:{chat_id}:mute")],
+                [InlineKeyboardButton("🔒 تقييد", callback_data=f"sec_set_warn_penalty:{chat_id}:restrict")],
+                [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=f"sec_warn:{chat_id}")]
+            ])
+            await query.edit_message_text("⚖️ اختر عقوبة التحذير:", reply_markup=kb)
+            await _safe_answer(query)
+            return
+
+        # ✅ معالجة حفظ عقوبة التحذير
+        if action == "set_warn_penalty":
+            if len(parts) >= 3:
+                penalty = parts[2]
+                if penalty in DB.VALID_PENALTY_TYPES:
+                    await DB.execute("UPDATE group_security SET warn_penalty=? WHERE chat_id=?", (penalty, chat_id))
+                    await _safe_answer(query, "✅ تم الحفظ")
+                    await query.edit_message_text(f"✅ تم تعيين عقوبة التحذير: {penalty}")
+            return
+
         # ✅ إعدادات الفيضان
         if action == "antiflood_settings":
             await CallbackHandlers._handle_antiflood_settings(update, context, query, chat_id, user_id, lang)
