@@ -8,6 +8,8 @@ handlers.py - جميع معالجات البوت (نسخة نهائية مصحح
 - معالجة جميع أزرار الأمان واللوحة
 - مدد جاهزة للعقوبات (افتراضية ومخالفات)
 - الفواتير وسجلات الدفع
+- الردود التلقائية من الملف وقاعدة البيانات مع إعادة تحميل
+- عرض فترة التشغيل (Uptime)
 """
 
 import asyncio
@@ -39,6 +41,7 @@ from utils import (
     _auto_reply_cache, export_auto_replies, import_auto_replies,
     fetch_json_from_url, _increment_usage_async, get_ram_usage,
     get_reply_from_file, load_replies_from_file, reload_replies_from_file,
+    _REPLIES_FROM_FILE,
     get_min_publish_interval, invalidate_banned_words_cache,
     get_banned_words_cached
 )
@@ -1869,7 +1872,6 @@ class CallbackHandlers:
         if chat_id is None:
             return
 
-        # ✅ تعريف valid_violations هنا ليكون متاحًا لجميع الفروع
         valid_violations = {"links","mentions","banned_words","flood","max_len","service","videos","audio","documents","stickers","forwarded","polls","games","voice","video_note"}
 
         action = parts[0].replace("sec_", "")
@@ -2110,17 +2112,14 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ معالجة إعدادات الفيضان
         if action == "antiflood_settings":
             await CallbackHandlers._handle_antiflood_settings(update, context, query, chat_id, user_id, lang)
             return
 
-        # ✅ معالجة إعدادات الوضع الليلي
         if action == "night_settings":
             await CallbackHandlers._handle_night_settings(update, context, query, chat_id, user_id, lang)
             return
 
-        # ✅ معالجة نصوص الترحيب والوداع
         if action == "welcome_text":
             StateManager.set(user_id, UserState.WAIT_WELCOME_TEXT)
             context.user_data['sec_chat'] = chat_id
@@ -2141,7 +2140,6 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ معالجة مدة الوضع البطيء
         if action == "slow_mode_seconds":
             StateManager.set(user_id, UserState.WAIT_SLOW_MODE_SECONDS)
             context.user_data['sec_chat'] = chat_id
@@ -2152,12 +2150,10 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ معالجة مدد العقوبات
         if action == "penalty_durations":
             await CallbackHandlers._handle_penalty_durations(update, context, query, chat_id, user_id, lang)
             return
 
-        # ✅ معالجة إعدادات الفيضان الفرعية
         if action == "antiflood_messages":
             StateManager.set(user_id, UserState.WAIT_ANTIFLOOD_MESSAGES)
             context.user_data['sec_chat'] = chat_id
@@ -2198,7 +2194,6 @@ class CallbackHandlers:
                 await CallbackHandlers._handle_antiflood_settings(update, context, query, chat_id, user_id, lang)
             return
 
-        # ✅ إعدادات الوضع الليلي الفرعية
         if action == "night_start":
             StateManager.set(user_id, UserState.WAIT_NIGHT_START)
             context.user_data['sec_chat'] = chat_id
@@ -2239,7 +2234,6 @@ class CallbackHandlers:
                 await CallbackHandlers._handle_night_settings(update, context, query, chat_id, user_id, lang)
             return
 
-        # ✅ مدد العقوبات الفرعية - عرض قائمة مدد جاهزة
         if action in ("penalty_mute", "penalty_ban", "penalty_restrict"):
             ptype = action.replace("penalty_", "")
             kb = InlineKeyboardMarkup([
@@ -2262,7 +2256,6 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ تطبيق المدة المختارة على العقوبة الافتراضية
         if action == "pen_set":
             if len(parts) >= 4:
                 ptype = parts[2]
@@ -2288,7 +2281,6 @@ class CallbackHandlers:
                     await CallbackHandlers._handle_penalty_durations(update, context, query, chat_id, user_id, lang)
             return
 
-        # ✅ إدارة عقوبات المخالفات
         if action == "violation_penalties":
             kb = []
             violation_names = {
@@ -2342,7 +2334,6 @@ class CallbackHandlers:
                 await query.edit_message_text("اختر نوع العقوبة:", reply_markup=kb)
             return
 
-        # ✅ عرض قائمة مدد جاهزة لعقوبات المخالفات
         if action == "violation_pen":
             if len(parts) >= 4:
                 v_type = parts[2]
@@ -2371,7 +2362,6 @@ class CallbackHandlers:
                 await query.edit_message_text(f"⏱️ اختر مدة عقوبة {p_type} لمخالفة {v_type}:", reply_markup=kb)
             return
 
-        # ✅ تطبيق المدة المختارة على عقوبة المخالفة
         if action == "violation_dur":
             if len(parts) >= 5:
                 v_type = parts[2]
@@ -2398,7 +2388,6 @@ class CallbackHandlers:
         except BadRequest:
             pass
 
-    # ✅ دوال جديدة لمعالجة إعدادات الأمان
     @staticmethod
     async def _handle_antiflood_settings(update, context, query, chat_id, user_id, lang):
         settings = await DB.get_security_settings(chat_id)
@@ -2600,6 +2589,19 @@ class CallbackHandlers:
             text = f"👥 {stats.get('users',0)} مستخدم\n📡 {stats.get('channels',0)} قناة\n👥 {stats.get('groups',0)} مجموعة\n💎 {stats.get('active_subs',0)} اشتراك نشط"
             await query.edit_message_text(text)
 
+        elif data == "admin_uptime":
+            try:
+                m = METRICS.get_stats()
+                up_sec = m.get('uptime_seconds', 0)
+                days, rem = divmod(up_sec, 86400)
+                hours, rem = divmod(rem, 3600)
+                mins, secs = divmod(rem, 60)
+                text = "⏳ **فترة تشغيل البوت**\n\n"
+                text += f"🕒 {int(days)} يوم, {int(hours)} ساعة, {int(mins)} دقيقة, {int(secs)} ثانية"
+            except Exception as e:
+                text = f"❌ تعذر حساب وقت التشغيل: {e}"
+            await query.edit_message_text(text)
+
         elif data == CB.ADMIN_METRICS:
             m = METRICS.get_stats()
             await query.edit_message_text(f"📊 API: {m.get('api_calls_last_hour', 0)}\n⚠️ أخطاء: {m.get('errors_last_hour', 0)}")
@@ -2748,7 +2750,6 @@ class CallbackHandlers:
         elif data in (CB.ADMIN_IMPORT_REPLIES, CB.ADMIN_IMPORT_GITHUB):
             await CallbackHandlers._handle_import(update, context, query, user_id)
 
-        # ✅ أزرار الفواتير وسجلات الدفع
         elif data == CB.ADMIN_INVOICES:
             invoices = await DB.fetchall(
                 "SELECT number, user_id, plan_id, amount, status, created_at FROM invoices ORDER BY id DESC LIMIT 20"
@@ -2947,7 +2948,6 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ مسح الحالة السابقة قبل تعيين حالة جديدة
         StateManager.clear(user_id)
 
         if action == "min":
@@ -3123,7 +3123,6 @@ class CallbackHandlers:
                 pass
             return
 
-        # ✅ التحقق من نوع العقوبة
         if penalty not in DB.VALID_PENALTY_TYPES:
             try:
                 await query.answer("❌ نوع عقوبة غير صالح", show_alert=True)
@@ -3289,7 +3288,6 @@ class MessageHandlers:
                     StateManager.clear(user_id)
                     return
 
-                # ✅ التحقق من البوت مشرف مع معالجة "Member list is inaccessible"
                 try:
                     bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
                 except Exception as e:
@@ -3309,7 +3307,6 @@ class MessageHandlers:
                     StateManager.clear(user_id)
                     return
 
-                # ✅ التحقق من صلاحية المستخدم
                 try:
                     user_member = await context.bot.get_chat_member(chat.id, user_id)
                 except Exception as e:
@@ -3984,7 +3981,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # الرسالة الافتراضية
         await CommandHandlers.start(update, context)
 
     @staticmethod
@@ -3998,6 +3994,8 @@ class MessageHandlers:
         text = update.message.text or ""
         if update.effective_user.is_bot:
             return
+
+        logger.info(f"🔍 handle_group: text={text[:30]}, replies_loaded={len(_REPLIES_FROM_FILE)}")
 
         locked = await DB.fetchone("SELECT locked FROM chat_locks WHERE chat_id=?", (chat_id,))
         if locked and locked[0] == 1:
@@ -4015,6 +4013,8 @@ class MessageHandlers:
         if await is_authorized_in_group(context.bot, chat_id, update.effective_user.id):
             ars = await DB.get_auto_reply_settings(chat_id)
             if ars.get('enabled', False):
+                if not _REPLIES_FROM_FILE:
+                    reload_replies_from_file()
                 reply = get_reply_from_file(text.lower().strip())
                 if not reply:
                     reply_data = await DB.get_auto_reply(text.lower().strip(), chat_id)
@@ -4059,6 +4059,8 @@ class MessageHandlers:
 
         ars = await DB.get_auto_reply_settings(chat_id)
         if ars.get('enabled', False):
+            if not _REPLIES_FROM_FILE:
+                reload_replies_from_file()
             reply = get_reply_from_file(text.lower().strip())
             if not reply:
                 reply_data = await DB.get_auto_reply(text.lower().strip(), chat_id)
@@ -4137,16 +4139,13 @@ async def apply_violation_penalty(context, chat_id, user_id, violation_type, rea
     if await is_authorized_in_group(context.bot, chat_id, user_id):
         return
 
-    # زيادة تحذيرات المستخدم (تُستخدم كعداد للمخالفات)
     warnings = await DB.add_user_warning(user_id, chat_id)
 
-    # محاولة الحصول على عقوبة مخصصة لنوع المخالفة
     rule = await DB.get_violation_penalty(chat_id, violation_type)
     if not rule:
-        # إذا لم توجد عقوبة مخصصة، استخدم العقوبة الافتراضية من إعدادات التحذير (warn_penalty)
         settings = await DB.get_security_settings(chat_id)
         penalty_type = settings.get('warn_penalty', 'ban')
-        duration_seconds = 0  # دائم افتراضيًا
+        duration_seconds = 0
     else:
         penalty_type = rule['penalty_type']
         duration_seconds = rule['duration_seconds']
@@ -4163,7 +4162,6 @@ async def apply_violation_penalty(context, chat_id, user_id, violation_type, rea
             pass
         return
 
-    # تطبيق العقوبة
     try:
         if penalty_type in ('ban', 'mute', 'restrict'):
             until_date = TimeUtils.utc_now() + timedelta(seconds=duration_seconds) if duration_seconds > 0 else None
@@ -4181,7 +4179,6 @@ async def apply_violation_penalty(context, chat_id, user_id, violation_type, rea
                     permissions=ChatPermissions(can_send_messages=False, can_send_media_messages=False),
                     until_date=until_date
                 )
-            # تسجيل العقوبة في قاعدة البيانات
             await DB.add_penalty(
                 user_id=user_id,
                 chat_id=chat_id,
@@ -4190,7 +4187,6 @@ async def apply_violation_penalty(context, chat_id, user_id, violation_type, rea
                 reason=reason,
                 issued_by=context.bot.id
             )
-            # إعادة تعيين التحذيرات بعد العقوبة
             await DB.reset_user_warnings(user_id, chat_id)
         else:
             logger.error(f"❌ نوع عقوبة غير صالح في apply_violation_penalty: {penalty_type}")
