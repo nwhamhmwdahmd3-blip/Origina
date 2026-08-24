@@ -3,6 +3,10 @@
 
 """
 database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية الكاملة)
+- جميع الإصلاحات الأمنية
+- تحسينات الأداء
+- قيم افتراضية لـ CONFIG
+- التحقق من صحة البيانات
 """
 
 import sqlite3
@@ -22,11 +26,13 @@ from config import PATHS, CONFIG
 
 logger = logging.getLogger(__name__)
 
+# قيم افتراضية
 MAX_GLOBAL_BANNED_WORDS = getattr(CONFIG, 'MAX_GLOBAL_BANNED_WORDS', 100)
 MAX_DAILY_REFERRALS = getattr(CONFIG, 'MAX_DAILY_REFERRALS', 10)
 
 
 def generate_referral_code(length: int = 8) -> str:
+    """توليد رمز إحالة آمن بدون أحرف خاصة"""
     alphabet = string.ascii_uppercase + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
@@ -692,7 +698,7 @@ class Database:
                 imported += 1
             logger.info(f"✅ تم استيراد {imported} كلمة محظورة من ملف banned_words.py")
         except ImportError:
-            logger.info("ℹ️ لا يوجد ملف banned_words.py")
+            logger.info("ℹ️ لا يوجد ملف banned_words.py، سيتم تخطي استيراد الكلمات المحظورة")
         except Exception as e:
             logger.error(f"❌ خطأ في استيراد الكلمات المحظورة: {e}")
 
@@ -872,7 +878,6 @@ class Database:
                     """, (user_id,))
                     plan_row = await plan_row.fetchone()
                     
-                    # ✅ السماح للمستخدم الجديد أو المطور بقناة واحدة
                     if not plan_row:
                         if user_id == CONFIG.PRIMARY_OWNER_ID:
                             max_channels = 999999
@@ -2330,3 +2335,4 @@ async def get_db() -> Database:
 
 async def initialize_db() -> None:
     await DB.initialize()
+
