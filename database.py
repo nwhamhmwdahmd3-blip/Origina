@@ -814,10 +814,10 @@ class Database:
             async with self._lock:
                 if await self.has_used_trial(user_id):
                     return 0
-                
+
                 days = 30
                 success = await self.grant_subscription_days(user_id, days, provider='trial')
-                
+
                 if success:
                     await self.execute("UPDATE users SET trial_used=1 WHERE user_id=?", (user_id,))
                     return days
@@ -865,7 +865,7 @@ class Database:
                 return None
         except (ValueError, TypeError):
             return None
-        
+
         try:
             async with self._lock:
                 async with self._get_connection() as conn:
@@ -1479,7 +1479,7 @@ class Database:
                     AND sub.end_date > datetime('now')
               )
         """)
-        
+
         result = []
         now = TimeUtils.utc_now()
         for ch in active_channels:
@@ -1489,7 +1489,7 @@ class Database:
                 result.append(ch_dict)
                 if len(result) >= limit:
                     break
-        
+
         return result
 
     # ========= دوال التذاكر =========
@@ -1525,7 +1525,7 @@ class Database:
             async with self._get_connection() as conn:
                 start_of_day = TimeUtils.utc_now().replace(hour=0, minute=0, second=0, microsecond=0).strftime('%Y-%m-%d %H:%M:%S')
                 end_of_day = (TimeUtils.utc_now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-                
+
                 count_row = await conn.execute(
                     "SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND created_at >= ? AND created_at < ?",
                     (referrer_id, start_of_day, end_of_day)
@@ -1567,15 +1567,18 @@ class Database:
         async with self._get_connection() as conn:
             total = (await (await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))).fetchone())[0]
             claimed = (await (await conn.execute("SELECT COALESCE(SUM(claimed_reward_days), 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
-            total_reward = (await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
+            row = await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone()
+            total_reward = row[0] if row else 0
         return {'total': total, 'claimed': claimed, 'available': total_reward - claimed}
 
     async def claim_referral_reward(self, user_id: int) -> int:
         try:
             async with self._lock:
                 async with self._get_connection() as conn:
-                    total_reward = (await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
-                    claimed = (await (await conn.execute("SELECT COALESCE(claimed_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
+                    row = await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone()
+                    total_reward = row[0] if row else 0
+                    row = await (await conn.execute("SELECT COALESCE(claimed_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone()
+                    claimed = row[0] if row else 0
                     available = total_reward - claimed
                     if available <= 0:
                         return 0
@@ -1643,7 +1646,7 @@ class Database:
             WHERE s.status = 'active' AND s.end_date > datetime('now')
             GROUP BY s.user_id
         """)
-        
+
         result = []
         now = TimeUtils.utc_now()
         for user in active_users:
@@ -1659,7 +1662,7 @@ class Database:
                 user_dict['language'] = await self.get_user_language(user_dict['user_id'])
                 user_dict['last_reminder_sent'] = settings.get('last_reminder_sent')
                 result.append(user_dict)
-        
+
         return result
 
     # ========= دوال المسابقات =========
@@ -1991,7 +1994,7 @@ class Database:
         if not plan:
             logger.error(f"❌ Plan not found: {plan_id}")
             return None
-        
+
         number = f"INV-{TimeUtils.utc_now().strftime('%Y%m')}-{secrets.token_hex(4).upper()}"
         await self.execute(
             "INSERT INTO invoices (number, user_id, plan_id, amount, currency, status, provider, created_at) VALUES (?,?,?,?,?,?,?,?)",
