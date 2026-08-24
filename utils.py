@@ -13,6 +13,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - fetch_json_from_url مع raise_for_status
 - إصلاح reload_replies_from_file
 - تعريف _REPLIES_FROM_FILE
+- تحسين get_reply_from_file لدعم النصوص متعددة الأسطر
 """
 
 import asyncio
@@ -1088,16 +1089,33 @@ def get_reply_from_file(keyword: str) -> Optional[str]:
     if not _REPLIES_FROM_FILE or not keyword:
         return None
     keyword = keyword.lower().strip()
-    if keyword in _REPLIES_FROM_FILE:
-        replies = _REPLIES_FROM_FILE[keyword]
-        return random.choice(replies) if replies else None
-    keyword_words = keyword.split()
+
+    # تقسيم النص إلى أسطر
+    lines = keyword.split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # محاولة تطابق السطر كاملاً
+        if line in _REPLIES_FROM_FILE:
+            replies = _REPLIES_FROM_FILE[line]
+            return random.choice(replies) if replies else None
+
+        # تقسيم السطر إلى كلمات والبحث عن تطابق أي كلمة
+        words = line.split()
+        for word in words:
+            if word in _REPLIES_FROM_FILE:
+                replies = _REPLIES_FROM_FILE[word]
+                return random.choice(replies) if replies else None
+
+    # تطابق جزئي: البحث عن أي كلمة رئيسية تظهر في النص
     for key, replies in _REPLIES_FROM_FILE.items():
         if not isinstance(replies, list) or not replies:
             continue
-        for word in keyword_words:
-            if len(word) > 2 and re.search(rf'\b{re.escape(word)}\b', key):
-                return random.choice(replies)
+        # استخدام حدود الكلمات لتفادي تطابق جزئي غير مقصود
+        if re.search(rf'\b{re.escape(key)}\b', keyword):
+            return random.choice(replies)
+
     return None
 
 def reload_replies_from_file() -> dict:
