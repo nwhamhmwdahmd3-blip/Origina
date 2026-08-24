@@ -3,10 +3,6 @@
 
 """
 database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية الكاملة)
-- جميع الإصلاحات الأمنية
-- تحسينات الأداء
-- قيم افتراضية لـ CONFIG
-- التحقق من صحة البيانات
 """
 
 import sqlite3
@@ -26,13 +22,11 @@ from config import PATHS, CONFIG
 
 logger = logging.getLogger(__name__)
 
-# قيم افتراضية
 MAX_GLOBAL_BANNED_WORDS = getattr(CONFIG, 'MAX_GLOBAL_BANNED_WORDS', 100)
 MAX_DAILY_REFERRALS = getattr(CONFIG, 'MAX_DAILY_REFERRALS', 10)
 
 
 def generate_referral_code(length: int = 8) -> str:
-    """توليد رمز إحالة آمن بدون أحرف خاصة"""
     alphabet = string.ascii_uppercase + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
@@ -698,7 +692,7 @@ class Database:
                 imported += 1
             logger.info(f"✅ تم استيراد {imported} كلمة محظورة من ملف banned_words.py")
         except ImportError:
-            logger.info("ℹ️ لا يوجد ملف banned_words.py، سيتم تخطي استيراد الكلمات المحظورة")
+            logger.info("ℹ️ لا يوجد ملف banned_words.py")
         except Exception as e:
             logger.error(f"❌ خطأ في استيراد الكلمات المحظورة: {e}")
 
@@ -809,7 +803,6 @@ class Database:
         row = await self.fetchone("SELECT trial_used FROM users WHERE user_id=?", (user_id,))
         return row and row['trial_used'] == 1
 
-    # ✅ الإصلاح: بدون قفل مزدوج
     async def activate_trial(self, user_id: int) -> int:
         try:
             if await self.has_used_trial(user_id):
@@ -879,12 +872,11 @@ class Database:
                     """, (user_id,))
                     plan_row = await plan_row.fetchone()
                     
-                    # ✅ السماح للمستخدم الجديد أو المطور بإضافة قناة واحدة على الأقل
+                    # ✅ السماح للمستخدم الجديد أو المطور بقناة واحدة
                     if not plan_row:
                         if user_id == CONFIG.PRIMARY_OWNER_ID:
                             max_channels = 999999
                         else:
-                            # السماح بقناة واحدة مجانية للمستخدمين الجدد
                             max_channels = 1
                     else:
                         max_channels = plan_row['max_channels']
@@ -1036,16 +1028,22 @@ class Database:
                         LIMIT 1
                     """, (user_id,))
                     plan_row = await plan_row.fetchone()
+                    
                     if not plan_row:
-                        return 0
+                        if user_id == CONFIG.PRIMARY_OWNER_ID:
+                            max_posts = 999999
+                        else:
+                            max_posts = 10
+                    else:
+                        max_posts = plan_row['max_posts']
 
-                    if plan_row['max_posts'] is not None:
+                    if max_posts is not None:
                         count_row = await conn.execute(
                             "SELECT COUNT(*) FROM posts WHERE channel_db_id = ?",
                             (channel_db_id,)
                         )
                         count_row = await count_row.fetchone()
-                        if count_row[0] + len(posts) > plan_row['max_posts']:
+                        if count_row[0] + len(posts) > max_posts:
                             return 0
 
                     total = 0
