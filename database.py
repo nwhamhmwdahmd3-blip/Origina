@@ -8,6 +8,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - إضافة حد أقصى للكلمات المحظورة العامة
 - تحسينات في الأداء (استخدام asyncio.to_thread)
 - جميع الجداول والدوال الأساسية
+- إصلاح دوال الإحالات للتعامل مع عدم وجود بيانات
 """
 
 import sqlite3
@@ -702,6 +703,12 @@ class Database:
                 await conn.execute(
                     "INSERT OR IGNORE INTO user_points (user_id, points, last_updated) VALUES (?,0,?)",
                     (user_id, TimeUtils.sql_iso())
+                )
+                # ✅ إضافة: إنشاء صف في referral_rewards عند التسجيل
+                await conn.execute(
+                    "INSERT OR IGNORE INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) "
+                    "VALUES (?, 0, 0, 0, NULL)",
+                    (user_id,)
                 )
                 await conn.commit()
             return True
@@ -1525,7 +1532,7 @@ class Database:
         await self.execute("DELETE FROM support_tickets")
         return True
 
-    # ========= دوال الإحالات =========
+    # ========= دوال الإحالات (مُصلحة) =========
     async def add_referral(self, referrer_id: int, referred_id: int) -> bool:
         if referrer_id == referred_id:
             return False
@@ -1536,8 +1543,10 @@ class Database:
                     "SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND date(created_at)=?",
                     (referrer_id, today)
                 )
-                count = (await count_row.fetchone())[0]
-                if count >= CONFIG.MAX_DAILY_REFERRALS:
+                count_result = await count_row.fetchone()
+                count = count_result[0] if count_result else 0
+                
+                if count >= getattr(CONFIG, 'MAX_DAILY_REFERRALS', 10):
                     logger.warning(f"⚠️ User {referrer_id} reached daily referral limit")
                     return False
 
@@ -1571,18 +1580,63 @@ class Database:
 
     async def get_referral_stats(self, user_id: int) -> Dict:
         async with self._get_connection() as conn:
-            total = (await (await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))).fetchone())[0]
-            claimed = (await (await conn.execute("SELECT COALESCE(SUM(claimed_reward_days), 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
-            total_reward = (await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
-        return {'total': total, 'claimed': claimed, 'available': total_reward - claimed}
+            # ✅ ضمان وجود صف في referral_rewards
+            await conn.execute(
+                "INSERT OR IGNORE INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) "
+                "VALUES (?, 0, 0, 0, NULL)",
+                (user_id,)
+            )
+            
+            # الحصول على إجمالي الإحالات
+            total_row = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
+            total_result = await total_row.fetchone()
+            total = total_result[0] if total_result else 0
+            
+            # الحصول على المكافآت
+            reward_row = await conn.execute(
+                "SELECT COALESCE(total_reward_days, 0) as total_reward, COALESCE(claimed_reward_days, 0) as claimed "
+                "FROM referral_rewards WHERE user_id = ?",
+                (user_id,)
+            )
+            reward_result = await reward_row.fetchone()
+            
+            total_reward = reward_result['total_reward'] if reward_result else 0
+            claimed = reward_result['claimed'] if reward_result else 0
+            
+            await conn.commit()
+        
+        return {
+            'total': total, 
+            'claimed': claimed, 
+            'available': max(0, total_reward - claimed)
+        }
 
     async def claim_referral_reward(self, user_id: int) -> int:
         try:
             async with self._lock:
                 async with self._get_connection() as conn:
-                    total_reward = (await (await conn.execute("SELECT COALESCE(total_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
-                    claimed = (await (await conn.execute("SELECT COALESCE(claimed_reward_days, 0) FROM referral_rewards WHERE user_id = ?", (user_id,))).fetchone())[0]
-                    available = total_reward - claimed
+                    # ✅ ضمان وجود صف في referral_rewards
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) "
+                        "VALUES (?, 0, 0, 0, NULL)",
+                        (user_id,)
+                    )
+                    
+                    # الحصول على المكافآت المتاحة
+                    reward_row = await conn.execute(
+                        "SELECT COALESCE(total_reward_days, 0) as total_reward, COALESCE(claimed_reward_days, 0) as claimed "
+                        "FROM referral_rewards WHERE user_id = ?",
+                        (user_id,)
+                    )
+                    reward_result = await reward_row.fetchone()
+                    
+                    if not reward_result:
+                        return 0
+                    
+                    total_reward = reward_result['total_reward'] or 0
+                    claimed = reward_result['claimed'] or 0
+                    available = max(0, total_reward - claimed)
+                    
                     if available <= 0:
                         return 0
 
