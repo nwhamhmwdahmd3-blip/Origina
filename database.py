@@ -7,6 +7,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - تحسينات الأداء
 - قيم افتراضية لـ CONFIG
 - التحقق من صحة البيانات
+- ✅ activate_trial بالنمط الأصلي (تمنح 30 يوم أو تحتفظ بالأطول)
 """
 
 import sqlite3
@@ -809,18 +810,54 @@ class Database:
         row = await self.fetchone("SELECT trial_used FROM users WHERE user_id=?", (user_id,))
         return row and row['trial_used'] == 1
 
+    # ✅ النسخة الأصلية من activate_trial
     async def activate_trial(self, user_id: int) -> int:
+        """تفعيل التجربة المجانية بذكاء: تمنح 30 يوماً أو تحتفظ بالاشتراك الأطول."""
         try:
-            if await self.has_used_trial(user_id):
-                return 0
+            async with self._lock:
+                now = TimeUtils.utc_now()
+                trial_end = now + timedelta(days=30)
 
-            days = 30
-            success = await self.grant_subscription_days(user_id, days, provider='trial')
+                async with self._get_connection() as conn:
+                    row = await conn.execute("""
+                        SELECT MAX(end_date) FROM subscriptions
+                        WHERE user_id=? AND status='active' AND end_date > datetime('now')
+                    """, (user_id,))
+                    row = await row.fetchone()
+                    current_end = TimeUtils.safe_parse_iso(row[0]) if row and row[0] else None
 
-            if success:
-                await self.execute("UPDATE users SET trial_used=1 WHERE user_id=?", (user_id,))
-                return days
-            return 0
+                    if current_end and current_end > trial_end:
+                        new_end = current_end
+                        days_granted = 0
+                    else:
+                        new_end = trial_end
+                        days_granted = 30
+
+                    if days_granted > 0:
+                        await conn.execute(
+                            "UPDATE users SET trial_used=1, subscription_end=? WHERE user_id=?",
+                            (new_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
+                        )
+                        await conn.execute(
+                            """INSERT INTO subscriptions 
+                               (user_id, plan_id, status, start_date, end_date, provider, created_at, updated_at)
+                               VALUES (?,?,?,?,?,?,?,?)""",
+                            (user_id, 1, 'active', TimeUtils.sql_iso(),
+                             new_end.strftime('%Y-%m-%d %H:%M:%S'), 'trial',
+                             TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                        )
+                    else:
+                        await conn.execute(
+                            "UPDATE users SET subscription_end=? WHERE user_id=?",
+                            (current_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
+                        )
+                        await conn.execute(
+                            "UPDATE users SET trial_used=1 WHERE user_id=?",
+                            (user_id,)
+                        )
+
+                    await conn.commit()
+                return days_granted
         except Exception as e:
             logger.error(f"❌ Error in activate_trial: {e}", exc_info=True)
             return 0
@@ -2335,4 +2372,3 @@ async def get_db() -> Database:
 
 async def initialize_db() -> None:
     await DB.initialize()
-
