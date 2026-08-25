@@ -10,6 +10,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ جميع الجداول والدوال الأساسية
 - ✅ إصلاح دوال الإحالات للتعامل مع عدم وجود بيانات
 - ✅ إصلاح get_channels_to_publish لدعم إعادة التدوير التلقائي
+- ✅ إعادة تدوير مباشرة عند نفاد المنشورات
 """
 
 import sqlite3
@@ -705,7 +706,6 @@ class Database:
                     "INSERT OR IGNORE INTO user_points (user_id, points, last_updated) VALUES (?,0,?)",
                     (user_id, TimeUtils.sql_iso())
                 )
-                # ✅ إنشاء صف في referral_rewards عند التسجيل
                 await conn.execute(
                     "INSERT OR IGNORE INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) "
                     "VALUES (?, 0, 0, 0, NULL)",
@@ -1087,6 +1087,9 @@ class Database:
         return row[0] if row else 0
 
     async def get_next_post(self, channel_db_id: int) -> Optional[Dict]:
+        """جلب المنشور التالي مع إعادة تدوير مباشرة عند النفاد"""
+        
+        # 1. محاولة جلب منشور غير منشور
         row = await self.fetchone("""
             SELECT p.id, p.text, p.media_type, p.media_file_id
             FROM posts p
@@ -1096,6 +1099,34 @@ class Database:
               AND uc.banned = 0
             ORDER BY p.created_at ASC LIMIT 1
         """, (channel_db_id,))
+        
+        if row:
+            return dict(row)
+        
+        # 2. التحقق من تفعيل إعادة التدوير
+        user_row = await self.fetchone("""
+            SELECT u.auto_recycle FROM users u
+            JOIN user_channels uc ON u.user_id = uc.user_id
+            WHERE uc.id = ?
+        """, (channel_db_id,))
+        
+        if not user_row or user_row[0] != 1:
+            return None
+        
+        # 3. إعادة تدوير جميع المنشورات المنشورة دفعة واحدة
+        await self.execute("""
+            UPDATE posts SET published = 0, published_at = NULL, fail_count = 0
+            WHERE channel_db_id = ? AND published = 1
+        """, (channel_db_id,))
+        
+        # 4. جلب أول منشور من البداية
+        row = await self.fetchone("""
+            SELECT p.id, p.text, p.media_type, p.media_file_id
+            FROM posts p
+            WHERE p.channel_db_id = ? AND p.published = 0
+            ORDER BY p.created_at ASC LIMIT 1
+        """, (channel_db_id,))
+        
         return dict(row) if row else None
 
     async def get_user_posts(self, user_id: int, channel_db_id: int, limit: int = 15) -> List[Dict]:
