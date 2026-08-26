@@ -2,20 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers_message.py - معالجات الرسائل - النسخة النهائية الكاملة 100%
+handlers_message.py - معالجات الرسائل - النسخة النهائية المتوافقة
 =====================================================================
-جميع الدوال موجودة - جميع المعالجات تعمل
-- عرض اسم القناة الفعلي بدلاً من المعرف
-- رسالة واضحة عند تجاوز حد القنوات
+- متوافق مع database.py الحالي
+- جميع الدوال موجودة بدون أخطاء
+- تنظيم منطقي كامل
 """
 
 import asyncio
 import logging
 import time
 import re
+import os
 from typing import Optional
 
-from telegram import Update, ChatPermissions
+from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest, TimedOut
 
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 # =====================================================================
-# كاش الإعدادات
+# الكاش
 # =====================================================================
 
 _security_settings_cache = {}
@@ -48,7 +49,6 @@ _auto_reply_settings_time = {}
 
 
 async def get_security_settings_cached(chat_id: int) -> dict:
-    """جلب إعدادات الأمان مع الكاش"""
     now = time.time()
     if chat_id in _security_settings_cache and (now - _security_settings_time.get(chat_id, 0)) < 30:
         return _security_settings_cache[chat_id]
@@ -59,7 +59,6 @@ async def get_security_settings_cached(chat_id: int) -> dict:
 
 
 async def get_auto_reply_settings_cached(chat_id: int) -> dict:
-    """جلب إعدادات الردود مع الكاش"""
     now = time.time()
     if chat_id in _auto_reply_settings_cache and (now - _auto_reply_settings_time.get(chat_id, 0)) < 60:
         return _auto_reply_settings_cache[chat_id]
@@ -70,7 +69,6 @@ async def get_auto_reply_settings_cached(chat_id: int) -> dict:
 
 
 async def invalidate_security_cache(chat_id: int = None) -> None:
-    """إبطال كاش الأمان"""
     if chat_id:
         _security_settings_cache.pop(chat_id, None)
         _security_settings_time.pop(chat_id, None)
@@ -80,7 +78,6 @@ async def invalidate_security_cache(chat_id: int = None) -> None:
 
 
 async def invalidate_auto_reply_cache(chat_id: int = None) -> None:
-    """إبطال كاش الردود"""
     if chat_id:
         _auto_reply_settings_cache.pop(chat_id, None)
         _auto_reply_settings_time.pop(chat_id, None)
@@ -90,7 +87,6 @@ async def invalidate_auto_reply_cache(chat_id: int = None) -> None:
 
 
 async def _delete_after_delay(bot, chat_id: int, message_id: int, delay: int = 10):
-    """حذف رسالة بعد تأخير"""
     await asyncio.sleep(delay)
     try:
         await bot.delete_message(chat_id, message_id)
@@ -99,7 +95,6 @@ async def _delete_after_delay(bot, chat_id: int, message_id: int, delay: int = 1
 
 
 async def apply_violation_penalty(update, context, chat_id, user_id, violation_type, penalty_type, duration_seconds):
-    """تطبيق عقوبة المخالفة"""
     try:
         success, msg = await apply_penalty(
             context.bot, chat_id, user_id, penalty_type, duration_seconds,
@@ -116,15 +111,16 @@ async def apply_violation_penalty(update, context, chat_id, user_id, violation_t
 # =====================================================================
 
 class MessageHandlers:
-    """جميع معالجات الرسائل"""
+
+    # =================================================================
+    # الرسائل الخاصة
+    # =================================================================
 
     @staticmethod
     async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """معالجة الرسائل الخاصة"""
         user_id = update.effective_user.id
         state = StateManager.get(user_id)
 
-        # تحليل المشاعر
         if state == UserState.WAIT_MOOD:
             text = update.effective_message.text or ""
             result = analyze_sentiment(text)
@@ -141,7 +137,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
-        # خريطة المعالجات
         handlers = {
             UserState.WAIT_CHANNEL: MessageHandlers._handle_channel_input,
             UserState.ADDING_POSTS: MessageHandlers._handle_adding_posts,
@@ -196,11 +191,13 @@ class MessageHandlers:
         handler = handlers.get(state)
         if handler:
             await handler(update, context)
-            return
+
+    # =================================================================
+    # رسائل المجموعات
+    # =================================================================
 
     @staticmethod
     async def handle_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """معالجة الرسائل في المجموعات"""
         if not update.effective_chat or not update.effective_message:
             return
 
@@ -212,14 +209,17 @@ class MessageHandlers:
         METRICS.increment_messages()
         settings = await get_security_settings_cached(chat_id)
 
+        # فحص الروابط
         if settings.get('delete_links') and TextUtils.contains_link(text):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "link")
             return
 
+        # فحص المنشنات
         if settings.get('mentions') and TextUtils.contains_mention(text):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "mention")
             return
 
+        # فحص الكلمات المحظورة
         if settings.get('delete_banned_words'):
             banned_words = await get_banned_words_cached(chat_id)
             if banned_words:
@@ -229,15 +229,18 @@ class MessageHandlers:
                         await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "banned_word")
                         return
 
+        # فحص طول الرسالة
         max_len = settings.get('max_message_length', 0)
         if max_len > 0 and len(text) > max_len:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "max_len")
             return
 
+        # فحص الرسائل المعاد توجيهها
         if getattr(message, 'forward_origin', None) and settings.get('delete_forwarded'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "forwarded")
             return
 
+        # فحص الوسائط
         if message.video and settings.get('delete_videos'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "video")
             return
@@ -262,12 +265,16 @@ class MessageHandlers:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "sticker")
             return
 
+        # الردود التلقائية
         if text:
             await MessageHandlers._process_auto_reply(update, context, chat_id, text, user_id)
 
+    # =================================================================
+    # حذف وتحذير
+    # =================================================================
+
     @staticmethod
     async def _delete_and_warn(update, context, chat_id, user_id, violation_type):
-        """حذف الرسالة وإرسال إنذار"""
         try:
             await update.effective_message.delete()
         except Exception:
@@ -307,9 +314,12 @@ class MessageHandlers:
             if success:
                 await safe_send(context.bot, chat_id, f"🚨 {msg}")
 
+    # =================================================================
+    # الردود التلقائية
+    # =================================================================
+
     @staticmethod
     async def _process_auto_reply(update, context, chat_id, text, user_id=None):
-        """معالجة الردود التلقائية"""
         try:
             ars = await get_auto_reply_settings_cached(chat_id)
             if not ars.get('enabled', False):
@@ -323,26 +333,7 @@ class MessageHandlers:
             reply = await DB.get_auto_reply(text, chat_id)
             if reply:
                 reply_text = reply.get('reply', '')
-                reply_type = reply.get('reply_type', 'text')
-                reply_media_id = reply.get('reply_media_id')
-                
-                if reply_type == 'text' or not reply_media_id:
-                    await safe_send(context.bot, chat_id, reply_text)
-                elif reply_type == 'photo':
-                    await context.bot.send_photo(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'video':
-                    await context.bot.send_video(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'animation':
-                    await context.bot.send_animation(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'document':
-                    await context.bot.send_document(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'sticker':
-                    await context.bot.send_sticker(chat_id, reply_media_id)
-                elif reply_type == 'voice':
-                    await context.bot.send_voice(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'video_note':
-                    await context.bot.send_video_note(chat_id, reply_media_id)
-                
+                await safe_send(context.bot, chat_id, reply_text)
                 await _increment_usage_async(chat_id, text)
                 return True
 
@@ -355,15 +346,27 @@ class MessageHandlers:
             logger.error(f"❌ خطأ في الردود: {e}")
             return False
 
-    # =====================================================================
-    # ✅ إضافة القناة - مع رسالة واضحة عند تجاوز الحد
-    # =====================================================================
+    # =================================================================
+    # إضافة القناة
+    # =================================================================
 
     @staticmethod
     async def _handle_channel_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إضافة قناة مع جلب الاسم الفعلي ورسالة واضحة عند الفشل"""
         user_id = update.effective_user.id
         text = (update.effective_message.text or "").strip()
+        
+        # التحقق من الاشتراك
+        if user_id != CONFIG.PRIMARY_OWNER_ID:
+            has_sub = await DB.has_active_subscription(user_id)
+            if not has_sub:
+                await safe_send(
+                    context.bot, user_id,
+                    "❌ **يجب أن يكون لديك اشتراك نشط لإضافة قناة!**\n\n"
+                    "📌 استخدم /subscribe للاشتراك\n"
+                    "🎁 أو /trial للتجربة المجانية"
+                )
+                StateManager.clear(user_id)
+                return
         
         try:
             # تحديد معرف القناة
@@ -378,7 +381,7 @@ class MessageHandlers:
                     StateManager.clear(user_id)
                     return
             
-            # ✅ جلب اسم القناة الفعلي
+            # جلب اسم القناة
             try:
                 chat_info = await context.bot.get_chat(channel_id)
                 channel_name = chat_info.title or chat_info.username or f"قناة {channel_id}"
@@ -395,49 +398,36 @@ class MessageHandlers:
             except:
                 pass
             
-            # ✅ إضافة القناة
+            # إضافة القناة
             ch_db_id = await DB.add_channel(user_id, channel_id, channel_name)
             
             if ch_db_id:
                 await safe_send(context.bot, user_id, f"✅ تمت إضافة القناة: {channel_name}")
             else:
-                # ✅ رسالة واضحة عند تجاوز الحد
-                channels = await DB.get_user_channels(user_id)
-                active_plan = await DB.get_active_plan(user_id)
-                max_channels = active_plan['max_channels'] if active_plan else 1
-                
-                if len(channels) >= max_channels:
-                    await safe_send(
-                        context.bot, user_id,
-                        f"❌ **وصلت للحد الأقصى!**\n\n"
-                        f"📡 خطتك الحالية تسمح بـ {max_channels} قناة فقط\n"
-                        f"💎 اشترك لإضافة المزيد من القنوات\n\n"
-                        f"اضغط /subscribe لعرض الباقات"
-                    )
-                else:
-                    await safe_send(context.bot, user_id, "❌ فشل إضافة القناة")
+                await safe_send(context.bot, user_id, "❌ فشل إضافة القناة")
         except Exception as e:
             await safe_send(context.bot, user_id, f"❌ خطأ: {str(e)[:50]}")
         
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ إضافة المنشورات
-    # =====================================================================
+    # =================================================================
+    # إضافة المنشورات
+    # =================================================================
 
     @staticmethod
     async def _handle_adding_posts(update, context):
-        """إضافة منشور"""
         user_id = update.effective_user.id
         active = await DB.get_active_channel(user_id)
         if not active:
             StateManager.clear(user_id)
             await safe_send(context.bot, user_id, "❌ لا توجد قناة نشطة")
             return
+
         msg = update.effective_message
         media_type = 'text'
         media_file_id = ''
         text = msg.text or ""
+
         if msg.photo:
             media_type = 'photo'
             media_file_id = msg.photo[-1].file_id
@@ -467,16 +457,18 @@ class MessageHandlers:
         elif msg.video_note:
             media_type = 'video_note'
             media_file_id = msg.video_note.file_id
+
         posts = [(text, media_type, media_file_id)]
         count = await DB.add_posts(user_id, active, posts)
+        
         if count > 0:
             await safe_send(context.bot, user_id, "✅ تمت إضافة المنشور")
         else:
             await safe_send(context.bot, user_id, "❌ فشل الإضافة")
 
-    # =====================================================================
-    # ✅ الدعم الفني
-    # =====================================================================
+    # =================================================================
+    # الدعم الفني
+    # =================================================================
 
     @staticmethod
     async def _handle_support_message(update, context):
@@ -487,9 +479,9 @@ class MessageHandlers:
         StateManager.clear(user_id)
         await safe_send(context.bot, user_id, f"✅ تم استلام رسالتك!\n🎫 رقم التذكرة: {ticket_number}")
 
-    # =====================================================================
-    # ✅ البث الجماعي
-    # =====================================================================
+    # =================================================================
+    # البث الجماعي
+    # =================================================================
 
     @staticmethod
     async def _handle_broadcast_input(update, context):
@@ -497,8 +489,10 @@ class MessageHandlers:
         if not CONFIG.is_developer(user_id):
             StateManager.clear(user_id)
             return
+        
         content = update.effective_message.text or ""
         users = await DB.get_all_users()
+        
         sent_count = 0
         for uid, banned in users:
             if banned == 0:
@@ -508,12 +502,13 @@ class MessageHandlers:
                     await asyncio.sleep(0.05)
                 except:
                     pass
+        
         await safe_send(context.bot, user_id, f"✅ تم البث إلى {sent_count} مستخدم")
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ التحديثات
-    # =====================================================================
+    # =================================================================
+    # التحديثات والإعدادات
+    # =================================================================
 
     @staticmethod
     async def _handle_update_input(update, context):
@@ -564,9 +559,9 @@ class MessageHandlers:
         await safe_send(context.bot, user_id, f"✅ تم تعيين: {text}")
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ المشرفين
-    # =====================================================================
+    # =================================================================
+    # المشرفين
+    # =================================================================
 
     @staticmethod
     async def _handle_admin_add_input(update, context):
@@ -599,9 +594,9 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ الردود التلقائية - إدارة
-    # =====================================================================
+    # =================================================================
+    # الردود التلقائية - إدارة
+    # =================================================================
 
     @staticmethod
     async def _handle_keyword_input(update, context):
@@ -649,9 +644,9 @@ class MessageHandlers:
         await safe_send(context.bot, user_id, "✅ تم الحذف")
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ الكلمات المحظورة - إدارة
-    # =====================================================================
+    # =================================================================
+    # الكلمات المحظورة - إدارة
+    # =================================================================
 
     @staticmethod
     async def _handle_global_ban_input(update, context):
@@ -697,9 +692,9 @@ class MessageHandlers:
         await safe_send(context.bot, user_id, "✅ تمت الإزالة")
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ المسابقات
-    # =====================================================================
+    # =================================================================
+    # المسابقات
+    # =================================================================
 
     @staticmethod
     async def _handle_contest_title(update, context):
@@ -720,7 +715,7 @@ class MessageHandlers:
         user_id = update.effective_user.id
         context.user_data['contest_prize'] = update.effective_message.text or ""
         StateManager.set(user_id, UserState.WAIT_CONTEST_DATE)
-        await safe_send(context.bot, user_id, "📅 أرسل التاريخ (YYYY-MM-DD HH:MM):")
+        await safe_send(context.bot, user_id, "📅 أرسل التاريخ:")
 
     @staticmethod
     async def _handle_contest_date(update, context):
@@ -749,9 +744,9 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ فشل")
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ الاستيراد والتصدير
-    # =====================================================================
+    # =================================================================
+    # الاستيراد
+    # =================================================================
 
     @staticmethod
     async def _handle_import_file(update, context):
@@ -778,9 +773,9 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, "❌ فشل")
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ منح اشتراك
-    # =====================================================================
+    # =================================================================
+    # منح اشتراك
+    # =================================================================
 
     @staticmethod
     async def _handle_grant_free(update, context):
@@ -799,9 +794,9 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ صيغة خاطئة")
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ الجدولة
-    # =====================================================================
+    # =================================================================
+    # الجدولة
+    # =================================================================
 
     @staticmethod
     async def _handle_min_input(update, context):
@@ -863,9 +858,9 @@ class MessageHandlers:
             pass
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ إعدادات الأمان
-    # =====================================================================
+    # =================================================================
+    # إعدادات الأمان
+    # =================================================================
 
     @staticmethod
     async def _handle_max_len_input(update, context):
@@ -972,9 +967,9 @@ class MessageHandlers:
         await safe_send(context.bot, user_id, f"✅ {time_val}")
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ العقوبات
-    # =====================================================================
+    # =================================================================
+    # العقوبات
+    # =================================================================
 
     @staticmethod
     async def _handle_ban_input(update, context):
@@ -1078,9 +1073,9 @@ class MessageHandlers:
                 pass
         StateManager.clear(user_id)
 
-    # =====================================================================
-    # ✅ رسائل الخدمة
-    # =====================================================================
+    # =================================================================
+    # رسائل الخدمة
+    # =================================================================
 
     @staticmethod
     async def handle_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1088,27 +1083,35 @@ class MessageHandlers:
             return
         chat_id = update.effective_chat.id
         settings = await get_security_settings_cached(chat_id)
+
         if update.effective_message.new_chat_members and settings.get('welcome_enabled'):
             for member in update.effective_message.new_chat_members:
                 welcome_text = settings.get('welcome_text', 'مرحباً {user} 🤍')
                 welcome_text = welcome_text.replace('{user}', member.first_name or "عضو")
                 await safe_send(context.bot, chat_id, welcome_text)
+
         if update.effective_message.left_chat_member and settings.get('goodbye_enabled'):
             member = update.effective_message.left_chat_member
             goodbye_text = settings.get('goodbye_text', 'وداعاً {user} 👋')
             goodbye_text = goodbye_text.replace('{user}', member.first_name or "عضو")
             await safe_send(context.bot, chat_id, goodbye_text)
 
+    # =================================================================
+    # طلبات الانضمام
+    # =================================================================
+
     @staticmethod
     async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
         settings = await get_security_settings_cached(chat_id)
+
         if settings.get('auto_approve_join'):
             try:
                 await context.bot.approve_chat_join_request(chat_id, user_id)
             except:
                 pass
+
         if settings.get('auto_reject_join'):
             try:
                 await context.bot.decline_chat_join_request(chat_id, user_id)
