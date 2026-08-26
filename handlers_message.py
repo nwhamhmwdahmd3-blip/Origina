@@ -4,8 +4,9 @@
 """
 handlers_message.py - معالجات الرسائل - النسخة النهائية الكاملة 100%
 =====================================================================
-جميع الدوال موجودة - جميع المعالجات تعمل - إصلاح إضافة القناة
+جميع الدوال موجودة - جميع المعالجات تعمل
 - عرض اسم القناة الفعلي بدلاً من المعرف
+- رسالة واضحة عند تجاوز حد القنوات
 """
 
 import asyncio
@@ -211,17 +212,14 @@ class MessageHandlers:
         METRICS.increment_messages()
         settings = await get_security_settings_cached(chat_id)
 
-        # فحص الروابط
         if settings.get('delete_links') and TextUtils.contains_link(text):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "link")
             return
 
-        # فحص المنشنات
         if settings.get('mentions') and TextUtils.contains_mention(text):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "mention")
             return
 
-        # فحص الكلمات المحظورة
         if settings.get('delete_banned_words'):
             banned_words = await get_banned_words_cached(chat_id)
             if banned_words:
@@ -231,18 +229,15 @@ class MessageHandlers:
                         await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "banned_word")
                         return
 
-        # فحص طول الرسالة
         max_len = settings.get('max_message_length', 0)
         if max_len > 0 and len(text) > max_len:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "max_len")
             return
 
-        # فحص المعاد توجيهه
         if getattr(message, 'forward_origin', None) and settings.get('delete_forwarded'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "forwarded")
             return
 
-        # فحص الوسائط
         if message.video and settings.get('delete_videos'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "video")
             return
@@ -267,7 +262,6 @@ class MessageHandlers:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "sticker")
             return
 
-        # الردود التلقائية
         if text:
             await MessageHandlers._process_auto_reply(update, context, chat_id, text, user_id)
 
@@ -362,12 +356,12 @@ class MessageHandlers:
             return False
 
     # =====================================================================
-    # ✅ إضافة القناة - مع جلب الاسم الفعلي
+    # ✅ إضافة القناة - مع رسالة واضحة عند تجاوز الحد
     # =====================================================================
 
     @staticmethod
     async def _handle_channel_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إضافة قناة مع جلب الاسم الفعلي"""
+        """إضافة قناة مع جلب الاسم الفعلي ورسالة واضحة عند الفشل"""
         user_id = update.effective_user.id
         text = (update.effective_message.text or "").strip()
         
@@ -401,13 +395,27 @@ class MessageHandlers:
             except:
                 pass
             
-            # ✅ إضافة القناة بالاسم الفعلي
+            # ✅ إضافة القناة
             ch_db_id = await DB.add_channel(user_id, channel_id, channel_name)
             
             if ch_db_id:
                 await safe_send(context.bot, user_id, f"✅ تمت إضافة القناة: {channel_name}")
             else:
-                await safe_send(context.bot, user_id, "❌ فشل إضافة القناة")
+                # ✅ رسالة واضحة عند تجاوز الحد
+                channels = await DB.get_user_channels(user_id)
+                active_plan = await DB.get_active_plan(user_id)
+                max_channels = active_plan['max_channels'] if active_plan else 1
+                
+                if len(channels) >= max_channels:
+                    await safe_send(
+                        context.bot, user_id,
+                        f"❌ **وصلت للحد الأقصى!**\n\n"
+                        f"📡 خطتك الحالية تسمح بـ {max_channels} قناة فقط\n"
+                        f"💎 اشترك لإضافة المزيد من القنوات\n\n"
+                        f"اضغط /subscribe لعرض الباقات"
+                    )
+                else:
+                    await safe_send(context.bot, user_id, "❌ فشل إضافة القناة")
         except Exception as e:
             await safe_send(context.bot, user_id, f"❌ خطأ: {str(e)[:50]}")
         
