@@ -6,6 +6,7 @@ handlers_message.py - معالجات الرسائل (MessageHandlers) - النس
 ===================================================================================
 جميع معالجات الرسائل مع كاش للإعدادات وإصلاح الحذف التلقائي
 + ميزة تحليل المشاعر
++ إصلاح forward_date نهائياً
 """
 
 import asyncio
@@ -438,7 +439,7 @@ class MessageHandlers:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "max_len")
             return
 
-        # ✅ استخدام getattr لتجنب خطأ forward_date
+        # ✅ الإصلاح النهائي: استخدام forward_origin بدلاً من forward_date
         if getattr(message, 'forward_origin', None) and settings.get('delete_forwarded'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "forwarded")
             return
