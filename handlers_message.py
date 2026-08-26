@@ -27,6 +27,7 @@ from utils import (
     get_banned_words_cached, invalidate_banned_words_cache,
     _auto_reply_cache, get_reply_from_file, _REPLIES_FROM_FILE,
     reload_replies_from_file, _increment_usage_async,
+    fetch_json_from_url, import_auto_replies,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,20 @@ async def _delete_after_delay(bot, chat_id: int, message_id: int, delay: int = 1
         await bot.delete_message(chat_id, message_id)
     except Exception:
         pass
+
+
+async def apply_violation_penalty(update, context, chat_id, user_id, violation_type, penalty_type, duration_seconds):
+    """تطبيق عقوبة المخالفة"""
+    try:
+        success, msg = await apply_penalty(
+            context.bot, chat_id, user_id, penalty_type, duration_seconds,
+            f"مخالفة: {violation_type}",
+            context.bot.id
+        )
+        return success, msg
+    except Exception as e:
+        logger.error(f"❌ فشل تطبيق العقوبة: {e}")
+        return False, str(e)[:100]
 
 
 # =====================================================================
@@ -303,11 +318,6 @@ class MessageHandlers:
             await MessageHandlers._handle_pin_input(update, context)
             return
 
-        # إذا لم تكن هناك حالة، فقط تجاهل أو رد افتراضي
-        text = update.effective_message.text if update.effective_message else ""
-        if text and text.startswith('/'):
-            return
-
     @staticmethod
     async def handle_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """معالجة الرسائل في المجموعات"""
@@ -323,10 +333,6 @@ class MessageHandlers:
 
         # ✅ استخدام الكاش للإعدادات
         settings = await get_security_settings_cached(chat_id)
-
-        # فحص القفل
-        if settings.get('slow_mode'):
-            pass  # الوضع البطيء يتم التعامل معه في مكان آخر
 
         # فحص الروابط
         if settings.get('delete_links') and TextUtils.contains_link(text):
@@ -355,8 +361,8 @@ class MessageHandlers:
             return
 
         # فحص الوسائط
-        if message.photo and settings.get('delete_videos'):
-            await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "video")
+        if message.photo and settings.get('delete_photos', 0):
+            await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "photo")
             return
 
         if message.video and settings.get('delete_videos'):
@@ -436,10 +442,8 @@ class MessageHandlers:
         max_strikes = security_settings.get('violation_strikes', 3)
         
         if violation_count >= max_strikes:
-            success, msg = await apply_penalty(
-                context.bot, chat_id, user_id, penalty_type, duration_seconds,
-                f"تجاوز الحد الأقصى للمخالفات ({violation_count})",
-                context.bot.id
+            success, msg = await apply_violation_penalty(
+                update, context, chat_id, user_id, violation_type, penalty_type, duration_seconds
             )
             if success:
                 await safe_send(context.bot, chat_id, f"🚨 {msg}")
