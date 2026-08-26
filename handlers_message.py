@@ -5,7 +5,7 @@
 handlers_message.py - معالجات الرسائل (MessageHandlers) - النسخة الكاملة
 ===================================================================================
 جميع معالجات الرسائل مع كاش للإعدادات وإصلاح الحذف التلقائي
-+ ميزة تحليل المشاعر
++ استيراد تحليل المشاعر من replies.py
 + إصلاح forward_date نهائياً
 """
 
@@ -33,73 +33,10 @@ from utils import (
     fetch_json_from_url, import_auto_replies,
 )
 
+# ✅ استيراد تحليل المشاعر من replies.py
+from replies import analyze_sentiment
+
 logger = logging.getLogger(__name__)
-
-
-# =====================================================================
-# تحليل المشاعر
-# =====================================================================
-
-POSITIVE_WORDS = [
-    "جميل", "رائع", "ممتاز", "حلو", "حب", "فرح", "سعيد",
-    "مذهل", "جيد", "عظيم", "مبسوط", "فرحان", "سعادة", "مرح",
-    "وناسة", "تسلم", "شكرا", "يعطيك", "ممتازة", "جميلة", "حلوة",
-    "رائعة", "مذهلة", "عظيمة", "مبسوطة",
-    "love", "happy", "great", "good", "nice", "beautiful", "amazing",
-    "excellent", "wonderful", "perfect", "awesome",
-]
-
-NEGATIVE_WORDS = [
-    "حزين", "سيء", "رديء", "غبي", "كره", "غضب", "خوف", "قلق",
-    "توتر", "ممل", "سيئة", "رديئة", "حزينة", "غبية", "كئيب",
-    "مقرف", "مزعج", "زعلان", "متضايق", "مكتئب", "حزن", "كئابة",
-    "ضيق", "هم", "غم",
-    "bad", "sad", "hate", "angry", "terrible", "horrible", "awful",
-    "disgusting", "annoying", "boring", "depressed",
-]
-
-
-def analyze_sentiment(text: str) -> dict:
-    """تحليل مشاعر النص"""
-    text_lower = text.lower()
-    words = re.findall(r'\w+', text_lower)
-    
-    positive_count = 0
-    negative_count = 0
-    
-    for word in words:
-        if word in POSITIVE_WORDS:
-            positive_count += 1
-        elif word in NEGATIVE_WORDS:
-            negative_count += 1
-    
-    total = positive_count + negative_count
-    
-    if total == 0:
-        sentiment = "محايد 😐"
-        emoji = "😐"
-    elif positive_count > negative_count:
-        sentiment = "إيجابي 😊"
-        emoji = "😊"
-    elif negative_count > positive_count:
-        sentiment = "سلبي 😔"
-        emoji = "😔"
-    else:
-        sentiment = "مختلط 🤔"
-        emoji = "🤔"
-    
-    positive_percent = (positive_count / total * 100) if total > 0 else 0
-    negative_percent = (negative_count / total * 100) if total > 0 else 0
-    
-    return {
-        'sentiment': sentiment,
-        'emoji': emoji,
-        'positive_count': positive_count,
-        'negative_count': negative_count,
-        'positive_percent': positive_percent,
-        'negative_percent': negative_percent,
-        'total_words': len(words)
-    }
 
 
 # =====================================================================
@@ -200,7 +137,8 @@ class MessageHandlers:
             response = (
                 f"{result['emoji']} **تحليل المشاعر**\n\n"
                 f"📝 النص: `{text[:100]}`\n"
-                f"🎯 النتيجة: {result['sentiment']}\n\n"
+                f"🎯 النتيجة: {result['sentiment']}\n"
+                f"💬 {result.get('response', '')}\n\n"
                 f"😊 إيجابي: {result['positive_percent']:.0f}%\n"
                 f"😔 سلبي: {result['negative_percent']:.0f}%\n"
                 f"📊 الكلمات: {result['total_words']}"

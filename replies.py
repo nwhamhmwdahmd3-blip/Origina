@@ -1,10 +1,93 @@
 # -*- coding: utf-8 -*-
 
 """
-replies.py - 200 رد تلقائي ذكي حسب المشاعر
-===========================================
-يحتوي على قاموس REPLIES الذي يقرأه البوت تلقائياً.
+replies.py - 200 رد تلقائي ذكي مع تحسين تحليل المشاعر
+=====================================================
+يحتوي على قاموس REPLIES وقوائم الكلمات الإيجابية والسلبية
+ودالة تحليل المشاعر المتطورة
 """
+
+import re
+import random
+
+# =====================================================================
+# قوائم الكلمات الإيجابية والسلبية لتحليل المشاعر
+# =====================================================================
+
+POSITIVE_WORDS = [
+    "جميل", "رائع", "ممتاز", "حلو", "حب", "فرح", "سعيد", "مذهل", "جيد",
+    "عظيم", "مبسوط", "فرحان", "سعادة", "مرح", "وناسة", "تسلم", "شكرا",
+    "يعطيك", "ممتازة", "جميلة", "حلوة", "رائعة", "مذهلة", "عظيمة",
+    "مبسوطة", "ناجح", "نجاح", "تفوق", "روعه", "روعة",
+    "love", "happy", "great", "good", "nice", "beautiful", "amazing",
+    "excellent", "wonderful", "perfect", "awesome", "fantastic", "joy",
+    "😊", "😍", "🥰", "😄", "😁", "😆", "🤗", "😘", "💖", "💕",
+    "❤️", "💗", "💓", "🎉", "🎊", "✨", "🌟", "⭐", "👍", "👏",
+]
+
+NEGATIVE_WORDS = [
+    "حزين", "سيء", "رديء", "غبي", "كره", "غضب", "خوف", "قلق", "توتر",
+    "ممل", "سيئة", "رديئة", "حزينة", "غبية", "كئيب", "مقرف", "مزعج",
+    "زعلان", "متضايق", "مكتئب", "حزن", "كئابة", "ضيق", "هم", "غم",
+    "فشل", "فاشل", "مؤلم", "ألم", "تعب", "مرهق", "ملل",
+    "bad", "sad", "hate", "angry", "terrible", "horrible", "awful",
+    "disgusting", "annoying", "boring", "depressed", "pain", "fail",
+    "😔", "😢", "😭", "😞", "😟", "😠", "😡", "😤", "😣", "😖",
+    "💔", "😫", "😩", "😪", "😓", "👎", "😾", "🙁", "☹️",
+]
+
+
+def analyze_sentiment(text: str) -> dict:
+    """تحليل مشاعر النص - نسخة متطورة"""
+    text_lower = text.lower()
+    words = re.findall(r'\w+|[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\u2600-\u26FF\u2700-\u27BF]', text_lower)
+    
+    positive_count = 0
+    negative_count = 0
+    
+    for word in words:
+        if word in POSITIVE_WORDS:
+            positive_count += 1
+        elif word in NEGATIVE_WORDS:
+            negative_count += 1
+    
+    total = positive_count + negative_count
+    
+    if total == 0:
+        sentiment = "محايد 😐"
+        emoji = "😐"
+        response = "أرى أن رسالتك محايدة، أخبرني أكثر!"
+    elif positive_count > negative_count:
+        sentiment = "إيجابي 😊"
+        emoji = "😊"
+        response = "رسالتك إيجابية! رائع جداً 🌟"
+    elif negative_count > positive_count:
+        sentiment = "سلبي 😔"
+        emoji = "😔"
+        response = "أشعر أنك متضايق، أنا هنا معك 🌹"
+    else:
+        sentiment = "مختلط 🤔"
+        emoji = "🤔"
+        response = "مشاعرك مختلطة، هذا طبيعي!"
+    
+    positive_percent = (positive_count / total * 100) if total > 0 else 0
+    negative_percent = (negative_count / total * 100) if total > 0 else 0
+    
+    return {
+        'sentiment': sentiment,
+        'emoji': emoji,
+        'response': response,
+        'positive_count': positive_count,
+        'negative_count': negative_count,
+        'positive_percent': positive_percent,
+        'negative_percent': negative_percent,
+        'total_words': len(words)
+    }
+
+
+# =====================================================================
+# قاموس الردود التلقائية (200 رد)
+# =====================================================================
 
 REPLIES = {
     # ================================================================
