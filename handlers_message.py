@@ -5,6 +5,7 @@
 handlers_message.py - معالجات الرسائل (MessageHandlers) - النسخة الكاملة
 ===================================================================================
 جميع معالجات الرسائل مع كاش للإعدادات وإصلاح الحذف التلقائي
++ ميزة تحليل المشاعر
 """
 
 import asyncio
@@ -12,6 +13,7 @@ import logging
 import time
 import re
 from typing import Optional
+from collections import Counter
 
 from telegram import Update, ChatPermissions
 from telegram.ext import ContextTypes
@@ -34,14 +36,78 @@ logger = logging.getLogger(__name__)
 
 
 # =====================================================================
+# تحليل المشاعر
+# =====================================================================
+
+POSITIVE_WORDS = [
+    "جميل", "رائع", "ممتاز", "حلو", "حب", "فرح", "سعيد", "ممتاز", "رائع",
+    "مذهل", "رائع", "ممتاز", "جيد", "ممتاز", "رائع", "جميل", "حلو",
+    "عظيم", "ممتاز", "رائع", "جميل", "حلو", "ممتاز", "رائع", "ممتاز",
+    "مبسوط", "فرحان", "سعادة", "مرح", "وناسة", "تسلم", "شكرا", "يعطيك",
+    "ممتازة", "جميلة", "حلوة", "رائعة", "مذهلة", "عظيمة", "مبسوطة",
+    "love", "happy", "great", "good", "nice", "beautiful", "amazing",
+    "excellent", "wonderful", "perfect", "awesome",
+]
+
+NEGATIVE_WORDS = [
+    "حزين", "سيء", "رديء", "غبي", "كره", "غضب", "خوف", "قلق", "توتر",
+    "ممل", "سيئة", "رديئة", "حزينة", "غبية", "كئيب", "مقرف", "مزعج",
+    "زعلان", "متضايق", "مكتئب", "حزن", "كئابة", "ضيق", "هم", "غم",
+    "bad", "sad", "hate", "angry", "terrible", "horrible", "awful",
+    "disgusting", "annoying", "boring", "depressed",
+]
+
+
+def analyze_sentiment(text: str) -> dict:
+    """تحليل مشاعر النص"""
+    text_lower = text.lower()
+    words = re.findall(r'\w+', text_lower)
+    
+    positive_count = 0
+    negative_count = 0
+    
+    for word in words:
+        if word in POSITIVE_WORDS:
+            positive_count += 1
+        elif word in NEGATIVE_WORDS:
+            negative_count += 1
+    
+    total = positive_count + negative_count
+    
+    if total == 0:
+        sentiment = "محايد 😐"
+        emoji = "😐"
+    elif positive_count > negative_count:
+        sentiment = "إيجابي 😊"
+        emoji = "😊"
+    elif negative_count > positive_count:
+        sentiment = "سلبي 😔"
+        emoji = "😔"
+    else:
+        sentiment = "مختلط 🤔"
+        emoji = "🤔"
+    
+    positive_percent = (positive_count / total * 100) if total > 0 else 0
+    negative_percent = (negative_count / total * 100) if total > 0 else 0
+    
+    return {
+        'sentiment': sentiment,
+        'emoji': emoji,
+        'positive_count': positive_count,
+        'negative_count': negative_count,
+        'positive_percent': positive_percent,
+        'negative_percent': negative_percent,
+        'total_words': len(words)
+    }
+
+
+# =====================================================================
 # كاش الإعدادات (لتسريع الردود)
 # =====================================================================
 
-# كاش إعدادات الأمان (30 ثانية TTL)
 _security_settings_cache = {}
 _security_settings_time = {}
 
-# كاش إعدادات الردود التلقائية (60 ثانية TTL)
 _auto_reply_settings_cache = {}
 _auto_reply_settings_time = {}
 
@@ -125,6 +191,23 @@ class MessageHandlers:
         """معالجة الرسائل الخاصة"""
         user_id = update.effective_user.id
         state = StateManager.get(user_id)
+
+        if state == UserState.WAIT_MOOD:
+            text = update.effective_message.text or ""
+            result = analyze_sentiment(text)
+            
+            response = (
+                f"{result['emoji']} **تحليل المشاعر**\n\n"
+                f"📝 النص: `{text[:100]}`\n"
+                f"🎯 النتيجة: {result['sentiment']}\n\n"
+                f"😊 إيجابي: {result['positive_percent']:.0f}%\n"
+                f"😔 سلبي: {result['negative_percent']:.0f}%\n"
+                f"📊 الكلمات: {result['total_words']}"
+            )
+            
+            await safe_send(context.bot, user_id, response)
+            StateManager.clear(user_id)
+            return
 
         if state == UserState.ADDING_POSTS:
             await MessageHandlers._handle_adding_posts(update, context)
@@ -331,20 +414,16 @@ class MessageHandlers:
 
         METRICS.increment_messages()
 
-        # ✅ استخدام الكاش للإعدادات
         settings = await get_security_settings_cached(chat_id)
 
-        # فحص الروابط
         if settings.get('delete_links') and TextUtils.contains_link(text):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "link")
             return
 
-        # فحص المنشنات
         if settings.get('mentions') and TextUtils.contains_mention(text):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "mention")
             return
 
-        # فحص الكلمات المحظورة
         if settings.get('delete_banned_words'):
             banned_words = await get_banned_words_cached(chat_id)
             if banned_words:
@@ -354,15 +433,9 @@ class MessageHandlers:
                         await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "banned_word")
                         return
 
-        # فحص طول الرسالة
         max_len = settings.get('max_message_length', 0)
         if max_len > 0 and len(text) > max_len:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "max_len")
-            return
-
-        # فحص الوسائط
-        if message.photo and settings.get('delete_photos', 0):
-            await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "photo")
             return
 
         if message.video and settings.get('delete_videos'):
@@ -393,7 +466,6 @@ class MessageHandlers:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "forwarded")
             return
 
-        # فحص الردود التلقائية
         if text:
             await MessageHandlers._process_auto_reply(update, context, chat_id, text, user_id)
 
@@ -406,10 +478,7 @@ class MessageHandlers:
         except Exception:
             pass
 
-        # تسجيل المخالفة
         violation_count = await DB.increment_violation_count(user_id, chat_id)
-        
-        # الحصول على العقوبة المحددة لهذه المخالفة
         penalty_rule = await DB.get_violation_penalty(chat_id, violation_type)
         
         if penalty_rule:
@@ -419,7 +488,6 @@ class MessageHandlers:
             penalty_type = 'mute'
             duration_seconds = 60
 
-        # إرسال رسالة الإنذار
         try:
             user_name = update.effective_user.first_name or "مستخدم"
             message_text = (
@@ -431,13 +499,10 @@ class MessageHandlers:
             )
             
             sent_msg = await context.bot.send_message(chat_id, message_text, parse_mode='HTML')
-            
-            # ✅ استخدام asyncio.create_task بدلاً من job_queue
             asyncio.create_task(_delete_after_delay(context.bot, chat_id, sent_msg.message_id, 10))
         except Exception:
             pass
 
-        # تطبيق العقوبة إذا تجاوز الحد
         security_settings = await get_security_settings_cached(chat_id)
         max_strikes = security_settings.get('violation_strikes', 3)
         
@@ -453,22 +518,18 @@ class MessageHandlers:
                                    chat_id: int, text: str, user_id: int = None) -> bool:
         """معالجة الردود التلقائية مع الكاش"""
         try:
-            # ✅ استخدام الكاش
             ars = await get_auto_reply_settings_cached(chat_id)
             
             if not ars.get('enabled', False):
                 return False
 
-            # التحقق من أن المستخدم ليس بوت إذا كان الإعداد يمنع البوتات
             if ars.get('ignore_bots', True) and update.effective_user.is_bot:
                 return False
 
-            # التحقق من الصلاحيات إذا كان الإعداد للمشرفين فقط
             if ars.get('only_admins', False):
                 if not await is_authorized_in_group(context.bot, chat_id, user_id or update.effective_user.id):
                     return False
 
-            # البحث في قاعدة البيانات
             reply = await DB.get_auto_reply(text, chat_id)
             if reply:
                 reply_text = reply.get('reply', '')
@@ -495,7 +556,6 @@ class MessageHandlers:
                 await _increment_usage_async(chat_id, text)
                 return True
 
-            # البحث في الملف
             file_reply = get_reply_from_file(text)
             if file_reply:
                 await safe_send(context.bot, chat_id, file_reply)
@@ -1213,7 +1273,6 @@ class MessageHandlers:
         chat_id = update.effective_chat.id
         settings = await get_security_settings_cached(chat_id)
 
-        # الترحيب بالأعضاء الجدد
         if update.effective_message.new_chat_members and settings.get('welcome_enabled'):
             for member in update.effective_message.new_chat_members:
                 welcome_text = settings.get('welcome_text', 'مرحباً {user} في {chat} 🤍')
@@ -1221,7 +1280,6 @@ class MessageHandlers:
                 welcome_text = welcome_text.replace('{chat}', update.effective_chat.title or "")
                 await safe_send(context.bot, chat_id, welcome_text)
 
-        # وداع الأعضاء المغادرين
         if update.effective_message.left_chat_member and settings.get('goodbye_enabled'):
             member = update.effective_message.left_chat_member
             goodbye_text = settings.get('goodbye_text', 'وداعاً {user} 👋')

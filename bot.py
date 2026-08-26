@@ -209,6 +209,7 @@ async def main():
         ("unban", "🔓 إلغاء حظر"),
         ("pin", "📌 تثبيت رسالة"),
         # ✅ الأوامر الجديدة
+        ("mood", "🎭 تحليل المشاعر"),
         ("admin", "👑 لوحة الأدمن"),
         ("broadcast", "📨 بث جماعي"),
         ("set_force", "🔒 تعيين الاشتراك الإجباري"),
@@ -262,6 +263,7 @@ async def main():
     app.add_handler(CommandHandler("list_hidden_admins", CommandHandlers.list_hidden_admins))
 
     # ✅ تسجيل الأوامر الجديدة
+    app.add_handler(CommandHandler("mood", CommandHandlers.mood))
     app.add_handler(CommandHandler("admin", CommandHandlers.admin))
     app.add_handler(CommandHandler("broadcast", CommandHandlers.broadcast))
     app.add_handler(CommandHandler("set_force", CommandHandlers.set_force))

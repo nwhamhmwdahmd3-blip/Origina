@@ -7,7 +7,7 @@ handlers_command.py - معالجات الأوامر (CommandHandlers) - النس
 جميع الأوامر النصية للبوت مع دعم المشرفين المخفيين وإصلاح جميع المشاكل.
 + الأوامر الإضافية: /admin /broadcast /set_force /set_update_ch /set_log_ch
 + /add_admin /remove_admin /export_replies /import_replies /backup /restore
-+ /auto_publish /auto_recycle /channels /posts
++ /auto_publish /auto_recycle /channels /posts /mood
 """
 
 import asyncio
@@ -282,6 +282,32 @@ class CommandHandlers:
         await safe_send(context.bot, user_id, text, reply_markup=kb)
 
     # ========== الأوامر الإضافية الجديدة ==========
+
+    @staticmethod
+    async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /mood - تحليل المشاعر"""
+        user_id = update.effective_user.id
+        args = context.args or []
+        
+        if not args:
+            StateManager.set(user_id, UserState.WAIT_MOOD)
+            await safe_send(context.bot, user_id, "📝 أرسل النص الذي تريد تحليل مشاعره:")
+            return
+        
+        text = " ".join(args)
+        from handlers_message import analyze_sentiment
+        result = analyze_sentiment(text)
+        
+        response = (
+            f"{result['emoji']} **تحليل المشاعر**\n\n"
+            f"📝 النص: `{text[:100]}`\n"
+            f"🎯 النتيجة: {result['sentiment']}\n\n"
+            f"😊 إيجابي: {result['positive_percent']:.0f}%\n"
+            f"😔 سلبي: {result['negative_percent']:.0f}%\n"
+            f"📊 الكلمات: {result['total_words']}"
+        )
+        
+        await safe_send(context.bot, user_id, response)
 
     @staticmethod
     async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -802,6 +828,12 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
 
+        # ✅ التحقق من صلاحيات البوت باستخدام can_act
+        perms = await check_bot_permissions(context.bot, chat_id)
+        if not perms.get('can_act', False):
+            await safe_send(context.bot, user_id, "❌ البوت لا يملك الصلاحيات الكافية.")
+            return
+
         args = context.args or []
         if not args:
             await safe_send(context.bot, user_id, f"📝 /{action} معرف_المستخدم [مدة_بالدقائق]")
@@ -846,6 +878,10 @@ class CommandHandlers:
 
         success, msg = await apply_penalty(context.bot, chat_id, target, action, duration_seconds, reason, user_id)
         await safe_send(context.bot, user_id, msg)
+
+        # ✅ إبطال كاش الصلاحيات بعد تطبيق العقوبة
+        if success:
+            await invalidate_auth_cache(chat_id=chat_id, user_id=target)
 
     # ========== أوامر المطور ==========
 

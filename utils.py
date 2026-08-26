@@ -10,6 +10,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - دعم المشرفين المجهولين في is_authorized_in_group
 - معالجة TimedOut مع إعادة المحاولة في safe_send
 - كل قناة تنشر بشكل مستقل بفاصل 12 دقيقة
+- حالة WAIT_MOOD لتحليل المشاعر
 """
 
 import asyncio
@@ -368,6 +369,8 @@ class UserState(Enum):
     WAIT_PENALTY_MUTE_DURATION = auto()
     WAIT_PENALTY_BAN_DURATION = auto()
     WAIT_PENALTY_RESTRICT_DURATION = auto()
+    # ✅ NEW: حالة تحليل المشاعر
+    WAIT_MOOD = auto()
 
 
 class StateManager:
@@ -1274,7 +1277,7 @@ class BackgroundTasks:
         await asyncio.sleep(10)
         max_channels = getattr(CONFIG, 'MAX_CHANNELS_PER_CYCLE', 20)
         min_interval_minutes = await get_min_publish_interval()
-        sleep_seconds = min_interval_minutes * 60  # 12 دقيقة = 720 ثانية
+        sleep_seconds = min_interval_minutes * 60
 
         while True:
             try:
@@ -1283,7 +1286,6 @@ class BackgroundTasks:
                     await asyncio.sleep(60)
                     continue
 
-                # ✅ إنشاء مهمة مستقلة لكل قناة
                 tasks = []
                 for ch in channels:
                     task = asyncio.create_task(
@@ -1293,7 +1295,6 @@ class BackgroundTasks:
                     )
                     tasks.append(task)
 
-                # انتظار انتهاء جميع المهام (ستستمر للأبد)
                 await asyncio.gather(*tasks, return_exceptions=True)
                 
             except Exception as e:
@@ -1305,17 +1306,14 @@ class BackgroundTasks:
         """دورة نشر مستقلة لكل قناة - كل قناة تنشر كل 12 دقيقة"""
         while True:
             try:
-                # التحقق من الاشتراك
                 has_sub = await DB.has_active_subscription(ch['user_id'])
                 if not has_sub:
                     logger.info(f"⏭️ تخطي القناة {ch['id']} لانتهاء الاشتراك")
-                    await asyncio.sleep(300)  # انتظار 5 دقائق ثم إعادة التحقق
+                    await asyncio.sleep(300)
                     continue
 
-                # جلب منشور
                 post = await DB.get_next_post(ch['id'])
                 if not post:
-                    # إعادة التدوير إذا كان مفعلاً
                     auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
                     if auto_recycle:
                         await DB.reset_posts(ch['user_id'], ch['id'])
@@ -1327,14 +1325,13 @@ class BackgroundTasks:
                         await asyncio.sleep(60)
                         continue
 
-                # نشر المنشور
                 success = await BackgroundTasks._publish_post(bot, ch['channel_id'], post)
                 if success:
                     await DB.mark_post_published(post['id'])
                     await DB.update_last_publish(ch['id'])
                     await DB.update_next_publish(ch['id'])
                     logger.info(f"✅ قناة {ch['id']} نشرت. انتظار {sleep_seconds//60} دقيقة...")
-                    await asyncio.sleep(sleep_seconds)  # ✅ كل قناة تنتظر بشكل مستقل
+                    await asyncio.sleep(sleep_seconds)
                 else:
                     await DB.increment_post_fail(post['id'])
                     await asyncio.sleep(5)
