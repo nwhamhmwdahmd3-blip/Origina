@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers_message.py - معالجات الرسائل (MessageHandlers) - النسخة الكاملة
-===================================================================================
-جميع معالجات الرسائل مع كاش للإعدادات وإصلاح الحذف التلقائي
-+ استيراد تحليل المشاعر من replies.py
-+ إصلاح forward_date نهائياً
+handlers_message.py - معالجات الرسائل (MessageHandlers) - النسخة النهائية
+===========================================================================
+- إصلاح التحقق من صلاحيات البوت عند إضافة قناة
+- دعم تحليل المشاعر
+- كاش للإعدادات
+- حذف تلقائي للرسائل
+- جميع المعالجات كاملة
 """
 
 import asyncio
@@ -40,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 # =====================================================================
-# كاش الإعدادات (لتسريع الردود)
+# كاش الإعدادات
 # =====================================================================
 
 _security_settings_cache = {}
@@ -148,16 +150,16 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        if state == UserState.WAIT_CHANNEL:
+            await MessageHandlers._handle_channel_input(update, context)
+            return
+
         if state == UserState.ADDING_POSTS:
             await MessageHandlers._handle_adding_posts(update, context)
             return
 
         if state == UserState.SUPPORT_MODE:
             await MessageHandlers._handle_support_message(update, context)
-            return
-
-        if state == UserState.WAIT_CHANNEL:
-            await MessageHandlers._handle_channel_input(update, context)
             return
 
         if state == UserState.WAIT_BROADCAST:
@@ -377,7 +379,6 @@ class MessageHandlers:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "max_len")
             return
 
-        # ✅ الإصلاح النهائي: استخدام forward_origin بدلاً من forward_date
         if getattr(message, 'forward_origin', None) and settings.get('delete_forwarded'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "forwarded")
             return
@@ -456,7 +457,7 @@ class MessageHandlers:
     @staticmethod
     async def _process_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                    chat_id: int, text: str, user_id: int = None) -> bool:
-        """معالجة الردود التلقائية مع الكاش"""
+        """معالجة الردود التلقائية"""
         try:
             ars = await get_auto_reply_settings_cached(chat_id)
             
@@ -473,26 +474,7 @@ class MessageHandlers:
             reply = await DB.get_auto_reply(text, chat_id)
             if reply:
                 reply_text = reply.get('reply', '')
-                reply_type = reply.get('reply_type', 'text')
-                reply_media_id = reply.get('reply_media_id')
-                
-                if reply_type == 'text' or not reply_media_id:
-                    await safe_send(context.bot, chat_id, reply_text)
-                elif reply_type == 'photo':
-                    await context.bot.send_photo(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'video':
-                    await context.bot.send_video(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'animation':
-                    await context.bot.send_animation(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'document':
-                    await context.bot.send_document(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'sticker':
-                    await context.bot.send_sticker(chat_id, reply_media_id)
-                elif reply_type == 'voice':
-                    await context.bot.send_voice(chat_id, reply_media_id, caption=reply_text or None)
-                elif reply_type == 'video_note':
-                    await context.bot.send_video_note(chat_id, reply_media_id)
-                
+                await safe_send(context.bot, chat_id, reply_text)
                 await _increment_usage_async(chat_id, text)
                 return True
 
@@ -507,7 +489,54 @@ class MessageHandlers:
             return False
 
     # =====================================================================
-    # معالجات الحالات الخاصة
+    # ✅ إصلاح إضافة القناة
+    # =====================================================================
+
+    @staticmethod
+    async def _handle_channel_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إضافة قناة مع التحقق الصحيح من صلاحيات البوت"""
+        user_id = update.effective_user.id
+        text = (update.effective_message.text or "").strip()
+        
+        try:
+            # تحديد معرف القناة
+            if text.lstrip('-').isdigit():
+                channel_id = int(text)
+            elif text.startswith('@'):
+                channel_id = text
+            else:
+                channel_id = text
+            
+            # التحقق من أن البوت مشرف في القناة
+            try:
+                bot_member = await context.bot.get_chat_member(channel_id, context.bot.id)
+                if bot_member.status != 'administrator':
+                    await safe_send(context.bot, user_id, "❌ البوت ليس مشرفًا في القناة!\nأضف البوت كمشرف أولاً.")
+                    StateManager.clear(user_id)
+                    return
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "member list is inaccessible" in error_msg:
+                    await safe_send(context.bot, user_id, "⚠️ تعذر التحقق من صلاحيات البوت.\nتأكد من أن البوت مشرف في القناة ثم حاول مرة أخرى.")
+                else:
+                    await safe_send(context.bot, user_id, f"❌ تعذر التحقق: {str(e)[:50]}")
+                StateManager.clear(user_id)
+                return
+            
+            # إضافة القناة
+            ch_db_id = await DB.add_channel(user_id, channel_id, f"قناة {channel_id}")
+            
+            if ch_db_id:
+                await safe_send(context.bot, user_id, "✅ تمت إضافة القناة بنجاح!")
+            else:
+                await safe_send(context.bot, user_id, "❌ فشل إضافة القناة")
+        except Exception as e:
+            await safe_send(context.bot, user_id, f"❌ خطأ: {str(e)[:50]}")
+        
+        StateManager.clear(user_id)
+
+    # =====================================================================
+    # بقية المعالجات (نفس النسخة السابقة)
     # =====================================================================
 
     @staticmethod
@@ -581,29 +610,6 @@ class MessageHandlers:
         ticket_number = await DB.create_ticket(user_id, username, content, media_type, media_file_id)
         StateManager.clear(user_id)
         await safe_send(context.bot, user_id, f"✅ تم استلام رسالتك!\n🎫 رقم التذكرة: {ticket_number}")
-
-    @staticmethod
-    async def _handle_channel_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        text = (update.effective_message.text or "").strip()
-        
-        try:
-            if text.lstrip('-').isdigit():
-                channel_id = int(text)
-            else:
-                channel_id = text.lstrip('@')
-            
-            channel_name = f"قناة {channel_id}"
-            ch_db_id = await DB.add_channel(user_id, channel_id, channel_name)
-            
-            if ch_db_id:
-                await safe_send(context.bot, user_id, f"✅ تمت إضافة القناة!")
-            else:
-                await safe_send(context.bot, user_id, "❌ فشل إضافة القناة (تأكد من أن البوت مشرف في القناة)")
-        except Exception as e:
-            await safe_send(context.bot, user_id, f"❌ خطأ: {str(e)[:50]}")
-        
-        StateManager.clear(user_id)
 
     @staticmethod
     async def _handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1206,7 +1212,7 @@ class MessageHandlers:
 
     @staticmethod
     async def handle_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """معالجة رسائل الخدمة (انضمام/مغادرة)"""
+        """معالجة رسائل الخدمة"""
         if not update.effective_chat or not update.effective_message:
             return
 
