@@ -1069,7 +1069,6 @@ class CallbackHandlers:
                     await safe_edit(query, "❌ **تعذر عرض أكواد الهدايا.**")
                 return
 
-            # ========== معالجة الزر غير المعروف rp_set ==========
             if data.startswith("rp_set:") or base_data.startswith("rp_set:"):
                 await _safe_answer(query, "⚠️ هذه الميزة قيد التطوير حالياً", show_alert=True)
                 return
