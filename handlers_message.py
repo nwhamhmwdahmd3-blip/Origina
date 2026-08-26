@@ -40,19 +40,19 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 POSITIVE_WORDS = [
-    "جميل", "رائع", "ممتاز", "حلو", "حب", "فرح", "سعيد", "ممتاز", "رائع",
-    "مذهل", "رائع", "ممتاز", "جيد", "ممتاز", "رائع", "جميل", "حلو",
-    "عظيم", "ممتاز", "رائع", "جميل", "حلو", "ممتاز", "رائع", "ممتاز",
-    "مبسوط", "فرحان", "سعادة", "مرح", "وناسة", "تسلم", "شكرا", "يعطيك",
-    "ممتازة", "جميلة", "حلوة", "رائعة", "مذهلة", "عظيمة", "مبسوطة",
+    "جميل", "رائع", "ممتاز", "حلو", "حب", "فرح", "سعيد",
+    "مذهل", "جيد", "عظيم", "مبسوط", "فرحان", "سعادة", "مرح",
+    "وناسة", "تسلم", "شكرا", "يعطيك", "ممتازة", "جميلة", "حلوة",
+    "رائعة", "مذهلة", "عظيمة", "مبسوطة",
     "love", "happy", "great", "good", "nice", "beautiful", "amazing",
     "excellent", "wonderful", "perfect", "awesome",
 ]
 
 NEGATIVE_WORDS = [
-    "حزين", "سيء", "رديء", "غبي", "كره", "غضب", "خوف", "قلق", "توتر",
-    "ممل", "سيئة", "رديئة", "حزينة", "غبية", "كئيب", "مقرف", "مزعج",
-    "زعلان", "متضايق", "مكتئب", "حزن", "كئابة", "ضيق", "هم", "غم",
+    "حزين", "سيء", "رديء", "غبي", "كره", "غضب", "خوف", "قلق",
+    "توتر", "ممل", "سيئة", "رديئة", "حزينة", "غبية", "كئيب",
+    "مقرف", "مزعج", "زعلان", "متضايق", "مكتئب", "حزن", "كئابة",
+    "ضيق", "هم", "غم",
     "bad", "sad", "hate", "angry", "terrible", "horrible", "awful",
     "disgusting", "annoying", "boring", "depressed",
 ]
@@ -438,6 +438,11 @@ class MessageHandlers:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "max_len")
             return
 
+        # ✅ استخدام getattr لتجنب خطأ forward_date
+        if getattr(message, 'forward_origin', None) and settings.get('delete_forwarded'):
+            await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "forwarded")
+            return
+
         if message.video and settings.get('delete_videos'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "video")
             return
@@ -460,10 +465,6 @@ class MessageHandlers:
 
         if message.sticker and settings.get('delete_stickers'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "sticker")
-            return
-
-        if message.forward_date and settings.get('delete_forwarded'):
-            await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "forwarded")
             return
 
         if text:
