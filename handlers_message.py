@@ -5,6 +5,7 @@
 handlers_message.py - معالجات الرسائل - النسخة النهائية الكاملة 100%
 =====================================================================
 جميع الدوال موجودة - جميع المعالجات تعمل - إصلاح إضافة القناة
+- عرض اسم القناة الفعلي بدلاً من المعرف
 """
 
 import asyncio
@@ -35,6 +36,10 @@ from replies import analyze_sentiment
 logger = logging.getLogger(__name__)
 
 
+# =====================================================================
+# كاش الإعدادات
+# =====================================================================
+
 _security_settings_cache = {}
 _security_settings_time = {}
 _auto_reply_settings_cache = {}
@@ -42,6 +47,7 @@ _auto_reply_settings_time = {}
 
 
 async def get_security_settings_cached(chat_id: int) -> dict:
+    """جلب إعدادات الأمان مع الكاش"""
     now = time.time()
     if chat_id in _security_settings_cache and (now - _security_settings_time.get(chat_id, 0)) < 30:
         return _security_settings_cache[chat_id]
@@ -52,6 +58,7 @@ async def get_security_settings_cached(chat_id: int) -> dict:
 
 
 async def get_auto_reply_settings_cached(chat_id: int) -> dict:
+    """جلب إعدادات الردود مع الكاش"""
     now = time.time()
     if chat_id in _auto_reply_settings_cache and (now - _auto_reply_settings_time.get(chat_id, 0)) < 60:
         return _auto_reply_settings_cache[chat_id]
@@ -62,6 +69,7 @@ async def get_auto_reply_settings_cached(chat_id: int) -> dict:
 
 
 async def invalidate_security_cache(chat_id: int = None) -> None:
+    """إبطال كاش الأمان"""
     if chat_id:
         _security_settings_cache.pop(chat_id, None)
         _security_settings_time.pop(chat_id, None)
@@ -71,6 +79,7 @@ async def invalidate_security_cache(chat_id: int = None) -> None:
 
 
 async def invalidate_auto_reply_cache(chat_id: int = None) -> None:
+    """إبطال كاش الردود"""
     if chat_id:
         _auto_reply_settings_cache.pop(chat_id, None)
         _auto_reply_settings_time.pop(chat_id, None)
@@ -80,6 +89,7 @@ async def invalidate_auto_reply_cache(chat_id: int = None) -> None:
 
 
 async def _delete_after_delay(bot, chat_id: int, message_id: int, delay: int = 10):
+    """حذف رسالة بعد تأخير"""
     await asyncio.sleep(delay)
     try:
         await bot.delete_message(chat_id, message_id)
@@ -88,6 +98,7 @@ async def _delete_after_delay(bot, chat_id: int, message_id: int, delay: int = 1
 
 
 async def apply_violation_penalty(update, context, chat_id, user_id, violation_type, penalty_type, duration_seconds):
+    """تطبيق عقوبة المخالفة"""
     try:
         success, msg = await apply_penalty(
             context.bot, chat_id, user_id, penalty_type, duration_seconds,
@@ -99,12 +110,20 @@ async def apply_violation_penalty(update, context, chat_id, user_id, violation_t
         return False, str(e)[:100]
 
 
+# =====================================================================
+# معالجات الرسائل
+# =====================================================================
+
 class MessageHandlers:
+    """جميع معالجات الرسائل"""
+
     @staticmethod
     async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """معالجة الرسائل الخاصة"""
         user_id = update.effective_user.id
         state = StateManager.get(user_id)
 
+        # تحليل المشاعر
         if state == UserState.WAIT_MOOD:
             text = update.effective_message.text or ""
             result = analyze_sentiment(text)
@@ -121,6 +140,7 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
 
+        # خريطة المعالجات
         handlers = {
             UserState.WAIT_CHANNEL: MessageHandlers._handle_channel_input,
             UserState.ADDING_POSTS: MessageHandlers._handle_adding_posts,
@@ -179,6 +199,7 @@ class MessageHandlers:
 
     @staticmethod
     async def handle_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """معالجة الرسائل في المجموعات"""
         if not update.effective_chat or not update.effective_message:
             return
 
@@ -190,14 +211,17 @@ class MessageHandlers:
         METRICS.increment_messages()
         settings = await get_security_settings_cached(chat_id)
 
+        # فحص الروابط
         if settings.get('delete_links') and TextUtils.contains_link(text):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "link")
             return
 
+        # فحص المنشنات
         if settings.get('mentions') and TextUtils.contains_mention(text):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "mention")
             return
 
+        # فحص الكلمات المحظورة
         if settings.get('delete_banned_words'):
             banned_words = await get_banned_words_cached(chat_id)
             if banned_words:
@@ -207,15 +231,18 @@ class MessageHandlers:
                         await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "banned_word")
                         return
 
+        # فحص طول الرسالة
         max_len = settings.get('max_message_length', 0)
         if max_len > 0 and len(text) > max_len:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "max_len")
             return
 
+        # فحص المعاد توجيهه
         if getattr(message, 'forward_origin', None) and settings.get('delete_forwarded'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "forwarded")
             return
 
+        # فحص الوسائط
         if message.video and settings.get('delete_videos'):
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "video")
             return
@@ -240,11 +267,13 @@ class MessageHandlers:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "sticker")
             return
 
+        # الردود التلقائية
         if text:
             await MessageHandlers._process_auto_reply(update, context, chat_id, text, user_id)
 
     @staticmethod
     async def _delete_and_warn(update, context, chat_id, user_id, violation_type):
+        """حذف الرسالة وإرسال إنذار"""
         try:
             await update.effective_message.delete()
         except Exception:
@@ -286,6 +315,7 @@ class MessageHandlers:
 
     @staticmethod
     async def _process_auto_reply(update, context, chat_id, text, user_id=None):
+        """معالجة الردود التلقائية"""
         try:
             ars = await get_auto_reply_settings_cached(chat_id)
             if not ars.get('enabled', False):
@@ -298,7 +328,27 @@ class MessageHandlers:
 
             reply = await DB.get_auto_reply(text, chat_id)
             if reply:
-                await safe_send(context.bot, chat_id, reply.get('reply', ''))
+                reply_text = reply.get('reply', '')
+                reply_type = reply.get('reply_type', 'text')
+                reply_media_id = reply.get('reply_media_id')
+                
+                if reply_type == 'text' or not reply_media_id:
+                    await safe_send(context.bot, chat_id, reply_text)
+                elif reply_type == 'photo':
+                    await context.bot.send_photo(chat_id, reply_media_id, caption=reply_text or None)
+                elif reply_type == 'video':
+                    await context.bot.send_video(chat_id, reply_media_id, caption=reply_text or None)
+                elif reply_type == 'animation':
+                    await context.bot.send_animation(chat_id, reply_media_id, caption=reply_text or None)
+                elif reply_type == 'document':
+                    await context.bot.send_document(chat_id, reply_media_id, caption=reply_text or None)
+                elif reply_type == 'sticker':
+                    await context.bot.send_sticker(chat_id, reply_media_id)
+                elif reply_type == 'voice':
+                    await context.bot.send_voice(chat_id, reply_media_id, caption=reply_text or None)
+                elif reply_type == 'video_note':
+                    await context.bot.send_video_note(chat_id, reply_media_id)
+                
                 await _increment_usage_async(chat_id, text)
                 return True
 
@@ -312,15 +362,17 @@ class MessageHandlers:
             return False
 
     # =====================================================================
-    # ✅ إضافة القناة - الإصلاح النهائي
+    # ✅ إضافة القناة - مع جلب الاسم الفعلي
     # =====================================================================
 
     @staticmethod
     async def _handle_channel_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إضافة قناة مع جلب الاسم الفعلي"""
         user_id = update.effective_user.id
         text = (update.effective_message.text or "").strip()
         
         try:
+            # تحديد معرف القناة
             if text.lstrip('-').isdigit():
                 channel_id = int(text)
             else:
@@ -332,6 +384,14 @@ class MessageHandlers:
                     StateManager.clear(user_id)
                     return
             
+            # ✅ جلب اسم القناة الفعلي
+            try:
+                chat_info = await context.bot.get_chat(channel_id)
+                channel_name = chat_info.title or chat_info.username or f"قناة {channel_id}"
+            except:
+                channel_name = f"قناة {channel_id}"
+            
+            # التحقق من أن البوت مشرف
             try:
                 bot_member = await context.bot.get_chat_member(channel_id, context.bot.id)
                 if bot_member.status != 'administrator':
@@ -341,10 +401,11 @@ class MessageHandlers:
             except:
                 pass
             
-            ch_db_id = await DB.add_channel(user_id, channel_id, f"قناة {channel_id}")
+            # ✅ إضافة القناة بالاسم الفعلي
+            ch_db_id = await DB.add_channel(user_id, channel_id, channel_name)
             
             if ch_db_id:
-                await safe_send(context.bot, user_id, "✅ تمت إضافة القناة بنجاح!")
+                await safe_send(context.bot, user_id, f"✅ تمت إضافة القناة: {channel_name}")
             else:
                 await safe_send(context.bot, user_id, "❌ فشل إضافة القناة")
         except Exception as e:
@@ -353,11 +414,12 @@ class MessageHandlers:
         StateManager.clear(user_id)
 
     # =====================================================================
-    # جميع الدوال المساعدة
+    # ✅ إضافة المنشورات
     # =====================================================================
 
     @staticmethod
     async def _handle_adding_posts(update, context):
+        """إضافة منشور"""
         user_id = update.effective_user.id
         active = await DB.get_active_channel(user_id)
         if not active:
@@ -400,9 +462,13 @@ class MessageHandlers:
         posts = [(text, media_type, media_file_id)]
         count = await DB.add_posts(user_id, active, posts)
         if count > 0:
-            await safe_send(context.bot, user_id, f"✅ تمت إضافة المنشور")
+            await safe_send(context.bot, user_id, "✅ تمت إضافة المنشور")
         else:
             await safe_send(context.bot, user_id, "❌ فشل الإضافة")
+
+    # =====================================================================
+    # ✅ الدعم الفني
+    # =====================================================================
 
     @staticmethod
     async def _handle_support_message(update, context):
@@ -412,6 +478,10 @@ class MessageHandlers:
         ticket_number = await DB.create_ticket(user_id, username, content)
         StateManager.clear(user_id)
         await safe_send(context.bot, user_id, f"✅ تم استلام رسالتك!\n🎫 رقم التذكرة: {ticket_number}")
+
+    # =====================================================================
+    # ✅ البث الجماعي
+    # =====================================================================
 
     @staticmethod
     async def _handle_broadcast_input(update, context):
@@ -432,6 +502,10 @@ class MessageHandlers:
                     pass
         await safe_send(context.bot, user_id, f"✅ تم البث إلى {sent_count} مستخدم")
         StateManager.clear(user_id)
+
+    # =====================================================================
+    # ✅ التحديثات
+    # =====================================================================
 
     @staticmethod
     async def _handle_update_input(update, context):
@@ -482,6 +556,10 @@ class MessageHandlers:
         await safe_send(context.bot, user_id, f"✅ تم تعيين: {text}")
         StateManager.clear(user_id)
 
+    # =====================================================================
+    # ✅ المشرفين
+    # =====================================================================
+
     @staticmethod
     async def _handle_admin_add_input(update, context):
         user_id = update.effective_user.id
@@ -493,7 +571,7 @@ class MessageHandlers:
             admin_id = int(text)
             await DB.execute("INSERT OR IGNORE INTO bot_admins (user_id, added_by, added_at) VALUES (?,?,?)",
                              (admin_id, user_id, TimeUtils.sql_iso()))
-            await safe_send(context.bot, user_id, f"✅ تمت الإضافة")
+            await safe_send(context.bot, user_id, "✅ تمت الإضافة")
         except:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
         StateManager.clear(user_id)
@@ -508,10 +586,14 @@ class MessageHandlers:
         try:
             admin_id = int(text)
             await DB.execute("DELETE FROM bot_admins WHERE user_id=?", (admin_id,))
-            await safe_send(context.bot, user_id, f"✅ تمت الإزالة")
+            await safe_send(context.bot, user_id, "✅ تمت الإزالة")
         except:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
         StateManager.clear(user_id)
+
+    # =====================================================================
+    # ✅ الردود التلقائية - إدارة
+    # =====================================================================
 
     @staticmethod
     async def _handle_keyword_input(update, context):
@@ -527,8 +609,41 @@ class MessageHandlers:
         keyword = context.user_data.get('auto_keyword', '')
         reply = update.effective_message.text or ""
         await DB.add_auto_reply(-1, keyword, reply)
-        await safe_send(context.bot, user_id, f"✅ تمت الإضافة")
+        await safe_send(context.bot, user_id, "✅ تمت الإضافة")
         StateManager.clear(user_id)
+
+    @staticmethod
+    async def _handle_auto_key(update, context):
+        user_id = update.effective_user.id
+        keyword = (update.effective_message.text or "").strip().lower()
+        context.user_data['auto_keyword'] = keyword
+        StateManager.set(user_id, UserState.WAIT_AUTO_REPLY)
+        await safe_send(context.bot, user_id, f"✅ الكلمة: {keyword}\n📝 أرسل الرد:")
+
+    @staticmethod
+    async def _handle_auto_reply_input(update, context):
+        user_id = update.effective_user.id
+        chat_id = context.user_data.get('auto_chat', -1)
+        keyword = context.user_data.get('auto_keyword', '')
+        reply = update.effective_message.text or ""
+        await DB.add_auto_reply(chat_id, keyword, reply)
+        await invalidate_auto_reply_cache(chat_id)
+        await safe_send(context.bot, user_id, "✅ تمت الإضافة")
+        StateManager.clear(user_id)
+
+    @staticmethod
+    async def _handle_auto_del(update, context):
+        user_id = update.effective_user.id
+        chat_id = context.user_data.get('auto_chat', -1)
+        keyword = (update.effective_message.text or "").strip().lower()
+        await DB.remove_auto_reply(chat_id, keyword)
+        await invalidate_auto_reply_cache(chat_id)
+        await safe_send(context.bot, user_id, "✅ تم الحذف")
+        StateManager.clear(user_id)
+
+    # =====================================================================
+    # ✅ الكلمات المحظورة - إدارة
+    # =====================================================================
 
     @staticmethod
     async def _handle_global_ban_input(update, context):
@@ -548,7 +663,7 @@ class MessageHandlers:
         word = (update.effective_message.text or "").strip().lower()
         await DB.remove_banned_word(word, -1)
         await invalidate_banned_words_cache(-1)
-        await safe_send(context.bot, user_id, f"✅ تمت الإزالة")
+        await safe_send(context.bot, user_id, "✅ تمت الإزالة")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -559,7 +674,7 @@ class MessageHandlers:
         added, _ = await DB.add_banned_word(word, chat_id, user_id)
         if added:
             await invalidate_banned_words_cache(chat_id)
-            await safe_send(context.bot, user_id, f"✅ تمت الإضافة")
+            await safe_send(context.bot, user_id, "✅ تمت الإضافة")
         else:
             await safe_send(context.bot, user_id, "❌ فشل")
         StateManager.clear(user_id)
@@ -571,8 +686,12 @@ class MessageHandlers:
         word = (update.effective_message.text or "").strip().lower()
         await DB.remove_banned_word(word, chat_id)
         await invalidate_banned_words_cache(chat_id)
-        await safe_send(context.bot, user_id, f"✅ تمت الإزالة")
+        await safe_send(context.bot, user_id, "✅ تمت الإزالة")
         StateManager.clear(user_id)
+
+    # =====================================================================
+    # ✅ المسابقات
+    # =====================================================================
 
     @staticmethod
     async def _handle_contest_title(update, context):
@@ -622,34 +741,9 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ فشل")
         StateManager.clear(user_id)
 
-    @staticmethod
-    async def _handle_auto_key(update, context):
-        user_id = update.effective_user.id
-        keyword = (update.effective_message.text or "").strip().lower()
-        context.user_data['auto_keyword'] = keyword
-        StateManager.set(user_id, UserState.WAIT_AUTO_REPLY)
-        await safe_send(context.bot, user_id, f"✅ الكلمة: {keyword}\n📝 أرسل الرد:")
-
-    @staticmethod
-    async def _handle_auto_reply_input(update, context):
-        user_id = update.effective_user.id
-        chat_id = context.user_data.get('auto_chat', -1)
-        keyword = context.user_data.get('auto_keyword', '')
-        reply = update.effective_message.text or ""
-        await DB.add_auto_reply(chat_id, keyword, reply)
-        await invalidate_auto_reply_cache(chat_id)
-        await safe_send(context.bot, user_id, "✅ تمت الإضافة")
-        StateManager.clear(user_id)
-
-    @staticmethod
-    async def _handle_auto_del(update, context):
-        user_id = update.effective_user.id
-        chat_id = context.user_data.get('auto_chat', -1)
-        keyword = (update.effective_message.text or "").strip().lower()
-        await DB.remove_auto_reply(chat_id, keyword)
-        await invalidate_auto_reply_cache(chat_id)
-        await safe_send(context.bot, user_id, "✅ تم الحذف")
-        StateManager.clear(user_id)
+    # =====================================================================
+    # ✅ الاستيراد والتصدير
+    # =====================================================================
 
     @staticmethod
     async def _handle_import_file(update, context):
@@ -676,6 +770,10 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, "❌ فشل")
         StateManager.clear(user_id)
 
+    # =====================================================================
+    # ✅ منح اشتراك
+    # =====================================================================
+
     @staticmethod
     async def _handle_grant_free(update, context):
         user_id = update.effective_user.id
@@ -688,10 +786,14 @@ class MessageHandlers:
                 target_id = int(parts[0])
                 days = int(parts[1])
                 await DB.grant_subscription_days(target_id, days)
-                await safe_send(context.bot, user_id, f"✅ تم المنح")
+                await safe_send(context.bot, user_id, "✅ تم المنح")
             except:
                 await safe_send(context.bot, user_id, "❌ صيغة خاطئة")
         StateManager.clear(user_id)
+
+    # =====================================================================
+    # ✅ الجدولة
+    # =====================================================================
 
     @staticmethod
     async def _handle_min_input(update, context):
@@ -752,6 +854,10 @@ class MessageHandlers:
         except:
             pass
         StateManager.clear(user_id)
+
+    # =====================================================================
+    # ✅ إعدادات الأمان
+    # =====================================================================
 
     @staticmethod
     async def _handle_max_len_input(update, context):
@@ -858,6 +964,10 @@ class MessageHandlers:
         await safe_send(context.bot, user_id, f"✅ {time_val}")
         StateManager.clear(user_id)
 
+    # =====================================================================
+    # ✅ العقوبات
+    # =====================================================================
+
     @staticmethod
     async def _handle_ban_input(update, context):
         user_id = update.effective_user.id
@@ -959,6 +1069,10 @@ class MessageHandlers:
             except:
                 pass
         StateManager.clear(user_id)
+
+    # =====================================================================
+    # ✅ رسائل الخدمة
+    # =====================================================================
 
     @staticmethod
     async def handle_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
