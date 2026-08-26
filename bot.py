@@ -2,8 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – البوت الرئيسي (نسخة Termux متوافقة مع Python 3.13)
-- يعمل بنظام Async متكامل بدون تضارب Event Loop
+🌿 Relax Manager – البوت الرئيسي (نسخة نهائية مصححة)
+- إصلاحات أمنية في معالجة الدفع (الاشتراكات والهدايا)
+- تسجيل جميع الأوامر في القوائم (الخاص + المجموعات)
+- دعم video_note في الرسائل
+- استدعاء CONFIG.validate()
+- المهام الخلفية مع إعادة تشغيل عند الفشل
+- دعم webhook و polling
 """
 
 import asyncio
@@ -44,14 +49,10 @@ ALLOWED_UPDATES = [
 ]
 
 
-# =====================================================================
-# دوال مساعدة للتحقق من الفاتورة
-# =====================================================================
-
 async def _validate_invoice_for_payment(user_id: int, payload: str):
     try:
         data = json.loads(payload)
-    except Exception:
+    except:
         return None, None, None
 
     invoice_number = data.get('invoice')
@@ -74,10 +75,6 @@ async def _validate_invoice_for_payment(user_id: int, payload: str):
     return invoice, plan, data
 
 
-# =====================================================================
-# معالجات الدفع
-# =====================================================================
-
 async def pre_checkout(update, context):
     query = update.pre_checkout_query
     user_id = query.from_user.id
@@ -89,7 +86,7 @@ async def pre_checkout(update, context):
         logger.warning(f"❌ Pre-checkout rejected for user {user_id}")
         try:
             await query.answer(ok=False, error_message="الفاتورة غير صالحة أو انتهت صلاحيتها.")
-        except Exception:
+        except:
             pass
         return
 
@@ -98,14 +95,14 @@ async def pre_checkout(update, context):
         if expected_amount is not None and query.total_amount != expected_amount:
             try:
                 await query.answer(ok=False, error_message="المبلغ غير مطابق لسعر الخطة.")
-            except Exception:
+            except:
                 pass
             return
 
     try:
         await query.answer(ok=True)
         logger.info(f"✅ Pre-checkout success: {query.id}")
-    except Exception:
+    except:
         pass
 
 
@@ -152,41 +149,6 @@ async def successful_payment(update, context):
             await safe_send(context.bot, user_id, "❌ حدث خطأ في توليد كود الهدية.")
 
 
-# =====================================================================
-# تشغيل المهام الخلفية
-# =====================================================================
-
-def start_background_tasks(app: Application):
-    """تغليف وتشغيل المهام الخلفية بشكل آمن"""
-    async def task_wrapper(task_func, *args):
-        while True:
-            try:
-                await task_func(*args)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"❌ Task crashed: {e}")
-                await asyncio.sleep(5)
-
-    tasks = [
-        BackgroundTasks.auto_publish(app.bot),
-        BackgroundTasks.auto_backup(),
-        BackgroundTasks.reminders(app.bot),
-        BackgroundTasks.heartbeat(app.bot),
-        BackgroundTasks.flush_usage_periodically(),
-        BackgroundTasks.expire_subscriptions(),
-        BackgroundTasks.sync_admins_periodically(app.bot),
-        BackgroundTasks.expire_penalties_periodically()
-    ]
-
-    for task in tasks:
-        asyncio.create_task(task_wrapper(lambda t=task: t))
-
-
-# =====================================================================
-# الدالة الرئيسية Async
-# =====================================================================
-
 async def main():
     try:
         CONFIG.validate()
@@ -197,26 +159,29 @@ async def main():
     logger.info(f"🌿 {CONFIG.BOT_NAME}")
     logger.info(f"👨‍💼 المالك: {CONFIG.PRIMARY_OWNER_ID}")
 
-    # تهيئة قاعدة البيانات
     await initialize_db()
 
-    # تسجيل المطورين
     for dev_id in CONFIG.DEVELOPER_IDS:
         await DB.register_user(dev_id)
     await DB.register_user(CONFIG.PRIMARY_OWNER_ID)
 
-    # تحميل الإعدادات
     KeyboardFactory.load_config()
     available_langs = TranslationManager.get_available_languages()
     for lang in available_langs:
         TranslationManager.load_translation(lang)
     logger.info(f"✅ تم تحميل {len(available_langs)} لغة")
 
-    # بناء التطبيق
-    app = Application.builder().token(CONFIG.TOKEN).build()
+    port = int(CONFIG.WEB_PORT)
+    hostname = (
+        os.getenv("RENDER_EXTERNAL_HOSTNAME") or
+        os.getenv("RAILWAY_PUBLIC_DOMAIN") or
+        os.getenv("HEROKU_APP_NAME")
+    )
 
-    # ========== تسجيل الأوامر ==========
-    private_commands = [
+    app = Application.builder().token(CONFIG.TOKEN).build()
+    await app.initialize()
+
+    commands = [
         ("start", "🏠 القائمة الرئيسية"),
         ("help", "📚 المساعدة"),
         ("trial", "🎁 تجربة مجانية"),
@@ -231,6 +196,18 @@ async def main():
         ("set_min_interval", "⏱️ تعيين الحد الأدنى للفاصل"),
         ("gift_plans", "🎁 خطط الهدايا"),
         ("redeem_gift", "🎟️ استرداد كود هدية"),
+        ("syncgroup", "🔗 تفعيل المجموعة"),
+        ("security", "🛡️ إعدادات الأمان"),
+        ("panel", "📋 لوحة التحكم"),
+        ("lock", "🔒 قفل المجموعة"),
+        ("unlock", "🔓 فتح المجموعة"),
+        ("ban", "🚫 حظر مستخدم"),
+        ("mute", "🔇 كتم مستخدم"),
+        ("warn", "⚠️ تحذير مستخدم"),
+        ("kick", "👢 طرد مستخدم"),
+        ("restrict", "🔒 تقييد مستخدم"),
+        ("unban", "🔓 إلغاء حظر"),
+        ("pin", "📌 تثبيت رسالة"),
         # ✅ الأوامر الجديدة
         ("admin", "👑 لوحة الأدمن"),
         ("broadcast", "📨 بث جماعي"),
@@ -249,24 +226,9 @@ async def main():
         ("posts", "📋 منشوراتي"),
     ]
 
-    group_commands = [
-        ("start", "🏠 القائمة الرئيسية"),
-        ("help", "📚 المساعدة"),
-        ("syncgroup", "🔗 تفعيل المجموعة"),
-        ("security", "🛡️ إعدادات الأمان"),
-        ("panel", "📋 لوحة التحكم"),
-        ("lock", "🔒 قفل المجموعة"),
-        ("unlock", "🔓 فتح المجموعة"),
-        ("ban", "🚫 حظر مستخدم"),
-        ("mute", "🔇 كتم مستخدم"),
-        ("warn", "⚠️ تحذير مستخدم"),
-        ("kick", "👢 طرد مستخدم"),
-        ("restrict", "🔒 تقييد مستخدم"),
-        ("unban", "🔓 إلغاء حظر"),
-        ("pin", "📌 تثبيت رسالة"),
-    ]
+    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
+    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
 
-    # ========== معالجات الأوامر والرسائل ==========
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("trial", CommandHandlers.trial))
@@ -344,46 +306,62 @@ async def main():
     app.add_handler(ChatJoinRequestHandler(MessageHandlers.handle_join_request))
     app.add_error_handler(ErrorHandler.handle_error)
 
-    # ========== بدء التشغيل الآمن ==========
-    async with app:
-        await app.initialize()
-        
-        # ضبط أوامر التليجرام
-        try:
-            await app.bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
-            await app.bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
-        except Exception as e:
-            logger.warning(f"⚠️ فشل تسجيل الأوامر: {e}")
+    async def run_task_with_retry(task_func, *args, task_name=""):
+        while True:
+            try:
+                await task_func(*args)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"❌ Task {task_name} crashed: {e}", exc_info=True)
+                logger.info(f"🔄 إعادة تشغيل المهمة {task_name} بعد 5 ثوانٍ...")
+                await asyncio.sleep(5)
 
-        await app.start()
+    tasks = [
+        asyncio.create_task(run_task_with_retry(BackgroundTasks.auto_publish, app.bot, task_name="auto_publish")),
+        asyncio.create_task(run_task_with_retry(BackgroundTasks.auto_backup, task_name="auto_backup")),
+        asyncio.create_task(run_task_with_retry(BackgroundTasks.reminders, app.bot, task_name="reminders")),
+        asyncio.create_task(run_task_with_retry(BackgroundTasks.heartbeat, app.bot, task_name="heartbeat")),
+        asyncio.create_task(run_task_with_retry(BackgroundTasks.flush_usage_periodically, task_name="flush_usage")),
+        asyncio.create_task(run_task_with_retry(BackgroundTasks.expire_subscriptions, task_name="expire_subscriptions")),
+        asyncio.create_task(run_task_with_retry(BackgroundTasks.sync_admins_periodically, app.bot, task_name="sync_admins")),
+        asyncio.create_task(run_task_with_retry(BackgroundTasks.expire_penalties_periodically, task_name="expire_penalties")),
+    ]
 
-        # إطلاق المهام الخلفية
-        start_background_tasks(app)
-
-        hostname = (
-            os.getenv("RENDER_EXTERNAL_HOSTNAME") or
-            os.getenv("RAILWAY_PUBLIC_DOMAIN") or
-            os.getenv("HEROKU_APP_NAME")
-        )
-
+    try:
         if hostname:
             webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
             logger.info(f"🔗 Webhook: {webhook_url}")
             await app.bot.delete_webhook(drop_pending_updates=True)
-            await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True, allowed_updates=ALLOWED_UPDATES)
-            logger.info("✅ Webhook تم التعيين")
-            await asyncio.Event().wait()
-        else:
-            logger.info("⚠️ Polling")
-            await app.updater.start_polling(
+            await app.bot.set_webhook(
+                url=webhook_url,
                 drop_pending_updates=True,
                 allowed_updates=ALLOWED_UPDATES
             )
-            # إبقاء الـ Loop يعمل بشكل مستمر
-            await asyncio.Event().wait()
+            logger.info("✅ Webhook تم التعيين")
+            runner = await setup_webhook(app, port)
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await runner.cleanup()
+        else:
+            logger.info("⚠️ Polling")
+            await app.run_polling(
+                drop_pending_updates=True,
+                allowed_updates=ALLOWED_UPDATES
+            )
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await app.shutdown()
+
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("\n👋 تم إيقاف البوت بنجاح")
+    except KeyboardInterrupt:
+        logger.info("\n👋 تم الإيقاف")
+    except Exception as e:
+        logger.error(f"❌ خطأ: {e}")
+        traceback.print_exc()
