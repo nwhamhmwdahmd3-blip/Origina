@@ -11,6 +11,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - معالجة TimedOut مع إعادة المحاولة في safe_send
 - كل قناة تنشر بشكل مستقل بفاصل 12 دقيقة
 - حالة WAIT_MOOD لتحليل المشاعر
+- رسالة تأكيد تحميل الردود
 """
 
 import asyncio
@@ -1189,12 +1190,17 @@ def load_replies_from_file() -> dict:
     try:
         import replies
         importlib.reload(replies)
-        return replies.REPLIES
+        replies_data = replies.REPLIES
+        if replies_data:
+            logger.info(f"✅ تم تحميل الردود: {len(replies_data)} رد تلقائي")
+        else:
+            logger.warning("⚠️ ملف replies.py فارغ")
+        return replies_data
     except ImportError:
         logger.info("ℹ️ لا يوجد replies.py")
         return {}
     except Exception as e:
-        logger.error(f"❌ {e}")
+        logger.error(f"❌ خطأ في تحميل replies.py: {e}")
         return {}
 
 
