@@ -11,6 +11,11 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ إصلاح دوال الإحالات للتعامل مع عدم وجود بيانات
 - ✅ إصلاح get_channels_to_publish لدعم إعادة التدوير التلقائي
 - ✅ إعادة تدوير مباشرة عند نفاد المنشورات
+- ✅ إضافة جدول user_violations ودوال التصعيد التلقائي
+- ✅ استكمال الأعمدة الناقصة في group_security
+- ✅ إضافة جدول anonymous_admins ودوال المشرفين المجهولين
+- ✅ زيادة طول رموز الإحالة إلى 16 حرف
+- ✅ إعادة تعيين عداد الفشل تلقائياً
 """
 
 import sqlite3
@@ -242,6 +247,19 @@ class Database:
                 PRIMARY KEY (chat_id, admin_id)
             )
         """)
+
+        # ✅ NEW: جدول المشرفين المجهولين (البوتات التي لها صلاحيات إدارية مع إخفاء الهوية)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS anonymous_admins (
+                chat_id INTEGER NOT NULL,
+                anonymous_id INTEGER NOT NULL,
+                added_by INTEGER,
+                added_at TEXT,
+                PRIMARY KEY (chat_id, anonymous_id)
+            )
+        """)
+
+        # ✅ جدول group_security مع جميع الأعمدة المطلوبة (بما فيها الأعمدة الإضافية)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS group_security (
                 chat_id INTEGER PRIMARY KEY,
@@ -269,12 +287,14 @@ class Database:
                 delete_video_note INTEGER DEFAULT 0,
                 delete_penalty TEXT DEFAULT 'none',
                 delete_penalty_duration INTEGER DEFAULT 0,
+                delete_penalty_messages INTEGER DEFAULT 0,
                 antiflood_enabled INTEGER DEFAULT 0,
                 antiflood_messages INTEGER DEFAULT 5,
                 antiflood_seconds INTEGER DEFAULT 10,
                 antiflood_penalty TEXT DEFAULT 'mute',
                 max_warnings INTEGER DEFAULT 3,
                 warn_penalty TEXT DEFAULT 'ban',
+                warn_enabled INTEGER DEFAULT 0,
                 max_message_length INTEGER DEFAULT 0,
                 night_mode_enabled INTEGER DEFAULT 0,
                 night_mode_start TEXT DEFAULT '23:00',
@@ -282,6 +302,7 @@ class Database:
                 night_mode_action TEXT DEFAULT 'mute',
                 nsfw_enabled INTEGER DEFAULT 0,
                 nsfw_threshold REAL DEFAULT 0.7,
+                nsfw_filter INTEGER DEFAULT 0,
                 auto_approve_join INTEGER DEFAULT 0,
                 auto_reject_join INTEGER DEFAULT 0,
                 mute_default_duration INTEGER DEFAULT 3600,
@@ -289,9 +310,12 @@ class Database:
                 warn_default_duration INTEGER DEFAULT 0,
                 restrict_default_duration INTEGER DEFAULT 1800,
                 enable_timed_penalties INTEGER DEFAULT 1,
-                auto_remove_penalties INTEGER DEFAULT 1
+                auto_remove_penalties INTEGER DEFAULT 1,
+                violation_strikes INTEGER DEFAULT 3,
+                violation_duration INTEGER DEFAULT 60
             )
         """)
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS chat_locks (
                 chat_id INTEGER PRIMARY KEY,
@@ -450,6 +474,16 @@ class Database:
                 PRIMARY KEY (user_id, chat_id)
             )
         """)
+        # ✅ NEW: جدول تتبع المخالفات للتصعيد التلقائي
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_violations (
+                user_id INTEGER,
+                chat_id INTEGER,
+                violation_count INTEGER DEFAULT 0,
+                last_violation_time TEXT,
+                PRIMARY KEY (user_id, chat_id)
+            )
+        """)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS group_rules (
                 chat_id INTEGER PRIMARY KEY,
@@ -590,56 +624,67 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )
         """)
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_user ON user_penalties(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_chat ON user_penalties(chat_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_status ON user_penalties(status)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_points_user ON user_points(user_id)")
         await conn.commit()
 
     async def _create_indexes(self, conn) -> None:
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users(banned)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_language ON users(language)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_subscription ON users(subscription_end)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_updated ON users(updated_at)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_uc_active ON user_channels(banned)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_fail ON posts(fail_count)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_next ON schedule(next_publish_date)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_groups_banned ON bot_groups(banned)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_group_admins_user ON group_admins(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_group_admins_chat ON group_admins(chat_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_security_chat ON group_security(chat_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_banned_words_chat ON banned_words(chat_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_banned_words_word ON banned_words(word)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_warnings_user ON user_warnings(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_warnings_chat ON user_warnings(chat_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_logs_chat ON admin_logs(chat_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_logs_admin ON admin_logs(admin_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_logs_created ON admin_logs(created_at)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_chat ON auto_replies(chat_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ar_keyword ON auto_replies(keyword)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_replies_lookup ON auto_replies(chat_id, keyword, is_active)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_status ON subscriptions(status)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_end ON subscriptions(end_date)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_user ON invoices(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_status ON invoices(status)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_contests_end ON contests(end_date)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_contest_participants_contest ON contest_participants(contest_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_contest_participants_user ON contest_participants(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_user ON user_reminder_settings(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_posts_channel_published ON posts(channel_db_id, published)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_sub_user_status_end ON subscriptions(user_id, status, end_date)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_user_chat_status ON user_penalties(user_id, chat_id, status)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_penalties_chat_status ON user_penalties(chat_id, status)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_replies_chat_key ON auto_replies(chat_id, keyword, is_active)")
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_users_banned ON users(banned)",
+            "CREATE INDEX IF NOT EXISTS idx_users_language ON users(language)",
+            "CREATE INDEX IF NOT EXISTS idx_users_subscription ON users(subscription_end)",
+            "CREATE INDEX IF NOT EXISTS idx_users_updated ON users(updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_uc_user ON user_channels(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_uc_active ON user_channels(banned)",
+            "CREATE INDEX IF NOT EXISTS idx_posts_channel ON posts(channel_db_id)",
+            "CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published)",
+            "CREATE INDEX IF NOT EXISTS idx_posts_fail ON posts(fail_count)",
+            "CREATE INDEX IF NOT EXISTS idx_sched_next ON schedule(next_publish_date)",
+            "CREATE INDEX IF NOT EXISTS idx_groups_banned ON bot_groups(banned)",
+            "CREATE INDEX IF NOT EXISTS idx_group_admins_user ON group_admins(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_group_admins_chat ON group_admins(chat_id)",
+            "CREATE INDEX IF NOT EXISTS idx_security_chat ON group_security(chat_id)",
+            "CREATE INDEX IF NOT EXISTS idx_banned_words_chat ON banned_words(chat_id)",
+            "CREATE INDEX IF NOT EXISTS idx_banned_words_word ON banned_words(word)",
+            "CREATE INDEX IF NOT EXISTS idx_user_warnings_user ON user_warnings(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_user_warnings_chat ON user_warnings(chat_id)",
+            "CREATE INDEX IF NOT EXISTS idx_user_violations_user ON user_violations(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_user_violations_chat ON user_violations(chat_id)",
+            "CREATE INDEX IF NOT EXISTS idx_admin_logs_chat ON admin_logs(chat_id)",
+            "CREATE INDEX IF NOT EXISTS idx_admin_logs_admin ON admin_logs(admin_id)",
+            "CREATE INDEX IF NOT EXISTS idx_admin_logs_created ON admin_logs(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_ar_chat ON auto_replies(chat_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ar_keyword ON auto_replies(keyword)",
+            "CREATE INDEX IF NOT EXISTS idx_auto_replies_lookup ON auto_replies(chat_id, keyword, is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)",
+            "CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sub_status ON subscriptions(status)",
+            "CREATE INDEX IF NOT EXISTS idx_sub_end ON subscriptions(end_date)",
+            "CREATE INDEX IF NOT EXISTS idx_inv_user ON invoices(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_inv_status ON invoices(status)",
+            "CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)",
+            "CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)",
+            "CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status)",
+            "CREATE INDEX IF NOT EXISTS idx_contests_end ON contests(end_date)",
+            "CREATE INDEX IF NOT EXISTS idx_contest_participants_contest ON contest_participants(contest_id)",
+            "CREATE INDEX IF NOT EXISTS idx_contest_participants_user ON contest_participants(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_reminders_user ON user_reminder_settings(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_posts_channel_published ON posts(channel_db_id, published)",
+            "CREATE INDEX IF NOT EXISTS idx_sub_user_status_end ON subscriptions(user_id, status, end_date)",
+            "CREATE INDEX IF NOT EXISTS idx_penalties_user ON user_penalties(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_penalties_chat ON user_penalties(chat_id)",
+            "CREATE INDEX IF NOT EXISTS idx_penalties_status ON user_penalties(status)",
+            "CREATE INDEX IF NOT EXISTS idx_penalties_user_chat_status ON user_penalties(user_id, chat_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_penalties_chat_status ON user_penalties(chat_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_auto_replies_chat_key ON auto_replies(chat_id, keyword, is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_points_user ON user_points(user_id)",
+            # ✅ NEW: فهرس لجدول المشرفين المجهولين
+            "CREATE INDEX IF NOT EXISTS idx_anonymous_admins_chat ON anonymous_admins(chat_id)",
+        ]
+        for query in indexes:
+            try:
+                await conn.execute(query)
+            except Exception as e:
+                logger.warning(f"⚠️ فشل إنشاء فهرس: {e}")
         await conn.commit()
 
     async def _init_default_data(self, conn) -> None:
@@ -689,7 +734,8 @@ class Database:
     # ========= دوال المستخدمين =========
     async def register_user(self, user_id: int, username: str = "", first_name: str = "") -> bool:
         try:
-            code = secrets.token_urlsafe(6)
+            # ✅ زيادة طول رمز الإحالة إلى 16 حرف
+            code = secrets.token_urlsafe(16)
             async with self._get_connection() as conn:
                 await conn.execute(
                     """INSERT INTO users 
@@ -1088,10 +1134,10 @@ class Database:
 
     async def get_next_post(self, channel_db_id: int) -> Optional[Dict]:
         """جلب المنشور التالي مع إعادة تدوير مباشرة عند النفاد"""
-        
+
         # 1. محاولة جلب منشور غير منشور
         row = await self.fetchone("""
-            SELECT p.id, p.text, p.media_type, p.media_file_id
+            SELECT p.id, p.text, p.media_type, p.media_file_id, p.fail_count
             FROM posts p
             JOIN user_channels uc ON p.channel_db_id = uc.id
             WHERE p.channel_db_id = ? AND p.published = 0
@@ -1099,34 +1145,40 @@ class Database:
               AND uc.banned = 0
             ORDER BY p.created_at ASC LIMIT 1
         """, (channel_db_id,))
-        
+
         if row:
+            # ✅ إعادة تعيين عداد الفشل تلقائياً
+            if dict(row).get('fail_count', 0) > 0:
+                await self.execute("UPDATE posts SET fail_count = 0 WHERE id=?", (row['id'],))
             return dict(row)
-        
+
         # 2. التحقق من تفعيل إعادة التدوير
         user_row = await self.fetchone("""
             SELECT u.auto_recycle FROM users u
             JOIN user_channels uc ON u.user_id = uc.user_id
             WHERE uc.id = ?
         """, (channel_db_id,))
-        
+
         if not user_row or user_row[0] != 1:
             return None
-        
+
         # 3. إعادة تدوير جميع المنشورات المنشورة دفعة واحدة
         await self.execute("""
             UPDATE posts SET published = 0, published_at = NULL, fail_count = 0
             WHERE channel_db_id = ? AND published = 1
         """, (channel_db_id,))
-        
+
         # 4. جلب أول منشور من البداية
         row = await self.fetchone("""
-            SELECT p.id, p.text, p.media_type, p.media_file_id
+            SELECT p.id, p.text, p.media_type, p.media_file_id, p.fail_count
             FROM posts p
             WHERE p.channel_db_id = ? AND p.published = 0
             ORDER BY p.created_at ASC LIMIT 1
         """, (channel_db_id,))
-        
+
+        if row and dict(row).get('fail_count', 0) > 0:
+            await self.execute("UPDATE posts SET fail_count = 0 WHERE id=?", (row['id'],))
+
         return dict(row) if row else None
 
     async def get_user_posts(self, user_id: int, channel_db_id: int, limit: int = 15) -> List[Dict]:
@@ -1202,8 +1254,10 @@ class Database:
                 SELECT chat_id FROM group_admins WHERE user_id=?
                 UNION
                 SELECT chat_id FROM bot_groups WHERE added_by = ?
+                UNION
+                SELECT chat_id FROM anonymous_admins WHERE anonymous_id=?
             )
-        """, (user_id, user_id, user_id, user_id, user_id))
+        """, (user_id, user_id, user_id, user_id, user_id, user_id))
         return [(row[0], row[1], row[2] or "", row[3]) for row in rows]
 
     async def sync_group_admins(self, chat_id: int, admin_ids: List[int]) -> int:
@@ -1236,6 +1290,57 @@ class Database:
         )
         return [dict(row) for row in rows]
 
+    # ========= دوال المشرفين المجهولين =========
+    async def add_anonymous_admin(self, chat_id: int, anonymous_id: int, added_by: int = None) -> bool:
+        try:
+            await self.execute(
+                "INSERT OR IGNORE INTO anonymous_admins (chat_id, anonymous_id, added_by, added_at) VALUES (?,?,?,?)",
+                (chat_id, anonymous_id, added_by, TimeUtils.sql_iso())
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error in add_anonymous_admin: {e}", exc_info=True)
+            return False
+
+    async def remove_anonymous_admin(self, chat_id: int, anonymous_id: int) -> bool:
+        async with self._get_connection() as conn:
+            cur = await conn.execute(
+                "DELETE FROM anonymous_admins WHERE chat_id=? AND anonymous_id=?",
+                (chat_id, anonymous_id)
+            )
+            await conn.commit()
+            return cur.rowcount > 0
+
+    async def get_anonymous_admins(self, chat_id: int) -> List[Dict]:
+        rows = await self.fetchall(
+            "SELECT anonymous_id, added_by, added_at FROM anonymous_admins WHERE chat_id=? ORDER BY added_at DESC",
+            (chat_id,)
+        )
+        return [dict(row) for row in rows]
+
+    async def is_anonymous_admin(self, chat_id: int, user_id: int) -> bool:
+        row = await self.fetchone(
+            "SELECT 1 FROM anonymous_admins WHERE chat_id=? AND anonymous_id=?",
+            (chat_id, user_id)
+        )
+        return row is not None
+
+    async def sync_anonymous_admins(self, chat_id: int, anonymous_ids: List[int], added_by: int = None) -> int:
+        try:
+            async with self._lock:
+                async with self._get_connection() as conn:
+                    await conn.execute("DELETE FROM anonymous_admins WHERE chat_id=?", (chat_id,))
+                    if anonymous_ids:
+                        await conn.executemany(
+                            "INSERT OR IGNORE INTO anonymous_admins (chat_id, anonymous_id, added_by, added_at) VALUES (?,?,?,?)",
+                            [(chat_id, anon_id, added_by, TimeUtils.sql_iso()) for anon_id in anonymous_ids]
+                        )
+                    await conn.commit()
+                    return len(anonymous_ids)
+        except Exception as e:
+            logger.error(f"❌ Error in sync_anonymous_admins: {e}", exc_info=True)
+            return 0
+
     # ========= دوال الأمان =========
     async def _validate_columns(self, table: str, columns: List[str]) -> bool:
         allowed = {
@@ -1246,13 +1351,15 @@ class Database:
                 'delete_videos', 'delete_audio', 'delete_animation', 'delete_service',
                 'delete_documents', 'delete_stickers', 'delete_forwarded', 'delete_polls',
                 'delete_games', 'delete_voice', 'delete_video_note', 'delete_penalty',
-                'delete_penalty_duration', 'antiflood_enabled', 'antiflood_messages',
-                'antiflood_seconds', 'antiflood_penalty', 'max_warnings', 'warn_penalty',
-                'max_message_length', 'night_mode_enabled', 'night_mode_start',
-                'night_mode_end', 'night_mode_action', 'nsfw_enabled', 'nsfw_threshold',
-                'auto_approve_join', 'auto_reject_join', 'mute_default_duration',
-                'ban_default_duration', 'warn_default_duration', 'restrict_default_duration',
-                'enable_timed_penalties', 'auto_remove_penalties'
+                'delete_penalty_duration', 'delete_penalty_messages',
+                'antiflood_enabled', 'antiflood_messages', 'antiflood_seconds', 'antiflood_penalty',
+                'max_warnings', 'warn_penalty', 'warn_enabled', 'max_message_length',
+                'night_mode_enabled', 'night_mode_start', 'night_mode_end', 'night_mode_action',
+                'nsfw_enabled', 'nsfw_threshold', 'nsfw_filter',
+                'auto_approve_join', 'auto_reject_join',
+                'mute_default_duration', 'ban_default_duration', 'warn_default_duration', 'restrict_default_duration',
+                'enable_timed_penalties', 'auto_remove_penalties',
+                'violation_strikes', 'violation_duration'
             },
             'auto_reply_settings': {'enabled', 'only_admins', 'ignore_bots', 'updated_at'},
             'schedule': {
@@ -1298,7 +1405,7 @@ class Database:
             word = word.strip().lower()
             if chat_id == -1:
                 count = await self.fetchval("SELECT COUNT(*) FROM banned_words WHERE chat_id=-1")
-                if count is not None and count >= CONFIG.MAX_GLOBAL_BANNED_WORDS:
+                if count is not None and count >= getattr(CONFIG, 'MAX_GLOBAL_BANNED_WORDS', 500):
                     return False, False
             await self.execute(
                 "INSERT INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)",
@@ -1584,7 +1691,7 @@ class Database:
                 )
                 count_result = await count_row.fetchone()
                 count = count_result[0] if count_result else 0
-                
+
                 if count >= getattr(CONFIG, 'MAX_DAILY_REFERRALS', 10):
                     logger.warning(f"⚠️ User {referrer_id} reached daily referral limit")
                     return False
@@ -1624,23 +1731,23 @@ class Database:
                 "VALUES (?, 0, 0, 0, NULL)",
                 (user_id,)
             )
-            
+
             total_row = await conn.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,))
             total_result = await total_row.fetchone()
             total = total_result[0] if total_result else 0
-            
+
             reward_row = await conn.execute(
                 "SELECT COALESCE(total_reward_days, 0) as total_reward, COALESCE(claimed_reward_days, 0) as claimed "
                 "FROM referral_rewards WHERE user_id = ?",
                 (user_id,)
             )
             reward_result = await reward_row.fetchone()
-            
+
             total_reward = reward_result['total_reward'] if reward_result else 0
             claimed = reward_result['claimed'] if reward_result else 0
-            
+
             await conn.commit()
-        
+
         return {
             'total': total, 
             'claimed': claimed, 
@@ -1656,21 +1763,21 @@ class Database:
                         "VALUES (?, 0, 0, 0, NULL)",
                         (user_id,)
                     )
-                    
+
                     reward_row = await conn.execute(
                         "SELECT COALESCE(total_reward_days, 0) as total_reward, COALESCE(claimed_reward_days, 0) as claimed "
                         "FROM referral_rewards WHERE user_id = ?",
                         (user_id,)
                     )
                     reward_result = await reward_row.fetchone()
-                    
+
                     if not reward_result:
                         return 0
-                    
+
                     total_reward = reward_result['total_reward'] or 0
                     claimed = reward_result['claimed'] or 0
                     available = max(0, total_reward - claimed)
-                    
+
                     if available <= 0:
                         return 0
 
@@ -2160,7 +2267,7 @@ class Database:
 
     async def create_gift_code(self, plan_id: int, creator_id: int) -> Optional[str]:
         try:
-            code = secrets.token_urlsafe(6)
+            code = secrets.token_urlsafe(8)
             async with self._get_connection() as conn:
                 await conn.execute(
                     """INSERT INTO gift_codes (code, plan_id, creator_id, created_at)
@@ -2330,6 +2437,49 @@ class Database:
                 'duration_seconds': row[2]
             }
         return result
+
+    # ========= دوال تتبع المخالفات والتصعيد التلقائي (NEW) =========
+    async def get_violation_count(self, user_id: int, chat_id: int) -> int:
+        """
+        جلب عدد المخالفات الحالية للمستخدم في المجموعة.
+        إذا مر أكثر من 24 ساعة على آخر مخالفة، يتم تصفير العداد تلقائياً.
+        """
+        row = await self.fetchone(
+            "SELECT violation_count, last_violation_time FROM user_violations WHERE user_id=? AND chat_id=?",
+            (user_id, chat_id)
+        )
+        if not row:
+            return 0
+        last_time = TimeUtils.safe_parse_iso(row['last_violation_time'])
+        if last_time:
+            if TimeUtils.utc_now() - last_time > timedelta(hours=24):
+                await self.execute(
+                    "UPDATE user_violations SET violation_count=0 WHERE user_id=? AND chat_id=?",
+                    (user_id, chat_id)
+                )
+                return 0
+        return row['violation_count']
+
+    async def increment_violation_count(self, user_id: int, chat_id: int) -> int:
+        current = await self.get_violation_count(user_id, chat_id)
+        new_count = current + 1
+        await self.execute(
+            """INSERT INTO user_violations (user_id, chat_id, violation_count, last_violation_time)
+               VALUES (?,?,?,?)
+               ON CONFLICT(user_id, chat_id) DO UPDATE SET
+                   violation_count = excluded.violation_count,
+                   last_violation_time = excluded.last_violation_time
+            """,
+            (user_id, chat_id, new_count, TimeUtils.sql_iso())
+        )
+        return new_count
+
+    async def reset_violation_count(self, user_id: int, chat_id: int) -> bool:
+        await self.execute(
+            "UPDATE user_violations SET violation_count=0, last_violation_time=NULL WHERE user_id=? AND chat_id=?",
+            (user_id, chat_id)
+        )
+        return True
 
     # ========= دوال النقاط والمستويات =========
     async def add_points(self, user_id: int, points: int) -> int:

@@ -2,18 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-utils.py - الأدوات المساعدة للبوت (النسخة النهائية المُحدّثة)
-==========================================================
-- إصلاح RateLimiter (استخدام self.max_per_second)
-- إضافة تأخير عند فشل النشر
-- نسخة احتياطية أولية مبكرة
-- دعم parse_mode في safe_send
-- استخدام asyncio.to_thread
-- معالجة غير معروفة في PenaltyFactory
-- fetch_json_from_url مع raise_for_status
-- إصلاح reload_replies_from_file
-- تعريف _REPLIES_FROM_FILE
-- تحسين get_reply_from_file لدعم النصوص متعددة الأسطر
+utils.py - الأدوات المساعدة للبوت (النسخة النهائية الكاملة والمكتملة)
+=====================================================================
+جميع الدوال والفئات موجودة - جميع الحالات مكتملة - جميع الثوابت معرّفة
+- معالجة لغة off تلقائياً
+- دعم كامل لجميع الأزرار
+- دعم المشرفين المجهولين في is_authorized_in_group
+- معالجة TimedOut مع إعادة المحاولة في safe_send
+- كل قناة تنشر بشكل مستقل بفاصل 12 دقيقة
 """
 
 import asyncio
@@ -42,7 +38,7 @@ except ImportError:
 import aiohttp
 
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton, ChatPermissions, Update
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TimedOut
 from telegram.ext import ContextTypes
 from cachetools import TTLCache
 
@@ -59,6 +55,8 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 class TimeUtils:
+    """أدوات الوقت والتاريخ"""
+
     @staticmethod
     def utc_now() -> datetime:
         return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -105,6 +103,8 @@ class TimeUtils:
 # =====================================================================
 
 class TextUtils:
+    """أدوات معالجة النصوص"""
+
     @staticmethod
     def contains_link(text: Optional[str]) -> bool:
         if not text:
@@ -130,6 +130,12 @@ class TextUtils:
         return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\\'])', r'\\\1', text)
 
     @staticmethod
+    def escape_html(text: str) -> str:
+        if not text:
+            return ""
+        return html.escape(text)
+
+    @staticmethod
     def truncate(text: str, max_len: int = 200) -> str:
         return text[:max_len] + ("..." if len(text) > max_len else "")
 
@@ -139,6 +145,8 @@ class TextUtils:
 # =====================================================================
 
 class RateLimiter:
+    """محدد معدل الطلبات"""
+
     def __init__(self, max_concurrent: int = 10, max_per_second: int = 30):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._last_calls = deque(maxlen=max_per_second * 2)
@@ -166,6 +174,8 @@ RATE_LIMITER = RateLimiter(max_concurrent=15, max_per_second=30)
 # =====================================================================
 
 class MetricsCollector:
+    """جمع مقاييس الأداء"""
+
     def __init__(self):
         self.api_calls = deque(maxlen=1000)
         self.errors = deque(maxlen=1000)
@@ -201,6 +211,8 @@ METRICS = MetricsCollector()
 # =====================================================================
 
 class AutoReplyCache:
+    """كاش للردود التلقائية"""
+
     def __init__(self, maxsize: int = 300):
         self.cache = OrderedDict()
         self.maxsize = maxsize
@@ -222,6 +234,9 @@ class AutoReplyCache:
         else:
             self.cache.clear()
 
+    def clear(self):
+        self.cache.clear()
+
 
 _auto_reply_cache = AutoReplyCache(maxsize=300)
 
@@ -231,12 +246,16 @@ _auto_reply_cache = AutoReplyCache(maxsize=300)
 # =====================================================================
 
 class TranslationManager:
+    """إدارة الترجمات"""
+
     _translations: Dict[str, Dict] = {}
     _locales_dir: str = str(Path(__file__).resolve().parent / "locales")
     _default_lang: str = "ar"
 
     @classmethod
     def load_translation(cls, lang: str) -> Dict:
+        if lang == 'off':
+            lang = cls._default_lang
         if lang in cls._translations:
             return cls._translations[lang]
         file_path = Path(cls._locales_dir) / f"{lang}.json"
@@ -264,7 +283,7 @@ class TranslationManager:
 
     @classmethod
     def get_available_languages(cls) -> Dict[str, str]:
-        all_languages = {
+        return {
             "ar": "العربية 🇸🇦",
             "en": "English 🇬🇧",
             "fr": "Français 🇫🇷",
@@ -278,7 +297,6 @@ class TranslationManager:
             "ja": "日本語 🇯🇵",
             "ko": "한국어 🇰🇷"
         }
-        return all_languages
 
 
 async def get_text(lang: str, key: str, **kwargs) -> str:
@@ -290,6 +308,8 @@ async def get_text(lang: str, key: str, **kwargs) -> str:
 # =====================================================================
 
 class UserState(Enum):
+    """حالات المستخدم - كاملة"""
+
     NONE = auto()
     ADDING_POSTS = auto()
     WAIT_CHANNEL = auto()
@@ -344,12 +364,18 @@ class UserState(Enum):
     WAIT_GOODBYE_TEXT = auto()
     WAIT_SLOW_MODE_SECONDS = auto()
     WAIT_PENALTY_DEFAULT_DURATION = auto()
+    WAIT_CONTEST_WINNER = auto()
+    WAIT_PENALTY_MUTE_DURATION = auto()
+    WAIT_PENALTY_BAN_DURATION = auto()
+    WAIT_PENALTY_RESTRICT_DURATION = auto()
 
 
 class StateManager:
+    """إدارة حالات المستخدمين - كاملة"""
+
     _states: Dict[int, UserState] = {}
     _timestamps: Dict[int, float] = {}
-    _timeout = 300
+    _timeout = 300  # 5 دقائق
 
     @classmethod
     def get(cls, user_id: int) -> UserState:
@@ -368,12 +394,21 @@ class StateManager:
         cls._states.pop(user_id, None)
         cls._timestamps.pop(user_id, None)
 
+    @classmethod
+    def is_expired(cls, user_id: int, timeout: int = None) -> bool:
+        if user_id not in cls._timestamps:
+            return False
+        ttl = timeout or cls._timeout
+        return time.time() - cls._timestamps[user_id] > ttl
+
 
 # =====================================================================
-# 8. تعريفات الأزرار (CB)
+# 8. تعريفات الأزرار (CB) - كاملة
 # =====================================================================
 
 class CB:
+    """ثوابت أزرار الكيبورد - كاملة"""
+
     MAIN = "main"
     BACK = "back"
     CANCEL = "cancel"
@@ -405,6 +440,17 @@ class CB:
     SEC_CLOSE = "sec_close"
     SEC_ENABLE_ALL = "sec_enable_all"
     SEC_DISABLE_ALL = "sec_disable_all"
+    SEC_NSFW = "sec_nsfw"
+    SEC_DEL_PEN = "sec_del_pen"
+    SEC_WARN = "sec_warn"
+    SEC_VIOLATION_PENALTIES = "sec_violation_penalties"
+    SEC_SET_VIOLATION_STRIKES = "sec_set_violation_strikes"
+    SEC_SET_VIOLATION_DURATION = "sec_set_violation_duration"
+    SEC_PENALTY_MUTE = "sec_penalty_mute"
+    SEC_PENALTY_BAN = "sec_penalty_ban"
+    SEC_PENALTY_RESTRICT = "sec_penalty_restrict"
+    SEC_ANTIFLOOD_PENALTY = "sec_antiflood_penalty"
+    SEC_NIGHT_ACTION = "sec_night_action"
 
     BAN_ADD = "ban_add"
     BAN_LIST = "ban_list"
@@ -460,6 +506,11 @@ class CB:
     CONTEST_WINNERS = "contest_winners"
     DECLARE_WINNER_SEL = "declare_winner_sel"
 
+    SCHED_MIN = "sched_min"
+    SCHED_HOUR = "sched_hour"
+    SCHED_DAY = "sched_day"
+    SCHED_TIME = "sched_time"
+
     ADMIN = "admin"
     ADMIN_USERS = "admin_users"
     ADMIN_BANNED = "admin_banned"
@@ -476,6 +527,7 @@ class CB:
     ADMIN_RAM = "admin_ram"
     ADMIN_STATS = "admin_stats"
     ADMIN_METRICS = "admin_metrics"
+    ADMIN_UPTIME = "admin_uptime"
     ADMIN_BACKUP = "admin_backup"
     ADMIN_RESTORE = "admin_restore"
     ADMIN_RESTORE_SEL = "admin_restore_sel"
@@ -506,6 +558,7 @@ class CB:
     ADMIN_IMPORT_GITHUB = "admin_import_github"
     ADMIN_INVOICES = "admin_invoices"
     ADMIN_PAYMENT_LOGS = "admin_payment_logs"
+    ADMIN_GRANT_FREE = "admin_grant_free"
 
     AUTO_REPLY_MENU = "auto_reply_menu"
     AUTO_REPLY_TOGGLE = "auto_reply_toggle"
@@ -522,6 +575,8 @@ class CB:
 # =====================================================================
 
 class KeyboardFactory:
+    """مصنع الكيبوردات"""
+
     _configs: Dict[str, Dict] = {}
     _default_lang: str = "ar"
     _config_path_template: str = str(Path(__file__).resolve().parent / "buttons_config_{lang}.json")
@@ -537,11 +592,14 @@ class KeyboardFactory:
         "invoices", "groups", "admin", "panel_close",
         "pub_all", "post_add", "post_pub", "post_list", "post_rec",
         "sec_antiflood_settings", "sec_night_settings",
-        "sec_penalty_durations", "sec_close"
+        "sec_penalty_durations", "sec_close", "admin_uptime"
     }
 
     @classmethod
     def _load_config_for_lang(cls, lang: str) -> Dict:
+        if lang == 'off':
+            lang = cls._default_lang
+
         if lang in cls._configs:
             return cls._configs[lang]
 
@@ -632,6 +690,7 @@ class KeyboardFactory:
                     ["sec_auto_reply_menu"],
                     ["sec_antiflood_settings", "sec_night_settings"],
                     ["sec_penalty_durations"],
+                    ["sec_violation_penalties"],
                     ["sec_enable_all", "sec_disable_all"],
                     ["sec_close"]
                 ],
@@ -646,6 +705,10 @@ class KeyboardFactory:
                     ["act_restrict", "act_unban"],
                     ["act_pin"],
                     ["act_log"],
+                    ["back"]
+                ],
+                "violation_penalties": [
+                    ["sec_set_violation_strikes", "sec_set_violation_duration"],
                     ["back"]
                 ]
             }
@@ -686,7 +749,9 @@ class KeyboardFactory:
             f"🔗 الروابط: {st(settings.get('delete_links', 0))}",
             f"👤 المعرفات: {st(settings.get('mentions', 0))}",
             f"🌊 الفيضان: {st(settings.get('antiflood_enabled', 0))}",
-            f"🌙 الوضع الليلي: {st(settings.get('night_mode_enabled', 0))}\n",
+            f"🌙 الوضع الليلي: {st(settings.get('night_mode_enabled', 0))}",
+            f"🔞 NSFW: {st(settings.get('nsfw_enabled', 0))}",
+            f"⚠️ التحذيرات: {st(settings.get('warn_enabled', 0))}\n",
             "🎬 **المحتوى**",
             f"🎬 فيديو: {st(settings.get('delete_videos', 0))}",
             f"🎵 موسيقى: {st(settings.get('delete_audio', 0))}",
@@ -725,6 +790,7 @@ async def get_banned_words_cached(chat_id: int) -> List[str]:
     _banned_words_cache_time[chat_id] = now
     return words
 
+
 def invalidate_banned_words_cache(chat_id: int = None) -> None:
     if chat_id is not None:
         _banned_words_cache.pop(chat_id, None)
@@ -733,10 +799,8 @@ def invalidate_banned_words_cache(chat_id: int = None) -> None:
         _banned_words_cache.clear()
         _banned_words_cache_time.clear()
 
+
 async def get_min_publish_interval() -> int:
-    """
-    يُرجع الحد الأدنى للفاصل الزمني بين المنشورات بالدقائق.
-    """
     val = await DB.get_setting('min_publish_interval', str(CONFIG.MIN_PUBLISH_INTERVAL))
     try:
         return max(1, int(val))
@@ -780,9 +844,13 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
             )
             if row2:
                 authorized = True
+            else:
+                if await DB.is_anonymous_admin(chat_id, user_id):
+                    authorized = True
 
     _auth_cache[cache_key] = authorized
     return authorized
+
 
 def invalidate_auth_cache(chat_id: int = None, user_id: int = None) -> None:
     try:
@@ -796,6 +864,7 @@ def invalidate_auth_cache(chat_id: int = None, user_id: int = None) -> None:
             _auth_cache.clear()
     except:
         pass
+
 
 async def check_bot_permissions(bot, chat_id: int) -> dict:
     try:
@@ -813,7 +882,7 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 
 
 # =====================================================================
-# 12. إرسال آمن
+# 12. إرسال آمن (مع معالجة TimedOut)
 # =====================================================================
 
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode: str = None, **kwargs):
@@ -829,16 +898,39 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
             parse_mode=parse_mode,
             **kwargs
         )
-    except Exception as e:
-        logger.warning(f"⚠️ فشل الإرسال: {e}")
-        if "can't parse entities" in str(e).lower() or "parse" in str(e).lower():
+    except TimedOut:
+        logger.warning("⚠️ Timed out، محاولة إعادة الإرسال...")
+        try:
+            await asyncio.sleep(1)
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                **kwargs
+            )
+        except Exception as e2:
+            logger.error(f"❌ فشل الإرسال بعد المحاولة الثانية: {e2}")
+            return None
+    except BadRequest as e:
+        error_msg = str(e).lower()
+        if "can't parse entities" in error_msg or "parse" in error_msg:
             plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', text)
             if len(plain) > 4096:
                 plain = plain[:4093] + "..."
             try:
-                return await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup, parse_mode=None, **kwargs)
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=plain,
+                    reply_markup=reply_markup,
+                    parse_mode=None,
+                    **kwargs
+                )
             except Exception as e2:
                 logger.error(f"❌ فشل الإرسال النهائي: {e2}")
+        return None
+    except Exception as e:
+        logger.warning(f"⚠️ فشل الإرسال: {e}")
         return None
 
 
@@ -862,6 +954,7 @@ class PenaltyStrategy(ABC):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         pass
 
+
 class BanPenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         if user_id == bot.id:
@@ -873,6 +966,7 @@ class BanPenalty(PenaltyStrategy):
             return True, "✅ تم الحظر"
         except Exception as e:
             return False, str(e)[:100]
+
 
 class MutePenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
@@ -886,9 +980,10 @@ class MutePenalty(PenaltyStrategy):
                 ChatPermissions(can_send_messages=False),
                 until_date=until_date
             )
-            return True, f"✅ تم الكتم"
+            return True, "✅ تم الكتم"
         except Exception as e:
             return False, str(e)[:100]
+
 
 class KickPenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
@@ -901,6 +996,7 @@ class KickPenalty(PenaltyStrategy):
         except Exception as e:
             return False, str(e)[:100]
 
+
 class WarnPenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         if user_id == bot.id:
@@ -910,6 +1006,7 @@ class WarnPenalty(PenaltyStrategy):
             return True, f"⚠️ تحذير {w}"
         except Exception as e:
             return False, str(e)[:100]
+
 
 class RestrictPenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
@@ -927,6 +1024,7 @@ class RestrictPenalty(PenaltyStrategy):
         except Exception as e:
             return False, str(e)[:100]
 
+
 class UnbanPenalty(PenaltyStrategy):
     async def apply(self, bot, chat_id: int, user_id: int, **kwargs) -> Tuple[bool, str]:
         try:
@@ -935,14 +1033,20 @@ class UnbanPenalty(PenaltyStrategy):
         except Exception as e:
             return False, str(e)[:100]
 
+
 class PenaltyFactory:
     @staticmethod
     def get_strategy(penalty_type: str):
         strategies = {
-            'ban': BanPenalty(), 'mute': MutePenalty(), 'kick': KickPenalty(),
-            'warn': WarnPenalty(), 'restrict': RestrictPenalty(), 'unban': UnbanPenalty()
+            'ban': BanPenalty(),
+            'mute': MutePenalty(),
+            'kick': KickPenalty(),
+            'warn': WarnPenalty(),
+            'restrict': RestrictPenalty(),
+            'unban': UnbanPenalty()
         }
         return strategies.get(penalty_type)
+
 
 async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration: int = 60, reason: str = "", moderator: int = None) -> Tuple[bool, str]:
     if user_id == CONFIG.PRIMARY_OWNER_ID:
@@ -982,6 +1086,7 @@ _USAGE_FLUSH_LIMIT = 50
 _USAGE_FLUSH_INTERVAL = 60
 _usage_lock = asyncio.Lock()
 
+
 async def _increment_usage_async(chat_id: int, keyword: str):
     async with _usage_lock:
         key = (chat_id, keyword.lower())
@@ -989,6 +1094,7 @@ async def _increment_usage_async(chat_id: int, keyword: str):
         should_flush = len(_usage_updates) >= _USAGE_FLUSH_LIMIT
     if should_flush:
         await _flush_usage_updates()
+
 
 async def _flush_usage_updates():
     async with _usage_lock:
@@ -1008,6 +1114,7 @@ async def _flush_usage_updates():
             for key, count in data:
                 _usage_updates[key] = _usage_updates.get(key, 0) + count
 
+
 async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
     rows = await DB.fetchall(
         "SELECT keyword, reply FROM auto_replies WHERE chat_id=? AND is_active=1",
@@ -1018,11 +1125,14 @@ async def export_auto_replies(chat_id: int, file_path: str = None) -> int:
     data = [dict(row) for row in rows]
     if file_path is None:
         file_path = f"auto_replies_{chat_id}.json"
+
     def _write():
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+
     await asyncio.to_thread(_write)
     return len(data)
+
 
 async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[Dict]], overwrite: bool = False) -> int:
     try:
@@ -1053,10 +1163,11 @@ async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[D
         logger.error(f"❌ Import error: {e}")
         return 0
 
+
 async def fetch_json_from_url(url: str) -> Optional[Union[list, dict]]:
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=30) as response:
+            async with session.get(url) as response:
                 response.raise_for_status()
                 data = await response.json()
                 if isinstance(data, (list, dict)):
@@ -1083,40 +1194,38 @@ def load_replies_from_file() -> dict:
         logger.error(f"❌ {e}")
         return {}
 
+
 _REPLIES_FROM_FILE = load_replies_from_file()
+
 
 def get_reply_from_file(keyword: str) -> Optional[str]:
     if not _REPLIES_FROM_FILE or not keyword:
         return None
     keyword = keyword.lower().strip()
 
-    # تقسيم النص إلى أسطر
     lines = keyword.split('\n')
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        # محاولة تطابق السطر كاملاً
         if line in _REPLIES_FROM_FILE:
             replies = _REPLIES_FROM_FILE[line]
             return random.choice(replies) if replies else None
 
-        # تقسيم السطر إلى كلمات والبحث عن تطابق أي كلمة
         words = line.split()
         for word in words:
             if word in _REPLIES_FROM_FILE:
                 replies = _REPLIES_FROM_FILE[word]
                 return random.choice(replies) if replies else None
 
-    # تطابق جزئي: البحث عن أي كلمة رئيسية تظهر في النص
     for key, replies in _REPLIES_FROM_FILE.items():
         if not isinstance(replies, list) or not replies:
             continue
-        # استخدام حدود الكلمات لتفادي تطابق جزئي غير مقصود
         if re.search(rf'\b{re.escape(key)}\b', keyword):
             return random.choice(replies)
 
     return None
+
 
 def reload_replies_from_file() -> dict:
     global _REPLIES_FROM_FILE
@@ -1135,7 +1244,6 @@ class BackgroundTasks:
             text = post.get('text', '')
             media_type = post.get('media_type')
             media_file_id = post.get('media_file_id')
-
             caption = text[:1024] if text else None
 
             if media_type == 'photo' and media_file_id:
@@ -1166,7 +1274,7 @@ class BackgroundTasks:
         await asyncio.sleep(10)
         max_channels = getattr(CONFIG, 'MAX_CHANNELS_PER_CYCLE', 20)
         min_interval_minutes = await get_min_publish_interval()
-        sleep_seconds = max(1, min_interval_minutes * 60)
+        sleep_seconds = min_interval_minutes * 60  # 12 دقيقة = 720 ثانية
 
         while True:
             try:
@@ -1175,31 +1283,66 @@ class BackgroundTasks:
                     await asyncio.sleep(60)
                     continue
 
+                # ✅ إنشاء مهمة مستقلة لكل قناة
+                tasks = []
                 for ch in channels:
-                    if not await DB.has_active_subscription(ch['user_id']):
-                        continue
-                    post = await DB.get_next_post(ch['id'])
-                    if not post:
-                        auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
-                        if auto_recycle:
-                            await DB.reset_posts(ch['user_id'], ch['id'])
-                            post = await DB.get_next_post(ch['id'])
-                            if not post:
-                                continue
-                        else:
-                            continue
-                    success = await BackgroundTasks._publish_post(bot, ch['channel_id'], post)
-                    if success:
-                        await DB.mark_post_published(post['id'])
-                        await DB.update_last_publish(ch['id'])
-                        await DB.update_next_publish(ch['id'])
-                        await asyncio.sleep(sleep_seconds)
-                    else:
-                        await DB.increment_post_fail(post['id'])
-                        await asyncio.sleep(1)
-                await asyncio.sleep(60)
+                    task = asyncio.create_task(
+                        BackgroundTasks._publish_channel_cycle(
+                            bot, ch, sleep_seconds
+                        )
+                    )
+                    tasks.append(task)
+
+                # انتظار انتهاء جميع المهام (ستستمر للأبد)
+                await asyncio.gather(*tasks, return_exceptions=True)
+                
             except Exception as e:
                 logger.error(f"❌ Auto publish: {e}")
+                await asyncio.sleep(60)
+
+    @staticmethod
+    async def _publish_channel_cycle(bot, ch, sleep_seconds):
+        """دورة نشر مستقلة لكل قناة - كل قناة تنشر كل 12 دقيقة"""
+        while True:
+            try:
+                # التحقق من الاشتراك
+                has_sub = await DB.has_active_subscription(ch['user_id'])
+                if not has_sub:
+                    logger.info(f"⏭️ تخطي القناة {ch['id']} لانتهاء الاشتراك")
+                    await asyncio.sleep(300)  # انتظار 5 دقائق ثم إعادة التحقق
+                    continue
+
+                # جلب منشور
+                post = await DB.get_next_post(ch['id'])
+                if not post:
+                    # إعادة التدوير إذا كان مفعلاً
+                    auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
+                    if auto_recycle:
+                        await DB.reset_posts(ch['user_id'], ch['id'])
+                        post = await DB.get_next_post(ch['id'])
+                        if not post:
+                            await asyncio.sleep(60)
+                            continue
+                    else:
+                        await asyncio.sleep(60)
+                        continue
+
+                # نشر المنشور
+                success = await BackgroundTasks._publish_post(bot, ch['channel_id'], post)
+                if success:
+                    await DB.mark_post_published(post['id'])
+                    await DB.update_last_publish(ch['id'])
+                    await DB.update_next_publish(ch['id'])
+                    logger.info(f"✅ قناة {ch['id']} نشرت. انتظار {sleep_seconds//60} دقيقة...")
+                    await asyncio.sleep(sleep_seconds)  # ✅ كل قناة تنتظر بشكل مستقل
+                else:
+                    await DB.increment_post_fail(post['id'])
+                    await asyncio.sleep(5)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"❌ خطأ في قناة {ch.get('id', 'غير معروفة')}: {e}")
                 await asyncio.sleep(60)
 
     @staticmethod
@@ -1346,6 +1489,7 @@ async def setup_webhook(app, port: int):
     await site.start()
     logger.info(f"✅ Webhook on port {port}")
     return runner
+
 
 async def webhook_handler(request):
     global _webhook_app

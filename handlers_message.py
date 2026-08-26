@@ -10,10 +10,21 @@ handlers_message.py - معالجات الرسائل (النسخة النهائي
 - إزالة حظر المحتوى الرقمي
 - التحقق من صلاحية المطور في WAIT_BROADCAST
 - تحديد طول الرسالة في handle_group
+- إضافة دعم only_admins في الردود التلقائية
+- إضافة فحص البث الفارغ
+- منع تكرار الترحيب عند الموافقة على طلب الانضمام
+- استخدام uuid لملفات الاستيراد المؤقتة
+- إضافة ميزات أمان إضافية للمجموعات (anti-flood, max length, night mode, slow mode, حذف الوسائط)
+- استخدام time.monotonic() للكاش
+- تنظيف بيانات مكافحة الفيضان تلقائياً
+- تصحيح الوضع الليلي: تخصيص العقوبة مباشرة
 """
 
 import asyncio
 import re
+import html
+import uuid
+import time
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -41,6 +52,31 @@ logger = logging.getLogger(__name__)
 
 MAX_CAPTION_LENGTH = 1024
 MAX_MESSAGE_LENGTH = 4096
+
+
+# ================ كاش لصلاحيات المستخدمين في المجموعات ================
+# لتقليل استعلامات getChatMember المتكررة
+_auth_cache = {}
+_auth_cache_time = {}
+_auth_locks = {}
+
+async def _is_authorized_cached(bot, chat_id: int, user_id: int, ttl: float = 10.0) -> bool:
+    """نسخة مخبأة من is_authorized_in_group لتقليل استعلامات API."""
+    key = (chat_id, user_id)
+    now = time.monotonic()
+    if key in _auth_cache and (now - _auth_cache_time.get(key, 0)) < ttl:
+        return _auth_cache[key]
+    if key not in _auth_locks:
+        _auth_locks[key] = asyncio.Lock()
+    async with _auth_locks[key]:
+        # تحقق مرة أخرى بعد الحصول على القفل
+        now = time.monotonic()
+        if key in _auth_cache and (now - _auth_cache_time.get(key, 0)) < ttl:
+            return _auth_cache[key]
+        result = await is_authorized_in_group(bot, chat_id, user_id)
+        _auth_cache[key] = result
+        _auth_cache_time[key] = now
+        return result
 
 
 async def _safe_answer(query, text=None, show_alert=False):
@@ -73,11 +109,18 @@ async def _check_admin_simple(bot, chat_id: int, user_id: int) -> bool:
     """تتحقق ببساطة مما إذا كان المستخدم مشرفاً في المجموعة."""
     if user_id == CONFIG.PRIMARY_OWNER_ID:
         return True
-    return await is_authorized_in_group(bot, chat_id, user_id)
+    return await _is_authorized_cached(bot, chat_id, user_id)
 
 
 async def _get_penalty_info(chat_id: int, violation_type: str) -> dict:
     """تسترجع معلومات العقوبة لنوع مخالفة معين."""
+    # تخصيص عقوبة الوضع الليلي من الإعدادات مباشرة
+    if violation_type == 'night':
+        settings = await DB.get_security_settings(chat_id)
+        return {
+            'penalty_type': settings.get('night_mode_action', 'mute'),
+            'duration_seconds': settings.get('mute_default_duration', 3600)
+        }
     rule = await DB.get_violation_penalty(chat_id, violation_type)
     if rule:
         return {
@@ -96,12 +139,24 @@ def _is_command_cancel(text: str) -> bool:
     return text and text.strip().lower() in ['/cancel', 'إلغاء', 'cancel']
 
 
+async def _delete_message_later(context: ContextTypes.DEFAULT_TYPE):
+    """حذف رسالة بعد مدة محددة (تُستخدم مع job_queue)"""
+    job_data = context.job.data
+    try:
+        await context.bot.delete_message(
+            chat_id=job_data['chat_id'],
+            message_id=job_data['message_id']
+        )
+    except Exception as e:
+        logger.debug(f"⚠️ فشل حذف رسالة الإنذار: {e}")
+
+
 async def apply_violation_penalty(context, chat_id, user_id, violation_type, reason="مخالفة"):
-    """تطبق عقوبة على مستخدم بناءً على نوع المخالفة"""
+    """تطبق عقوبة على مستخدم بناءً على نوع المخالفة مع إشعار محسّن وحذف تلقائي بعد 10 ثوانٍ"""
     # لا تعاقب البوت نفسه
     if user_id == context.bot.id:
         return
-    
+
     # لا تعاقب البوتات
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
@@ -109,9 +164,9 @@ async def apply_violation_penalty(context, chat_id, user_id, violation_type, rea
             return
     except Exception:
         pass
-    
+
     # لا تعاقب المشرفين
-    if await is_authorized_in_group(context.bot, chat_id, user_id):
+    if await _is_authorized_cached(context.bot, chat_id, user_id):
         return
 
     warnings = await DB.add_user_warning(user_id, chat_id)
@@ -121,11 +176,23 @@ async def apply_violation_penalty(context, chat_id, user_id, violation_type, rea
     settings = await DB.get_security_settings(chat_id)
     max_warnings = settings.get('max_warnings', 3)
 
+    user_mention = f'<a href="tg://user?id={user_id}">{_mask_id(user_id)}</a>'
+    reason_escaped = html.escape(reason) if reason else "مخالفة"
+
     if warnings < max_warnings:
+        message_text = (
+            f"⚠️ <b>إنذار!</b>\n\n"
+            f"👤 المستخدم: {user_mention}\n"
+            f"📋 السبب: <i>{reason_escaped}</i>\n"
+            f"🔢 عدد الإنذارات: {warnings} من {max_warnings}\n\n"
+            f"<i>سيتم حذف هذه الرسالة خلال 10 ثوانٍ</i>"
+        )
         try:
-            await context.bot.send_message(
-                chat_id,
-                f"⚠️ المستخدم `{_mask_id(user_id)}` تلقى إنذارًا ({warnings}/{max_warnings}) بسبب: {reason}"
+            sent_msg = await context.bot.send_message(chat_id, message_text, parse_mode='HTML')
+            context.job_queue.run_once(
+                _delete_message_later, 10,
+                data={'chat_id': chat_id, 'message_id': sent_msg.message_id},
+                name=f"delete_warning_{chat_id}_{sent_msg.message_id}"
             )
         except Exception as e:
             logger.warning(f"⚠️ فشل إرسال إشعار التحذير: {e}")
@@ -133,9 +200,7 @@ async def apply_violation_penalty(context, chat_id, user_id, violation_type, rea
 
     try:
         success, msg = await apply_penalty(
-            context.bot,
-            chat_id,
-            user_id,
+            context.bot, chat_id, user_id,
             penalty=penalty_type,
             duration=duration_seconds,
             reason=f"تجاوز الحد الأقصى للتحذيرات ({max_warnings}): {reason}",
@@ -143,10 +208,27 @@ async def apply_violation_penalty(context, chat_id, user_id, violation_type, rea
         )
         if success:
             await DB.reset_user_warnings(user_id, chat_id)
+            penalty_icon = {
+                'ban': '🚫',
+                'mute': '🔇',
+                'restrict': '🔒',
+                'kick': '👢'
+            }.get(penalty_type, '⚖️')
+            duration_text = f" لمدة {duration_seconds // 60} دقيقة" if duration_seconds > 0 else ""
+            message_text = (
+                f"{penalty_icon} <b>تم تطبيق العقوبة!</b>\n\n"
+                f"👤 المستخدم: {user_mention}\n"
+                f"📋 السبب: <i>{reason_escaped}</i>\n"
+                f"⚖️ العقوبة: <b>{penalty_type}</b>{duration_text}\n"
+                f"🔢 تجاوز الحد الأقصى ({max_warnings} إنذارات)\n\n"
+                f"<i>سيتم حذف هذه الرسالة خلال 10 ثوانٍ</i>"
+            )
             try:
-                await context.bot.send_message(
-                    chat_id,
-                    f"🚫 تم تطبيق عقوبة {penalty_type} على `{_mask_id(user_id)}` لتجاوز {max_warnings} تحذيرات"
+                sent_msg = await context.bot.send_message(chat_id, message_text, parse_mode='HTML')
+                context.job_queue.run_once(
+                    _delete_message_later, 10,
+                    data={'chat_id': chat_id, 'message_id': sent_msg.message_id},
+                    name=f"delete_penalty_{chat_id}_{sent_msg.message_id}"
                 )
             except Exception as e:
                 logger.warning(f"⚠️ فشل إرسال إشعار العقوبة: {e}")
@@ -189,7 +271,7 @@ class MessageHandlers:
 
             try:
                 file_obj = await context.bot.get_file(file.file_id)
-                temp_path = f"/tmp/import_{user_id}.json"
+                temp_path = f"/tmp/import_{user_id}_{uuid.uuid4().hex}.json"
                 await file_obj.download_to_drive(temp_path)
                 import_chat_id = context.user_data.get('import_chat_id', -1)
                 count = await import_auto_replies(import_chat_id, temp_path, overwrite=True)
@@ -234,7 +316,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ تم الإلغاء.")
                 return
 
-            # التحقق من الاشتراك أولاً
             if user_id != CONFIG.PRIMARY_OWNER_ID:
                 has_sub = await DB.has_active_subscription(user_id)
                 if not has_sub:
@@ -325,7 +406,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "✅ تم إنهاء إضافة المنشورات.")
                 return
 
-            # السماح بإضافة أي محتوى (بدون حظر المحتوى الرقمي)
             media_type = 'text'
             media_file_id = None
             if msg.photo:
@@ -353,7 +433,6 @@ class MessageHandlers:
                 media_type = 'video_note'
                 media_file_id = msg.video_note.file_id
 
-            # إصلاح استخراج المحتوى
             content = text if media_type == 'text' else (msg.caption or "")
 
             active = await DB.get_active_channel(user_id)
@@ -388,9 +467,13 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ تم الإلغاء.")
                 return
 
-            # التحقق من صلاحية المطور
             if not CONFIG.is_developer(user_id):
                 await safe_send(context.bot, user_id, "❌ غير مصرح لك بهذا الإجراء.")
+                StateManager.clear(user_id)
+                return
+
+            if not text:
+                await safe_send(context.bot, user_id, "❌ لا يمكن إرسال بث فارغ")
                 StateManager.clear(user_id)
                 return
 
@@ -1215,11 +1298,8 @@ class MessageHandlers:
             return
         chat_id = chat.id
         text = update.message.text or ""
-        
-        # تحديد طول الرسالة
-        if len(text) > MAX_MESSAGE_LENGTH:
-            text = text[:MAX_MESSAGE_LENGTH]
-        
+        user_id = update.effective_user.id
+
         if update.effective_user.is_bot:
             return
 
@@ -1228,7 +1308,7 @@ class MessageHandlers:
         # التحقق من القفل
         locked = await DB.fetchone("SELECT locked FROM chat_locks WHERE chat_id=?", (chat_id,))
         if locked and locked['locked'] == 1:
-            if not await is_authorized_in_group(context.bot, chat_id, update.effective_user.id):
+            if not await _is_authorized_cached(context.bot, chat_id, user_id):
                 try:
                     await update.message.delete()
                 except Exception as e:
@@ -1240,12 +1320,12 @@ class MessageHandlers:
         can_delete = perms.get('can_delete_messages', perms.get('can_act', False))
 
         # التحقق من صلاحيات المستخدم
-        if await is_authorized_in_group(context.bot, chat_id, update.effective_user.id):
-            # المشرفون يرون الردود التلقائية
-            await MessageHandlers._process_auto_reply(update, context, chat_id, text)
+        if await _is_authorized_cached(context.bot, chat_id, user_id):
+            await MessageHandlers._process_auto_reply(update, context, chat_id, text, user_id)
             return
 
         # تطبيق قواعد الأمان على الأعضاء العاديين
+
         # 1. حذف الروابط
         if settings.get('delete_links', False) and TextUtils.contains_link(text):
             if can_delete:
@@ -1253,7 +1333,7 @@ class MessageHandlers:
                     await update.message.delete()
                 except Exception as e:
                     logger.warning(f"⚠️ فشل حذف رسالة تحتوي رابط: {e}")
-            await apply_violation_penalty(context, chat_id, update.effective_user.id, 'links', "مخالفة روابط")
+            await apply_violation_penalty(context, chat_id, user_id, 'links', "مخالفة روابط")
             return
 
         # 2. حذف المعرفات
@@ -1263,7 +1343,7 @@ class MessageHandlers:
                     await update.message.delete()
                 except Exception as e:
                     logger.warning(f"⚠️ فشل حذف رسالة تحتوي منشن: {e}")
-            await apply_violation_penalty(context, chat_id, update.effective_user.id, 'mentions', "مخالفة منشن")
+            await apply_violation_penalty(context, chat_id, user_id, 'mentions', "مخالفة منشن")
             return
 
         # 3. حذف الكلمات الممنوعة
@@ -1275,28 +1355,185 @@ class MessageHandlers:
                         await update.message.delete()
                     except Exception as e:
                         logger.warning(f"⚠️ فشل حذف رسالة تحتوي كلمة ممنوعة: {e}")
-                await apply_violation_penalty(context, chat_id, update.effective_user.id, 'banned_words', "كلمة محظورة")
+                await apply_violation_penalty(context, chat_id, user_id, 'banned_words', "كلمة محظورة")
                 return
 
-        # 4. الردود التلقائية
-        await MessageHandlers._process_auto_reply(update, context, chat_id, text)
+        # 4. الحد الأقصى لطول الرسالة (فحص الطول الأصلي قبل الاقتطاع)
+        original_len = len(text)
+        max_len = settings.get('max_message_length', 0)
+        if max_len > 0 and original_len > max_len:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف رسالة طويلة: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'max_len', "رسالة طويلة")
+            return
+
+        # اقتطاع النص للاستخدامات اللاحقة
+        if len(text) > MAX_MESSAGE_LENGTH:
+            text = text[:MAX_MESSAGE_LENGTH]
+
+        # 5. Anti-flood (مع تنظيف تلقائي)
+        antiflood_enabled = settings.get('antiflood_enabled', False)
+        if antiflood_enabled:
+            max_messages = settings.get('antiflood_messages', 5)
+            time_window = settings.get('antiflood_seconds', 10)
+            key = f"antiflood:{chat_id}:{user_id}"
+            now = time.monotonic()
+            user_data = context.bot_data.setdefault('antiflood', {})
+            if key in user_data:
+                count, first_time = user_data[key]
+                if now - first_time <= time_window:
+                    count += 1
+                    user_data[key] = (count, first_time)
+                    if count > max_messages:
+                        if can_delete:
+                            try:
+                                await update.message.delete()
+                            except Exception as e:
+                                logger.warning(f"⚠️ فشل حذف رسالة الفيضان: {e}")
+                        await apply_violation_penalty(context, chat_id, user_id, 'flood', "فيضان رسائل")
+                        del user_data[key]
+                        return
+                else:
+                    user_data[key] = (1, now)
+            else:
+                user_data[key] = (1, now)
+
+            # تنظيف عام للقاموس عند الحجم الكبير
+            if len(user_data) > 1000:
+                for k, v in list(user_data.items()):
+                    if now - v[1] > time_window * 5:
+                        del user_data[k]
+
+        # 6. الوضع البطيء
+        slow_mode_seconds = settings.get('slow_mode_seconds', 0)
+        if slow_mode_seconds > 0:
+            key = f"slowmode:{chat_id}:{user_id}"
+            now = time.monotonic()
+            last_time = context.bot_data.setdefault('last_slow', {}).get(key, 0)
+            if now - last_time < slow_mode_seconds:
+                if can_delete:
+                    try:
+                        await update.message.delete()
+                    except Exception as e:
+                        logger.warning(f"⚠️ فشل حذف رسالة الوضع البطيء: {e}")
+                return
+            context.bot_data.setdefault('last_slow', {})[key] = now
+
+        # 7. الوضع الليلي (تطبيق العقوبة المحددة)
+        if settings.get('night_mode_enabled', False):
+            night_start = settings.get('night_mode_start', '23:00')
+            night_end = settings.get('night_mode_end', '06:00')
+            current_time = datetime.now().strftime('%H:%M')
+            if night_start <= night_end:
+                is_night = night_start <= current_time <= night_end
+            else:
+                is_night = current_time >= night_start or current_time <= night_end
+            if is_night:
+                await apply_violation_penalty(context, chat_id, user_id, 'night', "رسالة في الوضع الليلي")
+                return
+
+        # 8. حذف الوسائط المحظورة
+        if settings.get('delete_videos', False) and update.message.video:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف فيديو: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'videos', "فيديو غير مسموح")
+            return
+        if settings.get('delete_audio', False) and update.message.audio:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف صوت: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'audio', "صوت غير مسموح")
+            return
+        if settings.get('delete_documents', False) and update.message.document:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف مستند: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'documents', "مستند غير مسموح")
+            return
+        if settings.get('delete_stickers', False) and update.message.sticker:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف ملصق: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'stickers', "ملصق غير مسموح")
+            return
+        if settings.get('delete_forwarded', False) and update.message.forward_from:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف معاد توجيهه: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'forwarded', "إعادة توجيه غير مسموحة")
+            return
+        if settings.get('delete_polls', False) and update.message.poll:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف استطلاع: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'polls', "استطلاع غير مسموح")
+            return
+        if settings.get('delete_games', False) and update.message.game:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف لعبة: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'games', "لعبة غير مسموحة")
+            return
+        if settings.get('delete_voice', False) and update.message.voice:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف بصمة صوتية: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'voice', "بصمة صوتية غير مسموحة")
+            return
+        if settings.get('delete_video_note', False) and update.message.video_note:
+            if can_delete:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل حذف رسالة فيديو دائرية: {e}")
+            await apply_violation_penalty(context, chat_id, user_id, 'video_note', "رسالة فيديو غير مسموحة")
+            return
+
+        # 9. الردود التلقائية
+        await MessageHandlers._process_auto_reply(update, context, chat_id, text, user_id)
 
     @staticmethod
-    async def _process_auto_reply(update, context, chat_id, text):
-        """معالجة الردود التلقائية"""
+    async def _process_auto_reply(update, context, chat_id, text, user_id=None):
+        """معالجة الردود التلقائية مع دعم only_admins"""
         ars = await DB.get_auto_reply_settings(chat_id)
         if not ars.get('enabled', False):
             return False
-        
+
+        if ars.get('only_admins', False):
+            if user_id is None:
+                user_id = update.effective_user.id
+            if not await _is_authorized_cached(context.bot, chat_id, user_id):
+                return False
+
         if not _REPLIES_FROM_FILE:
             reload_replies_from_file()
-        
+
         reply = get_reply_from_file(text.lower().strip())
         if not reply:
             reply_data = await DB.get_auto_reply(text.lower().strip(), chat_id)
             if reply_data:
                 reply = reply_data.get('reply')
-        
+
         if reply:
             try:
                 await update.message.reply_text(reply)
@@ -1304,7 +1541,7 @@ class MessageHandlers:
                 return True
             except Exception as e:
                 logger.warning(f"⚠️ فشل إرسال رد تلقائي: {e}")
-        
+
         return False
 
     @staticmethod
@@ -1316,18 +1553,15 @@ class MessageHandlers:
         chat_id = update.effective_chat.id
         settings = await DB.get_security_settings(chat_id)
 
-        # لا معاقبة على رسائل الانضمام/المغادرة
         is_join = bool(update.message.new_chat_members)
         is_leave = bool(update.message.left_chat_member)
 
-        # حذف رسائل الخدمة (بدون معاقبة)
         if settings.get('delete_service', False) and not is_join and not is_leave:
             try:
                 await update.message.delete()
             except Exception as e:
                 logger.warning(f"⚠️ فشل حذف رسالة خدمة: {e}")
 
-        # رسالة الترحيب
         if settings.get('welcome_enabled', False) and is_join:
             for member in update.message.new_chat_members:
                 if member.id != context.bot.id:
@@ -1338,7 +1572,6 @@ class MessageHandlers:
                     except Exception as e:
                         logger.warning(f"⚠️ فشل إرسال رسالة ترحيب: {e}")
 
-        # رسالة الوداع
         if settings.get('goodbye_enabled', False) and is_leave:
             member = update.message.left_chat_member
             if member.id != context.bot.id:
@@ -1359,11 +1592,7 @@ class MessageHandlers:
         if settings.get('auto_approve_join', False):
             try:
                 await join_request.approve()
-                if settings.get('welcome_enabled', False):
-                    await context.bot.send_message(
-                        chat_id,
-                        f"مرحباً {join_request.from_user.full_name} 🤍"
-                    )
+                # لا نرسل ترحيب هنا، سيتم عبر handle_service بعد الانضمام الفعلي
             except Exception as e:
                 logger.warning(f"⚠️ فشل قبول طلب الانضمام: {e}")
             return

@@ -5,6 +5,9 @@
 handlers_command.py - معالجات الأوامر (CommandHandlers) - النسخة النهائية الكاملة
 ===================================================================================
 جميع الأوامر النصية للبوت مع دعم المشرفين المخفيين وإصلاح جميع المشاكل.
++ الأوامر الإضافية: /admin /broadcast /set_force /set_update_ch /set_log_ch
++ /add_admin /remove_admin /export_replies /import_replies /backup /restore
++ /auto_publish /auto_recycle /channels /posts
 """
 
 import asyncio
@@ -15,13 +18,14 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest, TimedOut
 
-from config import CONFIG
+from config import CONFIG, PATHS
 from database import DB
 from utils import (
     TimeUtils, TextUtils, safe_send, is_authorized_in_group,
     check_bot_permissions, invalidate_auth_cache, apply_penalty,
     RATE_LIMITER, METRICS, get_text, StateManager, UserState,
     KeyboardFactory, TranslationManager, CB,
+    export_auto_replies, import_auto_replies,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,8 +115,6 @@ class CommandHandlers:
                     return
             except Exception as e:
                 logger.error(f"❌ خطأ في التحقق من الاشتراك الإجباري: {e}")
-                await safe_send(context.bot, user_id, "❌ تعذر التحقق من الاشتراك الإجباري، حاول لاحقًا")
-                return
 
         # جمع بيانات المستخدم
         lang = await DB.get_user_language(user_id) or 'ar'
@@ -278,6 +280,171 @@ class CommandHandlers:
             text += f"  👥 المشاركون: {c.get('participants', 0)}\n\n"
         kb = KeyboardFactory.build("contests", lang=lang)
         await safe_send(context.bot, user_id, text, reply_markup=kb)
+
+    # ========== الأوامر الإضافية الجديدة ==========
+
+    @staticmethod
+    async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /admin - لوحة الأدمن"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            lang = await DB.get_user_language(user_id) or 'ar'
+            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            return
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("👑 لوحة الأدمن", callback_data=CB.ADMIN)
+        ]])
+        await safe_send(context.bot, user_id, "👑 **لوحة الأدمن**\n\nاضغط الزر أدناه:", reply_markup=kb)
+
+    @staticmethod
+    async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /broadcast - بدء البث الجماعي"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            lang = await DB.get_user_language(user_id) or 'ar'
+            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            return
+        StateManager.set(user_id, UserState.WAIT_BROADCAST)
+        await safe_send(context.bot, user_id, "📨 أرسل الرسالة التي تريد بثها:")
+
+    @staticmethod
+    async def set_force(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /set_force - تعيين الاشتراك الإجباري"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            return
+        StateManager.set(user_id, UserState.WAIT_FORCE)
+        await safe_send(context.bot, user_id, "🔒 أرسل معرف القناة:")
+
+    @staticmethod
+    async def set_update_ch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /set_update_ch - تعيين قناة التحديثات"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            return
+        StateManager.set(user_id, UserState.WAIT_UPDATE_CH)
+        await safe_send(context.bot, user_id, "📢 أرسل معرف قناة التحديثات:")
+
+    @staticmethod
+    async def set_log_ch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /set_log_ch - تعيين قناة السجلات"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            return
+        StateManager.set(user_id, UserState.WAIT_LOG_CH)
+        await safe_send(context.bot, user_id, "📋 أرسل معرف قناة السجلات:")
+
+    @staticmethod
+    async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /add_admin - إضافة مشرف للبوت"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            return
+        StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
+        await safe_send(context.bot, user_id, "👑 أرسل معرف المشرف:")
+
+    @staticmethod
+    async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /remove_admin - إزالة مشرف من البوت"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            return
+        StateManager.set(user_id, UserState.WAIT_ADMIN_REM)
+        await safe_send(context.bot, user_id, "🗑️ أرسل معرف المشرف:")
+
+    @staticmethod
+    async def export_replies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /export_replies - تصدير الردود"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            return
+        count = await export_auto_replies(-1)
+        await safe_send(context.bot, user_id, f"✅ تم تصدير {count} رد")
+
+    @staticmethod
+    async def import_replies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /import_replies - استيراد الردود"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            return
+        StateManager.set(user_id, UserState.WAIT_IMPORT_FILE)
+        await safe_send(context.bot, user_id, "📤 أرسل ملف JSON:")
+
+    @staticmethod
+    async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /backup - نسخ احتياطي"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            return
+        await safe_send(context.bot, user_id, "⏳ جارٍ النسخ الاحتياطي...")
+        try:
+            from utils import BackgroundTasks
+            asyncio.create_task(BackgroundTasks._do_backup())
+            await safe_send(context.bot, user_id, "✅ تم أخذ نسخة احتياطية")
+        except Exception as e:
+            logger.error(f"❌ فشل النسخ الاحتياطي: {e}")
+            await safe_send(context.bot, user_id, f"❌ فشل النسخ الاحتياطي: {str(e)[:50]}")
+
+    @staticmethod
+    async def restore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /restore - عرض النسخ الاحتياطية"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            return
+        backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
+        if not backups:
+            await safe_send(context.bot, user_id, "📭 لا توجد نسخ")
+            return
+        text = "🔄 **النسخ المتاحة:**\n\n" + "\n".join(b.name for b in backups[:10])
+        await safe_send(context.bot, user_id, text)
+
+    @staticmethod
+    async def auto_publish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /auto_publish - تبديل النشر التلقائي"""
+        user_id = update.effective_user.id
+        cur = await DB.get_auto_publish_status(user_id)
+        await DB.set_auto_publish(user_id, not cur)
+        await safe_send(context.bot, user_id, f"✅ النشر التلقائي: {'مفعل' if not cur else 'معطل'}")
+
+    @staticmethod
+    async def auto_recycle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /auto_recycle - تبديل التدوير التلقائي"""
+        user_id = update.effective_user.id
+        cur = await DB.get_auto_recycle_status(user_id)
+        await DB.set_auto_recycle(user_id, not cur)
+        await safe_send(context.bot, user_id, f"✅ التدوير التلقائي: {'مفعل' if not cur else 'معطل'}")
+
+    @staticmethod
+    async def channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /channels - عرض القنوات"""
+        user_id = update.effective_user.id
+        channels = await DB.get_user_channels(user_id)
+        if not channels:
+            await safe_send(context.bot, user_id, "📭 لا توجد قنوات")
+            return
+        text = "📡 **قنواتك:**\n\n"
+        for ch in channels:
+            text += f"• {ch['channel_name']} (`{ch['channel_id']}`)\n"
+        await safe_send(context.bot, user_id, text)
+
+    @staticmethod
+    async def posts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """الأمر /posts - عرض المنشورات"""
+        user_id = update.effective_user.id
+        active = await DB.get_active_channel(user_id)
+        if not active:
+            await safe_send(context.bot, user_id, "❌ لا توجد قناة نشطة")
+            return
+        posts = await DB.get_user_posts(user_id, active, 10)
+        if not posts:
+            await safe_send(context.bot, user_id, "📭 لا توجد منشورات")
+            return
+        text = "📋 **منشوراتك:**\n\n"
+        for p in posts:
+            text += f"• `{p['id']}`: {(p['text'] or '')[:30]}\n"
+        await safe_send(context.bot, user_id, text)
+
+    # ========== أوامر المجموعات ==========
 
     @staticmethod
     async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -456,11 +623,9 @@ class CommandHandlers:
 
         logger.info(f"🔍 محاولة تسجيل المجموعة: chat_id={chat_id}, user_id={user_id}")
 
-        # ✅ التحقق من أن البوت مشرف أولاً
+        # التحقق من أن البوت مشرف أولاً
         try:
             bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
-            logger.info(f"🔍 حالة البوت: {bot_member.status}")
-            
             if bot_member.status != 'administrator':
                 await safe_send(
                     context.bot, user_id,
@@ -477,60 +642,42 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, f"❌ فشل التحقق من حالة البوت: {str(e)[:50]}")
             return
 
-        # ✅ جلب المشرفين
+        # جلب المشرفين
         try:
             all_admins = await context.bot.get_chat_administrators(chat_id)
             logger.info(f"🔍 عدد المشرفين: {len(all_admins)}")
-            
-            # تسجيل جميع المشرفين للتصحيح
-            for admin in all_admins:
-                logger.info(f"  مشرف: {admin.user.id} - {admin.user.full_name if admin.user else 'Unknown'} - status={admin.status} - is_anonymous={getattr(admin, 'is_anonymous', False)}")
         except Exception as e:
             logger.error(f"❌ فشل جلب المشرفين: {e}")
             await safe_send(context.bot, user_id, "❌ فشل جلب المشرفين")
             return
 
-        # ✅ البحث عن المالك
+        # البحث عن المالك
         creator_id = None
         for admin in all_admins:
             if admin.status == 'creator' and not admin.user.is_bot:
                 creator_id = admin.user.id
                 break
 
-        # ✅ التحقق من المستخدم (يدعم المشرفين المخفيين)
+        # التحقق من المستخدم
         is_admin = False
-        is_anonymous = False
         real_user_id = user_id
 
         for admin in all_admins:
-            # التحقق من المشرف العادي
             if admin.user.id == user_id:
                 is_admin = True
-                is_anonymous = getattr(admin, 'is_anonymous', False)
                 real_user_id = admin.user.id
                 break
-            
-            # ✅ التحقق من المشرف المخفي
-            if getattr(admin, 'is_anonymous', False):
-                is_admin = True
-                is_anonymous = True
-                # استخدم CONFIG.ANONYMOUS_ADMIN_ID إذا كان محدداً
-                real_user_id = getattr(CONFIG, 'ANONYMOUS_ADMIN_ID', user_id)
-                break
 
-        # ✅ دعم المشرف المخفي عبر ANONYMOUS_ADMIN_ID
+        # دعم المشرف المجهول عبر ANONYMOUS_ADMIN_ID
         if not is_admin and hasattr(CONFIG, 'ANONYMOUS_ADMIN_ID') and user_id == CONFIG.ANONYMOUS_ADMIN_ID:
             is_admin = True
-            is_anonymous = True
             real_user_id = user_id
 
         if not is_admin:
             await safe_send(context.bot, user_id, "❌ **أنت لست مشرفاً في هذه المجموعة!**")
             return
 
-        logger.info(f"✅ المستخدم مشرف: real_user_id={real_user_id}, is_anonymous={is_anonymous}")
-
-        # ✅ تسجيل المجموعة
+        # تسجيل المجموعة
         try:
             await DB.register_group(chat_id, chat_name, creator_id or real_user_id, update.effective_chat.username)
             logger.info("✅ تم تسجيل المجموعة")
@@ -539,7 +686,7 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ فشل تسجيل المجموعة")
             return
 
-        # ✅ ربط المستخدم
+        # ربط المستخدم
         try:
             if creator_id:
                 await DB.execute(
@@ -561,7 +708,7 @@ class CommandHandlers:
         except Exception as e:
             logger.error(f"❌ فشل ربط المستخدم: {e}")
 
-        # ✅ مزامنة المشرفين
+        # مزامنة المشرفين
         try:
             admin_ids = [a.user.id for a in all_admins if a.user and not a.user.is_bot and a.user.id != chat_id]
             admin_count = await DB.sync_group_admins(chat_id, admin_ids)
@@ -570,16 +717,13 @@ class CommandHandlers:
             logger.error(f"❌ فشل مزامنة المشرفين: {e}")
             admin_count = 0
 
-        # ✅ رسالة النجاح
+        # رسالة النجاح
         msg = f"✅ **تم تفعيل المجموعة!**\n\n"
         msg += f"📌 {chat_name}\n"
         msg += f"🆔 `{chat_id}`\n"
         if creator_id:
             msg += f"👑 المالك: `{creator_id}`\n"
-        if is_anonymous:
-            msg += f"👻 **مشرف مخفي**: `{real_user_id}`\n"
-        else:
-            msg += f"👤 مشرف: `{real_user_id}`\n"
+        msg += f"👤 مشرف: `{real_user_id}`\n"
         msg += f"👥 {admin_count} مشرف"
 
         try:
@@ -598,6 +742,8 @@ class CommandHandlers:
                 await sent_msg.delete()
             except Exception as e:
                 logger.warning(f"⚠️ فشل حذف رسالة التفعيل: {e}")
+
+    # ========== أوامر الإشراف ==========
 
     @staticmethod
     async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -700,6 +846,8 @@ class CommandHandlers:
 
         success, msg = await apply_penalty(context.bot, chat_id, target, action, duration_seconds, reason, user_id)
         await safe_send(context.bot, user_id, msg)
+
+    # ========== أوامر المطور ==========
 
     @staticmethod
     async def set_min_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -806,7 +954,7 @@ class CommandHandlers:
             return
 
         code = args[0].strip()
-        
+
         if len(code) < 4 or len(code) > 50:
             await safe_send(context.bot, user_id, "❌ كود غير صالح")
             return
