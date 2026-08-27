@@ -14,6 +14,7 @@ import shutil
 import logging
 import json
 import time
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 from collections import OrderedDict
@@ -1353,7 +1354,27 @@ class CallbackHandlers:
             settings = await DB.get_security_settings(chat_id)
             text = KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-            await safe_edit(query, text, reply_markup=kb)
+
+            # محاولة التعديل بدون parse_mode لتجنب مشاكل التنسيق
+            try:
+                await query.edit_message_text(text, reply_markup=kb)
+            except BadRequest as e:
+                error_msg = str(e).lower()
+                if "message is not modified" in error_msg:
+                    pass
+                elif "message is too long" in error_msg:
+                    short_text = text[:4000] + "\n\n... (تم الاختصار)"
+                    await query.edit_message_text(short_text, reply_markup=kb)
+                elif "can't parse entities" in error_msg:
+                    # إزالة رموز Markdown
+                    plain_text = re.sub(r'[*_`\[\]()~>#+\-=|{}.!]', '', text)
+                    await query.edit_message_text(plain_text, reply_markup=kb)
+                else:
+                    # فشل التعديل، إرسال رسالة جديدة
+                    await query.message.reply_text(text, reply_markup=kb)
+            except Exception:
+                await query.message.reply_text(text, reply_markup=kb)
+
             await _safe_answer(query)
         except BadRequest as e:
             if "query is too old" in str(e).lower():
