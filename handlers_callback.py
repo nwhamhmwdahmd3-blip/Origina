@@ -19,6 +19,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - إضافة معالجات الأزرار النادرة (admin_restore_sel, sec_antiflood_penalty, sec_night_action, post_clear)
 - تعديل safe_edit لمعالجة الرسائل الطويلة (حذف وإرسال بديل) لمنع مشكلة "يضل يبحث"
 - استبدال query.edit_message_text بـ safe_edit في نهاية _handle_security
+- إصلاح زر "كلمات محظورة" ليفتح قائمة إدارة الكلمات بدلاً من التبديل
 """
 
 import asyncio
@@ -83,6 +84,7 @@ async def safe_edit(query, text, reply_markup=None, parse_mode=None):
         elif "message is too long" in error_msg:
             # الرسالة طويلة جداً: نحذف القديمة ونرسل جديدة
             try:
+                chat_id = query.message.chat_id
                 await query.message.delete()
                 await query.message.chat.send_message(
                     text=text,
@@ -919,6 +921,11 @@ class CallbackHandlers:
             await _safe_answer(query, "❌ لا صلاحية", show_alert=True)
             return
 
+        # معالجة خاصة لزر "كلمات محظورة" لفتح قائمة الإدارة
+        if action == "banned_words":
+            await CallbackHandlers._show_banned_words_menu(update, context, query, chat_id, lang)
+            return
+
         toggle_map = {
             "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
             "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
@@ -926,7 +933,7 @@ class CallbackHandlers:
             "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
             "voice": "delete_voice", "videonote": "delete_video_note", "welcome": "welcome_enabled",
             "goodbye": "goodbye_enabled", "flood": "antiflood_enabled", "night": "night_mode_enabled",
-            "banned_words": "delete_banned_words", "approve_join": "auto_approve_join",
+            "approve_join": "auto_approve_join",
             "reject_join": "auto_reject_join", "nsfw": "nsfw_enabled",
             "warn": "warn_enabled",
         }
@@ -1071,12 +1078,23 @@ class CallbackHandlers:
             text = KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
 
-            # استخدام safe_edit للتعامل مع الرسائل الطويلة
             await safe_edit(query, text, reply_markup=kb)
             await _safe_answer(query)
         except Exception as e:
             logger.error(f"خطأ في إعدادات الأمان: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
+
+    @staticmethod
+    async def _show_banned_words_menu(update, context, query, chat_id, lang):
+        """عرض قائمة إدارة الكلمات المحظورة"""
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"ban_add:{chat_id}"),
+             InlineKeyboardButton("📋 القائمة", callback_data=f"ban_list:{chat_id}")],
+            [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"ban_rem:{chat_id}")],
+            [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
+        ])
+        await safe_edit(query, "🚫 إدارة الكلمات المحظورة:", reply_markup=kb)
+        await _safe_answer(query)
 
     @staticmethod
     async def _show_penalty_type_selection(update, context, query, chat_id, lang, setting_key):
