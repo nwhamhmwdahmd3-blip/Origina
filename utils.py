@@ -18,6 +18,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - دعم TTL في AutoReplyCache
 - إصلاح تمرير kwargs في safe_send
 - دعم إرسال الوسائط في safe_send
+- تقصير نص إعدادات الأمان لمنع تجاوز حد تيليجرام
 """
 
 import asyncio
@@ -852,28 +853,14 @@ class KeyboardFactory:
         lines = [
             "🔐 إعدادات الأمان",
             "━━━━━━━━━━━━━━━━━━━━\n",
-            "🛡️ الحماية",
-            f"🔗 الروابط: {st(settings.get('delete_links', 0))}",
-            f"👤 المعرفات: {st(settings.get('mentions', 0))}",
-            f"🌊 الفيضان: {st(settings.get('antiflood_enabled', 0))}",
-            f"📊 رسائل الفيضان: {settings.get('antiflood_messages', 5)}",
-            f"⏱️ ثواني الفيضان: {settings.get('antiflood_seconds', 10)}",
-            f"📏 الحد الأقصى للطول: {settings.get('max_message_length', 0)}",
-            f"🌙 الوضع الليلي: {st(settings.get('night_mode_enabled', 0))}",
-            f"🔞 NSFW: {st(settings.get('nsfw_enabled', 0))}",
-            f"⚠️ التحذيرات: {st(settings.get('warn_enabled', 0))}",
-            f"📊 الحد الأقصى للتحذيرات: {settings.get('max_warnings', 3)}\n",
-            "👋 الترحيب",
-            f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))}",
-            f"👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
-            f"✅ موافقة انضمام: {st(settings.get('auto_approve_join', 0))}",
-            f"❌ رفض انضمام: {st(settings.get('auto_reject_join', 0))}\n",
-            "⏱️ مدد العقوبات",
-            f"🔇 كتم: {settings.get('mute_default_duration', 3600)} ثانية",
-            f"🚫 حظر: {settings.get('ban_default_duration', 0)} ثانية",
-            f"🔒 تقييد: {settings.get('restrict_default_duration', 1800)} ثانية",
-            f"⚠️ مخالفات قبل العقوبة: {settings.get('violation_strikes', 3)}",
-            f"⏱️ مدة عقوبة المخالفة: {settings.get('violation_duration', 60)} ثانية",
+            f"🔗 روابط: {st(settings.get('delete_links', 0))} | 👤 معرفات: {st(settings.get('mentions', 0))}",
+            f"🌊 فيضان: {st(settings.get('antiflood_enabled', 0))} | 📊 رسائل: {settings.get('antiflood_messages', 5)} | ⏱️ ثواني: {settings.get('antiflood_seconds', 10)}",
+            f"📏 طول: {settings.get('max_message_length', 0)} | 🌙 ليلي: {st(settings.get('night_mode_enabled', 0))} | 🔞 NSFW: {st(settings.get('nsfw_enabled', 0))}",
+            f"⚠️ تحذيرات: {st(settings.get('warn_enabled', 0))} | 📊 حد: {settings.get('max_warnings', 3)}\n",
+            f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))} | 👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
+            f"✅ موافقة: {st(settings.get('auto_approve_join', 0))} | ❌ رفض: {st(settings.get('auto_reject_join', 0))}\n",
+            f"⏱️ كتم: {settings.get('mute_default_duration', 3600)}ث | 🚫 حظر: {settings.get('ban_default_duration', 0)}ث | 🔒 تقييد: {settings.get('restrict_default_duration', 1800)}ث",
+            f"⚠️ مخالفات: {settings.get('violation_strikes', 3)} | ⏱️ مدة: {settings.get('violation_duration', 60)}ث",
             "━━━━━━━━━━━━━━━━━━━━"
         ]
         return "\n".join(lines)
@@ -941,7 +928,6 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
         pass
 
     if not authorized:
-        # استعلام واحد مدمج لتقليل الوصول لقاعدة البيانات
         row = await DB.fetchone("""
             SELECT 1 FROM (
                 SELECT owner_id as user_id FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?

@@ -20,6 +20,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - تعديل safe_edit لمعالجة الرسائل الطويلة (حذف وإرسال بديل) لمنع مشكلة "يضل يبحث"
 - استبدال query.edit_message_text بـ safe_edit في نهاية _handle_security
 - إصلاح زر "كلمات محظورة" ليفتح قائمة إدارة الكلمات بدلاً من التبديل
+- تصحيح _safe_answer لتجاهل أخطاء answerCallbackQuery المكررة
 """
 
 import asyncio
@@ -52,6 +53,10 @@ MAX_CONCURRENT_PUBLISH = 3
 
 
 async def _safe_answer(query, text=None, show_alert=False):
+    """
+    الرد على استعلام Callback بأمان.
+    يتجاهل الأخطاء المتعلقة بالاستعلامات المكررة أو المنتهية الصلاحية.
+    """
     if not query:
         return False
     try:
@@ -61,6 +66,7 @@ async def _safe_answer(query, text=None, show_alert=False):
             await query.answer()
         return True
     except Exception as e:
+        # تجاهل جميع أخطاء الردود لمنع تعطل حلقة المعالجة
         logger.debug(f"Query answer failed: {e}")
         return False
 
@@ -84,7 +90,6 @@ async def safe_edit(query, text, reply_markup=None, parse_mode=None):
         elif "message is too long" in error_msg:
             # الرسالة طويلة جداً: نحذف القديمة ونرسل جديدة
             try:
-                chat_id = query.message.chat_id
                 await query.message.delete()
                 await query.message.chat.send_message(
                     text=text,
