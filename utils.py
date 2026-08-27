@@ -14,6 +14,10 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - رسالة تأكيد تحميل الردود
 - دعم معاملات اختيارية في RateLimiter.acquire لمنع TypeError
 - إزالة رموز ** من نصوص الأمان لمنع 400 Bad Request
+- دمج استعلامات is_authorized_in_group لتقليل الوصول لقاعدة البيانات
+- دعم TTL في AutoReplyCache
+- إصلاح تمرير kwargs في safe_send
+- دعم إرسال الوسائط في safe_send
 """
 
 import asyncio
@@ -204,18 +208,23 @@ METRICS = MetricsCollector()
 # =====================================================================
 
 class AutoReplyCache:
-    def __init__(self, maxsize: int = 300):
+    def __init__(self, maxsize: int = 300, ttl: int = 300):
         self.cache = OrderedDict()
         self.maxsize = maxsize
+        self.ttl = ttl
 
     def get(self, key: str):
         if key in self.cache:
+            value, timestamp = self.cache[key]
+            if time.time() - timestamp > self.ttl:
+                del self.cache[key]
+                return None
             self.cache.move_to_end(key)
-            return self.cache[key]
+            return value
         return None
 
     def set(self, key: str, value: dict):
-        self.cache[key] = value
+        self.cache[key] = (value, time.time())
         if len(self.cache) > self.maxsize:
             self.cache.popitem(last=False)
 
@@ -229,7 +238,7 @@ class AutoReplyCache:
         self.cache.clear()
 
 
-_auto_reply_cache = AutoReplyCache(maxsize=300)
+_auto_reply_cache = AutoReplyCache(maxsize=300, ttl=300)
 
 
 # =====================================================================
@@ -356,6 +365,7 @@ class UserState(Enum):
     WAIT_PENALTY_BAN_DURATION = auto()
     WAIT_PENALTY_RESTRICT_DURATION = auto()
     WAIT_MOOD = auto()
+    WAIT_RESTORE = auto()  # حالة استعادة النسخة الاحتياطية
 
 
 class StateManager:
@@ -768,6 +778,45 @@ class KeyboardFactory:
                 "violation_penalties": [
                     ["sec_set_violation_strikes", "sec_set_violation_duration"],
                     ["back"]
+                ],
+                "settings": [
+                    ["toggle_auto", "toggle_rec"],
+                    ["reminder", "translation"],
+                    ["referral", "invoices"],
+                    ["back"]
+                ],
+                "plans": [
+                    ["buy_sub_1", "buy_sub_7"],
+                    ["buy_sub_30", "buy_sub_90"],
+                    ["buy_sub_365"],
+                    ["gift_plans", "redeem_gift"],
+                    ["back"]
+                ],
+                "reminder": [
+                    ["rem_sub", "rem_daily"],
+                    ["rem_weekly"],
+                    ["rem_days"],
+                    ["back"]
+                ],
+                "translation": [
+                    ["lang_ar", "lang_en"],
+                    ["trans_off"],
+                    ["back"]
+                ],
+                "channel_settings": [
+                    ["sched_min", "sched_hour"],
+                    ["sched_day", "sched_time"],
+                    ["back"]
+                ],
+                "admin": [
+                    ["admin_users", "admin_stats"],
+                    ["admin_banned", "admin_unban_all"],
+                    ["admin_channels", "admin_groups"],
+                    ["admin_grant_free", "admin_add_admin"],
+                    ["admin_broadcast", "admin_invoices"],
+                    ["admin_backup", "admin_restore"],
+                    ["admin_ram", "admin_metrics"],
+                    ["back"]
                 ]
             }
             if menu_name in default_menus:
@@ -807,21 +856,24 @@ class KeyboardFactory:
             f"🔗 الروابط: {st(settings.get('delete_links', 0))}",
             f"👤 المعرفات: {st(settings.get('mentions', 0))}",
             f"🌊 الفيضان: {st(settings.get('antiflood_enabled', 0))}",
+            f"📊 رسائل الفيضان: {settings.get('antiflood_messages', 5)}",
+            f"⏱️ ثواني الفيضان: {settings.get('antiflood_seconds', 10)}",
+            f"📏 الحد الأقصى للطول: {settings.get('max_message_length', 0)}",
             f"🌙 الوضع الليلي: {st(settings.get('night_mode_enabled', 0))}",
             f"🔞 NSFW: {st(settings.get('nsfw_enabled', 0))}",
-            f"⚠️ التحذيرات: {st(settings.get('warn_enabled', 0))}\n",
-            "🎬 المحتوى",
-            f"🎬 فيديو: {st(settings.get('delete_videos', 0))}",
-            f"🎵 موسيقى: {st(settings.get('delete_audio', 0))}",
-            f"🎞️ متحرك: {st(settings.get('delete_animation', 0))}",
-            f"🎤 صوتي: {st(settings.get('delete_voice', 0))}",
-            f"🖼️ ملصقات: {st(settings.get('delete_stickers', 0))}",
-            f"📄 ملفات: {st(settings.get('delete_documents', 0))}",
-            f"📨 مُعاد: {st(settings.get('delete_forwarded', 0))}",
-            f"🛠️ خدمة: {st(settings.get('delete_service', 0))}\n",
+            f"⚠️ التحذيرات: {st(settings.get('warn_enabled', 0))}",
+            f"📊 الحد الأقصى للتحذيرات: {settings.get('max_warnings', 3)}\n",
             "👋 الترحيب",
             f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))}",
             f"👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
+            f"✅ موافقة انضمام: {st(settings.get('auto_approve_join', 0))}",
+            f"❌ رفض انضمام: {st(settings.get('auto_reject_join', 0))}\n",
+            "⏱️ مدد العقوبات",
+            f"🔇 كتم: {settings.get('mute_default_duration', 3600)} ثانية",
+            f"🚫 حظر: {settings.get('ban_default_duration', 0)} ثانية",
+            f"🔒 تقييد: {settings.get('restrict_default_duration', 1800)} ثانية",
+            f"⚠️ مخالفات قبل العقوبة: {settings.get('violation_strikes', 3)}",
+            f"⏱️ مدة عقوبة المخالفة: {settings.get('violation_duration', 60)} ثانية",
             "━━━━━━━━━━━━━━━━━━━━"
         ]
         return "\n".join(lines)
@@ -889,22 +941,17 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
         pass
 
     if not authorized:
-        row = await DB.fetchone(
-            "SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?",
-            (chat_id, user_id)
-        )
-        if row:
-            authorized = True
-        else:
-            row2 = await DB.fetchone(
-                "SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?",
-                (chat_id, user_id)
-            )
-            if row2:
-                authorized = True
-            else:
-                if await DB.is_anonymous_admin(chat_id, user_id):
-                    authorized = True
+        # استعلام واحد مدمج لتقليل الوصول لقاعدة البيانات
+        row = await DB.fetchone("""
+            SELECT 1 FROM (
+                SELECT owner_id as user_id FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?
+                UNION
+                SELECT admin_id FROM hidden_admins WHERE chat_id=? AND admin_id=?
+                UNION
+                SELECT anonymous_id FROM anonymous_admins WHERE chat_id=? AND anonymous_id=?
+            ) LIMIT 1
+        """, (chat_id, user_id, chat_id, user_id, chat_id, user_id))
+        authorized = row is not None
 
     _auth_cache[cache_key] = authorized
     return authorized
@@ -940,26 +987,35 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 
 
 # =====================================================================
-# 12. إرسال آمن (مع معالجة TimedOut)
+# 12. إرسال آمن (مع معالجة TimedOut ودعم الوسائط)
 # =====================================================================
 
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode: str = None, **kwargs):
-    if not text:
-        return
+    if not text and not kwargs.get('photo') and not kwargs.get('video') and not kwargs.get('document') and not kwargs.get('audio') and not kwargs.get('voice') and not kwargs.get('animation') and not kwargs.get('sticker') and not kwargs.get('video_note'):
+        return None
+
     await RATE_LIMITER.acquire()
-    text = TextUtils.sanitize(text, max_len=4096)
+    text = TextUtils.sanitize(text, max_len=4096) if text else ""
+
     try:
-        return await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=parse_mode,
-            **kwargs
-        )
-    except TimedOut:
-        logger.warning("⚠️ Timed out، محاولة إعادة الإرسال...")
-        try:
-            await asyncio.sleep(1)
+        # إذا كانت هناك وسائط، استخدم الدوال المناسبة
+        if 'photo' in kwargs:
+            return await bot.send_photo(chat_id=chat_id, photo=kwargs['photo'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'photo'})
+        elif 'video' in kwargs:
+            return await bot.send_video(chat_id=chat_id, video=kwargs['video'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'video'})
+        elif 'document' in kwargs:
+            return await bot.send_document(chat_id=chat_id, document=kwargs['document'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'document'})
+        elif 'audio' in kwargs:
+            return await bot.send_audio(chat_id=chat_id, audio=kwargs['audio'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'audio'})
+        elif 'voice' in kwargs:
+            return await bot.send_voice(chat_id=chat_id, voice=kwargs['voice'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'voice'})
+        elif 'animation' in kwargs:
+            return await bot.send_animation(chat_id=chat_id, animation=kwargs['animation'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'animation'})
+        elif 'sticker' in kwargs:
+            return await bot.send_sticker(chat_id=chat_id, sticker=kwargs['sticker'], reply_markup=reply_markup)
+        elif 'video_note' in kwargs:
+            return await bot.send_video_note(chat_id=chat_id, video_note=kwargs['video_note'], reply_markup=reply_markup)
+        else:
             return await bot.send_message(
                 chat_id=chat_id,
                 text=text,
@@ -967,6 +1023,34 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
                 parse_mode=parse_mode,
                 **kwargs
             )
+    except TimedOut:
+        logger.warning("⚠️ Timed out، محاولة إعادة الإرسال...")
+        try:
+            await asyncio.sleep(1)
+            if 'photo' in kwargs:
+                return await bot.send_photo(chat_id=chat_id, photo=kwargs['photo'], caption=text or None, reply_markup=reply_markup)
+            elif 'video' in kwargs:
+                return await bot.send_video(chat_id=chat_id, video=kwargs['video'], caption=text or None, reply_markup=reply_markup)
+            elif 'document' in kwargs:
+                return await bot.send_document(chat_id=chat_id, document=kwargs['document'], caption=text or None, reply_markup=reply_markup)
+            elif 'audio' in kwargs:
+                return await bot.send_audio(chat_id=chat_id, audio=kwargs['audio'], caption=text or None, reply_markup=reply_markup)
+            elif 'voice' in kwargs:
+                return await bot.send_voice(chat_id=chat_id, voice=kwargs['voice'], caption=text or None, reply_markup=reply_markup)
+            elif 'animation' in kwargs:
+                return await bot.send_animation(chat_id=chat_id, animation=kwargs['animation'], caption=text or None, reply_markup=reply_markup)
+            elif 'sticker' in kwargs:
+                return await bot.send_sticker(chat_id=chat_id, sticker=kwargs['sticker'], reply_markup=reply_markup)
+            elif 'video_note' in kwargs:
+                return await bot.send_video_note(chat_id=chat_id, video_note=kwargs['video_note'], reply_markup=reply_markup)
+            else:
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    **kwargs
+                )
         except Exception as e2:
             logger.error(f"❌ فشل الإرسال بعد المحاولة الثانية: {e2}")
             return None
@@ -1121,6 +1205,7 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
         return False, "نوع عقوبة غير معروف"
     success, msg = await strategy.apply(bot, chat_id, user_id, duration=duration)
     if success:
+        # استخدام DB.VALID_PENALTY_TYPES المحدثة
         if penalty in DB.VALID_PENALTY_TYPES:
             await DB.add_penalty(
                 user_id=user_id,
@@ -1213,7 +1298,16 @@ async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[D
                 continue
             if overwrite:
                 await DB.execute("DELETE FROM auto_replies WHERE chat_id=? AND keyword=?", (chat_id, keyword))
-            await DB.add_auto_reply(chat_id, keyword, reply)
+            # دعم reply_type و media
+            reply_type = item.get('reply_type', 'text')
+            media_id = item.get('media_file_id')
+            buttons = item.get('buttons')
+            await DB.add_auto_reply(
+                chat_id, keyword, reply,
+                reply_type=reply_type,
+                media_id=media_id,
+                buttons=json.dumps(buttons) if buttons else None
+            )
             count += 1
         _auto_reply_cache.invalidate()
         return count
@@ -1363,6 +1457,8 @@ class BackgroundTasks:
 
     @staticmethod
     async def _publish_channel_cycle(bot, ch, sleep_seconds):
+        consecutive_failures = 0
+        max_failures = 10
         while True:
             try:
                 has_sub = await DB.has_active_subscription(ch['user_id'])
@@ -1373,16 +1469,22 @@ class BackgroundTasks:
 
                 post = await DB.get_next_post(ch['id'])
                 if not post:
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_failures:
+                        logger.info(f"⏹️ إيقاف القناة {ch['id']} - لا توجد منشورات")
+                        break
                     auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
                     if auto_recycle:
                         await DB.reset_posts(ch['user_id'], ch['id'])
                         post = await DB.get_next_post(ch['id'])
                         if not post:
-                            await asyncio.sleep(60)
+                            await asyncio.sleep(60 * consecutive_failures)
                             continue
                     else:
-                        await asyncio.sleep(60)
+                        await asyncio.sleep(60 * consecutive_failures)
                         continue
+                else:
+                    consecutive_failures = 0
 
                 success = await BackgroundTasks._publish_post(bot, ch['channel_id'], post)
                 if success:
@@ -1520,6 +1622,19 @@ class BackgroundTasks:
                 await DB.expire_penalties()
             except Exception as e:
                 logger.error(f"❌ Expire penalties: {e}")
+
+    @staticmethod
+    async def cleanup_old_data() -> None:
+        """تنظيف البيانات القديمة"""
+        while True:
+            await asyncio.sleep(86400)  # مرة كل يوم
+            try:
+                await DB.execute("DELETE FROM admin_logs WHERE created_at < datetime('now', '-30 days')")
+                await DB.execute("DELETE FROM user_penalties WHERE created_at < datetime('now', '-60 days')")
+                await DB.execute("DELETE FROM payment_logs WHERE created_at < datetime('now', '-90 days')")
+                logger.info("✅ تم تنظيف البيانات القديمة")
+            except Exception as e:
+                logger.error(f"❌ Cleanup error: {e}")
 
 
 # =====================================================================

@@ -18,6 +18,11 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ إعادة تعيين عداد الفشل تلقائياً
 - ✅ إصلاحات شاملة للأخطاء والاستثناءات
 - ✅ إضافة دوال الإدارة والتحقق المطلوبة من handlers_message.py
+- ✅ إصلاح مشكلة Deadlock الحرجة
+- ✅ إضافة دوال helper للعمل داخل connection موجود
+- ✅ تحديث VALID_PENALTY_TYPES لتشمل kick و warn
+- ✅ إضافة دالة get_general_stats للوحة الأدمن
+- ✅ إضافة خطة تجربة منفصلة
 """
 
 import sqlite3
@@ -101,7 +106,7 @@ class Database:
     _connection_lock = asyncio.Lock()
     _last_violation_cleanup = 0
 
-    VALID_PENALTY_TYPES = {'mute', 'ban', 'restrict'}
+    VALID_PENALTY_TYPES = {'mute', 'ban', 'restrict', 'kick', 'warn'}
     VALID_REPLY_TYPES = {'text', 'photo', 'video', 'animation', 'document', 'sticker', 'voice', 'video_note'}
 
     def __new__(cls) -> 'Database':
@@ -131,6 +136,57 @@ class Database:
                     await conn.rollback()
                     logger.error(f"❌ Database error: {e}", exc_info=True)
                     raise
+
+    # =====================================================================
+    # Helper methods للعمل داخل connection موجود (بدون قفل)
+    # =====================================================================
+
+    @staticmethod
+    async def _execute_in_conn(conn: aiosqlite.Connection, query: str, params: tuple = ()) -> bool:
+        """تنفيذ استعلام داخل connection موجود (بدون قفل)"""
+        try:
+            await conn.execute(query, params)
+            return True
+        except Exception as e:
+            logger.error(f"❌ _execute_in_conn error: {e}", exc_info=True)
+            return False
+
+    @staticmethod
+    async def _fetchone_in_conn(conn: aiosqlite.Connection, query: str, params: tuple = ()) -> Optional[Dict]:
+        """جلب صف واحد من connection موجود (بدون قفل)"""
+        try:
+            cursor = await conn.execute(query, params)
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"❌ _fetchone_in_conn error: {e}", exc_info=True)
+            return None
+
+    @staticmethod
+    async def _fetchall_in_conn(conn: aiosqlite.Connection, query: str, params: tuple = ()) -> List[Dict]:
+        """جلب جميع الصفوف من connection موجود (بدون قفل)"""
+        try:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ _fetchall_in_conn error: {e}", exc_info=True)
+            return []
+
+    @staticmethod
+    async def _fetchval_in_conn(conn: aiosqlite.Connection, query: str, params: tuple = (), default: Any = None) -> Any:
+        """جلب قيمة واحدة من connection موجود (بدون قفل)"""
+        try:
+            cursor = await conn.execute(query, params)
+            row = await cursor.fetchone()
+            return row[0] if row else default
+        except Exception as e:
+            logger.error(f"❌ _fetchval_in_conn error: {e}", exc_info=True)
+            return default
+
+    # =====================================================================
+    # الدوال العامة للاستعلامات
+    # =====================================================================
 
     async def execute(self, query: str, params: tuple = ()) -> bool:
         """تنفيذ استعلام بدون نتيجة"""
@@ -841,6 +897,7 @@ class Database:
     async def _init_default_data(self, conn: aiosqlite.Connection) -> None:
         """تهيئة البيانات الافتراضية"""
         default_plans = [
+            {"name": "تجربة", "description": "تجربة مجانية لمدة 30 يوم", "price": 0, "duration_days": 30, "max_channels": 3, "max_posts": 200, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
             {"name": "يوم", "description": "باقة يوم واحد", "price": 5, "duration_days": 1, "max_channels": 1, "max_posts": 50, "features": '{"auto_publish":true}', "is_gift": 0},
             {"name": "أسبوع", "description": "باقة 7 أيام", "price": 25, "duration_days": 7, "max_channels": 3, "max_posts": 300, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
             {"name": "شهر", "description": "باقة 30 يوم", "price": 75, "duration_days": 30, "max_channels": 10, "max_posts": 1500, "features": '{"auto_publish":true,"security":true,"support":true}', "is_gift": 0},
@@ -966,19 +1023,25 @@ class Database:
             async with self._lock:
                 now = TimeUtils.utc_now()
                 trial_end = now + timedelta(days=30)
+                
+                # البحث عن خطة التجربة
+                trial_plan_id = await self.fetchval("SELECT id FROM plans WHERE name = 'تجربة' AND is_active = 1", default=1)
+                
                 async with self._get_connection() as conn:
-                    cursor = await conn.execute(
+                    current_end = await self._fetchval_in_conn(
+                        conn,
                         "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
                         (user_id,)
                     )
-                    row = await cursor.fetchone()
-                    current_end = TimeUtils.safe_parse_iso(row[0]) if row and row[0] else None
-                    if current_end and current_end > trial_end:
-                        new_end = current_end
+                    current_end_dt = TimeUtils.safe_parse_iso(current_end) if current_end else None
+                    
+                    if current_end_dt and current_end_dt > trial_end:
+                        new_end = current_end_dt
                         days_granted = 0
                     else:
                         new_end = trial_end
                         days_granted = 30
+                    
                     if days_granted > 0:
                         await conn.execute(
                             "UPDATE users SET trial_used = 1, subscription_end = ? WHERE user_id = ?",
@@ -988,12 +1051,12 @@ class Database:
                             """INSERT INTO subscriptions 
                                (user_id, plan_id, status, start_date, end_date, provider, created_at, updated_at)
                                VALUES (?,?,?,?,?,?,?,?)""",
-                            (user_id, 1, 'active', TimeUtils.sql_iso(), new_end.strftime('%Y-%m-%d %H:%M:%S'), 'trial', TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                            (user_id, trial_plan_id, 'active', TimeUtils.sql_iso(), new_end.strftime('%Y-%m-%d %H:%M:%S'), 'trial', TimeUtils.sql_iso(), TimeUtils.sql_iso())
                         )
                     else:
                         await conn.execute(
                             "UPDATE users SET subscription_end = ? WHERE user_id = ?",
-                            (current_end.strftime('%Y-%m-%d %H:%M:%S'), user_id)
+                            (current_end_dt.strftime('%Y-%m-%d %H:%M:%S'), user_id)
                         )
                 return days_granted
         except Exception as e:
@@ -1390,7 +1453,7 @@ class Database:
                     return False, False
             result = await self.execute("INSERT INTO banned_words (word, chat_id, added_by, added_at) VALUES (?,?,?,?)", (word, chat_id, added_by, TimeUtils.sql_iso()))
             return result, False
-        except sqlite3.IntegrityError:
+        except aiosqlite.IntegrityError:
             return False, True
         except Exception as e:
             logger.error(f"❌ Error in add_banned_word: {e}", exc_info=True)
@@ -1466,7 +1529,7 @@ class Database:
                     (chat_id, keyword, reply, reply_type, media_id, buttons, TimeUtils.sql_iso())
                 )
             return True
-        except sqlite3.IntegrityError:
+        except aiosqlite.IntegrityError:
             return await self.execute(
                 "UPDATE auto_replies SET reply = ?, reply_type = ?, reply_media_id = ?, reply_buttons = ?, created_at = ? WHERE chat_id = ? AND keyword = ?",
                 (reply, reply_type, media_id, buttons, TimeUtils.sql_iso(), chat_id, keyword)
@@ -1632,7 +1695,7 @@ class Database:
         return await self.execute("DELETE FROM support_tickets")
 
     # =====================================================================
-    # دوال الإحالات
+    # دوال الإحالات (مصححة - بدون Deadlock)
     # =====================================================================
 
     async def add_referral(self, referrer_id: int, referred_id: int) -> bool:
@@ -1641,11 +1704,19 @@ class Database:
         try:
             async with self._get_connection() as conn:
                 today = TimeUtils.utc_now().strftime('%Y-%m-%d')
-                count = await self.fetchval("SELECT COUNT(*) FROM referrals WHERE referrer_id = ? AND date(created_at) = ?", (referrer_id, today), default=0)
+                count = await self._fetchval_in_conn(
+                    conn,
+                    "SELECT COUNT(*) FROM referrals WHERE referrer_id = ? AND date(created_at) = ?",
+                    (referrer_id, today),
+                    default=0
+                )
                 if count >= getattr(CONFIG, 'MAX_DAILY_REFERRALS', 10):
                     logger.warning(f"⚠️ User {referrer_id} reached daily referral limit")
                     return False
-                cursor = await conn.execute("INSERT INTO referrals (referrer_id, referred_id, created_at) VALUES (?,?,?)", (referrer_id, referred_id, TimeUtils.sql_iso()))
+                cursor = await conn.execute(
+                    "INSERT INTO referrals (referrer_id, referred_id, created_at) VALUES (?,?,?)",
+                    (referrer_id, referred_id, TimeUtils.sql_iso())
+                )
                 if cursor.rowcount > 0:
                     await conn.execute(
                         """INSERT INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date)
@@ -1659,12 +1730,14 @@ class Database:
                     await conn.execute(
                         """INSERT INTO user_points (user_id, points, last_updated)
                            VALUES (?,5,?)
-                           ON CONFLICT(user_id) DO UPDATE SET points = points + 5, last_updated = ?""",
+                           ON CONFLICT(user_id) DO UPDATE SET 
+                               points = points + 5, 
+                               last_updated = ?""",
                         (referrer_id, TimeUtils.sql_iso(), TimeUtils.sql_iso())
                     )
                     return True
                 return False
-        except sqlite3.IntegrityError:
+        except aiosqlite.IntegrityError:
             return False
         except Exception as e:
             logger.error(f"❌ Error in add_referral: {e}", exc_info=True)
@@ -1674,8 +1747,8 @@ class Database:
         try:
             async with self._get_connection() as conn:
                 await conn.execute("INSERT OR IGNORE INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) VALUES (?, 0, 0, 0, NULL)", (user_id,))
-                total = await self.fetchval("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,), default=0)
-                reward = await self.fetchone("SELECT COALESCE(total_reward_days, 0) as total_reward, COALESCE(claimed_reward_days, 0) as claimed FROM referral_rewards WHERE user_id = ?", (user_id,))
+                total = await self._fetchval_in_conn(conn, "SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,), default=0)
+                reward = await self._fetchone_in_conn(conn, "SELECT COALESCE(total_reward_days, 0) as total_reward, COALESCE(claimed_reward_days, 0) as claimed FROM referral_rewards WHERE user_id = ?", (user_id,))
                 total_reward = reward['total_reward'] if reward else 0
                 claimed = reward['claimed'] if reward else 0
             return {'total': total, 'claimed': claimed, 'available': max(0, total_reward - claimed)}
@@ -1688,8 +1761,11 @@ class Database:
             async with self._lock:
                 async with self._get_connection() as conn:
                     await conn.execute("INSERT OR IGNORE INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) VALUES (?, 0, 0, 0, NULL)", (user_id,))
-                    reward = await conn.execute("SELECT COALESCE(total_reward_days, 0) as total_reward, COALESCE(claimed_reward_days, 0) as claimed FROM referral_rewards WHERE user_id = ?", (user_id,))
-                    reward = await reward.fetchone()
+                    reward = await self._fetchone_in_conn(
+                        conn,
+                        "SELECT COALESCE(total_reward_days, 0) as total_reward, COALESCE(claimed_reward_days, 0) as claimed FROM referral_rewards WHERE user_id = ?",
+                        (user_id,)
+                    )
                     if not reward:
                         return 0
                     total_reward = reward['total_reward'] or 0
@@ -1697,8 +1773,15 @@ class Database:
                     available = max(0, total_reward - claimed)
                     if available <= 0:
                         return 0
-                    await conn.execute("UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id = ?", (available, user_id))
-                    current_end = await self.fetchval("SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')", (user_id,))
+                    await conn.execute(
+                        "UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id = ?",
+                        (available, user_id)
+                    )
+                    current_end = await self._fetchval_in_conn(
+                        conn,
+                        "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
+                        (user_id,)
+                    )
                     current_end = TimeUtils.safe_parse_iso(current_end) if current_end else None
                     now = TimeUtils.utc_now()
                     base = current_end if current_end and current_end > now else now
@@ -1796,8 +1879,7 @@ class Database:
     async def join_contest(self, contest_id: int, user_id: int, answer: str = "") -> bool:
         try:
             async with self._get_connection() as conn:
-                contest = await conn.execute("SELECT status, end_date FROM contests WHERE id = ?", (contest_id,))
-                contest = await contest.fetchone()
+                contest = await self._fetchone_in_conn(conn, "SELECT status, end_date FROM contests WHERE id = ?", (contest_id,))
                 if not contest or contest['status'] != 'active':
                     return False
                 end_date = TimeUtils.safe_parse_iso(contest['end_date'])
@@ -1805,7 +1887,7 @@ class Database:
                     return False
                 await conn.execute("INSERT INTO contest_participants (contest_id, user_id, answer, joined_at) VALUES (?,?,?,?)", (contest_id, user_id, answer, TimeUtils.sql_iso()))
                 return True
-        except sqlite3.IntegrityError:
+        except aiosqlite.IntegrityError:
             return False
         except Exception as e:
             logger.error(f"❌ Error in join_contest: {e}", exc_info=True)
@@ -1922,7 +2004,11 @@ class Database:
                     if not plan:
                         return False, 0
                     await conn.execute("UPDATE gift_codes SET used_by = ?, used_at = ? WHERE id = ?", (user_id, TimeUtils.sql_iso(), gift_code['id']))
-                    current_end = await self.fetchval("SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')", (user_id,))
+                    current_end = await self._fetchval_in_conn(
+                        conn,
+                        "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
+                        (user_id,)
+                    )
                     current_end = TimeUtils.safe_parse_iso(current_end) if current_end else None
                     now = TimeUtils.utc_now()
                     base = current_end if current_end and current_end > now else now
@@ -1943,12 +2029,16 @@ class Database:
         try:
             if days <= 0:
                 return False
-            exists = await self.fetchval("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-            if not exists:
-                return False
             async with self._lock:
                 async with self._get_connection() as conn:
-                    current_end = await self.fetchval("SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')", (user_id,))
+                    exists = await self._fetchval_in_conn(conn, "SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+                    if not exists:
+                        return False
+                    current_end = await self._fetchval_in_conn(
+                        conn,
+                        "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
+                        (user_id,)
+                    )
                     current_end = TimeUtils.safe_parse_iso(current_end) if current_end else None
                     now = TimeUtils.utc_now()
                     base = current_end if current_end and current_end > now else now
@@ -1973,7 +2063,11 @@ class Database:
                 return 0
             async with self._lock:
                 async with self._get_connection() as conn:
-                    current_end = await self.fetchval("SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')", (user_id,))
+                    current_end = await self._fetchval_in_conn(
+                        conn,
+                        "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
+                        (user_id,)
+                    )
                     current_end = TimeUtils.safe_parse_iso(current_end) if current_end else None
                     now = TimeUtils.utc_now()
                     base = current_end if current_end and current_end > now else now
@@ -2048,7 +2142,11 @@ class Database:
                     if not plan:
                         return False
                     await conn.execute("UPDATE invoices SET status = 'paid', provider_payment_id = ?, paid_at = ? WHERE number = ?", (payment_id, TimeUtils.sql_iso(), invoice_number))
-                    current_end = await self.fetchval("SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')", (user_id,))
+                    current_end = await self._fetchval_in_conn(
+                        conn,
+                        "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
+                        (user_id,)
+                    )
                     current_end = TimeUtils.safe_parse_iso(current_end) if current_end else None
                     now = TimeUtils.utc_now()
                     base = current_end if current_end and current_end > now else now
@@ -2278,6 +2376,13 @@ class Database:
         stats['published'] = await self.fetchval("SELECT COUNT(*) FROM posts WHERE published = 1", default=0)
         stats['active_subs'] = await self.fetchval("SELECT COUNT(*) FROM subscriptions WHERE status = 'active' AND end_date > datetime('now')", default=0)
         stats['tickets'] = await self.fetchval("SELECT COUNT(*) FROM support_tickets WHERE status = 'pending'", default=0)
+        return stats
+
+    async def get_general_stats(self) -> Dict:
+        """إحصائيات عامة للوحة الأدمن"""
+        stats = await self.get_bot_stats()
+        stats['invoices'] = await self.fetchval("SELECT COUNT(*) FROM invoices", default=0)
+        stats['active_penalties'] = await self.fetchval("SELECT COUNT(*) FROM user_penalties WHERE status='active'", default=0)
         return stats
 
     # =====================================================================
