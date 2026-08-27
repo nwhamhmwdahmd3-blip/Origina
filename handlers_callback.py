@@ -21,8 +21,7 @@ from collections import OrderedDict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import ContextTypes
 from telegram.error import (
-    BadRequest, TimedOut, Forbidden, ChatMigrated, InvalidQuery,
-    RetryAfter, NetworkError, TelegramError, Flood
+    BadRequest, TimedOut, Forbidden, ChatMigrated, RetryAfter, NetworkError, TelegramError, Flood
 )
 
 from config import CONFIG, PATHS
@@ -234,10 +233,13 @@ async def _safe_answer(query, text=None, show_alert=False):
         else:
             await query.answer()
         return True
-    except InvalidQuery:
-        logger.debug("Query is invalid or too old")
+    except BadRequest as e:
+        if "query is too old" in str(e).lower():
+            logger.debug("Query is too old")
+        else:
+            logger.debug(f"Query answer failed: {e}")
         return False
-    except (BadRequest, TimedOut) as e:
+    except (TimedOut, Forbidden) as e:
         logger.debug(f"Query answer failed: {e}")
         return False
     except Exception as e:
@@ -278,9 +280,8 @@ async def safe_edit(query, text, reply_markup=None, parse_mode=None):
         elif "query is too old" in error_msg or "message can't be edited" in error_msg or "message not found" in error_msg:
             logger.debug("لا يمكن تعديل الرسالة")
         else:
+            # إعادة رمي الخطأ إذا لم يكن معروفًا
             raise
-    except InvalidQuery:
-        logger.debug("InvalidQuery in safe_edit")
     except (Forbidden, ChatMigrated) as e:
         logger.warning(f"ChatMigrated or Forbidden in safe_edit: {e}")
     except Exception as e:
@@ -1006,8 +1007,15 @@ class CallbackHandlers:
 
             await _safe_answer(query, "⚠️ غير متوفر", show_alert=True)
 
-        except InvalidQuery:
-            logger.debug("InvalidQuery in main handler")
+        except BadRequest as e:
+            if "query is too old" in str(e).lower():
+                logger.debug("Query is too old in main handler")
+            else:
+                logger.error(f"❌ BadRequest in callback: {e}", exc_info=True)
+                try:
+                    await query.answer("❌ خطأ", show_alert=True)
+                except:
+                    pass
         except Exception as e:
             logger.error(f"❌ Callback error: {e}", exc_info=True)
             try:
@@ -1304,10 +1312,14 @@ class CallbackHandlers:
             kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
             await safe_edit(query, text, reply_markup=kb)
             await _safe_answer(query)
-        except InvalidQuery:
-            logger.debug("InvalidQuery in security")
+        except BadRequest as e:
+            if "query is too old" in str(e).lower():
+                logger.debug("Query too old in security")
+            else:
+                logger.error(f"خطأ في إعدادات الأمان: {e}", exc_info=True)
+                await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
         except Exception as e:
-            logger.error(f"خطأ في إعدادات الأمان: {e}")
+            logger.error(f"خطأ في إعدادات الأمان: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
 
     # ======================== دوال الأدمن ========================
@@ -1408,10 +1420,14 @@ class CallbackHandlers:
                 await _safe_answer(query)
             else:
                 await _safe_answer(query, "⚠️ غير متوفر", show_alert=True)
-        except InvalidQuery:
-            logger.debug("InvalidQuery in admin")
+        except BadRequest as e:
+            if "query is too old" in str(e).lower():
+                logger.debug("Query too old in admin")
+            else:
+                logger.error(f"خطأ في لوحة الأدمن: {e}", exc_info=True)
+                await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
         except Exception as e:
-            logger.error(f"خطأ في لوحة الأدمن: {e}")
+            logger.error(f"خطأ في لوحة الأدمن: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
 
     # ======================== دوال الردود التلقائية ========================
@@ -1468,10 +1484,14 @@ class CallbackHandlers:
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup(kb))
                 await _safe_answer(query)
                 return
-        except InvalidQuery:
-            logger.debug("InvalidQuery in auto_reply")
+        except BadRequest as e:
+            if "query is too old" in str(e).lower():
+                logger.debug("Query too old in auto_reply")
+            else:
+                logger.error(f"خطأ في الردود التلقائية: {e}", exc_info=True)
+                await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
         except Exception as e:
-            logger.error(f"خطأ في الردود التلقائية: {e}")
+            logger.error(f"خطأ في الردود التلقائية: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
 
     # ======================== دوال الجدولة ========================
@@ -1555,8 +1575,14 @@ class CallbackHandlers:
             else:
                 await _safe_answer(query)
             await _safe_answer(query)
+        except BadRequest as e:
+            if "query is too old" in str(e).lower():
+                logger.debug("Query too old in banned_words")
+            else:
+                logger.error(f"خطأ في الكلمات المحظورة: {e}", exc_info=True)
+                await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
         except Exception as e:
-            logger.error(f"خطأ في الكلمات المحظورة: {e}")
+            logger.error(f"خطأ في الكلمات المحظورة: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
 
     # ======================== دوال الإجراءات المتقدمة ========================
@@ -1622,8 +1648,14 @@ class CallbackHandlers:
         try:
             await DB.execute("UPDATE group_security SET auto_penalty=? WHERE chat_id=?", (penalty, chat_id))
             await safe_edit(query, f"✅ تم تعيين: {penalty}")
+        except BadRequest as e:
+            if "query is too old" in str(e).lower():
+                logger.debug("Query too old in penalty")
+            else:
+                logger.error(f"خطأ في تعيين العقوبة: {e}", exc_info=True)
+                await _safe_answer(query, "❌ فشل", show_alert=True)
         except Exception as e:
-            logger.error(f"خطأ في تعيين العقوبة: {e}")
+            logger.error(f"خطأ في تعيين العقوبة: {e}", exc_info=True)
             await _safe_answer(query, "❌ فشل", show_alert=True)
         await _safe_answer(query)
 
@@ -1677,10 +1709,14 @@ class CallbackHandlers:
                 else:
                     await safe_edit(query, "❌ لا يوجد مشاركون")
                     await _safe_answer(query)
-        except InvalidQuery:
-            logger.debug("InvalidQuery in contests")
+        except BadRequest as e:
+            if "query is too old" in str(e).lower():
+                logger.debug("Query too old in contests")
+            else:
+                logger.error(f"خطأ في المسابقات: {e}", exc_info=True)
+                await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
         except Exception as e:
-            logger.error(f"خطأ في المسابقات: {e}")
+            logger.error(f"خطأ في المسابقات: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
 
     # ======================== دوال الاستيراد ========================
