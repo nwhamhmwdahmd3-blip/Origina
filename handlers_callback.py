@@ -17,8 +17,8 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - إزالة تكرار toggle_map
 - إضافة معالج المقاييس (Metrics) بشكل فعلي
 - إضافة معالجات الأزرار النادرة (admin_restore_sel, sec_antiflood_penalty, sec_night_action, post_clear)
-- إضافة معالجة اختيار ملف الاستعادة
-- إضافة معالجة اختيار نوع عقوبة الفيضان والوضع الليلي
+- تعديل safe_edit لمعالجة الرسائل الطويلة (حذف وإرسال بديل) لمنع مشكلة "يضل يبحث"
+- استبدال query.edit_message_text بـ safe_edit في نهاية _handle_security
 """
 
 import asyncio
@@ -65,22 +65,39 @@ async def _safe_answer(query, text=None, show_alert=False):
 
 
 async def safe_edit(query, text, reply_markup=None, parse_mode=None):
+    """
+    تعديل رسالة، مع معالجة حالات:
+    - الرسالة غير معدلة (return True)
+    - الرسالة طويلة جداً (حذف وإرسال رسالة جديدة)
+    - أي خطأ آخر (return False)
+    """
     if not query or not query.message:
         return False
     try:
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
         return True
     except BadRequest as e:
-        if "message is not modified" in str(e).lower():
+        error_msg = str(e).lower()
+        if "message is not modified" in error_msg:
             return True
-        elif "message is too long" in str(e).lower():
+        elif "message is too long" in error_msg:
+            # الرسالة طويلة جداً: نحذف القديمة ونرسل جديدة
             try:
-                await query.edit_message_text(text[:4000] + "...", reply_markup=reply_markup, parse_mode=parse_mode)
-            except:
-                pass
+                await query.message.delete()
+                await query.message.chat.send_message(
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode
+                )
+                return True
+            except Exception as e2:
+                logger.error(f"فشل إرسال رسالة جديدة بعد الطول الزائد: {e2}")
+                return False
+        else:
+            return False
     except Exception as e:
         logger.debug(f"Edit error: {e}")
-    return False
+        return False
 
 
 async def safe_delete_message(query_or_message):
@@ -548,7 +565,6 @@ class CallbackHandlers:
             if base_data == CB.POST_CLEAR:
                 active = await DB.get_active_channel(user_id)
                 if active:
-                    # حذف جميع منشورات القناة النشطة
                     await DB.execute("DELETE FROM posts WHERE channel_db_id=?", (active,))
                     await safe_edit(query, "✅ تم مسح جميع المنشورات")
                 else:
@@ -766,7 +782,6 @@ class CallbackHandlers:
             return False
         except Forbidden as e:
             logger.warning(f"Forbidden: {e}")
-            # يمكن إيقاف القناة تلقائيًا
             await DB.execute("UPDATE user_channels SET banned=1 WHERE id=?", (ch_db_id,))
             if post.get('id'):
                 await DB.increment_post_fail(post['id'])
@@ -954,7 +969,7 @@ class CallbackHandlers:
                 await CallbackHandlers._show_penalty_type_selection(update, context, query, chat_id, lang, "antiflood_penalty")
                 return
             elif action == "set_antiflood_penalty":
-                penalty_type = parts[1] if len(parts) > 1 else 'mute'
+                penalty_type = parts[2] if len(parts) > 2 else 'mute'
                 if penalty_type in DB.VALID_PENALTY_TYPES:
                     await DB.update_security_settings(chat_id, antiflood_penalty=penalty_type)
                     await _safe_answer(query, f"✅ تم تعيين عقوبة الفيضان: {penalty_type}")
@@ -967,7 +982,7 @@ class CallbackHandlers:
                 await CallbackHandlers._show_penalty_type_selection(update, context, query, chat_id, lang, "night_mode_action")
                 return
             elif action == "set_night_action":
-                penalty_type = parts[1] if len(parts) > 1 else 'mute'
+                penalty_type = parts[2] if len(parts) > 2 else 'mute'
                 if penalty_type in DB.VALID_PENALTY_TYPES:
                     await DB.update_security_settings(chat_id, night_mode_action=penalty_type)
                     await _safe_answer(query, f"✅ تم تعيين إجراء الوضع الليلي: {penalty_type}")
@@ -1056,11 +1071,8 @@ class CallbackHandlers:
             text = KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
 
-            try:
-                await query.edit_message_text(text, reply_markup=kb, parse_mode=None)
-            except BadRequest as e:
-                if "message is not modified" not in str(e).lower():
-                    logger.warning(f"تعذر تعديل رسالة الأمان: {e}")
+            # استخدام safe_edit للتعامل مع الرسائل الطويلة
+            await safe_edit(query, text, reply_markup=kb)
             await _safe_answer(query)
         except Exception as e:
             logger.error(f"خطأ في إعدادات الأمان: {e}", exc_info=True)
@@ -1078,7 +1090,8 @@ class CallbackHandlers:
         ]
         kb = []
         for label, ptype in penalty_types:
-            kb.append([InlineKeyboardButton(label, callback_data=f"sec_set_{setting_key}:{chat_id}:{ptype}")])
+            callback = f"sec_set_{setting_key}:{chat_id}:{ptype}"
+            kb.append([InlineKeyboardButton(label, callback_data=callback)])
         kb.append([InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")])
         await safe_edit(query, "🚫 اختر نوع العقوبة:", reply_markup=InlineKeyboardMarkup(kb))
         await _safe_answer(query)
@@ -1287,7 +1300,6 @@ class CallbackHandlers:
                 return
 
             elif data == CB.ADMIN_RESTORE_SEL:
-                # عرض قائمة النسخ الاحتياطية
                 backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
                 if not backups:
                     await safe_edit(query, "📭 لا توجد نسخ احتياطية")
@@ -1306,12 +1318,9 @@ class CallbackHandlers:
                 if not backup_file.exists():
                     await _safe_answer(query, "❌ الملف غير موجود", show_alert=True)
                     return
-                # استعادة فورية مع نسخة احتياطية قبلها
                 try:
-                    # إنشاء نسخة احتياطية قبل الاستعادة
                     pre_restore_backup = PATHS.BACKUPS / f"pre_restore_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
                     shutil.copy2(PATHS.DB, pre_restore_backup)
-                    # استبدال قاعدة البيانات
                     shutil.copy2(backup_file, PATHS.DB)
                     await safe_edit(query, "✅ تمت الاستعادة بنجاح! أعد تشغيل البوت لتفعيل التغييرات.")
                 except Exception as e:
