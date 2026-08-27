@@ -26,6 +26,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ إضافة دالة get_unpublished_posts_count
 - ✅ تعيين القناة الجديدة كنشطة تلقائياً عند الإضافة
 - ✅ تعديل grant_subscription_days لاستخدام خطة الهدية عند عدم تحديد plan_id
+- ✅ زيادة عدد القنوات في خطة التجربة إلى 100
 """
 
 import sqlite3
@@ -900,13 +901,13 @@ class Database:
     async def _init_default_data(self, conn: aiosqlite.Connection) -> None:
         """تهيئة البيانات الافتراضية"""
         default_plans = [
-            {"name": "تجربة", "description": "تجربة مجانية لمدة 30 يوم", "price": 0, "duration_days": 30, "max_channels": 3, "max_posts": 200, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
+            {"name": "تجربة", "description": "تجربة مجانية لمدة 30 يوم", "price": 0, "duration_days": 30, "max_channels": 100, "max_posts": 200, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
             {"name": "يوم", "description": "باقة يوم واحد", "price": 5, "duration_days": 1, "max_channels": 1, "max_posts": 50, "features": '{"auto_publish":true}', "is_gift": 0},
             {"name": "أسبوع", "description": "باقة 7 أيام", "price": 25, "duration_days": 7, "max_channels": 3, "max_posts": 300, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
             {"name": "شهر", "description": "باقة 30 يوم", "price": 75, "duration_days": 30, "max_channels": 10, "max_posts": 1500, "features": '{"auto_publish":true,"security":true,"support":true}', "is_gift": 0},
             {"name": "3 أشهر", "description": "باقة 90 يوم", "price": 200, "duration_days": 90, "max_channels": 25, "max_posts": 5000, "features": '{"auto_publish":true,"security":true,"support":true,"analytics":true}', "is_gift": 0},
             {"name": "سنة", "description": "باقة 365 يوم", "price": 700, "duration_days": 365, "max_channels": 100, "max_posts": 99999, "features": '{"auto_publish":true,"security":true,"support":true,"analytics":true,"priority":true}', "is_gift": 0},
-            {"name": "هدية شهر", "description": "كود هدية لمدة 30 يوم", "price": 75, "duration_days": 30, "max_channels": 10, "max_posts": 1500, "features": '{}', "is_gift": 1},
+            {"name": "هدية شهر", "description": "كود هدية لمدة 30 يوم", "price": 75, "duration_days": 30, "max_channels": 100, "max_posts": 1500, "features": '{}', "is_gift": 1},
         ]
         for plan in default_plans:
             cursor = await conn.execute("SELECT id FROM plans WHERE name = ?", (plan["name"],))
@@ -919,6 +920,12 @@ class Database:
                     (plan["name"], plan["description"], plan["price"], "XTR",
                      plan["duration_days"], plan["max_channels"], plan["max_posts"],
                      plan["features"], 1, plan["is_gift"], TimeUtils.sql_iso())
+                )
+            else:
+                # تحديث الخطط الموجودة لضمان وجود max_channels = 100
+                await conn.execute(
+                    "UPDATE plans SET max_channels = ?, max_posts = ? WHERE name = ?",
+                    (plan["max_channels"], plan["max_posts"], plan["name"])
                 )
 
     async def _import_banned_words(self, conn: aiosqlite.Connection) -> None:
@@ -2517,3 +2524,4 @@ async def get_db() -> Database:
 async def initialize_db() -> bool:
     """تهيئة قاعدة البيانات"""
     return await DB.initialize()
+
