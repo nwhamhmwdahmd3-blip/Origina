@@ -280,7 +280,6 @@ async def safe_edit(query, text, reply_markup=None, parse_mode=None):
         elif "query is too old" in error_msg or "message can't be edited" in error_msg or "message not found" in error_msg:
             logger.debug("لا يمكن تعديل الرسالة")
         else:
-            # إعادة رمي الخطأ إذا لم يكن معروفًا
             raise
     except (Forbidden, ChatMigrated) as e:
         logger.warning(f"ChatMigrated or Forbidden in safe_edit: {e}")
@@ -314,11 +313,9 @@ async def _is_channel_owner(user_id: int, channel_db_id: int) -> bool:
     return row is not None
 
 async def _delete_group(chat_id: int) -> bool:
-    # حذف المجموعة والروابط المرتبطة
     async with DB._get_connection() as conn:
         await conn.execute("DELETE FROM bot_groups WHERE chat_id = ?", (chat_id,))
         await conn.execute("DELETE FROM user_groups_link WHERE chat_id = ?", (chat_id,))
-        # يمكن إضافة حذف من جداول أخرى إذا لزم
     return True
 
 async def _get_contest_by_id(contest_id: int) -> Optional[Dict]:
@@ -741,7 +738,11 @@ class CallbackHandlers:
                 return
 
             if data.startswith(CB.CH_SEL + ":"):
-                ch_id = int(data.split(":")[-1])
+                try:
+                    ch_id = int(data.split(":")[-1])
+                except ValueError:
+                    await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+                    return
                 channel = await DB.get_channel_info(user_id, ch_id)
                 if channel and channel.get('banned'):
                     await _safe_answer(query, "❌ القناة محظورة", show_alert=True)
@@ -756,7 +757,11 @@ class CallbackHandlers:
                 return
 
             if data.startswith(CB.CH_DEL + ":"):
-                ch_id = int(data.split(":")[-1])
+                try:
+                    ch_id = int(data.split(":")[-1])
+                except ValueError:
+                    await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+                    return
                 success = await DB.delete_channel(user_id, ch_id)
                 if success:
                     await _safe_answer(query, "✅ تم الحذف")
@@ -767,7 +772,11 @@ class CallbackHandlers:
                 return
 
             if data.startswith(CB.CH_STATS + ":"):
-                ch_id = int(data.split(":")[-1])
+                try:
+                    ch_id = int(data.split(":")[-1])
+                except ValueError:
+                    await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+                    return
                 stats = await DB.get_channel_stats(user_id, ch_id)
                 text = f"📊 **إحصائيات**\n\n📝 {stats['total']}\n✅ {stats['published']}\n⏳ {stats['unpublished']}"
                 kb = [[InlineKeyboardButton("🔙 رجوع", callback_data=CB.CH_LIST)]]
@@ -860,12 +869,31 @@ class CallbackHandlers:
                     return
                 text = "👥 **مجموعاتي**\n\n"
                 kb = []
-                for gid, name, username, banned in groups:
+                for group in groups:
+                    # استخراج البيانات بأمان
+                    if isinstance(group, dict):
+                        gid = group.get('chat_id') or group.get('id')
+                        name = group.get('chat_name') or group.get('name') or 'غير معروف'
+                        banned = group.get('banned', 0)
+                    elif isinstance(group, (tuple, list)):
+                        if len(group) >= 1:
+                            gid = group[0]
+                        if len(group) >= 2:
+                            name = group[1]
+                        else:
+                            name = 'غير معروف'
+                        banned = group[2] if len(group) >= 3 else 0
+                    else:
+                        continue
+
+                    if gid is None:
+                        continue
+
                     st = "✅" if not banned else "⛔"
                     text += f"{st} {name}\n"
-                    security_text = f"⚙️ أمان {name[:15]}"
+                    security_text = f"⚙️ أمان {str(name)[:15]}"
                     try:
-                        security_text = KeyboardFactory.get_text("security_button", lang).replace("{name}", name[:15])
+                        security_text = KeyboardFactory.get_text("security_button", lang).replace("{name}", str(name)[:15])
                     except:
                         pass
                     kb.append([InlineKeyboardButton(security_text, callback_data=f"{CB.GRP_SET}:{gid}")])
@@ -875,7 +903,11 @@ class CallbackHandlers:
                 return
 
             if data.startswith("grp_del:"):
-                chat_id = int(data.split(":")[-1])
+                try:
+                    chat_id = int(data.split(":")[-1])
+                except ValueError:
+                    await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+                    return
                 success = await _delete_group(chat_id)
                 if success:
                     await invalidate_user_groups_cache(user_id)
@@ -885,7 +917,11 @@ class CallbackHandlers:
                 return
 
             if data.startswith(CB.GRP_SET + ":"):
-                chat_id = int(data.split(":")[-1])
+                try:
+                    chat_id = int(data.split(":")[-1])
+                except ValueError:
+                    await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+                    return
                 context.user_data['security_chat_id'] = chat_id
                 if not await is_authorized_in_group_cached(context.bot, chat_id, user_id):
                     await _safe_answer(query, "❌ لا صلاحية", show_alert=True)
@@ -940,7 +976,11 @@ class CallbackHandlers:
                 return
 
             if data.startswith("sched_open:"):
-                ch_id = int(data.split(":")[-1])
+                try:
+                    ch_id = int(data.split(":")[-1])
+                except ValueError:
+                    await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+                    return
                 kb = KeyboardFactory.build("channel_settings", chat_id=ch_id, lang=lang)
                 await safe_edit(query, "📅 **جدولة القناة**", reply_markup=kb)
                 await _safe_answer(query)
@@ -1006,7 +1046,11 @@ class CallbackHandlers:
 
             # معالجة أزرار الردود التلقائية extra
             if data.startswith("auto_reply_menu:"):
-                chat_id = int(data.split(":")[-1])
+                try:
+                    chat_id = int(data.split(":")[-1])
+                except ValueError:
+                    await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+                    return
                 settings = await DB.get_auto_reply_settings(chat_id)
                 kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
                 await safe_edit(query, "🤖 **إعدادات الردود التلقائية**", reply_markup=kb)
