@@ -12,15 +12,14 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - كل قناة تنشر بشكل مستقل بفاصل 12 دقيقة
 - حالة WAIT_MOOD لتحليل المشاعر
 - رسالة تأكيد تحميل الردود
+- دعم معاملات اختيارية في RateLimiter.acquire لمنع TypeError
 """
 
 import asyncio
-import os
 import re
 import json
 import time
 import html
-import shutil
 import logging
 import random
 import importlib
@@ -80,11 +79,11 @@ class TimeUtils:
         return TimeUtils.utc_now().strftime('%Y-%m-%d %H:%M:%S')
 
     @staticmethod
-    def mecca_to_utc(dt: datetime) -> datetime:
+    def mecca_to_utc(dt: Optional[datetime]) -> Optional[datetime]:
         return dt - timedelta(hours=3) if dt else None
 
     @staticmethod
-    def utc_to_mecca(dt: datetime) -> datetime:
+    def utc_to_mecca(dt: Optional[datetime]) -> Optional[datetime]:
         return dt + timedelta(hours=3) if dt else None
 
     @staticmethod
@@ -147,7 +146,7 @@ class TextUtils:
 # =====================================================================
 
 class RateLimiter:
-    """محدد معدل الطلبات"""
+    """محدد معدل الطلبات - يدعم معاملات اختيارية لتجنب الأخطاء"""
 
     def __init__(self, max_concurrent: int = 10, max_per_second: int = 30):
         self.semaphore = asyncio.Semaphore(max_concurrent)
@@ -155,7 +154,8 @@ class RateLimiter:
         self._lock = asyncio.Lock()
         self.max_per_second = max_per_second
 
-    async def acquire(self):
+    async def acquire(self, *args, **kwargs):
+        """اكتساب إذن - يتجاهل أي معاملات إضافية"""
         async with self.semaphore:
             async with self._lock:
                 now = time.time()
@@ -599,6 +599,72 @@ class KeyboardFactory:
         "sec_penalty_durations", "sec_close", "admin_uptime"
     }
 
+    _default_texts = {
+        "back": "🔙 رجوع",
+        "main": "🌿 الرئيسية",
+        "add_group_button": "➕ أضف البوت لمجموعة",
+        "security_button": "⚙️ أمان {name}",
+        "ch_add": "➕ إضافة قناة",
+        "sec_links": "🔗 الروابط",
+        "sec_mentions": "👤 المعرفات",
+        "sec_slow": "🐢 بطيء",
+        "sec_flood": "🌊 الفيضان",
+        "sec_video": "🎬 فيديو",
+        "sec_audio": "🎵 موسيقى",
+        "sec_anim": "🎞️ متحرك",
+        "sec_service": "🛠️ خدمة",
+        "sec_doc": "📄 ملفات",
+        "sec_sticker": "🖼️ ملصقات",
+        "sec_forward": "📨 مُعاد",
+        "sec_poll": "📊 استطلاع",
+        "sec_game": "🎮 ألعاب",
+        "sec_voice": "🎤 صوتي",
+        "sec_videonote": "🎥 فيديو نوت",
+        "sec_banned_words": "🚫 كلمات محظورة",
+        "sec_welcome": "🎯 ترحيب",
+        "sec_goodbye": "👋 وداع",
+        "sec_night": "🌙 وضع ليلي",
+        "sec_approve_join": "✅ موافقة انضمام",
+        "sec_reject_join": "❌ رفض انضمام",
+        "sec_nsfw": "🔞 NSFW",
+        "sec_maxlen": "📏 طول الرسالة",
+        "sec_warn": "⚠️ تحذيرات",
+        "sec_penalty": "🚫 العقوبات",
+        "sec_del_pen": "🗑️ عقوبة الحذف",
+        "sec_adv_act": "🛠️ إجراءات متقدمة",
+        "sec_act_log": "📋 سجل المشرفين",
+        "sec_auto_reply_menu": "🤖 الردود التلقائية",
+        "sec_antiflood_settings": "🌊 إعدادات الفيضان",
+        "sec_night_settings": "🌙 إعدادات الليل",
+        "sec_penalty_durations": "⏱️ مدد العقوبات",
+        "sec_violation_penalties": "🚨 المخالفات",
+        "sec_enable_all": "✅ تفعيل الكل",
+        "sec_disable_all": "❌ تعطيل الكل",
+        "sec_close": "🔒 إغلاق",
+        "auto_reply_toggle": "🔘 تفعيل/تعطيل",
+        "auto_reply_admins": "👤 للمشرفين فقط",
+        "auto_reply_add": "➕ إضافة",
+        "auto_reply_del": "🗑️ حذف",
+        "auto_reply_list": "📋 القائمة",
+        "auto_reply_stats": "📊 إحصائيات",
+        "auto_reply_reset": "🔄 إعادة تعيين",
+        "act_ban": "🚫 حظر",
+        "act_mute": "🔇 كتم",
+        "act_warn": "⚠️ تحذير",
+        "act_kick": "👢 طرد",
+        "act_restrict": "🔒 تقييد",
+        "act_unban": "🔓 فك حظر",
+        "act_pin": "📌 تثبيت",
+        "act_log": "📋 سجل",
+        "pen_ban": "🚫 حظر",
+        "pen_mute": "🔇 كتم",
+        "pen_kick": "👢 طرد",
+        "pen_warn": "⚠️ تحذير",
+        "ban_add": "➕ إضافة كلمة",
+        "ban_list": "📋 القائمة",
+        "ban_rem": "🗑️ حذف كلمة",
+    }
+
     @classmethod
     def _load_config_for_lang(cls, lang: str) -> Dict:
         if lang == 'off':
@@ -621,7 +687,7 @@ class KeyboardFactory:
             else:
                 logger.warning("⚠️ buttons_config_ar.json غير موجود، سيتم استخدام إعدادات افتراضية")
                 default_config = {
-                    "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
+                    "texts": cls._default_texts,
                     "menus": {}
                 }
                 cls._configs[cls._default_lang] = default_config
@@ -632,7 +698,7 @@ class KeyboardFactory:
                 return cls._load_config_for_lang(cls._default_lang)
             else:
                 default_config = {
-                    "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
+                    "texts": cls._default_texts,
                     "menus": {}
                 }
                 cls._configs[cls._default_lang] = default_config
@@ -651,7 +717,10 @@ class KeyboardFactory:
     @classmethod
     def get_text(cls, key: str, lang: str = None) -> str:
         config = cls.get_config(lang)
-        return config.get("texts", {}).get(key, key)
+        text = config.get("texts", {}).get(key)
+        if text is not None:
+            return text
+        return cls._default_texts.get(key, key)
 
     @classmethod
     def get_menu(cls, menu_name: str, lang: str = None) -> List[List[str]]:
@@ -670,6 +739,13 @@ class KeyboardFactory:
                     ["back"]
                 ],
                 "auto_reply_manage": [
+                    ["auto_reply_toggle", "auto_reply_admins"],
+                    ["auto_reply_add", "auto_reply_del"],
+                    ["auto_reply_list", "auto_reply_stats"],
+                    ["auto_reply_reset"],
+                    ["back"]
+                ],
+                "auto_reply": [
                     ["auto_reply_toggle", "auto_reply_admins"],
                     ["auto_reply_add", "auto_reply_del"],
                     ["auto_reply_list", "auto_reply_stats"],
@@ -747,16 +823,16 @@ class KeyboardFactory:
     def _format_security_text(cls, settings: dict) -> str:
         st = cls._status_icon
         lines = [
-            "🔐 **إعدادات الأمان**",
+            "🔐 إعدادات الأمان",
             "━━━━━━━━━━━━━━━━━━━━\n",
-            "🛡️ **الحماية**",
+            "🛡️ الحماية",
             f"🔗 الروابط: {st(settings.get('delete_links', 0))}",
             f"👤 المعرفات: {st(settings.get('mentions', 0))}",
             f"🌊 الفيضان: {st(settings.get('antiflood_enabled', 0))}",
             f"🌙 الوضع الليلي: {st(settings.get('night_mode_enabled', 0))}",
             f"🔞 NSFW: {st(settings.get('nsfw_enabled', 0))}",
             f"⚠️ التحذيرات: {st(settings.get('warn_enabled', 0))}\n",
-            "🎬 **المحتوى**",
+            "🎬 المحتوى",
             f"🎬 فيديو: {st(settings.get('delete_videos', 0))}",
             f"🎵 موسيقى: {st(settings.get('delete_audio', 0))}",
             f"🎞️ متحرك: {st(settings.get('delete_animation', 0))}",
@@ -765,7 +841,7 @@ class KeyboardFactory:
             f"📄 ملفات: {st(settings.get('delete_documents', 0))}",
             f"📨 مُعاد: {st(settings.get('delete_forwarded', 0))}",
             f"🛠️ خدمة: {st(settings.get('delete_service', 0))}\n",
-            "👋 **الترحيب**",
+            "👋 الترحيب",
             f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))}",
             f"👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
             "━━━━━━━━━━━━━━━━━━━━"
@@ -1302,7 +1378,7 @@ class BackgroundTasks:
                     tasks.append(task)
 
                 await asyncio.gather(*tasks, return_exceptions=True)
-                
+
             except Exception as e:
                 logger.error(f"❌ Auto publish: {e}")
                 await asyncio.sleep(60)
