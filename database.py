@@ -23,6 +23,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ تحديث VALID_PENALTY_TYPES لتشمل kick و warn
 - ✅ إضافة دالة get_general_stats للوحة الأدمن
 - ✅ إضافة خطة تجربة منفصلة
+- ✅ إضافة دالة get_unpublished_posts_count
 """
 
 import sqlite3
@@ -1023,10 +1024,10 @@ class Database:
             async with self._lock:
                 now = TimeUtils.utc_now()
                 trial_end = now + timedelta(days=30)
-                
+
                 # البحث عن خطة التجربة
                 trial_plan_id = await self.fetchval("SELECT id FROM plans WHERE name = 'تجربة' AND is_active = 1", default=1)
-                
+
                 async with self._get_connection() as conn:
                     current_end = await self._fetchval_in_conn(
                         conn,
@@ -1034,14 +1035,14 @@ class Database:
                         (user_id,)
                     )
                     current_end_dt = TimeUtils.safe_parse_iso(current_end) if current_end else None
-                    
+
                     if current_end_dt and current_end_dt > trial_end:
                         new_end = current_end_dt
                         days_granted = 0
                     else:
                         new_end = trial_end
                         days_granted = 30
-                    
+
                     if days_granted > 0:
                         await conn.execute(
                             "UPDATE users SET trial_used = 1, subscription_end = ? WHERE user_id = ?",
@@ -1186,6 +1187,25 @@ class Database:
         total = await self.fetchval("SELECT COUNT(*) FROM posts WHERE channel_db_id = ?", (channel_db_id,), default=0)
         published = await self.fetchval("SELECT COUNT(*) FROM posts WHERE channel_db_id = ? AND published = 1", (channel_db_id,), default=0)
         return {'total': total, 'published': published, 'unpublished': total - published}
+
+    async def get_unpublished_posts_count(self, user_id: int, channel_db_id: int) -> int:
+        """
+        إرجاع عدد المنشورات غير المنشورة لقناة معينة يملكها المستخدم.
+        """
+        # التحقق من ملكية القناة
+        owner = await self.fetchval(
+            "SELECT 1 FROM user_channels WHERE id=? AND user_id=?",
+            (channel_db_id, user_id),
+            default=0
+        )
+        if not owner:
+            return 0
+        count = await self.fetchval(
+            "SELECT COUNT(*) FROM posts WHERE channel_db_id=? AND published=0",
+            (channel_db_id,),
+            default=0
+        )
+        return count
 
     async def get_channel_by_user(self, user_id: int, channel_id: int) -> Optional[Dict]:
         return await self.fetchone("SELECT * FROM user_channels WHERE user_id = ? AND channel_id = ?", (user_id, channel_id))
