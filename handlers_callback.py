@@ -6,10 +6,11 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - لوحة أدمن كاملة
 - جميع معالجات الأمان
 - شراء الهدايا يعمل
-- إصلاح زر الجدولة
-- تضمين نوع العقوبة في set_duration
-- تحسين معالجة الأخطاء
-- معالجة RetryAfter داخل النشر
+- إصلاح زر التحذير (تجنب 400)
+- إصلاح زر التحديثات
+- مدد العقوبات: دائم، نصف ساعة، ساعة، يوم، أسبوع، عشرة أيام، شهر
+- زر الرجوع في الردود يعمل
+- زر "للمشرفين فقط" يعمل
 """
 
 import asyncio
@@ -596,6 +597,8 @@ class CallbackHandlers:
                      InlineKeyboardButton("🚫 كلمات", callback_data=CB.ADMIN_BANNED_WORDS)],
                     [InlineKeyboardButton("🏆 مسابقات", callback_data=CB.ADMIN_CREATE_CONTEST),
                      InlineKeyboardButton("👑 فائز", callback_data=CB.ADMIN_DECLARE_WINNER)],
+                    [InlineKeyboardButton("📢 تحديث", callback_data=CB.ADMIN_SEND_UPDATE),
+                     InlineKeyboardButton("📋 قناة التحديثات", callback_data=CB.ADMIN_SET_UPDATE_CH)],
                     [InlineKeyboardButton("💾 نسخ", callback_data=CB.ADMIN_BACKUP),
                      InlineKeyboardButton("🖥️ الرام", callback_data=CB.ADMIN_RAM)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
@@ -741,7 +744,6 @@ class CallbackHandlers:
         except RetryAfter as e:
             logger.warning(f"RetryAfter: sleeping {e.retry_after}s")
             await asyncio.sleep(e.retry_after)
-            # لا نعيد رفع الاستثناء، نعتبرها فشل لزيادة العداد
             if post.get('id'):
                 await DB.increment_post_fail(post['id'])
         except Exception as e:
@@ -977,7 +979,12 @@ class CallbackHandlers:
             settings = await DB.get_security_settings(chat_id)
             text = KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-            await safe_edit(query, text, reply_markup=kb)
+
+            try:
+                await query.edit_message_text(text, reply_markup=kb, parse_mode=None)
+            except BadRequest as e:
+                if "message is not modified" not in str(e).lower():
+                    logger.warning(f"تعذر تعديل رسالة الأمان: {e}")
             await _safe_answer(query)
         except Exception as e:
             logger.error(f"خطأ في إعدادات الأمان: {e}", exc_info=True)
@@ -985,16 +992,28 @@ class CallbackHandlers:
 
     @staticmethod
     async def _show_penalty_durations(update, context, query, chat_id, lang, penalty_type='mute'):
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("دقيقة", callback_data=f"set_duration:{penalty_type}:{chat_id}:60"),
-             InlineKeyboardButton("5 دقائق", callback_data=f"set_duration:{penalty_type}:{chat_id}:300")],
-            [InlineKeyboardButton("ساعة", callback_data=f"set_duration:{penalty_type}:{chat_id}:3600"),
-             InlineKeyboardButton("يوم", callback_data=f"set_duration:{penalty_type}:{chat_id}:86400")],
-            [InlineKeyboardButton("أسبوع", callback_data=f"set_duration:{penalty_type}:{chat_id}:604800")],
-            [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
-        ])
+        durations = [
+            ("دائم", 0),
+            ("نصف ساعة", 1800),
+            ("ساعة", 3600),
+            ("يوم", 86400),
+            ("أسبوع", 604800),
+            ("عشرة أيام", 864000),
+            ("شهر", 2592000),
+        ]
+        kb = []
+        for i in range(0, len(durations), 2):
+            row = []
+            name, secs = durations[i]
+            row.append(InlineKeyboardButton(name, callback_data=f"set_duration:{penalty_type}:{chat_id}:{secs}"))
+            if i + 1 < len(durations):
+                name2, secs2 = durations[i+1]
+                row.append(InlineKeyboardButton(name2, callback_data=f"set_duration:{penalty_type}:{chat_id}:{secs2}"))
+            kb.append(row)
+        kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")])
+
         type_name = {'mute': 'كتم', 'ban': 'حظر', 'restrict': 'تقييد', 'kick': 'طرد', 'warn': 'تحذير'}.get(penalty_type, penalty_type)
-        await safe_edit(query, f"⏱️ اختر مدة {type_name}:", reply_markup=kb)
+        await safe_edit(query, f"⏱️ اختر مدة {type_name}:", reply_markup=InlineKeyboardMarkup(kb))
         await _safe_answer(query)
 
     @staticmethod
@@ -1384,6 +1403,14 @@ class CallbackHandlers:
         except (ValueError, IndexError):
             await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
             return
+
+        # ✅ معالجة زر الرجوع
+        if action == "menu":
+            kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
+            await safe_edit(query, "🤖 إعدادات الردود التلقائية:", reply_markup=kb)
+            await _safe_answer(query)
+            return
+
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             await _safe_answer(query, "❌ لا صلاحية", show_alert=True)
             return
