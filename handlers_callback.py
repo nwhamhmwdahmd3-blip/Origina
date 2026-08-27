@@ -12,6 +12,10 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - أزرار الردود التلقائية تعمل فورًا
 - عدّاد النشر الجماعي دقيق
 - استخدام parse_mode آمن (نص عادي بدون Markdown)
+- معالجات خاصة لأزرار الانضمام تمنع التعارض بين الموافقة والرفض
+- دعم 12 لغة في أزرار الترجمة كما في النسخة الأصلية
+- إزالة تكرار toggle_map
+- إضافة معالج المقاييس (Metrics) بشكل فعلي
 """
 
 import asyncio
@@ -19,11 +23,12 @@ import logging
 import json
 import time
 import shutil
+import re
 from typing import Optional, Dict, Any, List, Tuple
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import ContextTypes
-from telegram.error import BadRequest, RetryAfter
+from telegram.error import BadRequest, RetryAfter, Forbidden
 
 from config import CONFIG, PATHS
 from database import DB, TimeUtils
@@ -32,6 +37,7 @@ from utils import (
     get_text, StateManager, UserState,
     KeyboardFactory, CB, get_ram_usage
 )
+from handlers_command import CommandHandlers
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +149,8 @@ class CallbackHandlers:
 
             if base_data == CB.CANCEL:
                 StateManager.clear(user_id)
+                context.user_data.clear()
+                context.args = []
                 await _safe_answer(query, "❌ تم الإلغاء")
                 return
 
@@ -192,7 +200,6 @@ class CallbackHandlers:
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
                 kb = KeyboardFactory.build("settings", lang=lang)
                 await safe_edit(query, f"⚙️ الإعدادات\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             if base_data == CB.TOGGLE_AUTO:
@@ -202,7 +209,6 @@ class CallbackHandlers:
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
                 kb = KeyboardFactory.build("settings", lang=lang)
                 await safe_edit(query, f"⚙️ الإعدادات\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             if base_data == CB.TOGGLE_REC:
@@ -212,13 +218,11 @@ class CallbackHandlers:
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
                 kb = KeyboardFactory.build("settings", lang=lang)
                 await safe_edit(query, f"⚙️ الإعدادات\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             # ========== الباقات والدفع ==========
             if base_data == CB.PLANS:
                 await safe_edit(query, await get_text(lang, 'plan_selector'), reply_markup=KeyboardFactory.build("plans", lang=lang))
-                await _safe_answer(query)
                 return
 
             if base_data == "gift_plans":
@@ -229,7 +233,6 @@ class CallbackHandlers:
                 kb = [[InlineKeyboardButton(f"🎁 {p['days']} يوم - {p['price']} ⭐", callback_data=f"buy_gift:{p['id']}")] for p in plans]
                 kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
                 await safe_edit(query, "💎 شراء كود هدية", reply_markup=InlineKeyboardMarkup(kb))
-                await _safe_answer(query)
                 return
 
             if base_data == "redeem_gift":
@@ -315,7 +318,6 @@ class CallbackHandlers:
                     return
                 text = "🧾 فواتيري\n\n" + "\n".join(f"• #{inv['number']} - {inv['amount']} ⭐" for inv in invoices)
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.BACK)]]))
-                await _safe_answer(query)
                 return
 
             # ========== الإحالات ==========
@@ -337,21 +339,18 @@ class CallbackHandlers:
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
                 ])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             if base_data == CB.REF_CLAIM:
                 days = await DB.claim_referral_reward(user_id)
                 text = f"✅ تم صرف {days} يوم!" if days > 0 else "📭 لا توجد مكافآت"
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.REFERRAL)]]))
-                await _safe_answer(query)
                 return
 
             if base_data == CB.REF_LIST:
                 refs = await DB.get_referrals_list(user_id)
                 text = "📋 المُحالين\n\n" + "\n".join(f"{i}. {_mask_id(r)}" for i, r in enumerate(refs[:20], 1)) if refs else "📭 لا يوجد"
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.REFERRAL)]]))
-                await _safe_answer(query)
                 return
 
             # ========== التذكيرات ==========
@@ -371,7 +370,6 @@ class CallbackHandlers:
                     f"📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
                 )
                 await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang))
-                await _safe_answer(query)
                 return
 
             if base_data == CB.REMINDER:
@@ -383,25 +381,37 @@ class CallbackHandlers:
                     f"📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
                 )
                 await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang))
-                await _safe_answer(query)
                 return
 
             if base_data == CB.REM_SET_DAYS:
                 StateManager.set(user_id, UserState.WAIT_REM_DAYS)
                 await safe_edit(query, "📅 أرسل عدد الأيام (1-30):")
-                await _safe_answer(query)
                 return
 
             # ========== الترجمة ==========
             if base_data == CB.TRANSLATION:
-                await safe_edit(query, "🌐 اختر اللغة:", reply_markup=KeyboardFactory.build("translation", lang=lang))
-                await _safe_answer(query)
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar"),
+                     InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
+                    [InlineKeyboardButton("🇫🇷 Français", callback_data="lang_fr"),
+                     InlineKeyboardButton("🇹🇷 Türkçe", callback_data="lang_tr")],
+                    [InlineKeyboardButton("🇨🇳 中文", callback_data="lang_zh"),
+                     InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+                    [InlineKeyboardButton("🇩🇪 Deutsch", callback_data="lang_de"),
+                     InlineKeyboardButton("🇪🇸 Español", callback_data="lang_es")],
+                    [InlineKeyboardButton("🇮🇹 Italiano", callback_data="lang_it"),
+                     InlineKeyboardButton("🇵🇹 Português", callback_data="lang_pt")],
+                    [InlineKeyboardButton("🇯🇵 日本語", callback_data="lang_ja"),
+                     InlineKeyboardButton("🇰🇷 한국어", callback_data="lang_ko")],
+                    [InlineKeyboardButton("❌ إيقاف الترجمة", callback_data=CB.TRANS_OFF)],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
+                ])
+                await safe_edit(query, "🌐 اختر اللغة:", reply_markup=kb)
                 return
 
             if base_data == CB.TRANS_OFF:
                 await DB.set_user_language(user_id, 'off')
                 await safe_edit(query, "✅ تم إيقاف الترجمة")
-                await _safe_answer(query)
                 return
 
             # ========== المسابقات ==========
@@ -414,7 +424,6 @@ class CallbackHandlers:
                 winners = await DB.get_contest_winners(10)
                 text = "🏆 الفائزون\n\n" + "\n".join(f"• {w['title']} - {_mask_id(w['winner_id'])}" for w in winners) if winners else "📭 لا يوجد"
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.BACK)]]))
-                await _safe_answer(query)
                 return
 
             # ========== الدعم ==========
@@ -431,7 +440,6 @@ class CallbackHandlers:
                     return
                 StateManager.set(user_id, UserState.WAIT_CHANNEL)
                 await safe_edit(query, "📡 أرسل معرف القناة:")
-                await _safe_answer(query)
                 return
 
             if base_data == CB.CH_LIST:
@@ -448,7 +456,6 @@ class CallbackHandlers:
                     await safe_edit(query, "✅ تم تحديد القناة!")
                 else:
                     await _safe_answer(query, "❌ لا يمكنك تحديد هذه القناة", show_alert=True)
-                await _safe_answer(query)
                 return
 
             if data.startswith(CB.CH_DEL + ":"):
@@ -473,7 +480,6 @@ class CallbackHandlers:
                 stats = await DB.get_channel_stats(user_id, ch_id)
                 text = f"📊 إحصائيات\n\n📝 {stats['total']}\n✅ {stats['published']}\n⏳ {stats['unpublished']}"
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.CH_LIST)]]))
-                await _safe_answer(query)
                 return
 
             # ========== المنشورات ==========
@@ -487,7 +493,6 @@ class CallbackHandlers:
                     return
                 StateManager.set(user_id, UserState.ADDING_POSTS)
                 await safe_edit(query, "📥 أرسل المنشورات:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ إنهاء", callback_data="finish_posts")]]))
-                await _safe_answer(query)
                 return
 
             if base_data == "finish_posts":
@@ -521,7 +526,6 @@ class CallbackHandlers:
                     await safe_edit(query, f"♻️ {count} منشور!")
                 else:
                     await _safe_answer(query, "❌ لا توجد قناة نشطة", show_alert=True)
-                await _safe_answer(query)
                 return
 
             if data.startswith(CB.POST_DEL + ":"):
@@ -562,7 +566,6 @@ class CallbackHandlers:
                     kb.append([InlineKeyboardButton("🗑️ حذف", callback_data=f"grp_del:{g['chat_id']}")])
                 kb.append([InlineKeyboardButton("🔙", callback_data=CB.BACK)])
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup(kb))
-                await _safe_answer(query)
                 return
 
             if data.startswith("grp_del:"):
@@ -589,7 +592,6 @@ class CallbackHandlers:
                     return
                 settings = await DB.get_security_settings(chat_id)
                 await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang))
-                await _safe_answer(query)
                 return
 
             # ========== لوحة الأدمن ==========
@@ -617,10 +619,10 @@ class CallbackHandlers:
                      InlineKeyboardButton("📋 قناة التحديثات", callback_data=CB.ADMIN_SET_UPDATE_CH)],
                     [InlineKeyboardButton("💾 نسخ", callback_data=CB.ADMIN_BACKUP),
                      InlineKeyboardButton("🖥️ الرام", callback_data=CB.ADMIN_RAM)],
+                    [InlineKeyboardButton("📊 مقاييس", callback_data=CB.ADMIN_METRICS)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
                 ])
                 await safe_edit(query, "👑 لوحة الأدمن", reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             # ========== توجيه المعالجات ==========
@@ -657,10 +659,12 @@ class CallbackHandlers:
 
             if data.startswith("lang_"):
                 lang_set = data.split("_")[-1]
-                if lang_set in ['ar', 'en', 'off']:
+                if lang_set in ['ar', 'en', 'fr', 'tr', 'zh', 'ru', 'de', 'es', 'it', 'pt', 'ja', 'ko', 'off']:
                     await DB.set_user_language(user_id, lang_set)
                     await _safe_answer(query, f"✅ {lang_set}")
                     await CommandHandlers.start(update, context)
+                else:
+                    await _safe_answer(query, "❌ لغة غير مدعومة", show_alert=True)
                 return
 
             # ========== ترقيم الصفحات ==========
@@ -761,6 +765,13 @@ class CallbackHandlers:
         except RetryAfter as e:
             logger.warning(f"RetryAfter: sleeping {e.retry_after}s")
             await asyncio.sleep(e.retry_after)
+            if post.get('id'):
+                await DB.increment_post_fail(post['id'])
+            return False
+        except Forbidden as e:
+            logger.warning(f"Forbidden: {e}")
+            # يمكن إيقاف القناة تلقائيًا
+            await DB.execute("UPDATE user_channels SET banned=1 WHERE id=?", (ch_db_id,))
             if post.get('id'):
                 await DB.increment_post_fail(post['id'])
             return False
@@ -906,16 +917,29 @@ class CallbackHandlers:
             "banned_words": "delete_banned_words", "approve_join": "auto_approve_join",
             "reject_join": "auto_reject_join", "nsfw": "nsfw_enabled",
             "warn": "warn_enabled",
-            "warn_enabled": "warn_enabled",
         }
 
         try:
             if action in toggle_map:
                 col = toggle_map[action]
                 settings = await DB.get_security_settings(chat_id)
-                await DB.update_security_settings(chat_id, **{col: 1 - settings.get(col, 0)})
+                new_val = 1 - settings.get(col, 0)
+                update_data = {col: new_val}
+                # منع التعارض بين الموافقة والرفض
+                if action == "approve_join" and new_val:
+                    update_data['auto_reject_join'] = 0
+                elif action == "reject_join" and new_val:
+                    update_data['auto_approve_join'] = 0
+                await DB.update_security_settings(chat_id, **update_data)
             elif action == "enable_all":
-                await DB.update_security_settings(chat_id, **{k: 1 for k in toggle_map.values()})
+                settings = await DB.get_security_settings(chat_id)
+                update_data = {k: 1 for k in toggle_map.values()}
+                # منع التعارض في enable_all
+                if settings.get('auto_reject_join'):
+                    update_data['auto_approve_join'] = 0
+                else:
+                    update_data['auto_reject_join'] = 0
+                await DB.update_security_settings(chat_id, **update_data)
             elif action == "disable_all":
                 await DB.update_security_settings(chat_id, **{k: 0 for k in toggle_map.values()})
             elif action == "close":
@@ -947,13 +971,11 @@ class CallbackHandlers:
                 StateManager.set(user_id, UserState.WAIT_MAX_LEN)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "📏 أرسل الحد الأقصى لطول الرسالة:")
-                await _safe_answer(query)
                 return
             elif action == "del_pen":
                 StateManager.set(user_id, UserState.WAIT_PENALTY_DURATION)
                 context.user_data['adv_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل مدة العقوبة بالدقائق:")
-                await _safe_answer(query)
                 return
             elif action == "penalty":
                 await CallbackHandlers._show_penalty_types(update, context, query, chat_id, lang)
@@ -962,37 +984,31 @@ class CallbackHandlers:
                 StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "📊 أرسل عدد المخالفات قبل العقوبة:")
-                await _safe_answer(query)
                 return
             elif action == "set_violation_duration":
                 StateManager.set(user_id, UserState.WAIT_PENALTY_DURATION)
                 context.user_data['adv_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل مدة العقوبة بالدقائق:")
-                await _safe_answer(query)
                 return
             elif action == "set_antiflood_messages":
                 StateManager.set(user_id, UserState.WAIT_ANTIFLOOD_MESSAGES)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "📊 أرسل عدد الرسائل المسموحة:")
-                await _safe_answer(query)
                 return
             elif action == "set_antiflood_seconds":
                 StateManager.set(user_id, UserState.WAIT_ANTIFLOOD_SECONDS)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل المدة بالثواني:")
-                await _safe_answer(query)
                 return
             elif action == "set_night_start":
                 StateManager.set(user_id, UserState.WAIT_NIGHT_START)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "🌙 أرسل وقت البدء (HH:MM):")
-                await _safe_answer(query)
                 return
             elif action == "set_night_end":
                 StateManager.set(user_id, UserState.WAIT_NIGHT_END)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "🌙 أرسل وقت النهاية (HH:MM):")
-                await _safe_answer(query)
                 return
             else:
                 await _safe_answer(query, "⚠️ غير معروف", show_alert=True)
@@ -1115,7 +1131,6 @@ class CallbackHandlers:
             if data == "admin_grant_free":
                 StateManager.set(user_id, UserState.WAIT_GRANT_FREE)
                 await safe_edit(query, "🎁 أرسل: معرف_المستخدم عدد_الأيام")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_USERS:
@@ -1126,7 +1141,6 @@ class CallbackHandlers:
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_BANNED:
@@ -1137,13 +1151,11 @@ class CallbackHandlers:
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_UNBAN_ALL:
                 await DB.execute("UPDATE users SET banned=0 WHERE banned=1")
                 await safe_edit(query, "✅ تم إلغاء حظر الجميع")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_STATS:
@@ -1158,7 +1170,6 @@ class CallbackHandlers:
                         f"🎫 التذاكر المعلقة: {stats['tickets']}")
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_CHANNELS:
@@ -1166,7 +1177,6 @@ class CallbackHandlers:
                 text = "📡 القنوات\n\n" + "\n".join(f"{'✅' if not c['banned'] else '🚫'} {c['channel_name']} ({c['channel_id']})" for c in channels) if channels else "📭 لا توجد قنوات"
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_GROUPS:
@@ -1174,19 +1184,16 @@ class CallbackHandlers:
                 text = "👥 المجموعات\n\n" + "\n".join(f"{'✅' if not g['banned'] else '🚫'} {g['chat_name']} ({g['chat_id']})" for g in groups) if groups else "📭 لا توجد مجموعات"
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_ADD_ADMIN:
                 StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
                 await safe_edit(query, "👑 أرسل معرف المشرف:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_REM_ADMIN:
                 StateManager.set(user_id, UserState.WAIT_ADMIN_REM)
                 await safe_edit(query, "🗑️ أرسل معرف المشرف:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_LIST_ADMINS:
@@ -1198,13 +1205,11 @@ class CallbackHandlers:
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_BROADCAST:
                 StateManager.set(user_id, UserState.WAIT_BROADCAST)
                 await safe_edit(query, "📨 أرسل الرسالة:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_INVOICES:
@@ -1212,7 +1217,6 @@ class CallbackHandlers:
                 text = "🧾 الفواتير\n\n" + "\n".join(f"• {i['number']} - {i['amount']} ⭐ - {i['status']}" for i in invoices) if invoices else "📭 لا توجد"
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_BACKUP:
@@ -1223,19 +1227,39 @@ class CallbackHandlers:
             elif data == CB.ADMIN_RESTORE:
                 StateManager.set(user_id, UserState.WAIT_RESTORE)
                 await safe_edit(query, "📂 أرسل ملف النسخة الاحتياطية:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_RAM:
                 ram = get_ram_usage()
                 text = f"🖥️ الرام\n\n💾 الإجمالي: {ram['total']} GB\n📊 المستخدم: {ram['used']} GB\n📈 النسبة: {ram['percent']}%"
                 await safe_edit(query, text)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_METRICS:
-                await safe_edit(query, "📊 المقاييس غير متوفرة حالياً")
-                await _safe_answer(query)
+                # عرض مقاييس إضافية من قاعدة البيانات
+                try:
+                    stats = await DB.get_general_stats()
+                    total_posts = stats['posts']
+                    published_posts = stats['published']
+                    active_channels = stats['channels']
+                    active_groups = stats['groups']
+                    total_users = stats['users']
+                    total_invoices = stats['invoices']
+                    pending_tickets = stats['tickets']
+                    text = (
+                        "📊 مقاييس النظام\n\n"
+                        f"👥 المستخدمون: {total_users}\n"
+                        f"📡 القنوات: {active_channels}\n"
+                        f"👥 المجموعات: {active_groups}\n"
+                        f"📝 المنشورات: {total_posts}\n"
+                        f"✅ المنشورة: {published_posts}\n"
+                        f"🧾 الفواتير: {total_invoices}\n"
+                        f"🎫 تذاكر معلقة: {pending_tickets}\n"
+                        f"💾 حجم قاعدة البيانات: {PATHS.DB.stat().st_size / 1024:.1f} KB"
+                    )
+                    await safe_edit(query, text)
+                except Exception as e:
+                    await safe_edit(query, f"❌ تعذر جلب المقاييس: {e}")
                 return
 
             elif data == CB.ADMIN_TICKETS:
@@ -1246,38 +1270,32 @@ class CallbackHandlers:
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_DEL_TICKETS:
                 await DB.delete_all_tickets()
                 await safe_edit(query, "✅ تم حذف جميع التذاكر")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_PAYMENT_LOGS:
                 logs = await DB.fetchall("SELECT user_id, event_type, created_at FROM payment_logs ORDER BY id DESC LIMIT 20")
                 text = "💳 سجلات الدفع\n\n" + "\n".join(f"• {l['user_id']} - {l['event_type']} ({l['created_at']})" for l in logs) if logs else "📭 لا توجد"
                 await safe_edit(query, text)
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_SET_UPDATE_CH:
                 StateManager.set(user_id, UserState.WAIT_UPDATE_CH)
                 await safe_edit(query, "📢 أرسل معرف قناة التحديثات:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_SEND_UPDATE:
                 StateManager.set(user_id, UserState.WAIT_UPDATE)
                 await safe_edit(query, "📝 أرسل نص التحديث:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_SET_LOG_CH:
                 StateManager.set(user_id, UserState.WAIT_LOG_CH)
                 await safe_edit(query, "📋 أرسل معرف قناة السجلات:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_REPLIES:
@@ -1291,21 +1309,18 @@ class CallbackHandlers:
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == "admin_add_reply":
                 StateManager.set(user_id, UserState.WAIT_KEYWORD)
                 context.user_data['auto_chat'] = -1
                 await safe_edit(query, "📝 أرسل الكلمة:")
-                await _safe_answer(query)
                 return
 
             elif data == "admin_del_reply":
                 StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
                 context.user_data['auto_chat'] = -1
                 await safe_edit(query, "🗑️ أرسل الكلمة:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_EXPORT_REPLIES:
@@ -1314,19 +1329,16 @@ class CallbackHandlers:
                     await safe_send(context.bot, user_id, f"✅ تم تصدير {count} رد")
                 else:
                     await safe_edit(query, "📭 لا توجد ردود")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_IMPORT_REPLIES:
                 StateManager.set(user_id, UserState.WAIT_IMPORT_FILE)
                 await safe_edit(query, "📤 أرسل ملف JSON:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_IMPORT_GITHUB:
                 StateManager.set(user_id, UserState.WAIT_GITHUB_URL)
                 await safe_edit(query, "📥 أرسل الرابط:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_BANNED_WORDS:
@@ -1338,39 +1350,33 @@ class CallbackHandlers:
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
                 await safe_edit(query, text, reply_markup=kb)
-                await _safe_answer(query)
                 return
 
             elif data == "admin_add_banned":
                 StateManager.set(user_id, UserState.WAIT_GLOBAL_BAN)
                 await safe_edit(query, "📝 أرسل الكلمة:")
-                await _safe_answer(query)
                 return
 
             elif data == "admin_rem_banned":
                 StateManager.set(user_id, UserState.WAIT_REM_GLOBAL_BAN)
                 await safe_edit(query, "🗑️ أرسل الكلمة:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_CREATE_CONTEST:
                 StateManager.set(user_id, UserState.WAIT_CONTEST_TITLE)
                 await safe_edit(query, "🏆 أرسل العنوان:")
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_DECLARE_WINNER:
                 contests = await DB.get_active_contests(5)
                 if not contests:
                     await safe_edit(query, "📭 لا توجد مسابقات نشطة")
-                    await _safe_answer(query)
                     return
                 kb = []
                 for c in contests:
                     kb.append([InlineKeyboardButton(f"🏆 {c['title'][:20]}", callback_data=f"{CB.DECLARE_WINNER_SEL}:{c['id']}")])
                 kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)])
                 await safe_edit(query, "🏆 اختر المسابقة:", reply_markup=InlineKeyboardMarkup(kb))
-                await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_DEL_CONTEST:
@@ -1383,7 +1389,6 @@ class CallbackHandlers:
                     kb.append([InlineKeyboardButton(f"🗑️ {c['title'][:20]}", callback_data=f"admin_delete_contest:{c['id']}")])
                 kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)])
                 await safe_edit(query, "🗑️ اختر المسابقة للحذف:", reply_markup=InlineKeyboardMarkup(kb))
-                await _safe_answer(query)
                 return
 
             elif data.startswith("admin_delete_contest:"):
@@ -1396,7 +1401,6 @@ class CallbackHandlers:
                     await safe_edit(query, "✅ تم حذف المسابقة")
                 else:
                     await _safe_answer(query, "❌ فشل", show_alert=True)
-                await _safe_answer(query)
                 return
 
             else:
@@ -1434,7 +1438,6 @@ class CallbackHandlers:
         if action == "menu":
             kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
             await safe_edit(query, "🤖 إعدادات الردود التلقائية:", reply_markup=kb)
-            await _safe_answer(query)
             return
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
@@ -1462,14 +1465,12 @@ class CallbackHandlers:
                 StateManager.set(user_id, UserState.WAIT_AUTO_KEY)
                 context.user_data['auto_chat'] = chat_id
                 await safe_edit(query, "📝 أرسل الكلمة:")
-                await _safe_answer(query)
                 return
 
             elif action == "del":
                 StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
                 context.user_data['auto_chat'] = chat_id
                 await safe_edit(query, "🗑️ أرسل الكلمة:")
-                await _safe_answer(query)
                 return
 
             elif action == "reset":
@@ -1481,7 +1482,6 @@ class CallbackHandlers:
                 rows = await DB.fetchall("SELECT keyword FROM auto_replies WHERE chat_id=? LIMIT 20", (chat_id,))
                 text = "📋 الردود\n\n" + "\n".join(f"• {r['keyword']}" for r in rows) if rows else "📭 لا يوجد"
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=f"auto_reply_menu:{chat_id}")]]))
-                await _safe_answer(query)
                 return
 
             elif action == "stats":
@@ -1494,7 +1494,6 @@ class CallbackHandlers:
                 else:
                     text = "📭 لا توجد ردود"
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=f"auto_reply_menu:{chat_id}")]]))
-                await _safe_answer(query)
                 return
 
         except Exception as e:
@@ -1569,19 +1568,16 @@ class CallbackHandlers:
                 StateManager.set(user_id, UserState.WAIT_GROUP_BAN if chat_id != -1 else UserState.WAIT_GLOBAL_BAN)
                 context.user_data['ban_chat'] = chat_id
                 await safe_edit(query, "📝 أرسل الكلمة:")
-                await _safe_answer(query)
                 return
             elif action == "list":
                 words = await DB.get_banned_words(chat_id)
                 text = "🚫 الكلمات\n\n" + "\n".join(f"• {w}" for w in words[:50]) if words else "📭 لا يوجد"
                 await safe_edit(query, text)
-                await _safe_answer(query)
                 return
             elif action == "rem":
                 StateManager.set(user_id, UserState.WAIT_REM_GROUP_BAN if chat_id != -1 else UserState.WAIT_REM_GLOBAL_BAN)
                 context.user_data['ban_chat'] = chat_id
                 await safe_edit(query, "🗑️ أرسل الكلمة:")
-                await _safe_answer(query)
                 return
 
         elif parts[0].startswith("act_"):
@@ -1598,7 +1594,6 @@ class CallbackHandlers:
                 StateManager.set(user_id, state)
                 context.user_data['adv_chat'] = chat_id
                 await safe_edit(query, msg)
-                await _safe_answer(query)
                 return
 
         elif parts[0].startswith("pen_"):
@@ -1678,5 +1673,18 @@ class CallbackHandlers:
             await safe_edit(query, "📥 أرسل الرابط:")
         await _safe_answer(query)
 
-
-from handlers_command import CommandHandlers
+    # ============ النسخ الاحتياطي ============
+    @staticmethod
+    async def _do_backup(context, user_id):
+        try:
+            PATHS.BACKUPS.mkdir(parents=True, exist_ok=True)
+            backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+            shutil.copy2(PATHS.DB, backup_file)
+            backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+            for old in backups[MAX_BACKUPS:]:
+                old.unlink(missing_ok=True)
+            with open(backup_file, 'rb') as f:
+                await context.bot.send_document(chat_id=user_id, document=f, filename=backup_file.name)
+        except Exception as e:
+            logger.error(f"❌ فشل النسخ: {e}")
+            await safe_send(context.bot, user_id, "❌ فشل النسخ")
