@@ -21,7 +21,7 @@ from collections import OrderedDict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import ContextTypes
 from telegram.error import (
-    BadRequest, TimedOut, Forbidden, ChatMigrated, RetryAfter, NetworkError, TelegramError, Flood
+    BadRequest, TimedOut, Forbidden, ChatMigrated, RetryAfter, NetworkError, TelegramError
 )
 
 from config import CONFIG, PATHS
@@ -543,8 +543,8 @@ class CallbackHandlers:
                     )
                     await _safe_answer(query, "✅ تم إرسال الفاتورة")
                     await safe_delete_message(query)
-                except (Flood, RetryAfter) as e:
-                    logger.warning(f"FloodWait in send_invoice: {e}")
+                except RetryAfter as e:
+                    logger.warning(f"RetryAfter in send_invoice: {e}")
                     await _safe_answer(query, f"⚠️ حاول بعد {e.retry_after} ثانية", show_alert=True)
                 except Exception as e:
                     logger.error(f"❌ فشل إرسال الفاتورة: {e}")
@@ -1067,11 +1067,6 @@ class CallbackHandlers:
                             await bot.send_message(chat_id=ch_tele, text=text[i:i+MAX_MESSAGE_LENGTH])
                     else:
                         await bot.send_message(chat_id=ch_tele, text=text if text else ".")
-            except Flood as e:
-                wait = e.retry_after if hasattr(e, 'retry_after') else 30
-                logger.warning(f"FloodWait: sleeping {wait}s")
-                await asyncio.sleep(wait)
-                raise
             except RetryAfter as e:
                 wait = e.retry_after
                 logger.warning(f"RetryAfter: sleeping {wait}s")
@@ -1095,10 +1090,6 @@ class CallbackHandlers:
             except Exception as db_err:
                 logger.error(f"فشل تحديث قاعدة البيانات بعد النشر: {db_err}")
 
-        except Flood:
-            logger.error(f"FloodWait نهائي في _publish_single")
-            if post and post.get('id'):
-                await DB.increment_post_fail(post['id'])
         except Exception as e:
             logger.error(f"❌ فشل النشر النهائي: {e}")
             if post and post.get('id'):
