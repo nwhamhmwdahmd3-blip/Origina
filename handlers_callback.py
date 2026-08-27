@@ -6,11 +6,12 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - لوحة أدمن كاملة
 - جميع معالجات الأمان
 - شراء الهدايا يعمل
-- إصلاح زر التحذير (تجنب 400)
+- إصلاح زر التحذير
 - إصلاح زر التحديثات
 - مدد العقوبات: دائم، نصف ساعة، ساعة، يوم، أسبوع، عشرة أيام، شهر
-- زر الرجوع في الردود يعمل
-- زر "للمشرفين فقط" يعمل
+- أزرار الردود التلقائية تعمل فورًا
+- عدّاد النشر الجماعي دقيق
+- استخدام parse_mode آمن (نص عادي بدون Markdown)
 """
 
 import asyncio
@@ -190,7 +191,7 @@ class CallbackHandlers:
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
                 kb = KeyboardFactory.build("settings", lang=lang)
-                await safe_edit(query, f"⚙️ **الإعدادات**\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb)
+                await safe_edit(query, f"⚙️ الإعدادات\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -200,7 +201,7 @@ class CallbackHandlers:
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
                 kb = KeyboardFactory.build("settings", lang=lang)
-                await safe_edit(query, f"⚙️ **الإعدادات**\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb)
+                await safe_edit(query, f"⚙️ الإعدادات\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -210,7 +211,7 @@ class CallbackHandlers:
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
                 kb = KeyboardFactory.build("settings", lang=lang)
-                await safe_edit(query, f"⚙️ **الإعدادات**\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb)
+                await safe_edit(query, f"⚙️ الإعدادات\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -227,7 +228,7 @@ class CallbackHandlers:
                     return
                 kb = [[InlineKeyboardButton(f"🎁 {p['days']} يوم - {p['price']} ⭐", callback_data=f"buy_gift:{p['id']}")] for p in plans]
                 kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
-                await safe_edit(query, "💎 **شراء كود هدية**", reply_markup=InlineKeyboardMarkup(kb))
+                await safe_edit(query, "💎 شراء كود هدية", reply_markup=InlineKeyboardMarkup(kb))
                 await _safe_answer(query)
                 return
 
@@ -312,8 +313,8 @@ class CallbackHandlers:
                 if not invoices:
                     await safe_edit(query, "📭 لا توجد فواتير")
                     return
-                text = "🧾 **فواتيري**\n\n" + "\n".join(f"• #{inv['number']} - {inv['amount']} ⭐" for inv in invoices)
-                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.BACK)]]), parse_mode="Markdown")
+                text = "🧾 فواتيري\n\n" + "\n".join(f"• #{inv['number']} - {inv['amount']} ⭐" for inv in invoices)
+                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.BACK)]]))
                 await _safe_answer(query)
                 return
 
@@ -324,13 +325,18 @@ class CallbackHandlers:
                 if code.startswith('ref_'):
                     code = code[4:]
                 link = f"https://t.me/{CONFIG.BOT_USERNAME}?start=ref_{code}"
-                text = f"🔗 **نظام الإحالات**\n\n📎 رابطك:\n`{link}`\n\n👥 المُحالين: {stats['total']}\n🎁 الأيام المتاحة: {stats['available']} يوم"
+                text = (
+                    f"🔗 نظام الإحالات\n\n"
+                    f"📎 رابطك:\n{link}\n\n"
+                    f"👥 المُحالين: {stats['total']}\n"
+                    f"🎁 الأيام المتاحة: {stats['available']} يوم"
+                )
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🎁 صرف", callback_data=CB.REF_CLAIM),
                      InlineKeyboardButton("📋 قائمة", callback_data=CB.REF_LIST)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
                 ])
-                await safe_edit(query, text, reply_markup=kb, parse_mode="MarkdownV2")
+                await safe_edit(query, text, reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -343,8 +349,8 @@ class CallbackHandlers:
 
             if base_data == CB.REF_LIST:
                 refs = await DB.get_referrals_list(user_id)
-                text = "📋 **المُحالين**\n\n" + "\n".join(f"{i}. `{_mask_id(r)}`" for i, r in enumerate(refs[:20], 1)) if refs else "📭 لا يوجد"
-                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.REFERRAL)]]), parse_mode="MarkdownV2")
+                text = "📋 المُحالين\n\n" + "\n".join(f"{i}. {_mask_id(r)}" for i, r in enumerate(refs[:20], 1)) if refs else "📭 لا يوجد"
+                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.REFERRAL)]]))
                 await _safe_answer(query)
                 return
 
@@ -358,15 +364,25 @@ class CallbackHandlers:
                 elif base_data == CB.REM_TOGGLE_WEEKLY:
                     await DB.update_reminder_settings(user_id, weekly_report=not settings.get('weekly_report', False))
                 settings = await DB.get_reminder_settings(user_id)
-                text = f"⏰ **التذكيرات**\n\n🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n📊 يومي: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
-                await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang), parse_mode="Markdown")
+                text = (
+                    f"⏰ التذكيرات\n\n"
+                    f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
+                    f"📊 يومي: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
+                    f"📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
+                )
+                await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang))
                 await _safe_answer(query)
                 return
 
             if base_data == CB.REMINDER:
                 settings = await DB.get_reminder_settings(user_id)
-                text = f"⏰ **التذكيرات**\n\n🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n📊 يومي: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
-                await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang), parse_mode="Markdown")
+                text = (
+                    f"⏰ التذكيرات\n\n"
+                    f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
+                    f"📊 يومي: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
+                    f"📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
+                )
+                await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang))
                 await _safe_answer(query)
                 return
 
@@ -396,8 +412,8 @@ class CallbackHandlers:
 
             if base_data == CB.CONTEST_WINNERS:
                 winners = await DB.get_contest_winners(10)
-                text = "🏆 **الفائزون**\n\n" + "\n".join(f"• {w['title']} → `{_mask_id(w['winner_id'])}`" for w in winners) if winners else "📭 لا يوجد"
-                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.BACK)]]), parse_mode="MarkdownV2")
+                text = "🏆 الفائزون\n\n" + "\n".join(f"• {w['title']} - {_mask_id(w['winner_id'])}" for w in winners) if winners else "📭 لا يوجد"
+                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.BACK)]]))
                 await _safe_answer(query)
                 return
 
@@ -455,8 +471,8 @@ class CallbackHandlers:
                     await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
                     return
                 stats = await DB.get_channel_stats(user_id, ch_id)
-                text = f"📊 **إحصائيات**\n\n📝 {stats['total']}\n✅ {stats['published']}\n⏳ {stats['unpublished']}"
-                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.CH_LIST)]]), parse_mode="Markdown")
+                text = f"📊 إحصائيات\n\n📝 {stats['total']}\n✅ {stats['published']}\n⏳ {stats['unpublished']}"
+                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.CH_LIST)]]))
                 await _safe_answer(query)
                 return
 
@@ -538,7 +554,7 @@ class CallbackHandlers:
                     kb = InlineKeyboardMarkup([[InlineKeyboardButton("➕ أضف البوت", url=f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup")]])
                     await safe_edit(query, "📭 لا توجد مجموعات", reply_markup=kb)
                     return
-                text = "👥 **مجموعاتي**\n\n"
+                text = "👥 مجموعاتي\n\n"
                 kb = []
                 for g in groups:
                     text += f"{'✅' if not g['banned'] else '⛔'} {g['chat_name']}\n"
@@ -603,7 +619,7 @@ class CallbackHandlers:
                      InlineKeyboardButton("🖥️ الرام", callback_data=CB.ADMIN_RAM)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
                 ])
-                await safe_edit(query, "👑 **لوحة الأدمن**", reply_markup=kb, parse_mode="Markdown")
+                await safe_edit(query, "👑 لوحة الأدمن", reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -708,7 +724,7 @@ class CallbackHandlers:
 
     # ============ دوال النشر ============
     @staticmethod
-    async def _publish_single(bot, ch_db_id, ch_tele, post):
+    async def _publish_single(bot, ch_db_id, ch_tele, post) -> bool:
         try:
             post_id = post.get('id')
             text = post.get('text', '')
@@ -741,15 +757,18 @@ class CallbackHandlers:
                 await DB.mark_post_published(post_id)
             await DB.update_last_publish(ch_db_id)
             await DB.update_next_publish(ch_db_id)
+            return True
         except RetryAfter as e:
             logger.warning(f"RetryAfter: sleeping {e.retry_after}s")
             await asyncio.sleep(e.retry_after)
             if post.get('id'):
                 await DB.increment_post_fail(post['id'])
+            return False
         except Exception as e:
             logger.error(f"❌ فشل النشر: {e}")
             if post.get('id'):
                 await DB.increment_post_fail(post['id'])
+            return False
 
     @staticmethod
     async def _publish_all(bot, user_id, channels):
@@ -768,19 +787,20 @@ class CallbackHandlers:
             await safe_send(bot, user_id, "📭 لا توجد منشورات للنشر")
             return
         sem = asyncio.Semaphore(MAX_CONCURRENT_PUBLISH)
+
         async def run(task):
             async with sem:
-                try:
-                    await CallbackHandlers._publish_single(bot, task[0], task[1], task[2])
-                    return True
-                except:
-                    return False
+                return await CallbackHandlers._publish_single(bot, task[0], task[1], task[2])
+
         BATCH = 10
         for i in range(0, len(tasks), BATCH):
             batch = tasks[i:i+BATCH]
             results = await asyncio.gather(*(run(t) for t in batch), return_exceptions=True)
-            published += sum(1 for r in results if r is True)
-            failed += sum(1 for r in results if r is False or isinstance(r, Exception))
+            for r in results:
+                if r is True:
+                    published += 1
+                else:
+                    failed += 1
         await safe_send(bot, user_id, f"✅ تم نشر {published} | ❌ فشل {failed}")
 
     # ============ دوال عرض القوائم ============
@@ -801,7 +821,7 @@ class CallbackHandlers:
         per_page = 5
         total_pages = max(1, (len(channels) + per_page - 1) // per_page)
         page_channels = channels[page*per_page:(page+1)*per_page]
-        text = f"📡 **قنواتي** (صفحة {page+1}/{total_pages})\n\n"
+        text = f"📡 قنواتي (صفحة {page+1}/{total_pages})\n\n"
         kb = []
         for ch in page_channels:
             st = "✅" if not ch['banned'] else "🚫"
@@ -823,7 +843,7 @@ class CallbackHandlers:
             kb.append(nav)
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
-        await safe_edit(query, text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await safe_edit(query, text, reply_markup=InlineKeyboardMarkup(kb))
         await _safe_answer(query)
 
     @staticmethod
@@ -839,7 +859,7 @@ class CallbackHandlers:
         posts = await DB.fetchall("SELECT id, text, published FROM posts WHERE channel_db_id=? ORDER BY created_at ASC LIMIT ? OFFSET ?", (active, per_page, page*per_page))
         total = await DB.fetchval("SELECT COUNT(*) FROM posts WHERE channel_db_id=?", (active,), default=0)
         total_pages = max(1, (total + per_page - 1) // per_page)
-        text = f"📋 **منشوراتي** (صفحة {page+1}/{total_pages})\n\n"
+        text = f"📋 منشوراتي (صفحة {page+1}/{total_pages})\n\n"
         kb = []
         for p in posts:
             text += f"🆔 {p['id']}: {(p['text'] or '')[:30]}\n"
@@ -853,7 +873,7 @@ class CallbackHandlers:
             kb.append(nav)
         kb.append([InlineKeyboardButton("🔄 إعادة تدوير", callback_data=CB.POST_REC)])
         kb.append([InlineKeyboardButton("🔙", callback_data=CB.BACK)])
-        await safe_edit(query, text if posts else "📭 لا يوجد", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await safe_edit(query, text if posts else "📭 لا يوجد", reply_markup=InlineKeyboardMarkup(kb))
         await _safe_answer(query)
 
     # ============ معالجات الأمان ============
@@ -884,7 +904,9 @@ class CallbackHandlers:
             "voice": "delete_voice", "videonote": "delete_video_note", "welcome": "welcome_enabled",
             "goodbye": "goodbye_enabled", "flood": "antiflood_enabled", "night": "night_mode_enabled",
             "banned_words": "delete_banned_words", "approve_join": "auto_approve_join",
-            "reject_join": "auto_reject_join", "nsfw": "nsfw_enabled", "warn_enabled": "warn_enabled",
+            "reject_join": "auto_reject_join", "nsfw": "nsfw_enabled",
+            "warn": "warn_enabled",
+            "warn_enabled": "warn_enabled",
         }
 
         try:
@@ -1061,8 +1083,8 @@ class CallbackHandlers:
     @staticmethod
     async def _show_admin_logs(update, context, query, chat_id, lang):
         logs = await DB.get_admin_logs(chat_id, 10)
-        text = "📋 **سجل المشرفين**\n\n" + "\n".join(f"• {l['admin_id']} → {l['action']}" for l in logs) if logs else "📭 لا يوجد"
-        await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]]), parse_mode="Markdown")
+        text = "📋 سجل المشرفين\n\n" + "\n".join(f"• {l['admin_id']} → {l['action']}" for l in logs) if logs else "📭 لا يوجد"
+        await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]]))
         await _safe_answer(query)
 
     @staticmethod
@@ -1098,23 +1120,23 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_USERS:
                 stats = await DB.get_user_stats()
-                text = f"👥 **المستخدمون**\n\n👥 الإجمالي: {stats['users']}\n⛔ المحظورون: {stats['banned']}"
+                text = f"👥 المستخدمون\n\n👥 الإجمالي: {stats['users']}\n⛔ المحظورون: {stats['banned']}"
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("⛔ المحظورين", callback_data=CB.ADMIN_BANNED)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
-                await safe_edit(query, text, reply_markup=kb, parse_mode="Markdown")
+                await safe_edit(query, text, reply_markup=kb)
                 await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_BANNED:
                 banned_users = await DB.fetchall("SELECT user_id FROM users WHERE banned=1 LIMIT 20")
-                text = "⛔ **المحظورين**\n\n" + "\n".join(str(u['user_id']) for u in banned_users) if banned_users else "📭 لا يوجد محظورون"
+                text = "⛔ المحظورين\n\n" + "\n".join(str(u['user_id']) for u in banned_users) if banned_users else "📭 لا يوجد محظورون"
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("✅ فك حظر الكل", callback_data=CB.ADMIN_UNBAN_ALL)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
-                await safe_edit(query, text, reply_markup=kb, parse_mode="Markdown")
+                await safe_edit(query, text, reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -1126,7 +1148,7 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_STATS:
                 stats = await DB.get_general_stats()
-                text = (f"📊 **إحصائيات عامة**\n\n"
+                text = (f"📊 إحصائيات عامة\n\n"
                         f"👥 المستخدمون: {stats['users']}\n"
                         f"📡 القنوات: {stats['channels']}\n"
                         f"👥 المجموعات: {stats['groups']}\n"
@@ -1135,23 +1157,23 @@ class CallbackHandlers:
                         f"🧾 الفواتير: {stats['invoices']}\n"
                         f"🎫 التذاكر المعلقة: {stats['tickets']}")
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]])
-                await safe_edit(query, text, reply_markup=kb, parse_mode="Markdown")
+                await safe_edit(query, text, reply_markup=kb)
                 await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_CHANNELS:
                 channels = await DB.fetchall("SELECT id, channel_id, channel_name, banned FROM user_channels LIMIT 50")
-                text = "📡 **القنوات**\n\n" + "\n".join(f"{'✅' if not c['banned'] else '🚫'} {c['channel_name']} (`{c['channel_id']}`)" for c in channels) if channels else "📭 لا توجد قنوات"
+                text = "📡 القنوات\n\n" + "\n".join(f"{'✅' if not c['banned'] else '🚫'} {c['channel_name']} ({c['channel_id']})" for c in channels) if channels else "📭 لا توجد قنوات"
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]])
-                await safe_edit(query, text, reply_markup=kb, parse_mode="MarkdownV2")
+                await safe_edit(query, text, reply_markup=kb)
                 await _safe_answer(query)
                 return
 
             elif data == CB.ADMIN_GROUPS:
                 groups = await DB.fetchall("SELECT chat_id, chat_name, banned FROM bot_groups LIMIT 20")
-                text = "👥 **المجموعات**\n\n" + "\n".join(f"{'✅' if not g['banned'] else '🚫'} {g['chat_name']} (`{g['chat_id']}`)" for g in groups) if groups else "📭 لا توجد مجموعات"
+                text = "👥 المجموعات\n\n" + "\n".join(f"{'✅' if not g['banned'] else '🚫'} {g['chat_name']} ({g['chat_id']})" for g in groups) if groups else "📭 لا توجد مجموعات"
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]])
-                await safe_edit(query, text, reply_markup=kb, parse_mode="MarkdownV2")
+                await safe_edit(query, text, reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -1169,13 +1191,13 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_LIST_ADMINS:
                 admins = await DB.get_admin_list()
-                text = "👑 **المشرفون**\n\n" + "\n".join(f"• `{a['user_id']}`" for a in admins) if admins else "📭 لا يوجد"
+                text = "👑 المشرفون\n\n" + "\n".join(f"• {a['user_id']}" for a in admins) if admins else "📭 لا يوجد"
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("➕ إضافة", callback_data=CB.ADMIN_ADD_ADMIN),
                      InlineKeyboardButton("🗑️ إزالة", callback_data=CB.ADMIN_REM_ADMIN)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
-                await safe_edit(query, text, reply_markup=kb, parse_mode="MarkdownV2")
+                await safe_edit(query, text, reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -1187,9 +1209,9 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_INVOICES:
                 invoices = await DB.fetchall("SELECT number, amount, status FROM invoices ORDER BY id DESC LIMIT 20")
-                text = "🧾 **الفواتير**\n\n" + "\n".join(f"• {i['number']} - {i['amount']} ⭐ - {i['status']}" for i in invoices) if invoices else "📭 لا توجد"
+                text = "🧾 الفواتير\n\n" + "\n".join(f"• {i['number']} - {i['amount']} ⭐ - {i['status']}" for i in invoices) if invoices else "📭 لا توجد"
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]])
-                await safe_edit(query, text, reply_markup=kb, parse_mode="Markdown")
+                await safe_edit(query, text, reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -1206,8 +1228,8 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_RAM:
                 ram = get_ram_usage()
-                text = f"🖥️ **الرام**\n\n💾 الإجمالي: {ram['total']} GB\n📊 المستخدم: {ram['used']} GB\n📈 النسبة: {ram['percent']}%"
-                await safe_edit(query, text, parse_mode="Markdown")
+                text = f"🖥️ الرام\n\n💾 الإجمالي: {ram['total']} GB\n📊 المستخدم: {ram['used']} GB\n📈 النسبة: {ram['percent']}%"
+                await safe_edit(query, text)
                 await _safe_answer(query)
                 return
 
@@ -1218,7 +1240,7 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_TICKETS:
                 tickets = await DB.get_tickets()
-                text = "🎫 **التذاكر المعلقة**\n\n" + "\n".join(f"• #{t['ticket_number']} - {t['user_id']}: {t['message'][:50]}" for t in tickets[:10]) if tickets else "📭 لا توجد تذاكر"
+                text = "🎫 التذاكر المعلقة\n\n" + "\n".join(f"• #{t['ticket_number']} - {t['user_id']}: {t['message'][:50]}" for t in tickets[:10]) if tickets else "📭 لا توجد تذاكر"
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🗑️ حذف الكل", callback_data=CB.ADMIN_DEL_TICKETS)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
@@ -1235,7 +1257,7 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_PAYMENT_LOGS:
                 logs = await DB.fetchall("SELECT user_id, event_type, created_at FROM payment_logs ORDER BY id DESC LIMIT 20")
-                text = "💳 **سجلات الدفع**\n\n" + "\n".join(f"• {l['user_id']} - {l['event_type']} ({l['created_at']})" for l in logs) if logs else "📭 لا توجد"
+                text = "💳 سجلات الدفع\n\n" + "\n".join(f"• {l['user_id']} - {l['event_type']} ({l['created_at']})" for l in logs) if logs else "📭 لا توجد"
                 await safe_edit(query, text)
                 await _safe_answer(query)
                 return
@@ -1260,7 +1282,7 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_REPLIES:
                 replies = await DB.fetchall("SELECT keyword FROM auto_replies WHERE chat_id=-1 LIMIT 30")
-                text = "💬 **الردود العامة**\n\n" + "\n".join(f"• {r['keyword']}" for r in replies) if replies else "📭 لا توجد"
+                text = "💬 الردود العامة\n\n" + "\n".join(f"• {r['keyword']}" for r in replies) if replies else "📭 لا توجد"
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("➕ إضافة", callback_data="admin_add_reply"),
                      InlineKeyboardButton("🗑️ حذف", callback_data="admin_del_reply")],
@@ -1268,7 +1290,7 @@ class CallbackHandlers:
                      InlineKeyboardButton("📥 استيراد", callback_data=CB.ADMIN_IMPORT_REPLIES)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
                 ])
-                await safe_edit(query, text, reply_markup=kb, parse_mode="Markdown")
+                await safe_edit(query, text, reply_markup=kb)
                 await _safe_answer(query)
                 return
 
@@ -1309,7 +1331,7 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_BANNED_WORDS:
                 words = await DB.get_banned_words(-1)
-                text = "🚫 **الكلمات المحظورة العامة**\n\n" + "\n".join(f"• {w}" for w in words[:30]) if words else "📭 لا توجد"
+                text = "🚫 الكلمات المحظورة العامة\n\n" + "\n".join(f"• {w}" for w in words[:30]) if words else "📭 لا توجد"
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("➕ إضافة", callback_data="admin_add_banned"),
                      InlineKeyboardButton("🗑️ حذف", callback_data="admin_rem_banned")],
@@ -1395,16 +1417,20 @@ class CallbackHandlers:
             lang = await DB.get_user_language(user_id) or 'ar'
         data = query.data
         parts = data.split(":")
-        if len(parts) < 2:
-            return
         action = parts[0].replace("auto_reply_", "")
-        try:
+
+        chat_id = None
+        if len(parts) >= 2 and parts[1].lstrip('-').isdigit():
             chat_id = int(parts[1])
-        except (ValueError, IndexError):
-            await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+        else:
+            chat_id = context.user_data.get('auto_chat') or context.user_data.get('security_chat_id')
+            if not chat_id and update.effective_chat:
+                chat_id = update.effective_chat.id
+
+        if chat_id is None:
+            await _safe_answer(query, "❌ لم يتم تحديد المجموعة", show_alert=True)
             return
 
-        # ✅ معالجة زر الرجوع
         if action == "menu":
             kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
             await safe_edit(query, "🤖 إعدادات الردود التلقائية:", reply_markup=kb)
@@ -1414,55 +1440,63 @@ class CallbackHandlers:
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             await _safe_answer(query, "❌ لا صلاحية", show_alert=True)
             return
+
         try:
             if action == "toggle":
                 settings = await DB.get_auto_reply_settings(chat_id)
                 await DB.update_auto_reply_settings(chat_id, enabled=not settings.get('enabled', False))
                 kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
-                await safe_edit(query, "🤖 إعدادات الردود التلقائية:", reply_markup=kb)
-                await _safe_answer(query)
+                await query.edit_message_reply_markup(reply_markup=kb)
+                await _safe_answer(query, "✅ تم التحديث")
                 return
+
             elif action == "admins":
                 settings = await DB.get_auto_reply_settings(chat_id)
                 await DB.update_auto_reply_settings(chat_id, only_admins=not settings.get('only_admins', 0))
                 kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
-                await safe_edit(query, "🤖 إعدادات الردود التلقائية:", reply_markup=kb)
-                await _safe_answer(query)
+                await query.edit_message_reply_markup(reply_markup=kb)
+                await _safe_answer(query, "✅ تم التحديث")
                 return
+
             elif action == "add":
                 StateManager.set(user_id, UserState.WAIT_AUTO_KEY)
                 context.user_data['auto_chat'] = chat_id
                 await safe_edit(query, "📝 أرسل الكلمة:")
                 await _safe_answer(query)
                 return
+
             elif action == "del":
                 StateManager.set(user_id, UserState.WAIT_AUTO_DEL)
                 context.user_data['auto_chat'] = chat_id
                 await safe_edit(query, "🗑️ أرسل الكلمة:")
                 await _safe_answer(query)
                 return
+
             elif action == "reset":
                 await DB.reset_auto_replies(chat_id)
                 await _safe_answer(query, "✅ تم الحذف")
                 return
+
             elif action == "list":
                 rows = await DB.fetchall("SELECT keyword FROM auto_replies WHERE chat_id=? LIMIT 20", (chat_id,))
-                text = "📋 **الردود**\n\n" + "\n".join(f"• {r['keyword']}" for r in rows) if rows else "📭 لا يوجد"
+                text = "📋 الردود\n\n" + "\n".join(f"• {r['keyword']}" for r in rows) if rows else "📭 لا يوجد"
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=f"auto_reply_menu:{chat_id}")]]))
                 await _safe_answer(query)
                 return
+
             elif action == "stats":
                 stats = await DB.get_auto_reply_stats(chat_id, 20)
                 if stats:
-                    text = "📊 **إحصائيات الردود**\n\n"
+                    text = "📊 إحصائيات الردود\n\n"
                     for s in stats:
                         source = "🌐 عام" if s['source'] == 'global' else "👥 مجموعة"
-                        text += f"• `{s['keyword']}` ({source}): {s['usage_count']} استخدام\n"
+                        text += f"• {s['keyword']} ({source}): {s['usage_count']} استخدام\n"
                 else:
                     text = "📭 لا توجد ردود"
-                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=f"auto_reply_menu:{chat_id}")]]), parse_mode="MarkdownV2")
+                await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=f"auto_reply_menu:{chat_id}")]]))
                 await _safe_answer(query)
                 return
+
         except Exception as e:
             logger.error(f"خطأ في الردود التلقائية: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
@@ -1509,7 +1543,7 @@ class CallbackHandlers:
     async def _show_schedule_menu(update, context, query, ch_id, user_id):
         lang = await DB.get_user_language(user_id) or 'ar'
         kb = KeyboardFactory.build("channel_settings", chat_id=ch_id, lang=lang)
-        await safe_edit(query, "📅 **جدولة القناة**", reply_markup=kb)
+        await safe_edit(query, "📅 جدولة القناة", reply_markup=kb)
         await _safe_answer(query)
 
     # ============ معالجات الإجراءات المتقدمة والعقوبات ============
@@ -1519,8 +1553,6 @@ class CallbackHandlers:
         parts = data.split(":")
         if len(parts) < 2:
             return
-        # استخراج البادئة الصحيحة
-        prefix = parts[0].split("_")[0] if "_" in parts[0] else ""
         action = parts[0].replace("act_", "").replace("pen_", "").replace("ban_", "")
         try:
             chat_id = int(parts[1])
@@ -1532,7 +1564,6 @@ class CallbackHandlers:
             await _safe_answer(query, "❌ لا صلاحية", show_alert=True)
             return
 
-        # التعامل مع الكلمات المحظورة (ban_add, ban_list, ban_rem)
         if parts[0].startswith("ban_"):
             if action == "add":
                 StateManager.set(user_id, UserState.WAIT_GROUP_BAN if chat_id != -1 else UserState.WAIT_GLOBAL_BAN)
@@ -1542,7 +1573,7 @@ class CallbackHandlers:
                 return
             elif action == "list":
                 words = await DB.get_banned_words(chat_id)
-                text = "🚫 **الكلمات**\n\n" + "\n".join(f"• {w}" for w in words[:50]) if words else "📭 لا يوجد"
+                text = "🚫 الكلمات\n\n" + "\n".join(f"• {w}" for w in words[:50]) if words else "📭 لا يوجد"
                 await safe_edit(query, text)
                 await _safe_answer(query)
                 return
@@ -1553,7 +1584,6 @@ class CallbackHandlers:
                 await _safe_answer(query)
                 return
 
-        # التعامل مع إجراءات المستخدمين (act_ban, act_mute, ...)
         elif parts[0].startswith("act_"):
             user_actions = {
                 "ban": (UserState.WAIT_BAN, "🚫 أرسل معرف المستخدم:"),
@@ -1571,7 +1601,6 @@ class CallbackHandlers:
                 await _safe_answer(query)
                 return
 
-        # التعامل مع عقوبات المخالفات (pen_ban, pen_mute, ...)
         elif parts[0].startswith("pen_"):
             penalty_types = {'ban', 'mute', 'kick', 'warn', 'restrict'}
             if action in penalty_types:
@@ -1607,7 +1636,7 @@ class CallbackHandlers:
                 await safe_edit(query, "📝 أرسل إجابتك:")
             elif data == CB.CONTEST_WINNERS:
                 winners = await DB.get_contest_winners(10)
-                text = "🏆 **الفائزون**\n\n" + "\n".join(f"• {w['title']} → `{w['winner_id']}`" for w in winners) if winners else "📭 لا يوجد"
+                text = "🏆 الفائزون\n\n" + "\n".join(f"• {w['title']} - {w['winner_id']}" for w in winners) if winners else "📭 لا يوجد"
                 await safe_edit(query, text)
             elif data.startswith(CB.DECLARE_WINNER_SEL + ":"):
                 if not CONFIG.is_developer(user_id):
@@ -1621,7 +1650,7 @@ class CallbackHandlers:
                 winner = await DB.fetchone("SELECT user_id FROM contest_participants WHERE contest_id=? ORDER BY RANDOM() LIMIT 1", (cid,))
                 if winner:
                     if await DB.declare_winner(cid, winner['user_id']):
-                        await safe_edit(query, f"✅ الفائز: `{winner['user_id']}`")
+                        await safe_edit(query, f"✅ الفائز: {winner['user_id']}")
                         try:
                             await context.bot.send_message(winner['user_id'], "🎉 مبروك! فزت بالمسابقة!")
                         except:
