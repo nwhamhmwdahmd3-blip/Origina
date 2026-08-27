@@ -2,13 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers_message.py - معالجات الرسائل - النسخة النهائية المحسّنة
+handlers_message.py - معالجات الرسائل - النسخة النهائية المتوافقة مع handlers_callback.py
 =====================================================================
-- متوافق مع database.py (مع افتراض أن DB.execute غير متزامنة)
+- متوافق مع database.py
 - جميع الدوال موجودة ومصححة بالكامل
 - تحسينات أمنية وأداء
 - معالجة شاملة للأخطاء
 - دعم كامل للنصوص والوسائط
+- يتضمن معالجات لجميع الحالات المستخدمة في handlers_callback.py
+- إصلاح مشكلة استخراج معرف القناة في _handle_adding_posts
+- إصلاح معالجة نتيجة get_all_users في _handle_broadcast_input
+- إصلاح استدعاءات DB.execute الخاطئة
+- إصلاح اسم العمود violation_duration
+- إضافة Rate Limiting محسن
+- دعم الوسائط في الردود التلقائية
+- إضافة معالجات الحالات الجديدة
 """
 
 import asyncio
@@ -26,9 +34,9 @@ from telegram.ext import ContextTypes
 from telegram.error import BadRequest, TimedOut
 
 from config import CONFIG
-from database import DB
+from database import DB, TimeUtils
 from utils import (
-    TimeUtils, TextUtils, safe_send, is_authorized_in_group,
+    TextUtils, safe_send, is_authorized_in_group,
     check_bot_permissions, invalidate_auth_cache, apply_penalty,
     RATE_LIMITER, METRICS, get_text, StateManager, UserState,
     KeyboardFactory, TranslationManager, CB,
@@ -95,7 +103,6 @@ async def _delete_after_delay(bot, chat_id: int, message_id: int, delay: int = 1
     try:
         await bot.delete_message(chat_id, message_id)
     except BadRequest:
-        # الرسالة قد تكون محذوفة بالفعل
         pass
     except Exception as e:
         logger.debug(f"تعذر حذف الرسالة المؤجلة: {e}")
@@ -125,82 +132,93 @@ class MessageHandlers:
     @staticmethod
     async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """معالجة الرسائل الخاصة حسب حالة المستخدم"""
-        user_id = update.effective_user.id
-        state = StateManager.get(user_id)
+        try:
+            user_id = update.effective_user.id
+            state = StateManager.get(user_id)
 
-        # تحليل المشاعر
-        if state == UserState.WAIT_MOOD:
-            text = update.effective_message.text or ""
-            result = analyze_sentiment(text)
-            response = (
-                f"{result['emoji']} <b>تحليل المشاعر</b>\n\n"
-                f"📝 النص: <code>{escape(text[:100])}</code>\n"
-                f"🎯 النتيجة: {escape(result['sentiment'])}\n"
-                f"💬 {escape(result.get('response', ''))}\n\n"
-                f"😊 إيجابي: {result['positive_percent']:.0f}%\n"
-                f"😔 سلبي: {result['negative_percent']:.0f}%\n"
-                f"📊 الكلمات: {result['total_words']}"
-            )
-            await safe_send(context.bot, user_id, response, parse_mode='HTML')
-            StateManager.clear(user_id)
-            return
+            # تحليل المشاعر
+            if state == UserState.WAIT_MOOD:
+                text = update.effective_message.text or ""
+                result = analyze_sentiment(text)
+                response = (
+                    f"{result['emoji']} <b>تحليل المشاعر</b>\n\n"
+                    f"📝 النص: <code>{escape(text[:100])}</code>\n"
+                    f"🎯 النتيجة: {escape(result['sentiment'])}\n"
+                    f"💬 {escape(result.get('response', ''))}\n\n"
+                    f"😊 إيجابي: {result['positive_percent']:.0f}%\n"
+                    f"😔 سلبي: {result['negative_percent']:.0f}%\n"
+                    f"📊 الكلمات: {result['total_words']}"
+                )
+                await safe_send(context.bot, user_id, response, parse_mode='HTML')
+                StateManager.clear(user_id)
+                return
 
-        handlers = {
-            UserState.WAIT_CHANNEL: MessageHandlers._handle_channel_input,
-            UserState.ADDING_POSTS: MessageHandlers._handle_adding_posts,
-            UserState.SUPPORT_MODE: MessageHandlers._handle_support_message,
-            UserState.WAIT_BROADCAST: MessageHandlers._handle_broadcast_input,
-            UserState.WAIT_UPDATE: MessageHandlers._handle_update_input,
-            UserState.WAIT_UPDATE_CH: MessageHandlers._handle_update_ch_input,
-            UserState.WAIT_FORCE: MessageHandlers._handle_force_input,
-            UserState.WAIT_LOG_CH: MessageHandlers._handle_log_ch_input,
-            UserState.WAIT_ADMIN_ADD: MessageHandlers._handle_admin_add_input,
-            UserState.WAIT_ADMIN_REM: MessageHandlers._handle_admin_rem_input,
-            UserState.WAIT_KEYWORD: MessageHandlers._handle_keyword_input,
-            UserState.WAIT_REPLY: MessageHandlers._handle_reply_input,
-            UserState.WAIT_GLOBAL_BAN: MessageHandlers._handle_global_ban_input,
-            UserState.WAIT_REM_GLOBAL_BAN: MessageHandlers._handle_rem_global_ban_input,
-            UserState.WAIT_GROUP_BAN: MessageHandlers._handle_group_ban_input,
-            UserState.WAIT_REM_GROUP_BAN: MessageHandlers._handle_rem_group_ban_input,
-            UserState.WAIT_CONTEST_TITLE: MessageHandlers._handle_contest_title,
-            UserState.WAIT_CONTEST_DESC: MessageHandlers._handle_contest_desc,
-            UserState.WAIT_CONTEST_PRIZE: MessageHandlers._handle_contest_prize,
-            UserState.WAIT_CONTEST_DATE: MessageHandlers._handle_contest_date,
-            UserState.WAIT_CONTEST_ANSWER: MessageHandlers._handle_contest_answer,
-            UserState.WAIT_AUTO_KEY: MessageHandlers._handle_auto_key,
-            UserState.WAIT_AUTO_REPLY: MessageHandlers._handle_auto_reply_input,
-            UserState.WAIT_AUTO_DEL: MessageHandlers._handle_auto_del,
-            UserState.WAIT_IMPORT_FILE: MessageHandlers._handle_import_file,
-            UserState.WAIT_GITHUB_URL: MessageHandlers._handle_github_url,
-            UserState.WAIT_GRANT_FREE: MessageHandlers._handle_grant_free,
-            UserState.WAIT_MIN: MessageHandlers._handle_min_input,
-            UserState.WAIT_HOUR: MessageHandlers._handle_hour_input,
-            UserState.WAIT_DAY: MessageHandlers._handle_day_input,
-            UserState.WAIT_PUB_TIME: MessageHandlers._handle_pub_time_input,
-            UserState.WAIT_REM_DAYS: MessageHandlers._handle_rem_days_input,
-            UserState.WAIT_MAX_LEN: MessageHandlers._handle_max_len_input,
-            UserState.WAIT_WARN_COUNT: MessageHandlers._handle_warn_count_input,
-            UserState.WAIT_WELCOME_TEXT: MessageHandlers._handle_welcome_text_input,
-            UserState.WAIT_GOODBYE_TEXT: MessageHandlers._handle_goodbye_text_input,
-            UserState.WAIT_SLOW_MODE_SECONDS: MessageHandlers._handle_slow_mode_input,
-            UserState.WAIT_ANTIFLOOD_MESSAGES: MessageHandlers._handle_antiflood_messages_input,
-            UserState.WAIT_ANTIFLOOD_SECONDS: MessageHandlers._handle_antiflood_seconds_input,
-            UserState.WAIT_NIGHT_START: MessageHandlers._handle_night_start_input,
-            UserState.WAIT_NIGHT_END: MessageHandlers._handle_night_end_input,
-            UserState.WAIT_BAN: MessageHandlers._handle_ban_input,
-            UserState.WAIT_MUTE: MessageHandlers._handle_mute_input,
-            UserState.WAIT_WARN: MessageHandlers._handle_warn_input,
-            UserState.WAIT_KICK: MessageHandlers._handle_kick_input,
-            UserState.WAIT_RESTRICT: MessageHandlers._handle_restrict_input,
-            UserState.WAIT_UNBAN: MessageHandlers._handle_unban_input,
-            UserState.WAIT_PIN: MessageHandlers._handle_pin_input,
-        }
+            handlers = {
+                UserState.WAIT_CHANNEL: MessageHandlers._handle_channel_input,
+                UserState.ADDING_POSTS: MessageHandlers._handle_adding_posts,
+                UserState.SUPPORT_MODE: MessageHandlers._handle_support_message,
+                UserState.WAIT_BROADCAST: MessageHandlers._handle_broadcast_input,
+                UserState.WAIT_UPDATE: MessageHandlers._handle_update_input,
+                UserState.WAIT_UPDATE_CH: MessageHandlers._handle_update_ch_input,
+                UserState.WAIT_FORCE: MessageHandlers._handle_force_input,
+                UserState.WAIT_LOG_CH: MessageHandlers._handle_log_ch_input,
+                UserState.WAIT_ADMIN_ADD: MessageHandlers._handle_admin_add_input,
+                UserState.WAIT_ADMIN_REM: MessageHandlers._handle_admin_rem_input,
+                UserState.WAIT_KEYWORD: MessageHandlers._handle_keyword_input,
+                UserState.WAIT_REPLY: MessageHandlers._handle_reply_input,
+                UserState.WAIT_GLOBAL_BAN: MessageHandlers._handle_global_ban_input,
+                UserState.WAIT_REM_GLOBAL_BAN: MessageHandlers._handle_rem_global_ban_input,
+                UserState.WAIT_GROUP_BAN: MessageHandlers._handle_group_ban_input,
+                UserState.WAIT_REM_GROUP_BAN: MessageHandlers._handle_rem_group_ban_input,
+                UserState.WAIT_CONTEST_TITLE: MessageHandlers._handle_contest_title,
+                UserState.WAIT_CONTEST_DESC: MessageHandlers._handle_contest_desc,
+                UserState.WAIT_CONTEST_PRIZE: MessageHandlers._handle_contest_prize,
+                UserState.WAIT_CONTEST_DATE: MessageHandlers._handle_contest_date,
+                UserState.WAIT_CONTEST_ANSWER: MessageHandlers._handle_contest_answer,
+                UserState.WAIT_AUTO_KEY: MessageHandlers._handle_auto_key,
+                UserState.WAIT_AUTO_REPLY: MessageHandlers._handle_auto_reply_input,
+                UserState.WAIT_AUTO_DEL: MessageHandlers._handle_auto_del,
+                UserState.WAIT_IMPORT_FILE: MessageHandlers._handle_import_file,
+                UserState.WAIT_GITHUB_URL: MessageHandlers._handle_github_url,
+                UserState.WAIT_GRANT_FREE: MessageHandlers._handle_grant_free,
+                UserState.WAIT_MIN: MessageHandlers._handle_min_input,
+                UserState.WAIT_HOUR: MessageHandlers._handle_hour_input,
+                UserState.WAIT_DAY: MessageHandlers._handle_day_input,
+                UserState.WAIT_PUB_TIME: MessageHandlers._handle_pub_time_input,
+                UserState.WAIT_REM_DAYS: MessageHandlers._handle_rem_days_input,
+                UserState.WAIT_MAX_LEN: MessageHandlers._handle_max_len_input,
+                UserState.WAIT_WARN_COUNT: MessageHandlers._handle_warn_count_input,
+                UserState.WAIT_WELCOME_TEXT: MessageHandlers._handle_welcome_text_input,
+                UserState.WAIT_GOODBYE_TEXT: MessageHandlers._handle_goodbye_text_input,
+                UserState.WAIT_SLOW_MODE_SECONDS: MessageHandlers._handle_slow_mode_input,
+                UserState.WAIT_ANTIFLOOD_MESSAGES: MessageHandlers._handle_antiflood_messages_input,
+                UserState.WAIT_ANTIFLOOD_SECONDS: MessageHandlers._handle_antiflood_seconds_input,
+                UserState.WAIT_NIGHT_START: MessageHandlers._handle_night_start_input,
+                UserState.WAIT_NIGHT_END: MessageHandlers._handle_night_end_input,
+                UserState.WAIT_BAN: MessageHandlers._handle_ban_input,
+                UserState.WAIT_MUTE: MessageHandlers._handle_mute_input,
+                UserState.WAIT_WARN: MessageHandlers._handle_warn_input,
+                UserState.WAIT_KICK: MessageHandlers._handle_kick_input,
+                UserState.WAIT_RESTRICT: MessageHandlers._handle_restrict_input,
+                UserState.WAIT_UNBAN: MessageHandlers._handle_unban_input,
+                UserState.WAIT_PIN: MessageHandlers._handle_pin_input,
+                UserState.WAIT_PENALTY_DURATION: MessageHandlers._handle_penalty_duration_input,
+                UserState.WAIT_VIOLATION_STRIKES: MessageHandlers._handle_violation_strikes_input,
+                UserState.WAIT_VIOLATION_DURATION: MessageHandlers._handle_violation_duration_input,
+                UserState.WAIT_REDEEM_GIFT: MessageHandlers._handle_redeem_gift_input,
+            }
 
-        handler = handlers.get(state)
-        if handler:
-            await handler(update, context)
-        elif state:
-            logger.warning(f"حالة غير معروفة: {state}")
+            handler = handlers.get(state)
+            if handler:
+                await handler(update, context)
+            elif state and state != UserState.NONE:
+                logger.warning(f"حالة غير معروفة: {state}")
+        except Exception as e:
+            logger.exception("خطأ غير متوقع في معالجة الرسالة الخاصة")
+            try:
+                await safe_send(context.bot, update.effective_user.id, "❌ حدث خطأ غير متوقع، حاول مرة أخرى")
+            except:
+                pass
 
     # =================================================================
     # رسائل المجموعات
@@ -215,6 +233,12 @@ class MessageHandlers:
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
         message = update.effective_message
+
+        # التحقق من Rate Limiter
+        try:
+            await RATE_LIMITER.acquire(f"group_{chat_id}_{user_id}")
+        except:
+            pass
 
         # النص والتسمية (caption) بشكل منفصل
         msg_text = message.text or ""
@@ -266,6 +290,8 @@ class MessageHandlers:
             (message.animation, 'delete_animation', 'animation'),
             (message.document, 'delete_documents', 'document'),
             (message.sticker, 'delete_stickers', 'sticker'),
+            (message.photo, 'delete_photos', 'photo'),
+            (message.video_note, 'delete_video_note', 'video_note'),
         ]
         for media, setting_key, violation_type in media_checks:
             if media and settings.get(setting_key):
@@ -297,17 +323,38 @@ class MessageHandlers:
             penalty_type = penalty_rule['penalty_type']
             duration_seconds = penalty_rule['duration_seconds']
         else:
-            penalty_type = 'mute'
-            duration_seconds = 60
+            penalty_type = settings.get('auto_penalty', 'mute')
+            if penalty_type not in ['mute', 'ban', 'restrict', 'kick', 'warn']:
+                penalty_type = 'mute'
+            duration_seconds = settings.get('auto_mute_duration', 3600)
+
+        # تسجيل المخالفة في سجل المشرفين
+        await DB.add_admin_log(chat_id, context.bot.id, f"violation_{violation_type}", user_id)
 
         # إرسال تنبيه (بتنسيق HTML)
+        violation_messages = {
+            'link': '🚫 الروابط غير مسموحة',
+            'mention': '🚫 المنشنات غير مسموحة',
+            'banned_word': '🚫 كلمة محظورة',
+            'max_len': '📏 الرسالة طويلة جداً',
+            'forwarded': '↩️ الرسائل المعاد توجيهها غير مسموحة',
+            'video': '🎬 الفيديوهات غير مسموحة',
+            'audio': '🎵 الملفات الصوتية غير مسموحة',
+            'voice': '🎤 الرسائل الصوتية غير مسموحة',
+            'animation': '🎞️ الصور المتحركة غير مسموحة',
+            'document': '📄 الملفات غير مسموحة',
+            'sticker': '🖼️ الملصقات غير مسموحة',
+            'photo': '📷 الصور غير مسموحة',
+            'video_note': '🎥 فيديو نوت غير مسموح',
+        }
+        violation_message = violation_messages.get(violation_type, f'🚫 مخالفة: {violation_type}')
+
         try:
             user_name = escape(update.effective_user.first_name or "مستخدم")
-            violation_type_escaped = escape(violation_type)
             message_text = (
                 f"⚠️ <b>تنبيه</b>\n"
+                f"{violation_message}\n"
                 f"👤 {user_name}\n"
-                f"🚫 المخالفة: {violation_type_escaped}\n"
                 f"📊 عدد المخالفات: {violation_count}\n"
                 f"⏳ سيتم حذف هذه الرسالة خلال 10 ثوانٍ"
             )
@@ -317,13 +364,15 @@ class MessageHandlers:
             logger.warning(f"تعذر إرسال تنبيه المخالفة: {e}")
 
         # تطبيق العقوبة إذا تجاوز الحد
-        max_strikes = settings.get('max_warnings') or 3  # معالجة القيمة None أو 0
+        max_strikes = settings.get('violation_strikes') or settings.get('max_warnings') or 3
         if violation_count >= max_strikes:
             success, msg = await apply_violation_penalty(
                 update, context, chat_id, user_id, violation_type, penalty_type, duration_seconds
             )
             if success:
                 await safe_send(context.bot, chat_id, f"🚨 {msg}")
+                # إعادة تعيين العداد بعد العقوبة
+                await DB.reset_violation_count(user_id, chat_id)
 
     # =================================================================
     # الردود التلقائية
@@ -331,7 +380,7 @@ class MessageHandlers:
 
     @staticmethod
     async def _process_auto_reply(update, context, chat_id, text, user_id=None):
-        """معالجة الردود التلقائية"""
+        """معالجة الردود التلقائية مع دعم الوسائط"""
         try:
             ars = await get_auto_reply_settings_cached(chat_id)
             if not ars.get('enabled', False):
@@ -345,7 +394,35 @@ class MessageHandlers:
             reply = await DB.get_auto_reply(text, chat_id)
             if reply:
                 reply_text = reply.get('reply', '')
-                await safe_send(context.bot, chat_id, reply_text)
+                reply_type = reply.get('reply_type', 'text')
+                media_id = reply.get('reply_media_id')
+                
+                # استخدام bot مباشرة لإرسال الوسائط
+                try:
+                    if reply_type == 'photo' and media_id:
+                        await context.bot.send_photo(chat_id=chat_id, photo=media_id, caption=reply_text or None)
+                    elif reply_type == 'video' and media_id:
+                        await context.bot.send_video(chat_id=chat_id, video=media_id, caption=reply_text or None)
+                    elif reply_type == 'document' and media_id:
+                        await context.bot.send_document(chat_id=chat_id, document=media_id, caption=reply_text or None)
+                    elif reply_type == 'audio' and media_id:
+                        await context.bot.send_audio(chat_id=chat_id, audio=media_id, caption=reply_text or None)
+                    elif reply_type == 'voice' and media_id:
+                        await context.bot.send_voice(chat_id=chat_id, voice=media_id)
+                    elif reply_type == 'animation' and media_id:
+                        await context.bot.send_animation(chat_id=chat_id, animation=media_id, caption=reply_text or None)
+                    elif reply_type == 'sticker' and media_id:
+                        await context.bot.send_sticker(chat_id=chat_id, sticker=media_id)
+                    elif reply_type == 'video_note' and media_id:
+                        await context.bot.send_video_note(chat_id=chat_id, video_note=media_id)
+                    else:
+                        await safe_send(context.bot, chat_id, reply_text)
+                except Exception as e:
+                    logger.error(f"فشل إرسال الرد التلقائي بالوسائط: {e}")
+                    # محاولة الإرسال كنص فقط
+                    if reply_text:
+                        await safe_send(context.bot, chat_id, reply_text)
+                
                 await _increment_usage_async(chat_id, text)
                 return True
 
@@ -411,10 +488,8 @@ class MessageHandlers:
                     return
             except Exception as e:
                 logger.warning(f"تعذر التحقق من صلاحيات البوت: {e}")
-                # نكمل رغم الفشل، لأن قد يكون الخطأ بسبب عدم القدرة على الوصول
 
-            # التحقق من أن المستخدم لديه صلاحية في القناة (اختياري إضافي)
-            # نتحقق إذا لم يكن المالك الرئيسي
+            # التحقق من أن المستخدم لديه صلاحية في القناة
             if user_id != CONFIG.PRIMARY_OWNER_ID:
                 try:
                     user_member = await context.bot.get_chat_member(channel_id, user_id)
@@ -424,7 +499,6 @@ class MessageHandlers:
                         return
                 except Exception as e:
                     logger.warning(f"تعذر التحقق من صلاحية المستخدم في القناة: {e}")
-                    # نمنع الإضافة إذا لم نستطع التحقق
                     await safe_send(context.bot, user_id, "❌ تعذر التحقق من صلاحياتك في القناة.")
                     StateManager.clear(user_id)
                     return
@@ -435,7 +509,7 @@ class MessageHandlers:
             if ch_db_id:
                 await safe_send(context.bot, user_id, f"✅ تمت إضافة القناة: {escape(channel_name)}")
             else:
-                await safe_send(context.bot, user_id, "❌ فشل إضافة القناة")
+                await safe_send(context.bot, user_id, "❌ فشل إضافة القناة (قد يكون الحد الأقصى للقنوات قد تم الوصول إليه)")
         except Exception as e:
             logger.exception("خطأ غير متوقع في إضافة القناة")
             await safe_send(context.bot, user_id, f"❌ خطأ: {escape(str(e)[:100])}")
@@ -443,27 +517,17 @@ class MessageHandlers:
         StateManager.clear(user_id)
 
     # =================================================================
-    # إضافة المنشورات
+    # إضافة المنشورات (مصححة)
     # =================================================================
 
     @staticmethod
     async def _handle_adding_posts(update, context):
         user_id = update.effective_user.id
-        active_channel = await DB.get_active_channel(user_id)
-        if not active_channel:
+        channel_db_id = await DB.get_active_channel(user_id)
+        
+        if not channel_db_id:
             StateManager.clear(user_id)
             await safe_send(context.bot, user_id, "❌ لا توجد قناة نشطة")
-            return
-
-        # استخراج معرف القناة بشكل آمن
-        channel_id = None
-        if isinstance(active_channel, dict):
-            channel_id = active_channel.get('id') or active_channel.get('channel_id')
-        else:
-            channel_id = getattr(active_channel, 'id', None) or getattr(active_channel, 'channel_id', None)
-        if not channel_id:
-            StateManager.clear(user_id)
-            await safe_send(context.bot, user_id, "❌ بيانات القناة غير صالحة")
             return
 
         msg = update.effective_message
@@ -502,12 +566,12 @@ class MessageHandlers:
             media_file_id = msg.video_note.file_id
 
         posts = [(text, media_type, media_file_id)]
-        count = await DB.add_posts(user_id, channel_id, posts)
+        count = await DB.add_posts(user_id, channel_db_id, posts)
 
         if count > 0:
             await safe_send(context.bot, user_id, "✅ تمت إضافة المنشور")
         else:
-            await safe_send(context.bot, user_id, "❌ فشل الإضافة")
+            await safe_send(context.bot, user_id, "❌ فشل الإضافة (قد يكون الحد الأقصى للمنشورات قد تم الوصول إليه)")
 
     # =================================================================
     # الدعم الفني
@@ -523,7 +587,7 @@ class MessageHandlers:
         await safe_send(context.bot, user_id, f"✅ تم استلام رسالتك!\n🎫 رقم التذكرة: {ticket_number}")
 
     # =================================================================
-    # البث الجماعي
+    # البث الجماعي (مصحح)
     # =================================================================
 
     @staticmethod
@@ -537,14 +601,17 @@ class MessageHandlers:
         users = await DB.get_all_users()
 
         sent_count = 0
-        for uid, banned in users:
+        for user in users:
+            user_id_target = user.get('user_id') if isinstance(user, dict) else user[0]
+            banned = user.get('banned', 0) if isinstance(user, dict) else (user[1] if len(user) > 1 else 0)
+            
             if banned == 0:
                 try:
-                    await safe_send(context.bot, uid, content)
+                    await safe_send(context.bot, user_id_target, content)
                     sent_count += 1
                     await asyncio.sleep(0.05)
                 except Exception as e:
-                    logger.warning(f"فشل الإرسال إلى {uid}: {e}")
+                    logger.warning(f"فشل الإرسال إلى {user_id_target}: {e}")
 
         await safe_send(context.bot, user_id, f"✅ تم البث إلى {sent_count} مستخدم")
         StateManager.clear(user_id)
@@ -606,7 +673,7 @@ class MessageHandlers:
         StateManager.clear(user_id)
 
     # =================================================================
-    # المشرفين
+    # المشرفين (مصحح)
     # =================================================================
 
     @staticmethod
@@ -620,21 +687,18 @@ class MessageHandlers:
             admin_id = int(text)
             if admin_id <= 0:
                 raise ValueError
-            result = await DB.execute(
-                "INSERT OR IGNORE INTO bot_admins (user_id, added_by, added_at) VALUES (?,?,?)",
-                (admin_id, user_id, TimeUtils.sql_iso())
-            )
-            # محاولة استخراج rowcount بأمان
-            rowcount = getattr(result, 'rowcount', None)
-            if rowcount is not None:
-                if rowcount > 0:
-                    await safe_send(context.bot, user_id, "✅ تمت الإضافة")
-                else:
-                    await safe_send(context.bot, user_id, "ℹ️ هذا المستخدم مشرف بالفعل")
-            else:
-                # إذا لم يتوفر rowcount، نتحقق بطريقة أخرى (مثلاً استعلام لاحق)
-                # هنا نعتبر أن التنفيذ نجح
+            
+            # استخدام الدالة المخصصة add_admin
+            success = await DB.add_admin(admin_id, user_id)
+            if success:
                 await safe_send(context.bot, user_id, "✅ تمت الإضافة")
+            else:
+                # التحقق إذا كان موجوداً بالفعل
+                admins = await DB.get_admin_list()
+                if any(admin['user_id'] == admin_id for admin in admins):
+                    await safe_send(context.bot, user_id, "ℹ️ هذا المستخدم مشرف بالفعل")
+                else:
+                    await safe_send(context.bot, user_id, "❌ فشل الإضافة")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
         except Exception as e:
@@ -651,15 +715,15 @@ class MessageHandlers:
         text = (update.effective_message.text or "").strip()
         try:
             admin_id = int(text)
-            result = await DB.execute("DELETE FROM bot_admins WHERE user_id=?", (admin_id,))
-            rowcount = getattr(result, 'rowcount', None)
-            if rowcount is not None:
-                if rowcount > 0:
-                    await safe_send(context.bot, user_id, "✅ تمت الإزالة")
-                else:
-                    await safe_send(context.bot, user_id, "ℹ️ هذا المستخدم ليس مشرفًا")
-            else:
+            if admin_id <= 0:
+                raise ValueError
+            
+            # استخدام الدالة المخصصة remove_admin
+            success = await DB.remove_admin(admin_id)
+            if success:
                 await safe_send(context.bot, user_id, "✅ تمت الإزالة")
+            else:
+                await safe_send(context.bot, user_id, "ℹ️ هذا المستخدم ليس مشرفًا")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
         except Exception as e:
@@ -696,7 +760,8 @@ class MessageHandlers:
         user_id = update.effective_user.id
         keyword = (update.effective_message.text or "").strip().lower()
         context.user_data['auto_keyword'] = keyword
-        context.user_data['auto_chat'] = -1  # إعادة تعيين دائمًا لتجنب القيم القديمة
+        if 'auto_chat' not in context.user_data:
+            context.user_data['auto_chat'] = -1
         StateManager.set(user_id, UserState.WAIT_AUTO_REPLY)
         await safe_send(context.bot, user_id, f"✅ الكلمة: {escape(keyword)}\n📝 أرسل الرد:")
 
@@ -734,7 +799,7 @@ class MessageHandlers:
             await invalidate_banned_words_cache(-1)
             await safe_send(context.bot, user_id, f"✅ تمت الإضافة: {escape(word)}")
         else:
-            await safe_send(context.bot, user_id, "❌ فشل")
+            await safe_send(context.bot, user_id, "❌ فشل (قد تكون الكلمة موجودة أو تم الوصول للحد الأقصى)")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -813,7 +878,7 @@ class MessageHandlers:
         if contest_id:
             await safe_send(context.bot, user_id, f"✅ تم الإنشاء #{contest_id}")
         else:
-            await safe_send(context.bot, user_id, "❌ فشل")
+            await safe_send(context.bot, user_id, "❌ فشل (تأكد من صيغة التاريخ)")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -826,7 +891,7 @@ class MessageHandlers:
             if joined:
                 await safe_send(context.bot, user_id, "✅ تم الاشتراك!")
             else:
-                await safe_send(context.bot, user_id, "❌ فشل")
+                await safe_send(context.bot, user_id, "❌ فشل (قد تكون مشتركاً بالفعل أو المسابقة انتهت)")
         else:
             await safe_send(context.bot, user_id, "❌ لا توجد مسابقة محددة")
         StateManager.clear(user_id)
@@ -846,7 +911,6 @@ class MessageHandlers:
             file = await update.effective_message.document.get_file()
             file_path = await file.download_to_drive()
             count = await import_auto_replies(-1, str(file_path))
-            # تنظيف الملف المؤقت
             try:
                 os.remove(file_path)
             except OSError as e:
@@ -868,8 +932,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ فشل جلب البيانات")
                 StateManager.clear(user_id)
                 return
-
-            # تحويل البيانات إلى ملف مؤقت لتوحيد طريقة الاستيراد
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp:
                 json.dump(data, tmp, ensure_ascii=False)
                 tmp_path = tmp.name
@@ -990,7 +1052,6 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
         time_val = (update.effective_message.text or "").strip()
-        # تحقق بسيط من تنسيق الوقت (HH:MM)
         if not re.match(r'^\d{1,2}:\d{2}$', time_val):
             await safe_send(context.bot, user_id, "❌ تنسيق غير صالح (مثال: 14:30)")
             StateManager.clear(user_id)
@@ -1052,7 +1113,7 @@ class MessageHandlers:
             count = int(update.effective_message.text or "3")
             if count <= 0:
                 raise ValueError
-            await DB.update_security_settings(chat_id, max_warnings=count)
+            await DB.update_security_settings(chat_id, max_warnings=count, violation_strikes=count)
             await invalidate_security_cache(chat_id)
             await safe_send(context.bot, user_id, f"✅ {count}")
         except ValueError:
@@ -1225,8 +1286,8 @@ class MessageHandlers:
             duration = int(parts[1]) * 60 if len(parts) > 1 else 0
             if target <= 0 or duration < 0:
                 raise ValueError
-            await apply_penalty(context.bot, chat_id, target, 'ban', duration, "", user_id)
-            await safe_send(context.bot, user_id, "✅ تم الحظر")
+            success, msg = await apply_penalty(context.bot, chat_id, target, 'ban', duration, "", user_id)
+            await safe_send(context.bot, user_id, msg if success else f"❌ {msg}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ صيغة غير صحيحة")
         except Exception as e:
@@ -1256,8 +1317,8 @@ class MessageHandlers:
             duration = int(parts[1]) * 60 if len(parts) > 1 else 60
             if target <= 0 or duration <= 0:
                 raise ValueError
-            await apply_penalty(context.bot, chat_id, target, 'mute', duration, "", user_id)
-            await safe_send(context.bot, user_id, "✅ تم الكتم")
+            success, msg = await apply_penalty(context.bot, chat_id, target, 'mute', duration, "", user_id)
+            await safe_send(context.bot, user_id, msg if success else f"❌ {msg}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ صيغة غير صحيحة")
         except Exception as e:
@@ -1281,8 +1342,8 @@ class MessageHandlers:
             target = int((update.effective_message.text or "").strip())
             if target <= 0:
                 raise ValueError
-            await apply_penalty(context.bot, chat_id, target, 'warn', 0, "", user_id)
-            await safe_send(context.bot, user_id, "✅ تم التحذير")
+            success, msg = await apply_penalty(context.bot, chat_id, target, 'warn', 0, "", user_id)
+            await safe_send(context.bot, user_id, msg if success else f"❌ {msg}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
         except Exception as e:
@@ -1306,8 +1367,8 @@ class MessageHandlers:
             target = int((update.effective_message.text or "").strip())
             if target <= 0:
                 raise ValueError
-            await apply_penalty(context.bot, chat_id, target, 'kick', 0, "", user_id)
-            await safe_send(context.bot, user_id, "✅ تم الطرد")
+            success, msg = await apply_penalty(context.bot, chat_id, target, 'kick', 0, "", user_id)
+            await safe_send(context.bot, user_id, msg if success else f"❌ {msg}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
         except Exception as e:
@@ -1337,8 +1398,8 @@ class MessageHandlers:
             duration = int(parts[1]) * 60 if len(parts) > 1 else 1800
             if target <= 0 or duration <= 0:
                 raise ValueError
-            await apply_penalty(context.bot, chat_id, target, 'restrict', duration, "", user_id)
-            await safe_send(context.bot, user_id, "✅ تم التقييد")
+            success, msg = await apply_penalty(context.bot, chat_id, target, 'restrict', duration, "", user_id)
+            await safe_send(context.bot, user_id, msg if success else f"❌ {msg}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ صيغة غير صحيحة")
         except Exception as e:
@@ -1362,8 +1423,8 @@ class MessageHandlers:
             target = int((update.effective_message.text or "").strip())
             if target <= 0:
                 raise ValueError
-            await apply_penalty(context.bot, chat_id, target, 'unban', 0, "", user_id)
-            await safe_send(context.bot, user_id, "✅ تم إلغاء الحظر")
+            success, msg = await apply_penalty(context.bot, chat_id, target, 'unban', 0, "", user_id)
+            await safe_send(context.bot, user_id, msg if success else f"❌ {msg}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ معرف غير صالح")
         except Exception as e:
@@ -1395,6 +1456,99 @@ class MessageHandlers:
         StateManager.clear(user_id)
 
     # =================================================================
+    # معالجات إضافية للحالات الجديدة
+    # =================================================================
+
+    @staticmethod
+    async def _handle_penalty_duration_input(update, context):
+        """معالج مدة العقوبة للعقوبات المحذوفة"""
+        user_id = update.effective_user.id
+        chat_id = context.user_data.get('adv_chat') or context.user_data.get('sec_chat')
+        if not chat_id:
+            await safe_send(context.bot, user_id, "❌ لم يتم تحديد المجموعة")
+            StateManager.clear(user_id)
+            return
+        try:
+            duration = int(update.effective_message.text or "60")
+            if duration <= 0:
+                raise ValueError
+            # استخدام العمود الصحيح violation_duration
+            await DB.update_security_settings(chat_id, violation_duration=duration)
+            await invalidate_security_cache(chat_id)
+            await safe_send(context.bot, user_id, f"✅ تم تعيين المدة: {duration} ثانية")
+        except ValueError:
+            await safe_send(context.bot, user_id, "❌ رقم غير صالح")
+        except Exception as e:
+            logger.error(f"فشل تعيين المدة: {e}")
+            await safe_send(context.bot, user_id, "❌ فشل")
+        StateManager.clear(user_id)
+
+    @staticmethod
+    async def _handle_violation_strikes_input(update, context):
+        """معالج عدد المخالفات قبل العقوبة"""
+        user_id = update.effective_user.id
+        chat_id = context.user_data.get('sec_chat')
+        if not chat_id:
+            await safe_send(context.bot, user_id, "❌ لم يتم تحديد المجموعة")
+            StateManager.clear(user_id)
+            return
+        try:
+            strikes = int(update.effective_message.text or "3")
+            if strikes <= 0:
+                raise ValueError
+            await DB.update_security_settings(chat_id, violation_strikes=strikes)
+            await invalidate_security_cache(chat_id)
+            await safe_send(context.bot, user_id, f"✅ تم تعيين عدد المخالفات: {strikes}")
+        except ValueError:
+            await safe_send(context.bot, user_id, "❌ رقم غير صالح")
+        except Exception as e:
+            logger.error(f"فشل تعيين عدد المخالفات: {e}")
+            await safe_send(context.bot, user_id, "❌ فشل")
+        StateManager.clear(user_id)
+
+    @staticmethod
+    async def _handle_violation_duration_input(update, context):
+        """معالج مدة عقوبة المخالفات"""
+        user_id = update.effective_user.id
+        chat_id = context.user_data.get('sec_chat')
+        if not chat_id:
+            await safe_send(context.bot, user_id, "❌ لم يتم تحديد المجموعة")
+            StateManager.clear(user_id)
+            return
+        try:
+            duration = int(update.effective_message.text or "60")
+            if duration <= 0:
+                raise ValueError
+            await DB.update_security_settings(chat_id, violation_duration=duration)
+            await invalidate_security_cache(chat_id)
+            await safe_send(context.bot, user_id, f"✅ تم تعيين المدة: {duration} ثانية")
+        except ValueError:
+            await safe_send(context.bot, user_id, "❌ رقم غير صالح")
+        except Exception as e:
+            logger.error(f"فشل تعيين المدة: {e}")
+            await safe_send(context.bot, user_id, "❌ فشل")
+        StateManager.clear(user_id)
+
+    @staticmethod
+    async def _handle_redeem_gift_input(update, context):
+        """معالج استرداد كود الهدية"""
+        user_id = update.effective_user.id
+        code = (update.effective_message.text or "").strip()
+        if not code:
+            await safe_send(context.bot, user_id, "❌ أرسل الكود")
+            StateManager.clear(user_id)
+            return
+        
+        success, result = await DB.redeem_gift_code(user_id, code)
+        if success:
+            await safe_send(context.bot, user_id, f"🎁 تم استرداد الهدية!\n📅 المدة: {result} يوم")
+        elif result == -1:
+            await safe_send(context.bot, user_id, "❌ لا يمكنك استخدام كود قمت بإنشائه بنفسك")
+        else:
+            await safe_send(context.bot, user_id, "❌ الكود غير صالح أو مستخدم بالفعل")
+        StateManager.clear(user_id)
+
+    # =================================================================
     # رسائل الخدمة
     # =================================================================
 
@@ -1411,6 +1565,7 @@ class MessageHandlers:
             for member in update.effective_message.new_chat_members:
                 welcome_text = settings.get('welcome_text', 'مرحباً {user} 🤍')
                 welcome_text = welcome_text.replace('{user}', escape(member.first_name or "عضو"))
+                welcome_text = welcome_text.replace('{chat}', escape(update.effective_chat.title or "المجموعة"))
                 await safe_send(context.bot, chat_id, welcome_text)
 
         # وداع للأعضاء المغادرين
@@ -1418,6 +1573,7 @@ class MessageHandlers:
             member = update.effective_message.left_chat_member
             goodbye_text = settings.get('goodbye_text', 'وداعاً {user} 👋')
             goodbye_text = goodbye_text.replace('{user}', escape(member.first_name or "عضو"))
+            goodbye_text = goodbye_text.replace('{chat}', escape(update.effective_chat.title or "المجموعة"))
             await safe_send(context.bot, chat_id, goodbye_text)
 
     # =================================================================
