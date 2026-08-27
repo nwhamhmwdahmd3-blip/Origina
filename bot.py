@@ -3,10 +3,9 @@
 
 """
 🌿 Relax Manager – البوت الرئيسي (نسخة نهائية مصححة)
-- إصلاحات أمنية في معالجة الدفع (الاشتراكات والهدايا)
+- استيراد المعالجات مباشرة من الملفات المنفصلة
 - تسجيل جميع الأوامر في القوائم (الخاص + المجموعات)
 - دعم video_note في الرسائل
-- استدعاء CONFIG.validate()
 - المهام الخلفية مع إعادة تشغيل عند الفشل
 - دعم webhook و polling
 """
@@ -29,7 +28,12 @@ from telegram.ext import (
 
 from config import CONFIG, PATHS
 from database import DB, initialize_db
-from handlers import CommandHandlers, CallbackHandlers, MessageHandlers
+
+# ✅ الاستيراد المباشر من الملفات المنفصلة
+from handlers_command import CommandHandlers
+from handlers_callback import CallbackHandlers
+from handlers_message import MessageHandlers
+
 from utils import (
     TranslationManager, KeyboardFactory, BackgroundTasks,
     ErrorHandler, setup_webhook, safe_send
@@ -208,7 +212,6 @@ async def main():
         ("restrict", "🔒 تقييد مستخدم"),
         ("unban", "🔓 إلغاء حظر"),
         ("pin", "📌 تثبيت رسالة"),
-        # ✅ الأوامر الجديدة
         ("mood", "🎭 تحليل المشاعر"),
         ("admin", "👑 لوحة الأدمن"),
         ("broadcast", "📨 بث جماعي"),
@@ -230,6 +233,7 @@ async def main():
     await app.bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
     await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
 
+    # ✅ تسجيل الأوامر بالكامل
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("trial", CommandHandlers.trial))
@@ -262,7 +266,6 @@ async def main():
     app.add_handler(CommandHandler("remove_hidden_admin", CommandHandlers.remove_hidden_admin))
     app.add_handler(CommandHandler("list_hidden_admins", CommandHandlers.list_hidden_admins))
 
-    # ✅ تسجيل الأوامر الجديدة
     app.add_handler(CommandHandler("mood", CommandHandlers.mood))
     app.add_handler(CommandHandler("admin", CommandHandlers.admin))
     app.add_handler(CommandHandler("broadcast", CommandHandlers.broadcast))
@@ -280,10 +283,14 @@ async def main():
     app.add_handler(CommandHandler("channels", CommandHandlers.channels))
     app.add_handler(CommandHandler("posts", CommandHandlers.posts))
 
+    # ✅ الدفع
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+
+    # ✅ الأزرار
     app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
 
+    # ✅ الرسائل
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
          filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL |
@@ -300,14 +307,19 @@ async def main():
         MessageHandlers.handle_group
     ))
 
+    # ✅ رسائل الخدمة (انضمام/مغادرة)
     app.add_handler(MessageHandler(
         filters.StatusUpdate.ALL & filters.ChatType.GROUPS,
         MessageHandlers.handle_service
     ))
 
+    # ✅ طلبات الانضمام
     app.add_handler(ChatJoinRequestHandler(MessageHandlers.handle_join_request))
+
+    # ✅ معالج الأخطاء
     app.add_error_handler(ErrorHandler.handle_error)
 
+    # ✅ المهام الخلفية مع إعادة التشغيل عند الفشل
     async def run_task_with_retry(task_func, *args, task_name=""):
         while True:
             try:

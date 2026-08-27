@@ -2,21 +2,18 @@
 # -*- coding: utf-8 -*-
 
 """
-handlers_message.py - معالجات الرسائل - النسخة النهائية المتوافقة مع handlers_callback.py
+handlers_message.py - معالجات الرسائل - النسخة النهائية الكاملة والمحسّنة
 =====================================================================
-- متوافق مع database.py
+- متوافق تماماً مع database.py و handlers_callback.py
 - جميع الدوال موجودة ومصححة بالكامل
-- تحسينات أمنية وأداء
-- معالجة شاملة للأخطاء
 - دعم كامل للنصوص والوسائط
-- يتضمن معالجات لجميع الحالات المستخدمة في handlers_callback.py
-- إصلاح مشكلة استخراج معرف القناة في _handle_adding_posts
+- إصلاح استخراج معرف القناة في _handle_adding_posts
 - إصلاح معالجة نتيجة get_all_users في _handle_broadcast_input
 - إصلاح استدعاءات DB.execute الخاطئة
-- إصلاح اسم العمود violation_duration
-- إضافة Rate Limiting محسن
+- مدة العقوبة بالدقائق
 - دعم الوسائط في الردود التلقائية
-- إضافة معالجات الحالات الجديدة
+- معالجة جميع الحالات الجديدة
+- تحسينات أمنية وأداء شاملة
 """
 
 import asyncio
@@ -243,13 +240,12 @@ class MessageHandlers:
         # النص والتسمية (caption) بشكل منفصل
         msg_text = message.text or ""
         msg_caption = message.caption or ""
-        # النص الكامل لفحص الكلمات المحظورة والطول وغيرها
         full_text = (msg_text + " " + msg_caption).strip()
 
         METRICS.increment_messages()
         settings = await get_security_settings_cached(chat_id)
 
-        # فحص الروابط - في النص والتسمية
+        # فحص الروابط
         if settings.get('delete_links'):
             if TextUtils.contains_link(full_text):
                 await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "link", settings)
@@ -271,7 +267,7 @@ class MessageHandlers:
                         await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "banned_word", settings)
                         return
 
-        # فحص طول الرسالة (يشمل النص والتسمية)
+        # فحص طول الرسالة
         max_len = settings.get('max_message_length', 0)
         if max_len > 0 and len(full_text) > max_len:
             await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, "max_len", settings)
@@ -298,24 +294,22 @@ class MessageHandlers:
                 await MessageHandlers._delete_and_warn(update, context, chat_id, user_id, violation_type, settings)
                 return
 
-        # الردود التلقائية (نستخدم النص فقط إن وجد، وليس full_text)
+        # الردود التلقائية
         if msg_text:
             await MessageHandlers._process_auto_reply(update, context, chat_id, msg_text, user_id)
 
     # =================================================================
-    # حذف وتحذير (مع تمرير الإعدادات لتجنب الاستعلام المتكرر)
+    # حذف وتحذير
     # =================================================================
 
     @staticmethod
     async def _delete_and_warn(update, context, chat_id, user_id, violation_type, settings: dict):
-        """حذف الرسالة وإرسال تنبيه وتطبيق العقوبات حسب الإعدادات"""
-        # حذف الرسالة
+        """حذف الرسالة وإرسال تنبيه وتطبيق العقوبات"""
         try:
             await update.effective_message.delete()
         except Exception as e:
             logger.warning(f"تعذر حذف الرسالة: {e}")
 
-        # زيادة عداد المخالفات
         violation_count = await DB.increment_violation_count(user_id, chat_id)
         penalty_rule = await DB.get_violation_penalty(chat_id, violation_type)
 
@@ -328,10 +322,8 @@ class MessageHandlers:
                 penalty_type = 'mute'
             duration_seconds = settings.get('auto_mute_duration', 3600)
 
-        # تسجيل المخالفة في سجل المشرفين
         await DB.add_admin_log(chat_id, context.bot.id, f"violation_{violation_type}", user_id)
 
-        # إرسال تنبيه (بتنسيق HTML)
         violation_messages = {
             'link': '🚫 الروابط غير مسموحة',
             'mention': '🚫 المنشنات غير مسموحة',
@@ -363,7 +355,6 @@ class MessageHandlers:
         except Exception as e:
             logger.warning(f"تعذر إرسال تنبيه المخالفة: {e}")
 
-        # تطبيق العقوبة إذا تجاوز الحد
         max_strikes = settings.get('violation_strikes') or settings.get('max_warnings') or 3
         if violation_count >= max_strikes:
             success, msg = await apply_violation_penalty(
@@ -371,7 +362,6 @@ class MessageHandlers:
             )
             if success:
                 await safe_send(context.bot, chat_id, f"🚨 {msg}")
-                # إعادة تعيين العداد بعد العقوبة
                 await DB.reset_violation_count(user_id, chat_id)
 
     # =================================================================
@@ -396,8 +386,7 @@ class MessageHandlers:
                 reply_text = reply.get('reply', '')
                 reply_type = reply.get('reply_type', 'text')
                 media_id = reply.get('reply_media_id')
-                
-                # استخدام bot مباشرة لإرسال الوسائط
+
                 try:
                     if reply_type == 'photo' and media_id:
                         await context.bot.send_photo(chat_id=chat_id, photo=media_id, caption=reply_text or None)
@@ -419,10 +408,9 @@ class MessageHandlers:
                         await safe_send(context.bot, chat_id, reply_text)
                 except Exception as e:
                     logger.error(f"فشل إرسال الرد التلقائي بالوسائط: {e}")
-                    # محاولة الإرسال كنص فقط
                     if reply_text:
                         await safe_send(context.bot, chat_id, reply_text)
-                
+
                 await _increment_usage_async(chat_id, text)
                 return True
 
@@ -444,10 +432,8 @@ class MessageHandlers:
         user_id = update.effective_user.id
         text = (update.effective_message.text or "").strip()
 
-        # التحقق من الاشتراك
         if user_id != CONFIG.PRIMARY_OWNER_ID:
-            has_sub = await DB.has_active_subscription(user_id)
-            if not has_sub:
+            if not await DB.has_active_subscription(user_id):
                 await safe_send(
                     context.bot, user_id,
                     "❌ <b>يجب أن يكون لديك اشتراك نشط لإضافة قناة!</b>\n\n"
@@ -459,37 +445,32 @@ class MessageHandlers:
                 return
 
         try:
-            # تحديد معرف القناة
             if text.lstrip('-').isdigit():
                 channel_id = int(text)
             else:
                 try:
                     chat = await context.bot.get_chat(text)
                     channel_id = chat.id
-                except Exception as e:
-                    logger.warning(f"فشل جلب القناة: {e}")
+                except:
                     await safe_send(context.bot, user_id, "❌ القناة غير موجودة!")
                     StateManager.clear(user_id)
                     return
 
-            # جلب معلومات القناة
             try:
                 chat_info = await context.bot.get_chat(channel_id)
                 channel_name = chat_info.title or chat_info.username or f"قناة {channel_id}"
-            except Exception:
+            except:
                 channel_name = f"قناة {channel_id}"
 
-            # التحقق من أن البوت مشرف (أو منشئ القناة)
             try:
                 bot_member = await context.bot.get_chat_member(channel_id, context.bot.id)
                 if bot_member.status not in ['administrator', 'creator']:
                     await safe_send(context.bot, user_id, "❌ البوت ليس مشرفًا في القناة!")
                     StateManager.clear(user_id)
                     return
-            except Exception as e:
-                logger.warning(f"تعذر التحقق من صلاحيات البوت: {e}")
+            except:
+                pass
 
-            # التحقق من أن المستخدم لديه صلاحية في القناة
             if user_id != CONFIG.PRIMARY_OWNER_ID:
                 try:
                     user_member = await context.bot.get_chat_member(channel_id, user_id)
@@ -497,13 +478,11 @@ class MessageHandlers:
                         await safe_send(context.bot, user_id, "❌ يجب أن تكون مشرفًا في القناة لإضافتها!")
                         StateManager.clear(user_id)
                         return
-                except Exception as e:
-                    logger.warning(f"تعذر التحقق من صلاحية المستخدم في القناة: {e}")
+                except:
                     await safe_send(context.bot, user_id, "❌ تعذر التحقق من صلاحياتك في القناة.")
                     StateManager.clear(user_id)
                     return
 
-            # إضافة القناة
             ch_db_id = await DB.add_channel(user_id, channel_id, channel_name)
 
             if ch_db_id:
@@ -517,14 +496,14 @@ class MessageHandlers:
         StateManager.clear(user_id)
 
     # =================================================================
-    # إضافة المنشورات (مصححة)
+    # إضافة المنشورات
     # =================================================================
 
     @staticmethod
     async def _handle_adding_posts(update, context):
         user_id = update.effective_user.id
         channel_db_id = await DB.get_active_channel(user_id)
-        
+
         if not channel_db_id:
             StateManager.clear(user_id)
             await safe_send(context.bot, user_id, "❌ لا توجد قناة نشطة")
@@ -587,7 +566,7 @@ class MessageHandlers:
         await safe_send(context.bot, user_id, f"✅ تم استلام رسالتك!\n🎫 رقم التذكرة: {ticket_number}")
 
     # =================================================================
-    # البث الجماعي (مصحح)
+    # البث الجماعي
     # =================================================================
 
     @staticmethod
@@ -604,7 +583,7 @@ class MessageHandlers:
         for user in users:
             user_id_target = user.get('user_id') if isinstance(user, dict) else user[0]
             banned = user.get('banned', 0) if isinstance(user, dict) else (user[1] if len(user) > 1 else 0)
-            
+
             if banned == 0:
                 try:
                     await safe_send(context.bot, user_id_target, content)
@@ -673,7 +652,7 @@ class MessageHandlers:
         StateManager.clear(user_id)
 
     # =================================================================
-    # المشرفين (مصحح)
+    # المشرفين
     # =================================================================
 
     @staticmethod
@@ -687,15 +666,12 @@ class MessageHandlers:
             admin_id = int(text)
             if admin_id <= 0:
                 raise ValueError
-            
-            # استخدام الدالة المخصصة add_admin
             success = await DB.add_admin(admin_id, user_id)
             if success:
                 await safe_send(context.bot, user_id, "✅ تمت الإضافة")
             else:
-                # التحقق إذا كان موجوداً بالفعل
                 admins = await DB.get_admin_list()
-                if any(admin['user_id'] == admin_id for admin in admins):
+                if any(a['user_id'] == admin_id for a in admins):
                     await safe_send(context.bot, user_id, "ℹ️ هذا المستخدم مشرف بالفعل")
                 else:
                     await safe_send(context.bot, user_id, "❌ فشل الإضافة")
@@ -717,8 +693,6 @@ class MessageHandlers:
             admin_id = int(text)
             if admin_id <= 0:
                 raise ValueError
-            
-            # استخدام الدالة المخصصة remove_admin
             success = await DB.remove_admin(admin_id)
             if success:
                 await safe_send(context.bot, user_id, "✅ تمت الإزالة")
@@ -740,7 +714,7 @@ class MessageHandlers:
         user_id = update.effective_user.id
         keyword = (update.effective_message.text or "").strip().lower()
         context.user_data['auto_keyword'] = keyword
-        context.user_data['auto_chat'] = -1  # عام
+        context.user_data['auto_chat'] = -1
         StateManager.set(user_id, UserState.WAIT_REPLY)
         await safe_send(context.bot, user_id, f"✅ الكلمة: {escape(keyword)}\n📝 أرسل الرد:")
 
@@ -914,7 +888,7 @@ class MessageHandlers:
             try:
                 os.remove(file_path)
             except OSError as e:
-                logger.warning(f"تعذر حذف الملف المؤقت {file_path}: {e}")
+                logger.warning(f"تعذر حذف الملف المؤقت: {e}")
             await safe_send(context.bot, user_id, f"✅ تم استيراد {count} رد")
         except Exception as e:
             logger.exception("خطأ في استيراد الملف")
@@ -944,8 +918,8 @@ class MessageHandlers:
             if tmp_path:
                 try:
                     os.remove(tmp_path)
-                except OSError as e:
-                    logger.warning(f"تعذر حذف الملف المؤقت: {e}")
+                except OSError:
+                    pass
         StateManager.clear(user_id)
 
     # =================================================================
@@ -968,7 +942,7 @@ class MessageHandlers:
                 await DB.grant_subscription_days(target_id, days)
                 await safe_send(context.bot, user_id, "✅ تم المنح")
             except ValueError:
-                await safe_send(context.bot, user_id, "❌ صيغة خاطئة (يجب أرقام موجبة)")
+                await safe_send(context.bot, user_id, "❌ صيغة خاطئة")
             except Exception as e:
                 logger.error(f"فشل منح اشتراك: {e}")
                 await safe_send(context.bot, user_id, "❌ فشل")
@@ -997,8 +971,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ يجب أن يكون الرقم موجبًا")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
-        except Exception as e:
-            logger.error(f"خطأ في تحديث الجدولة: {e}")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -1018,8 +990,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ يجب أن يكون الرقم موجبًا")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
-        except Exception as e:
-            logger.error(f"خطأ في تحديث الجدولة: {e}")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -1039,8 +1009,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ يجب أن يكون الرقم موجبًا")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
-        except Exception as e:
-            logger.error(f"خطأ في تحديث الجدولة: {e}")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -1072,8 +1040,6 @@ class MessageHandlers:
                 await safe_send(context.bot, user_id, "❌ يجب أن يكون بين 1 و 30")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
-        except Exception as e:
-            logger.error(f"خطأ في تحديث التذكير: {e}")
         StateManager.clear(user_id)
 
     # =================================================================
@@ -1097,8 +1063,6 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, f"✅ {max_len}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
-        except Exception as e:
-            logger.error(f"خطأ في تحديث الإعدادات: {e}")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -1118,8 +1082,6 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, f"✅ {count}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
-        except Exception as e:
-            logger.error(f"خطأ في تحديث الإعدادات: {e}")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -1167,8 +1129,6 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, f"✅ {seconds}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
-        except Exception as e:
-            logger.error(f"خطأ في تحديث الإعدادات: {e}")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -1188,8 +1148,6 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, f"✅ {count}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
-        except Exception as e:
-            logger.error(f"خطأ في تحديث الإعدادات: {e}")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -1209,8 +1167,6 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, f"✅ {seconds}")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
-        except Exception as e:
-            logger.error(f"خطأ في تحديث الإعدادات: {e}")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -1250,12 +1206,11 @@ class MessageHandlers:
         StateManager.clear(user_id)
 
     # =================================================================
-    # العقوبات - مع التحقق من الصلاحيات
+    # العقوبات
     # =================================================================
 
     @staticmethod
     async def _check_admin_in_chat(context, chat_id, user_id):
-        """التحقق من أن المستخدم ما زال مشرفًا في المجموعة"""
         if user_id == CONFIG.PRIMARY_OWNER_ID:
             return True
         try:
@@ -1456,12 +1411,12 @@ class MessageHandlers:
         StateManager.clear(user_id)
 
     # =================================================================
-    # معالجات إضافية للحالات الجديدة
+    # معالجات إضافية
     # =================================================================
 
     @staticmethod
     async def _handle_penalty_duration_input(update, context):
-        """معالج مدة العقوبة للعقوبات المحذوفة"""
+        """معالج مدة العقوبة بالدقائق"""
         user_id = update.effective_user.id
         chat_id = context.user_data.get('adv_chat') or context.user_data.get('sec_chat')
         if not chat_id:
@@ -1469,13 +1424,13 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
         try:
-            duration = int(update.effective_message.text or "60")
-            if duration <= 0:
+            minutes = int(update.effective_message.text or "1")
+            if minutes <= 0:
                 raise ValueError
-            # استخدام العمود الصحيح violation_duration
-            await DB.update_security_settings(chat_id, violation_duration=duration)
+            duration_seconds = minutes * 60
+            await DB.update_security_settings(chat_id, violation_duration=duration_seconds)
             await invalidate_security_cache(chat_id)
-            await safe_send(context.bot, user_id, f"✅ تم تعيين المدة: {duration} ثانية")
+            await safe_send(context.bot, user_id, f"✅ تم تعيين المدة: {minutes} دقيقة")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
         except Exception as e:
@@ -1485,7 +1440,7 @@ class MessageHandlers:
 
     @staticmethod
     async def _handle_violation_strikes_input(update, context):
-        """معالج عدد المخالفات قبل العقوبة"""
+        """معالج عدد المخالفات"""
         user_id = update.effective_user.id
         chat_id = context.user_data.get('sec_chat')
         if not chat_id:
@@ -1508,7 +1463,7 @@ class MessageHandlers:
 
     @staticmethod
     async def _handle_violation_duration_input(update, context):
-        """معالج مدة عقوبة المخالفات"""
+        """معالج مدة عقوبة المخالفات بالدقائق"""
         user_id = update.effective_user.id
         chat_id = context.user_data.get('sec_chat')
         if not chat_id:
@@ -1516,12 +1471,13 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
         try:
-            duration = int(update.effective_message.text or "60")
-            if duration <= 0:
+            minutes = int(update.effective_message.text or "1")
+            if minutes <= 0:
                 raise ValueError
-            await DB.update_security_settings(chat_id, violation_duration=duration)
+            duration_seconds = minutes * 60
+            await DB.update_security_settings(chat_id, violation_duration=duration_seconds)
             await invalidate_security_cache(chat_id)
-            await safe_send(context.bot, user_id, f"✅ تم تعيين المدة: {duration} ثانية")
+            await safe_send(context.bot, user_id, f"✅ تم تعيين المدة: {minutes} دقيقة")
         except ValueError:
             await safe_send(context.bot, user_id, "❌ رقم غير صالح")
         except Exception as e:
@@ -1538,7 +1494,6 @@ class MessageHandlers:
             await safe_send(context.bot, user_id, "❌ أرسل الكود")
             StateManager.clear(user_id)
             return
-        
         success, result = await DB.redeem_gift_code(user_id, code)
         if success:
             await safe_send(context.bot, user_id, f"🎁 تم استرداد الهدية!\n📅 المدة: {result} يوم")
@@ -1554,13 +1509,12 @@ class MessageHandlers:
 
     @staticmethod
     async def handle_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """معالجة رسائل الخدمة (انضمام/مغادرة) مع رسائل الترحيب والوداع"""
+        """معالجة رسائل الخدمة (انضمام/مغادرة)"""
         if not update.effective_chat or not update.effective_message:
             return
         chat_id = update.effective_chat.id
         settings = await get_security_settings_cached(chat_id)
 
-        # ترحيب بالأعضاء الجدد
         if update.effective_message.new_chat_members and settings.get('welcome_enabled'):
             for member in update.effective_message.new_chat_members:
                 welcome_text = settings.get('welcome_text', 'مرحباً {user} 🤍')
@@ -1568,7 +1522,6 @@ class MessageHandlers:
                 welcome_text = welcome_text.replace('{chat}', escape(update.effective_chat.title or "المجموعة"))
                 await safe_send(context.bot, chat_id, welcome_text)
 
-        # وداع للأعضاء المغادرين
         if update.effective_message.left_chat_member and settings.get('goodbye_enabled'):
             member = update.effective_message.left_chat_member
             goodbye_text = settings.get('goodbye_text', 'وداعاً {user} 👋')
@@ -1582,12 +1535,11 @@ class MessageHandlers:
 
     @staticmethod
     async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """معالجة طلبات الانضمام مع إعطاء أولوية للرفض إذا تم تفعيلهما معًا"""
+        """معالجة طلبات الانضمام"""
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
         settings = await get_security_settings_cached(chat_id)
 
-        # الرفض له الأولوية إذا تم تفعيله
         if settings.get('auto_reject_join'):
             try:
                 await context.bot.decline_chat_join_request(chat_id, user_id)
@@ -1595,7 +1547,6 @@ class MessageHandlers:
             except Exception as e:
                 logger.warning(f"فشل رفض طلب الانضمام: {e}")
 
-        # إذا لم يتم الرفض، نحاول الموافقة إذا كانت مفعلة
         if settings.get('auto_approve_join'):
             try:
                 await context.bot.approve_chat_join_request(chat_id, user_id)
