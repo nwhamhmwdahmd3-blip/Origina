@@ -871,7 +871,6 @@ class CallbackHandlers:
                 text = "👥 **مجموعاتي**\n\n"
                 kb = []
                 for group in groups:
-                    # استخراج البيانات بأمان
                     if isinstance(group, dict):
                         gid = group.get('chat_id') or group.get('id')
                         name = group.get('chat_name') or group.get('name') or 'غير معروف'
@@ -1347,8 +1346,54 @@ class CallbackHandlers:
                 await safe_delete_message(query)
                 await _safe_answer(query)
                 return
-            else:
+            elif action == "penalty_durations":
+                # عرض قائمة مدد العقوبات
+                await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang)
+                return
+            elif action == "violation_penalties":
+                # عرض قائمة المخالفات
+                await CallbackHandlers._show_violation_penalties(update, context, query, chat_id, lang)
+                return
+            elif action == "antiflood_settings":
+                # عرض إعدادات الفيضان
+                await CallbackHandlers._show_antiflood_settings(update, context, query, chat_id, lang)
+                return
+            elif action == "night_settings":
+                # عرض إعدادات الوضع الليلي
+                await CallbackHandlers._show_night_settings(update, context, query, chat_id, lang)
+                return
+            elif action == "auto_reply_menu":
+                # عرض قائمة الردود التلقائية
+                await CallbackHandlers._show_auto_reply_menu(update, context, query, chat_id, lang)
+                return
+            elif action == "adv_act":
+                # عرض الإجراءات المتقدمة
+                await CallbackHandlers._show_advanced_actions(update, context, query, chat_id, lang)
+                return
+            elif action == "act_log":
+                # عرض سجل المشرفين
+                await CallbackHandlers._show_admin_logs(update, context, query, chat_id, lang)
+                return
+            elif action == "maxlen":
+                # طلب طول الرسالة الأقصى
+                StateManager.set(user_id, UserState.WAIT_MAX_LEN)
+                context.user_data['adv_chat'] = chat_id
+                await safe_edit(query, "📏 أرسل الحد الأقصى لطول الرسالة:")
                 await _safe_answer(query)
+                return
+            elif action == "del_pen":
+                # إعدادات عقوبة الحذف
+                StateManager.set(user_id, UserState.WAIT_PENALTY_DURATION)
+                context.user_data['adv_chat'] = chat_id
+                await safe_edit(query, "⏱️ أرسل مدة العقوبة بالثواني:")
+                await _safe_answer(query)
+                return
+            elif action == "penalty":
+                # عرض أنواع العقوبات
+                await CallbackHandlers._show_penalty_types(update, context, query, chat_id, lang)
+                return
+            else:
+                await _safe_answer(query, "⚠️ غير معروف", show_alert=True)
                 return
 
             settings = await DB.get_security_settings(chat_id)
@@ -1357,20 +1402,15 @@ class CallbackHandlers:
 
             # محاولة التعديل بدون parse_mode لتجنب مشاكل التنسيق
             try:
-                await query.edit_message_text(text, reply_markup=kb)
+                await query.edit_message_text(text, reply_markup=kb, parse_mode=None)
             except BadRequest as e:
                 error_msg = str(e).lower()
                 if "message is not modified" in error_msg:
                     pass
                 elif "message is too long" in error_msg:
                     short_text = text[:4000] + "\n\n... (تم الاختصار)"
-                    await query.edit_message_text(short_text, reply_markup=kb)
-                elif "can't parse entities" in error_msg:
-                    # إزالة رموز Markdown
-                    plain_text = re.sub(r'[*_`\[\]()~>#+\-=|{}.!]', '', text)
-                    await query.edit_message_text(plain_text, reply_markup=kb)
+                    await query.edit_message_text(short_text, reply_markup=kb, parse_mode=None)
                 else:
-                    # فشل التعديل، إرسال رسالة جديدة
                     await query.message.reply_text(text, reply_markup=kb)
             except Exception:
                 await query.message.reply_text(text, reply_markup=kb)
@@ -1385,6 +1425,91 @@ class CallbackHandlers:
         except Exception as e:
             logger.error(f"خطأ في إعدادات الأمان: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
+
+    # ======================== دوال عرض القوائم الفرعية للأمان ========================
+
+    @staticmethod
+    async def _show_penalty_durations(update, context, query, chat_id, lang):
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("30 ثانية", callback_data=f"set_duration:{chat_id}:30"),
+             InlineKeyboardButton("دقيقة", callback_data=f"set_duration:{chat_id}:60")],
+            [InlineKeyboardButton("5 دقائق", callback_data=f"set_duration:{chat_id}:300"),
+             InlineKeyboardButton("ساعة", callback_data=f"set_duration:{chat_id}:3600")],
+            [InlineKeyboardButton("يوم", callback_data=f"set_duration:{chat_id}:86400"),
+             InlineKeyboardButton("أسبوع", callback_data=f"set_duration:{chat_id}:604800")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"sec_penalty:{chat_id}")]
+        ])
+        await safe_edit(query, "⏱️ اختر مدة العقوبة:", reply_markup=kb)
+        await _safe_answer(query)
+
+    @staticmethod
+    async def _show_violation_penalties(update, context, query, chat_id, lang):
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("عدد الضربات", callback_data=f"sec_set_violation_strikes:{chat_id}"),
+             InlineKeyboardButton("المدة", callback_data=f"sec_set_violation_duration:{chat_id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")]
+        ])
+        await safe_edit(query, "🚨 إعدادات المخالفات:", reply_markup=kb)
+        await _safe_answer(query)
+
+    @staticmethod
+    async def _show_antiflood_settings(update, context, query, chat_id, lang):
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("عدد الرسائل", callback_data=f"sec_set_antiflood_messages:{chat_id}"),
+             InlineKeyboardButton("الثواني", callback_data=f"sec_set_antiflood_seconds:{chat_id}")],
+            [InlineKeyboardButton("نوع العقوبة", callback_data=f"sec_set_antiflood_penalty:{chat_id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")]
+        ])
+        await safe_edit(query, "🌊 إعدادات الفيضان:", reply_markup=kb)
+        await _safe_answer(query)
+
+    @staticmethod
+    async def _show_night_settings(update, context, query, chat_id, lang):
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("وقت البدء", callback_data=f"sec_set_night_start:{chat_id}"),
+             InlineKeyboardButton("وقت النهاية", callback_data=f"sec_set_night_end:{chat_id}")],
+            [InlineKeyboardButton("الإجراء", callback_data=f"sec_set_night_action:{chat_id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")]
+        ])
+        await safe_edit(query, "🌙 إعدادات الوضع الليلي:", reply_markup=kb)
+        await _safe_answer(query)
+
+    @staticmethod
+    async def _show_auto_reply_menu(update, context, query, chat_id, lang):
+        kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
+        await safe_edit(query, "🤖 إعدادات الردود التلقائية:", reply_markup=kb)
+        await _safe_answer(query)
+
+    @staticmethod
+    async def _show_advanced_actions(update, context, query, chat_id, lang):
+        kb = KeyboardFactory.build("advanced_actions", chat_id=chat_id, lang=lang)
+        await safe_edit(query, "🛠️ الإجراءات المتقدمة:", reply_markup=kb)
+        await _safe_answer(query)
+
+    @staticmethod
+    async def _show_admin_logs(update, context, query, chat_id, lang):
+        logs = await DB.get_admin_logs(chat_id, 10)
+        if logs:
+            text = "📋 **سجل المشرفين**\n\n"
+            for log in logs:
+                text += f"• {log['admin_id']} → {log['action']} on {log['target_id']}\n"
+        else:
+            text = "📭 لا يوجد سجلات"
+        kb = [[InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")]]
+        await safe_edit(query, text, reply_markup=InlineKeyboardMarkup(kb))
+        await _safe_answer(query)
+
+    @staticmethod
+    async def _show_penalty_types(update, context, query, chat_id, lang):
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("حظر", callback_data=f"sec_set_penalty:{chat_id}:ban"),
+             InlineKeyboardButton("كتم", callback_data=f"sec_set_penalty:{chat_id}:mute")],
+            [InlineKeyboardButton("طرد", callback_data=f"sec_set_penalty:{chat_id}:kick"),
+             InlineKeyboardButton("تحذير", callback_data=f"sec_set_penalty:{chat_id}:warn")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")]
+        ])
+        await safe_edit(query, "🚫 اختر نوع العقوبة:", reply_markup=kb)
+        await _safe_answer(query)
 
     # ======================== دوال الأدمن ========================
 
