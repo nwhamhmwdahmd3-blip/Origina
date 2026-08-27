@@ -3,8 +3,8 @@
 
 """
 handlers_callback.py - المعالج النهائي الكامل لجميع الأزرار
-- لوحة أدمن كاملة مع جميع الأزرار المذكورة في ملف الترجمة
-- جميع معالجات الأمان بما فيها الإعدادات النصية والمدد
+- لوحة أدمن كاملة
+- جميع معالجات الأمان
 - شراء الهدايا يعمل
 - إصلاح زر التحذير
 - إصلاح زر التحديثات
@@ -15,7 +15,10 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - معالجات خاصة لأزرار الانضمام تمنع التعارض بين الموافقة والرفض
 - دعم 12 لغة في أزرار الترجمة كما في النسخة الأصلية
 - إزالة تكرار toggle_map
-- إضافة معالجات للأزرار الناقصة مثل admin_uptime, admin_force_sub, sec_welcome_text, panel_lock, act_pin, وغيرها
+- إضافة معالج المقاييس (Metrics) بشكل فعلي
+- إضافة معالجات الأزرار النادرة (admin_restore_sel, sec_antiflood_penalty, sec_night_action, post_clear)
+- إضافة معالجة اختيار ملف الاستعادة
+- إضافة معالجة اختيار نوع عقوبة الفيضان والوضع الليلي
 """
 
 import asyncio
@@ -26,7 +29,7 @@ import shutil
 import re
 from typing import Optional, Dict, Any, List, Tuple
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ChatPermissions
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest, RetryAfter, Forbidden
 
@@ -542,6 +545,16 @@ class CallbackHandlers:
                 await CallbackHandlers._show_post_list(update, context, query, user_id, lang)
                 return
 
+            if base_data == CB.POST_CLEAR:
+                active = await DB.get_active_channel(user_id)
+                if active:
+                    # حذف جميع منشورات القناة النشطة
+                    await DB.execute("DELETE FROM posts WHERE channel_db_id=?", (active,))
+                    await safe_edit(query, "✅ تم مسح جميع المنشورات")
+                else:
+                    await _safe_answer(query, "❌ لا توجد قناة نشطة", show_alert=True)
+                return
+
             if base_data == CB.PUB_ALL:
                 channels = await DB.get_user_channels(user_id)
                 if not channels:
@@ -866,6 +879,7 @@ class CallbackHandlers:
         if nav:
             kb.append(nav)
         kb.append([InlineKeyboardButton("🔄 إعادة تدوير", callback_data=CB.POST_REC)])
+        kb.append([InlineKeyboardButton("🧹 مسح الكل", callback_data=CB.POST_CLEAR)])
         kb.append([InlineKeyboardButton("🔙", callback_data=CB.BACK)])
         await safe_edit(query, text if posts else "📭 لا يوجد", reply_markup=InlineKeyboardMarkup(kb))
         await _safe_answer(query)
@@ -936,8 +950,28 @@ class CallbackHandlers:
             elif action == "antiflood_settings":
                 await CallbackHandlers._show_antiflood_settings(update, context, query, chat_id, lang)
                 return
+            elif action == "antiflood_penalty":
+                await CallbackHandlers._show_penalty_type_selection(update, context, query, chat_id, lang, "antiflood_penalty")
+                return
+            elif action == "set_antiflood_penalty":
+                penalty_type = parts[1] if len(parts) > 1 else 'mute'
+                if penalty_type in DB.VALID_PENALTY_TYPES:
+                    await DB.update_security_settings(chat_id, antiflood_penalty=penalty_type)
+                    await _safe_answer(query, f"✅ تم تعيين عقوبة الفيضان: {penalty_type}")
+                    await CallbackHandlers._handle_security(update, context, query, user_id, lang)
+                return
             elif action == "night_settings":
                 await CallbackHandlers._show_night_settings(update, context, query, chat_id, lang)
+                return
+            elif action == "night_action":
+                await CallbackHandlers._show_penalty_type_selection(update, context, query, chat_id, lang, "night_mode_action")
+                return
+            elif action == "set_night_action":
+                penalty_type = parts[1] if len(parts) > 1 else 'mute'
+                if penalty_type in DB.VALID_PENALTY_TYPES:
+                    await DB.update_security_settings(chat_id, night_mode_action=penalty_type)
+                    await _safe_answer(query, f"✅ تم تعيين إجراء الوضع الليلي: {penalty_type}")
+                    await CallbackHandlers._handle_security(update, context, query, user_id, lang)
                 return
             elif action == "auto_reply_menu":
                 await CallbackHandlers._show_auto_reply_menu(update, context, query, chat_id, lang)
@@ -1033,6 +1067,23 @@ class CallbackHandlers:
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
 
     @staticmethod
+    async def _show_penalty_type_selection(update, context, query, chat_id, lang, setting_key):
+        """عرض قائمة أنواع العقوبات لتحديد نوع معين (للفيضان أو الوضع الليلي)."""
+        penalty_types = [
+            ("🔇 كتم", "mute"),
+            ("🚫 حظر", "ban"),
+            ("⚠️ تحذير", "warn"),
+            ("👢 طرد", "kick"),
+            ("🔒 تقييد", "restrict"),
+        ]
+        kb = []
+        for label, ptype in penalty_types:
+            kb.append([InlineKeyboardButton(label, callback_data=f"sec_set_{setting_key}:{chat_id}:{ptype}")])
+        kb.append([InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")])
+        await safe_edit(query, "🚫 اختر نوع العقوبة:", reply_markup=InlineKeyboardMarkup(kb))
+        await _safe_answer(query)
+
+    @staticmethod
     async def _show_penalty_durations(update, context, query, chat_id, lang, penalty_type='mute'):
         durations = [
             ("دائم", 0),
@@ -1073,6 +1124,7 @@ class CallbackHandlers:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("عدد الرسائل", callback_data=f"sec_set_antiflood_messages:{chat_id}"),
              InlineKeyboardButton("الثواني", callback_data=f"sec_set_antiflood_seconds:{chat_id}")],
+            [InlineKeyboardButton("نوع العقوبة", callback_data=f"sec_antiflood_penalty:{chat_id}")],
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🌊 إعدادات الفيضان:", reply_markup=kb)
@@ -1083,6 +1135,7 @@ class CallbackHandlers:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("وقت البدء", callback_data=f"sec_set_night_start:{chat_id}"),
              InlineKeyboardButton("وقت النهاية", callback_data=f"sec_set_night_end:{chat_id}")],
+            [InlineKeyboardButton("نوع الإجراء", callback_data=f"sec_night_action:{chat_id}")],
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🌙 إعدادات الوضع الليلي:", reply_markup=kb)
@@ -1233,6 +1286,39 @@ class CallbackHandlers:
                 await safe_edit(query, "📂 أرسل ملف النسخة الاحتياطية:")
                 return
 
+            elif data == CB.ADMIN_RESTORE_SEL:
+                # عرض قائمة النسخ الاحتياطية
+                backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if not backups:
+                    await safe_edit(query, "📭 لا توجد نسخ احتياطية")
+                    return
+                kb = []
+                for b in backups[:10]:
+                    fname = b.name
+                    kb.append([InlineKeyboardButton(f"📁 {fname}", callback_data=f"admin_restore_file:{fname}")])
+                kb.append([InlineKeyboardButton("🔙", callback_data=CB.ADMIN)])
+                await safe_edit(query, "📂 اختر نسخة احتياطية للاستعادة:", reply_markup=InlineKeyboardMarkup(kb))
+                return
+
+            elif data.startswith("admin_restore_file:"):
+                fname = data.split(":", 1)[1]
+                backup_file = PATHS.BACKUPS / fname
+                if not backup_file.exists():
+                    await _safe_answer(query, "❌ الملف غير موجود", show_alert=True)
+                    return
+                # استعادة فورية مع نسخة احتياطية قبلها
+                try:
+                    # إنشاء نسخة احتياطية قبل الاستعادة
+                    pre_restore_backup = PATHS.BACKUPS / f"pre_restore_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+                    shutil.copy2(PATHS.DB, pre_restore_backup)
+                    # استبدال قاعدة البيانات
+                    shutil.copy2(backup_file, PATHS.DB)
+                    await safe_edit(query, "✅ تمت الاستعادة بنجاح! أعد تشغيل البوت لتفعيل التغييرات.")
+                except Exception as e:
+                    logger.error(f"❌ فشل الاستعادة: {e}")
+                    await safe_edit(query, f"❌ فشل الاستعادة: {str(e)[:100]}")
+                return
+
             elif data == CB.ADMIN_RAM:
                 ram = get_ram_usage()
                 text = f"🖥️ الرام\n\n💾 الإجمالي: {ram['total']} GB\n📊 المستخدم: {ram['used']} GB\n📈 النسبة: {ram['percent']}%"
@@ -1305,7 +1391,7 @@ class CallbackHandlers:
                 return
 
             elif data == CB.ADMIN_SHOW_UPDATE:
-                ch = await DB.get_update_channel()
+                ch = await DB.get_updates_channel()
                 if ch:
                     await safe_edit(query, f"📢 قناة التحديثات: {ch}")
                 else:
@@ -1326,7 +1412,7 @@ class CallbackHandlers:
                 return
 
             elif data == CB.ADMIN_FORCE_SUB:
-                sub = await DB.get_force_sub_channel()
+                sub = await DB.get_force_subscribe_channel()
                 text = f"🔒 الاشتراك الإجباري: {'✅ مفعل' if sub else '❌ معطل'}\n"
                 if sub:
                     text += f"القناة: {sub}"
@@ -1334,12 +1420,11 @@ class CallbackHandlers:
                 return
 
             elif data == CB.ADMIN_SET_FORCE:
-                StateManager.set(user_id, UserState.WAIT_FORCE_SUB_CH)
+                StateManager.set(user_id, UserState.WAIT_FORCE)
                 await safe_edit(query, "🔒 أرسل معرف قناة الاشتراك الإجباري:")
                 return
 
             elif data == CB.ADMIN_REFRESH_CACHE:
-                # يمكن استدعاء دالة لتفريغ الكاش إذا وجدت
                 await safe_edit(query, "🔄 تم تحديث الكاش")
                 return
 
@@ -1679,10 +1764,9 @@ class CallbackHandlers:
                 await safe_edit(query, msg)
                 return
             elif action == "pin":
-                # تثبيت رسالة: سيتطلب معرف الرسالة
-                StateManager.set(user_id, UserState.WAIT_PIN_MESSAGE)
+                StateManager.set(user_id, UserState.WAIT_PIN)
                 context.user_data['adv_chat'] = chat_id
-                await safe_edit(query, "📌 أرسل معرف الرسالة أو قم بالرد على الرسالة المراد تثبيتها:")
+                await safe_edit(query, "📌 قم بالرد على الرسالة المطلوب تثبيتها ثم أرسل أي شيء:")
                 return
             elif action == "log":
                 await CallbackHandlers._show_admin_logs(update, context, query, chat_id, lang=None)

@@ -24,6 +24,8 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ إضافة دالة get_general_stats للوحة الأدمن
 - ✅ إضافة خطة تجربة منفصلة
 - ✅ إضافة دالة get_unpublished_posts_count
+- ✅ تعيين القناة الجديدة كنشطة تلقائياً عند الإضافة
+- ✅ تعديل grant_subscription_days لاستخدام خطة الهدية عند عدم تحديد plan_id
 """
 
 import sqlite3
@@ -1130,6 +1132,8 @@ class Database:
                     else:
                         ch_db_id = existing['id']
                         await conn.execute("UPDATE user_channels SET channel_name = ?, banned = 0 WHERE id = ?", (channel_name, ch_db_id))
+                    # تعيين القناة كنشطة تلقائيًا (الجديدة أو المعاد تفعيلها)
+                    await conn.execute("UPDATE users SET active_channel = ? WHERE user_id = ?", (ch_db_id, user_id))
                     await conn.execute(
                         """INSERT INTO schedule (channel_db_id, schedule_type, interval_minutes, next_publish_date)
                            VALUES (?, 'interval_minutes', 12, ?)
@@ -1192,7 +1196,6 @@ class Database:
         """
         إرجاع عدد المنشورات غير المنشورة لقناة معينة يملكها المستخدم.
         """
-        # التحقق من ملكية القناة
         owner = await self.fetchval(
             "SELECT 1 FROM user_channels WHERE id=? AND user_id=?",
             (channel_db_id, user_id),
@@ -2054,6 +2057,13 @@ class Database:
                     exists = await self._fetchval_in_conn(conn, "SELECT 1 FROM users WHERE user_id = ?", (user_id,))
                     if not exists:
                         return False
+                    # إذا لم يتم تحديد خطة، نستخدم خطة الهدية ذات أعلى max_channels
+                    if not plan_id:
+                        plan_id = await self._fetchval_in_conn(
+                            conn,
+                            "SELECT id FROM plans WHERE is_gift = 1 AND is_active = 1 ORDER BY max_channels DESC LIMIT 1",
+                            default=1
+                        )
                     current_end = await self._fetchval_in_conn(
                         conn,
                         "SELECT MAX(end_date) FROM subscriptions WHERE user_id = ? AND status = 'active' AND end_date > datetime('now')",
@@ -2063,12 +2073,11 @@ class Database:
                     now = TimeUtils.utc_now()
                     base = current_end if current_end and current_end > now else now
                     new_end = base + timedelta(days=days)
-                    final_plan_id = plan_id if plan_id else 1
                     await conn.execute(
                         """INSERT INTO subscriptions 
                            (user_id, plan_id, status, start_date, end_date, provider, created_at, updated_at)
                            VALUES (?,?,?,?,?,?,?,?)""",
-                        (user_id, final_plan_id, 'active', TimeUtils.sql_iso(), new_end.strftime('%Y-%m-%d %H:%M:%S'), provider, TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                        (user_id, plan_id, 'active', TimeUtils.sql_iso(), new_end.strftime('%Y-%m-%d %H:%M:%S'), provider, TimeUtils.sql_iso(), TimeUtils.sql_iso())
                     )
                     await self._refresh_user_subscription_end(conn, user_id)
                     return True

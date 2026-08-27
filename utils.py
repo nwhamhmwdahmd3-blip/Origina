@@ -365,7 +365,7 @@ class UserState(Enum):
     WAIT_PENALTY_BAN_DURATION = auto()
     WAIT_PENALTY_RESTRICT_DURATION = auto()
     WAIT_MOOD = auto()
-    WAIT_RESTORE = auto()  # حالة استعادة النسخة الاحتياطية
+    WAIT_RESTORE = auto()
 
 
 class StateManager:
@@ -998,7 +998,6 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
     text = TextUtils.sanitize(text, max_len=4096) if text else ""
 
     try:
-        # إذا كانت هناك وسائط، استخدم الدوال المناسبة
         if 'photo' in kwargs:
             return await bot.send_photo(chat_id=chat_id, photo=kwargs['photo'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'photo'})
         elif 'video' in kwargs:
@@ -1205,7 +1204,6 @@ async def apply_penalty(bot, chat_id: int, user_id: int, penalty: str, duration:
         return False, "نوع عقوبة غير معروف"
     success, msg = await strategy.apply(bot, chat_id, user_id, duration=duration)
     if success:
-        # استخدام DB.VALID_PENALTY_TYPES المحدثة
         if penalty in DB.VALID_PENALTY_TYPES:
             await DB.add_penalty(
                 user_id=user_id,
@@ -1298,7 +1296,6 @@ async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[D
                 continue
             if overwrite:
                 await DB.execute("DELETE FROM auto_replies WHERE chat_id=? AND keyword=?", (chat_id, keyword))
-            # دعم reply_type و media
             reply_type = item.get('reply_type', 'text')
             media_id = item.get('media_file_id')
             buttons = item.get('buttons')
@@ -1627,7 +1624,7 @@ class BackgroundTasks:
     async def cleanup_old_data() -> None:
         """تنظيف البيانات القديمة"""
         while True:
-            await asyncio.sleep(86400)  # مرة كل يوم
+            await asyncio.sleep(86400)
             try:
                 await DB.execute("DELETE FROM admin_logs WHERE created_at < datetime('now', '-30 days')")
                 await DB.execute("DELETE FROM user_penalties WHERE created_at < datetime('now', '-60 days')")
