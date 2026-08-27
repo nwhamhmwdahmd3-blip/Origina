@@ -1057,6 +1057,45 @@ class CallbackHandlers:
                 await _safe_answer(query)
                 return
 
+            # ✅ NEW: معالجة أزرار set_duration (مدة الحظر/الكتم/التقييد)
+            if data.startswith("set_duration:"):
+                parts_data = data.split(":")
+                if len(parts_data) >= 3:
+                    try:
+                        chat_id = int(parts_data[1])
+                        duration = int(parts_data[2])
+                    except ValueError:
+                        await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+                        return
+                    penalty_type = context.user_data.get('penalty_type', 'mute')
+                    if penalty_type == 'mute':
+                        col = 'mute_default_duration'
+                    elif penalty_type == 'ban':
+                        col = 'ban_default_duration'
+                    elif penalty_type == 'restrict':
+                        col = 'restrict_default_duration'
+                    else:
+                        await _safe_answer(query, "❌ نوع غير معروف", show_alert=True)
+                        return
+                    await DB.execute(f"UPDATE group_security SET {col} = ? WHERE chat_id = ?", (duration, chat_id))
+                    await _safe_answer(query, f"✅ تم تعيين المدة: {duration} ثانية")
+                    # العودة إلى قائمة الأمان
+                    await CallbackHandlers._handle_security(update, context, query, user_id, lang, return_to_main=True)
+                    return
+
+            # ✅ NEW: معالجة أزرار اختيار نوع العقوبة (sec_penalty_mute, sec_penalty_ban, sec_penalty_restrict)
+            if data.startswith("sec_penalty_") and ":" in data:
+                try:
+                    penalty_type = data.split("_")[-1].split(":")[0]
+                    chat_id = int(data.split(":")[-1])
+                except:
+                    await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
+                    return
+                if penalty_type in ['mute', 'ban', 'restrict']:
+                    context.user_data['penalty_type'] = penalty_type
+                    await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, penalty_type)
+                    return
+
             await _safe_answer(query, "⚠️ غير متوفر", show_alert=True)
 
         except BadRequest as e:
@@ -1265,7 +1304,7 @@ class CallbackHandlers:
     # ======================== دوال الأمان ========================
 
     @staticmethod
-    async def _handle_security(update, context, query, user_id, lang=None):
+    async def _handle_security(update, context, query, user_id, lang=None, return_to_main=False):
         if not lang:
             lang = await get_user_language_cached(user_id)
         data = query.data
@@ -1347,49 +1386,39 @@ class CallbackHandlers:
                 await _safe_answer(query)
                 return
             elif action == "penalty_durations":
-                # عرض قائمة مدد العقوبات
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang)
                 return
             elif action == "violation_penalties":
-                # عرض قائمة المخالفات
                 await CallbackHandlers._show_violation_penalties(update, context, query, chat_id, lang)
                 return
             elif action == "antiflood_settings":
-                # عرض إعدادات الفيضان
                 await CallbackHandlers._show_antiflood_settings(update, context, query, chat_id, lang)
                 return
             elif action == "night_settings":
-                # عرض إعدادات الوضع الليلي
                 await CallbackHandlers._show_night_settings(update, context, query, chat_id, lang)
                 return
             elif action == "auto_reply_menu":
-                # عرض قائمة الردود التلقائية
                 await CallbackHandlers._show_auto_reply_menu(update, context, query, chat_id, lang)
                 return
             elif action == "adv_act":
-                # عرض الإجراءات المتقدمة
                 await CallbackHandlers._show_advanced_actions(update, context, query, chat_id, lang)
                 return
             elif action == "act_log":
-                # عرض سجل المشرفين
                 await CallbackHandlers._show_admin_logs(update, context, query, chat_id, lang)
                 return
             elif action == "maxlen":
-                # طلب طول الرسالة الأقصى
                 StateManager.set(user_id, UserState.WAIT_MAX_LEN)
                 context.user_data['adv_chat'] = chat_id
                 await safe_edit(query, "📏 أرسل الحد الأقصى لطول الرسالة:")
                 await _safe_answer(query)
                 return
             elif action == "del_pen":
-                # إعدادات عقوبة الحذف
                 StateManager.set(user_id, UserState.WAIT_PENALTY_DURATION)
                 context.user_data['adv_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل مدة العقوبة بالثواني:")
                 await _safe_answer(query)
                 return
             elif action == "penalty":
-                # عرض أنواع العقوبات
                 await CallbackHandlers._show_penalty_types(update, context, query, chat_id, lang)
                 return
             else:
@@ -1400,7 +1429,6 @@ class CallbackHandlers:
             text = KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
 
-            # محاولة التعديل بدون parse_mode لتجنب مشاكل التنسيق
             try:
                 await query.edit_message_text(text, reply_markup=kb, parse_mode=None)
             except BadRequest as e:
@@ -1429,7 +1457,7 @@ class CallbackHandlers:
     # ======================== دوال عرض القوائم الفرعية للأمان ========================
 
     @staticmethod
-    async def _show_penalty_durations(update, context, query, chat_id, lang):
+    async def _show_penalty_durations(update, context, query, chat_id, lang, penalty_type='mute'):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("30 ثانية", callback_data=f"set_duration:{chat_id}:30"),
              InlineKeyboardButton("دقيقة", callback_data=f"set_duration:{chat_id}:60")],
@@ -1437,9 +1465,10 @@ class CallbackHandlers:
              InlineKeyboardButton("ساعة", callback_data=f"set_duration:{chat_id}:3600")],
             [InlineKeyboardButton("يوم", callback_data=f"set_duration:{chat_id}:86400"),
              InlineKeyboardButton("أسبوع", callback_data=f"set_duration:{chat_id}:604800")],
-            [InlineKeyboardButton("🔙 رجوع", callback_data=f"sec_penalty:{chat_id}")]
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")]
         ])
-        await safe_edit(query, "⏱️ اختر مدة العقوبة:", reply_markup=kb)
+        type_name = {'mute': 'كتم', 'ban': 'حظر', 'restrict': 'تقييد'}.get(penalty_type, penalty_type)
+        await safe_edit(query, f"⏱️ اختر مدة {type_name}:", reply_markup=kb)
         await _safe_answer(query)
 
     @staticmethod
@@ -1502,10 +1531,10 @@ class CallbackHandlers:
     @staticmethod
     async def _show_penalty_types(update, context, query, chat_id, lang):
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("حظر", callback_data=f"sec_set_penalty:{chat_id}:ban"),
-             InlineKeyboardButton("كتم", callback_data=f"sec_set_penalty:{chat_id}:mute")],
-            [InlineKeyboardButton("طرد", callback_data=f"sec_set_penalty:{chat_id}:kick"),
-             InlineKeyboardButton("تحذير", callback_data=f"sec_set_penalty:{chat_id}:warn")],
+            [InlineKeyboardButton("حظر", callback_data=f"sec_penalty_ban:{chat_id}"),
+             InlineKeyboardButton("كتم", callback_data=f"sec_penalty_mute:{chat_id}")],
+            [InlineKeyboardButton("طرد", callback_data=f"sec_penalty_kick:{chat_id}"),
+             InlineKeyboardButton("تحذير", callback_data=f"sec_penalty_warn:{chat_id}")],
             [InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🚫 اختر نوع العقوبة:", reply_markup=kb)
