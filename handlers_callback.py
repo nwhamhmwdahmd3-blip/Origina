@@ -850,7 +850,11 @@ class CallbackHandlers:
                 await _safe_answer(query)
                 groups = await get_user_groups_cached(user_id)
                 if not groups:
-                    add_text = KeyboardFactory.get_text("add_group_button", lang)
+                    add_text = "➕ أضف البوت لمجموعة"
+                    try:
+                        add_text = KeyboardFactory.get_text("add_group_button", lang)
+                    except:
+                        pass
                     kb = InlineKeyboardMarkup([[InlineKeyboardButton(add_text, url=f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup")]])
                     await safe_edit(query, "📭 لا توجد مجموعات", reply_markup=kb)
                     return
@@ -859,10 +863,14 @@ class CallbackHandlers:
                 for gid, name, username, banned in groups:
                     st = "✅" if not banned else "⛔"
                     text += f"{st} {name}\n"
-                    security_text = KeyboardFactory.get_text("security_button", lang).replace("{name}", name[:15])
+                    security_text = f"⚙️ أمان {name[:15]}"
+                    try:
+                        security_text = KeyboardFactory.get_text("security_button", lang).replace("{name}", name[:15])
+                    except:
+                        pass
                     kb.append([InlineKeyboardButton(security_text, callback_data=f"{CB.GRP_SET}:{gid}")])
                     kb.append([InlineKeyboardButton("🗑️ حذف", callback_data=f"grp_del:{gid}")])
-                kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
+                kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup(kb))
                 return
 
