@@ -27,6 +27,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - توسيع set_duration ليشمل مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
 - إضافة debounce لمنع الضغط المتكرر السريع
 - إضافة رد فوري في safe_edit لمنع ظهور "يبحث"
+- إصلاح استدعاء متكرر في _handle_security عند تبديل التحذيرات
 """
 
 import asyncio
@@ -740,7 +741,10 @@ class CallbackHandlers:
                         return
                     await DB.update_security_settings(chat_id, **{col: duration})
                     await _safe_answer(query, f"✅ تم تعيين المدة: {duration} ثانية")
-                    await CallbackHandlers._handle_security(update, context, query, user_id, lang)
+                    settings = await DB.get_security_settings(chat_id)
+                    text = KeyboardFactory._format_security_text(settings)
+                    kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
+                    await safe_edit(query, text, reply_markup=kb)
                     return
 
             # ========== sec_penalty_ ==========
@@ -1019,8 +1023,11 @@ class CallbackHandlers:
                 settings = await DB.get_security_settings(chat_id)
                 new_val = 1 - settings.get('warn_enabled', 0)
                 await DB.update_security_settings(chat_id, warn_enabled=new_val)
-                await _safe_answer(query, f"✅ التحذيرات: {'مفعلة' if new_val else 'معطلة'}")
-                await CallbackHandlers._handle_security(update, context, query, user_id, lang)
+                # عرض لوحة الأمان مباشرة بدلاً من إعادة الاستدعاء (إصلاح RecursionError)
+                settings = await DB.get_security_settings(chat_id)
+                text = KeyboardFactory._format_security_text(settings)
+                kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
+                await safe_edit(query, text, reply_markup=kb)
                 return
             elif action == "warn_count":
                 StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
@@ -1059,7 +1066,10 @@ class CallbackHandlers:
                 if penalty_type in DB.VALID_PENALTY_TYPES:
                     await DB.update_security_settings(chat_id, antiflood_penalty=penalty_type)
                     await _safe_answer(query, f"✅ تم تعيين عقوبة الفيضان: {penalty_type}")
-                    await CallbackHandlers._handle_security(update, context, query, user_id, lang)
+                    settings = await DB.get_security_settings(chat_id)
+                    text = KeyboardFactory._format_security_text(settings)
+                    kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
+                    await safe_edit(query, text, reply_markup=kb)
                 return
             elif action == "night_settings":
                 await CallbackHandlers._show_night_settings(update, context, query, chat_id, lang)
@@ -1072,7 +1082,10 @@ class CallbackHandlers:
                 if penalty_type in DB.VALID_PENALTY_TYPES:
                     await DB.update_security_settings(chat_id, night_mode_action=penalty_type)
                     await _safe_answer(query, f"✅ تم تعيين إجراء الوضع الليلي: {penalty_type}")
-                    await CallbackHandlers._handle_security(update, context, query, user_id, lang)
+                    settings = await DB.get_security_settings(chat_id)
+                    text = KeyboardFactory._format_security_text(settings)
+                    kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
+                    await safe_edit(query, text, reply_markup=kb)
                 return
             elif action == "auto_reply_menu":
                 await CallbackHandlers._show_auto_reply_menu(update, context, query, chat_id, lang)
