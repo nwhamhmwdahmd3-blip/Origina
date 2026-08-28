@@ -9,7 +9,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - إصلاح زر التحذير
 - إصلاح زر التحديثات
 - مدد العقوبات: دائم، نصف ساعة، ساعة، يوم، أسبوع، عشرة أيام، شهر
-- أزرار الردود التلقائية تعمل فورًا مع رسائل تأكيد
+- أزرار الردود التلقائية تعمل فورًا
 - عدّاد النشر الجماعي دقيق
 - استخدام parse_mode آمن (نص عادي بدون Markdown)
 - معالجات خاصة لأزرار الانضمام تمنع التعارض بين الموافقة والرفض
@@ -21,9 +21,9 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - استبدال query.edit_message_text بـ safe_edit في نهاية _handle_security
 - إصلاح زر "كلمات محظورة" ليفتح قائمة إدارة الكلمات بدلاً من التبديل
 - تصحيح _safe_answer لتجاهل أخطاء answerCallbackQuery المكررة
-- إصلاح أزرار الردود التلقائية (تفعيل/تعطيل، للمشرفين فقط)
-- إصلاح منطق أزرار التحذير: فصل نوع العقوبة عن المدة، وإزالة sec_penalty_warn من قائمة المد د
-- معالجة sec_warn_penalty_set داخل _handle_security مباشرة
+- إصلاح أزرار الردود التلقائية (تفعيل/تعطيل، للمشرفين فقط) مع رسائل تأكيد
+- تنظيف context.user_data عند التنقل بين القوائم
+- استبدال زر "تحذير" بـ "تقييد" في قائمة مدد العقوبات
 """
 
 import asyncio
@@ -129,6 +129,12 @@ def _mask_id(id_value, prefix=3, suffix=2):
 
 async def _is_channel_owner(user_id: int, channel_db_id: int) -> bool:
     return await DB.is_channel_owner(user_id, channel_db_id)
+
+
+def _clear_security_context(context):
+    """تنظيف بيانات الأمان المؤقتة عند الخروج من القائمة"""
+    for key in ('security_chat_id', 'auto_chat', 'adv_chat', 'ban_chat', 'sec_chat'):
+        context.user_data.pop(key, None)
 
 
 class CallbackHandlers:
@@ -591,6 +597,8 @@ class CallbackHandlers:
                 return
 
             # ========== المجموعات ==========
+            # تنظيف بيانات الأمان عند فتح قائمة المجموعات
+            _clear_security_context(context)
             if base_data == CB.GROUPS:
                 groups = await DB.get_user_groups(user_id)
                 if not groups:
@@ -713,10 +721,7 @@ class CallbackHandlers:
                     except (ValueError, IndexError):
                         await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
                         return
-                    col = {'mute': 'mute_default_duration', 'ban': 'ban_default_duration', 'restrict': 'restrict_default_duration'}.get(penalty_type, None)
-                    if col is None:
-                        await _safe_answer(query, "❌ نوع عقوبة غير صالح", show_alert=True)
-                        return
+                    col = {'mute': 'mute_default_duration', 'ban': 'ban_default_duration', 'restrict': 'restrict_default_duration'}.get(penalty_type, 'mute_default_duration')
                     await DB.update_security_settings(chat_id, **{col: duration})
                     await _safe_answer(query, f"✅ تم تعيين المدة: {duration} ثانية")
                     await CallbackHandlers._handle_security(update, context, query, user_id, lang)
@@ -730,12 +735,9 @@ class CallbackHandlers:
                 except (ValueError, IndexError):
                     await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
                     return
-                if penalty_type in ['mute', 'ban', 'restrict', 'kick']:
+                if penalty_type in ['mute', 'ban', 'restrict', 'kick', 'warn']:
                     context.user_data['penalty_type'] = penalty_type
                     await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, penalty_type)
-                    return
-                else:
-                    await _safe_answer(query, "❌ نوع عقوبة غير صالح", show_alert=True)
                     return
 
             # ========== معالجات اللوحة الخاصة (panel) ==========
@@ -937,18 +939,6 @@ class CallbackHandlers:
             await CallbackHandlers._show_banned_words_menu(update, context, query, chat_id, lang)
             return
 
-        # معالجة خاصة لزر "تحذيرات" لفتح قائمة إدارة التحذيرات
-        if action == "warn":
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ تفعيل/تعطيل", callback_data=f"sec_warn_toggle:{chat_id}")],
-                [InlineKeyboardButton("🔢 عدد التحذيرات", callback_data=f"sec_warn_count:{chat_id}")],
-                [InlineKeyboardButton("⚖️ عقوبة التحذير", callback_data=f"sec_warn_penalty:{chat_id}")],
-                [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
-            ])
-            await safe_edit(query, "⚠️ إدارة التحذيرات:", reply_markup=kb)
-            await _safe_answer(query)
-            return
-
         toggle_map = {
             "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
             "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
@@ -958,6 +948,7 @@ class CallbackHandlers:
             "goodbye": "goodbye_enabled", "flood": "antiflood_enabled", "night": "night_mode_enabled",
             "approve_join": "auto_approve_join",
             "reject_join": "auto_reject_join", "nsfw": "nsfw_enabled",
+            "warn": "warn_enabled",
         }
 
         try:
@@ -983,33 +974,7 @@ class CallbackHandlers:
                 await DB.update_security_settings(chat_id, **{k: 0 for k in toggle_map.values()})
             elif action == "close":
                 await safe_delete_message(query)
-                return
-            elif action == "warn_toggle":
-                settings = await DB.get_security_settings(chat_id)
-                new_val = 1 - settings.get('warn_enabled', 0)
-                await DB.update_security_settings(chat_id, warn_enabled=new_val)
-                await _safe_answer(query, f"✅ التحذيرات: {'مفعلة' if new_val else 'معطلة'}")
-                await CallbackHandlers._handle_security(update, context, query, user_id, lang)
-                return
-            elif action == "warn_count":
-                StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
-                context.user_data['sec_chat'] = chat_id
-                await safe_edit(query, "🔢 أرسل عدد التحذيرات:")
-                return
-            elif action == "warn_penalty":
-                await CallbackHandlers._show_warn_penalty_types(update, context, query, chat_id, lang)
-                return
-            elif action == "warn_penalty_set":
-                penalty_type = parts[2] if len(parts) > 2 else 'ban'
-                if penalty_type in DB.VALID_PENALTY_TYPES:
-                    await DB.update_security_settings(chat_id, warn_penalty=penalty_type)
-                    await _safe_answer(query, f"✅ تم تعيين عقوبة التحذير: {penalty_type}")
-                    settings = await DB.get_security_settings(chat_id)
-                    text = KeyboardFactory._format_security_text(settings)
-                    kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                    await safe_edit(query, text, reply_markup=kb)
-                else:
-                    await _safe_answer(query, "❌ نوع عقوبة غير صالح", show_alert=True)
+                _clear_security_context(context)
                 return
             elif action == "penalty_durations":
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang)
@@ -1110,6 +1075,14 @@ class CallbackHandlers:
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "📝 أرسل نص الوداع:")
                 return
+            elif action == "warn_count":
+                StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
+                context.user_data['sec_chat'] = chat_id
+                await safe_edit(query, "🔢 أرسل عدد التحذيرات:")
+                return
+            elif action == "warn_penalty":
+                await CallbackHandlers._show_penalty_types(update, context, query, chat_id, lang)
+                return
             else:
                 await _safe_answer(query, "⚠️ غير معروف", show_alert=True)
                 return
@@ -1122,19 +1095,6 @@ class CallbackHandlers:
         except Exception as e:
             logger.error(f"خطأ في إعدادات الأمان: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
-
-    @staticmethod
-    async def _show_warn_penalty_types(update, context, query, chat_id, lang):
-        """عرض أنواع العقوبات الممكنة بعد تجاوز عدد التحذيرات (بدون مدة)"""
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🚫 حظر", callback_data=f"sec_warn_penalty_set:{chat_id}:ban"),
-             InlineKeyboardButton("🔇 كتم", callback_data=f"sec_warn_penalty_set:{chat_id}:mute")],
-            [InlineKeyboardButton("👢 طرد", callback_data=f"sec_warn_penalty_set:{chat_id}:kick"),
-             InlineKeyboardButton("🔒 تقييد", callback_data=f"sec_warn_penalty_set:{chat_id}:restrict")],
-            [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
-        ])
-        await safe_edit(query, "⚖️ اختر عقوبة تجاوز التحذيرات:", reply_markup=kb)
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_banned_words_menu(update, context, query, chat_id, lang):
@@ -1186,7 +1146,7 @@ class CallbackHandlers:
             kb.append(row)
         kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")])
 
-        type_name = {'mute': 'كتم', 'ban': 'حظر', 'restrict': 'تقييد', 'kick': 'طرد'}.get(penalty_type, penalty_type)
+        type_name = {'mute': 'كتم', 'ban': 'حظر', 'restrict': 'تقييد', 'kick': 'طرد', 'warn': 'تحذير'}.get(penalty_type, penalty_type)
         await safe_edit(query, f"⏱️ اختر مدة {type_name}:", reply_markup=InlineKeyboardMarkup(kb))
 
     @staticmethod
@@ -1673,6 +1633,8 @@ class CallbackHandlers:
             return
 
         if action == "menu":
+            _clear_security_context(context)
+            context.user_data['auto_chat'] = chat_id
             kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
             await safe_edit(query, "🤖 إعدادات الردود التلقائية:", reply_markup=kb)
             return
@@ -1847,7 +1809,7 @@ class CallbackHandlers:
                 return
 
         elif parts[0].startswith("pen_"):
-            penalty_types = {'ban', 'mute', 'kick', 'restrict'}
+            penalty_types = {'ban', 'mute', 'kick', 'warn', 'restrict'}
             if action in penalty_types:
                 await DB.update_security_settings(chat_id, auto_penalty=action)
                 await _safe_answer(query, f"✅ تم تعيين العقوبة: {action}")
