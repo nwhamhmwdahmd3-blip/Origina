@@ -783,7 +783,7 @@ class MessageHandlers:
         word = (update.effective_message.text or "").strip().lower()
         success, duplicate = await DB.add_banned_word(word, -1, user_id)
         if success:
-            await invalidate_banned_words_cache(-1)
+            invalidate_banned_words_cache(-1)
             await safe_send(context.bot, user_id, f"✅ تمت إضافة الكلمة المحظورة: {escape(word)}")
         elif duplicate:
             await safe_send(context.bot, user_id, "❌ الكلمة موجودة بالفعل في القائمة العامة")
@@ -796,7 +796,7 @@ class MessageHandlers:
         user_id = update.effective_user.id
         word = (update.effective_message.text or "").strip().lower()
         await DB.remove_banned_word(word, -1)
-        await invalidate_banned_words_cache(-1)
+        invalidate_banned_words_cache(-1)
         await safe_send(context.bot, user_id, "✅ تمت الإزالة")
         StateManager.clear(user_id)
 
@@ -811,7 +811,7 @@ class MessageHandlers:
         word = (update.effective_message.text or "").strip().lower()
         success, duplicate = await DB.add_banned_word(word, chat_id, user_id)
         if success:
-            await invalidate_banned_words_cache(chat_id)
+            invalidate_banned_words_cache(chat_id)
             await safe_send(context.bot, user_id, f"✅ تمت إضافة الكلمة المحظورة: {escape(word)}")
         elif duplicate:
             await safe_send(context.bot, user_id, "❌ الكلمة موجودة بالفعل في قائمة المجموعة")
@@ -829,7 +829,7 @@ class MessageHandlers:
             return
         word = (update.effective_message.text or "").strip().lower()
         await DB.remove_banned_word(word, chat_id)
-        await invalidate_banned_words_cache(chat_id)
+        invalidate_banned_words_cache(chat_id)
         await safe_send(context.bot, user_id, "✅ تمت الإزالة")
         StateManager.clear(user_id)
 
