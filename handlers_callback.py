@@ -27,7 +27,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - توسيع set_duration ليشمل مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
 - إضافة debounce لمنع الضغط المتكرر السريع
 - إضافة رد فوري في safe_edit لمنع ظهور "يبحث"
-- إصلاح استدعاء متكرر في _handle_security عند تبديل التحذيرات
+- تحسين أداء _handle_security بتقليل استعلامات قاعدة البيانات
 """
 
 import asyncio
@@ -967,6 +967,7 @@ class CallbackHandlers:
             settings = await DB.get_security_settings(chat_id)
             new_val = 1 - settings.get('delete_banned_words', 0)
             await DB.update_security_settings(chat_id, delete_banned_words=new_val)
+            settings['delete_banned_words'] = new_val  # تحديث محلي
             await CallbackHandlers._show_banned_words_menu(update, context, query, chat_id, lang)
             return
 
@@ -1005,6 +1006,17 @@ class CallbackHandlers:
                 elif action == "reject_join" and new_val:
                     update_data['auto_approve_join'] = 0
                 await DB.update_security_settings(chat_id, **update_data)
+                # تحديث محلي للإعدادات لتجنب جلبها مرة أخرى
+                settings[col] = new_val
+                if action == "approve_join" and new_val:
+                    settings['auto_reject_join'] = 0
+                elif action == "reject_join" and new_val:
+                    settings['auto_approve_join'] = 0
+                text = KeyboardFactory._format_security_text(settings)
+                kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
+                await safe_edit(query, text, reply_markup=kb)
+                return
+
             elif action == "enable_all":
                 settings = await DB.get_security_settings(chat_id)
                 update_data = {k: 1 for k in toggle_map.values()}
@@ -1014,29 +1026,46 @@ class CallbackHandlers:
                 else:
                     update_data['auto_reject_join'] = 0
                 await DB.update_security_settings(chat_id, **update_data)
-            elif action == "disable_all":
-                await DB.update_security_settings(chat_id, **{k: 0 for k in toggle_map.values()})
-            elif action == "close":
-                await safe_delete_message(query)
-                return
-            elif action == "warn_toggle":
-                settings = await DB.get_security_settings(chat_id)
-                new_val = 1 - settings.get('warn_enabled', 0)
-                await DB.update_security_settings(chat_id, warn_enabled=new_val)
-                # عرض لوحة الأمان مباشرة بدلاً من إعادة الاستدعاء (إصلاح RecursionError)
-                settings = await DB.get_security_settings(chat_id)
+                # تحديث محلي
+                settings.update(update_data)
                 text = KeyboardFactory._format_security_text(settings)
                 kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
                 await safe_edit(query, text, reply_markup=kb)
                 return
+
+            elif action == "disable_all":
+                update_data = {k: 0 for k in toggle_map.values()}
+                await DB.update_security_settings(chat_id, **update_data)
+                settings = await DB.get_security_settings(chat_id)  # لا يمكن التحديث المحلي بسهولة لأننا لا نملك القيم الأصلية؛ يمكن جلبها مرة واحدة
+                text = KeyboardFactory._format_security_text(settings)
+                kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
+                await safe_edit(query, text, reply_markup=kb)
+                return
+
+            elif action == "close":
+                await safe_delete_message(query)
+                return
+
+            elif action == "warn_toggle":
+                settings = await DB.get_security_settings(chat_id)
+                new_val = 1 - settings.get('warn_enabled', 0)
+                await DB.update_security_settings(chat_id, warn_enabled=new_val)
+                settings['warn_enabled'] = new_val
+                text = KeyboardFactory._format_security_text(settings)
+                kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
+                await safe_edit(query, text, reply_markup=kb)
+                return
+
             elif action == "warn_count":
                 StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "🔢 أرسل عدد التحذيرات:")
                 return
+
             elif action == "warn_penalty":
                 await CallbackHandlers._show_warn_penalty_types(update, context, query, chat_id, lang)
                 return
+
             elif action == "warn_penalty_set":
                 penalty_type = parts[2] if len(parts) > 2 else 'ban'
                 if penalty_type in DB.VALID_PENALTY_TYPES:
@@ -1049,18 +1078,23 @@ class CallbackHandlers:
                 else:
                     await _safe_answer(query, "❌ نوع عقوبة غير صالح", show_alert=True)
                 return
+
             elif action == "penalty_durations":
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang)
                 return
+
             elif action == "violation_penalties":
                 await CallbackHandlers._show_violation_penalties(update, context, query, chat_id, lang)
                 return
+
             elif action == "antiflood_settings":
                 await CallbackHandlers._show_antiflood_settings(update, context, query, chat_id, lang)
                 return
+
             elif action == "antiflood_penalty":
                 await CallbackHandlers._show_penalty_type_selection(update, context, query, chat_id, lang, "antiflood_penalty")
                 return
+
             elif action == "set_antiflood_penalty":
                 penalty_type = parts[2] if len(parts) > 2 else 'mute'
                 if penalty_type in DB.VALID_PENALTY_TYPES:
@@ -1071,12 +1105,15 @@ class CallbackHandlers:
                     kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
                     await safe_edit(query, text, reply_markup=kb)
                 return
+
             elif action == "night_settings":
                 await CallbackHandlers._show_night_settings(update, context, query, chat_id, lang)
                 return
+
             elif action == "night_action":
                 await CallbackHandlers._show_penalty_type_selection(update, context, query, chat_id, lang, "night_mode_action")
                 return
+
             elif action == "set_night_action":
                 penalty_type = parts[2] if len(parts) > 2 else 'mute'
                 if penalty_type in DB.VALID_PENALTY_TYPES:
@@ -1087,85 +1124,104 @@ class CallbackHandlers:
                     kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
                     await safe_edit(query, text, reply_markup=kb)
                 return
+
             elif action == "auto_reply_menu":
                 await CallbackHandlers._show_auto_reply_menu(update, context, query, chat_id, lang)
                 return
+
             elif action == "adv_act":
                 await CallbackHandlers._show_advanced_actions(update, context, query, chat_id, lang)
                 return
+
             elif action == "act_log":
                 await CallbackHandlers._show_admin_logs(update, context, query, chat_id, lang)
                 return
+
             elif action == "maxlen":
                 StateManager.set(user_id, UserState.WAIT_MAX_LEN)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "📏 أرسل الحد الأقصى لطول الرسالة:")
                 return
+
             elif action == "del_pen":
                 StateManager.set(user_id, UserState.WAIT_PENALTY_DURATION)
                 context.user_data['adv_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل مدة العقوبة بالدقائق:")
                 return
+
             elif action == "penalty":
                 await CallbackHandlers._show_penalty_types(update, context, query, chat_id, lang)
                 return
+
             elif action == "set_violation_strikes":
                 StateManager.set(user_id, UserState.WAIT_WARN_COUNT)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "📊 أرسل عدد المخالفات قبل العقوبة:")
                 return
+
             elif action == "set_violation_duration":
                 StateManager.set(user_id, UserState.WAIT_PENALTY_DURATION)
                 context.user_data['adv_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل مدة العقوبة بالدقائق:")
                 return
+
             elif action == "set_antiflood_messages":
                 StateManager.set(user_id, UserState.WAIT_ANTIFLOOD_MESSAGES)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "📊 أرسل عدد الرسائل المسموحة:")
                 return
+
             elif action == "set_antiflood_seconds":
                 StateManager.set(user_id, UserState.WAIT_ANTIFLOOD_SECONDS)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل المدة بالثواني:")
                 return
+
             elif action == "antiflood_duration":
                 context.user_data['penalty_type'] = 'antiflood'
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'antiflood')
                 return
+
             elif action == "night_duration":
                 context.user_data['penalty_type'] = 'night'
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'night')
                 return
+
             elif action == "warn_penalty_duration":
                 context.user_data['penalty_type'] = 'warn_penalty'
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'warn_penalty')
                 return
+
             elif action == "set_night_start":
                 StateManager.set(user_id, UserState.WAIT_NIGHT_START)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "🌙 أرسل وقت البدء (HH:MM):")
                 return
+
             elif action == "set_night_end":
                 StateManager.set(user_id, UserState.WAIT_NIGHT_END)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "🌙 أرسل وقت النهاية (HH:MM):")
                 return
+
             elif action == "slow_mode_seconds":
                 StateManager.set(user_id, UserState.WAIT_SLOW_MODE_SECONDS)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل مدة الوضع البطيء بالثواني:")
                 return
+
             elif action == "welcome_text":
                 StateManager.set(user_id, UserState.WAIT_WELCOME_TEXT)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "📝 أرسل نص الترحيب:")
                 return
+
             elif action == "goodbye_text":
                 StateManager.set(user_id, UserState.WAIT_GOODBYE_TEXT)
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "📝 أرسل نص الوداع:")
                 return
+
             else:
                 await _safe_answer(query, "⚠️ غير معروف", show_alert=True)
                 return
@@ -1173,8 +1229,8 @@ class CallbackHandlers:
             settings = await DB.get_security_settings(chat_id)
             text = KeyboardFactory._format_security_text(settings)
             kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-
             await safe_edit(query, text, reply_markup=kb)
+
         except Exception as e:
             logger.error(f"خطأ في إعدادات الأمان: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
