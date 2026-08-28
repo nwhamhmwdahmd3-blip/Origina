@@ -14,6 +14,7 @@ handlers_message.py - معالجات الرسائل - النسخة النهائ�
 - دعم الوسائط في الردود التلقائية
 - معالجة جميع الحالات الجديدة
 - تحسينات أمنية وأداء شاملة
+- استخدام مدد العقوبات الجديدة (فيضان، ليلي، تحذير) عند تطبيق العقوبات
 """
 
 import asyncio
@@ -303,6 +304,18 @@ class MessageHandlers:
     # =================================================================
 
     @staticmethod
+    def _get_penalty_duration(settings: dict, violation_type: str, penalty_type: str) -> int:
+        """اختيار المدة المناسبة للعقوبة حسب نوع المخالفة"""
+        if violation_type in ('flood', 'antiflood'):
+            return settings.get('antiflood_penalty_duration', 3600)
+        elif violation_type in ('night', 'night_mode'):
+            return settings.get('night_mode_action_duration', 3600)
+        elif violation_type in ('warn_penalty', 'warn'):
+            return settings.get('warn_penalty_duration', 3600)
+        # افتراضي
+        return settings.get('auto_mute_duration', 3600)
+
+    @staticmethod
     async def _delete_and_warn(update, context, chat_id, user_id, violation_type, settings: dict):
         """حذف الرسالة وإرسال تنبيه وتطبيق العقوبات"""
         try:
@@ -320,7 +333,7 @@ class MessageHandlers:
             penalty_type = settings.get('auto_penalty', 'mute')
             if penalty_type not in ['mute', 'ban', 'restrict', 'kick', 'warn']:
                 penalty_type = 'mute'
-            duration_seconds = settings.get('auto_mute_duration', 3600)
+            duration_seconds = MessageHandlers._get_penalty_duration(settings, violation_type, penalty_type)
 
         await DB.add_admin_log(chat_id, context.bot.id, f"violation_{violation_type}", user_id)
 

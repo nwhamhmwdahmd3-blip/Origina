@@ -27,6 +27,8 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ تعيين القناة الجديدة كنشطة تلقائياً عند الإضافة
 - ✅ تعديل grant_subscription_days لاستخدام خطة الهدية عند عدم تحديد plan_id
 - ✅ زيادة عدد القنوات في خطة التجربة إلى 100
+- ✅ إضافة أعمدة مدد العقوبات الجديدة (antiflood_penalty_duration, night_mode_action_duration, warn_penalty_duration)
+- ✅ إضافة دالة export_auto_replies_to_file لتصدير الردود التلقائية
 """
 
 import sqlite3
@@ -435,14 +437,17 @@ class Database:
                 antiflood_messages INTEGER DEFAULT 5,
                 antiflood_seconds INTEGER DEFAULT 10,
                 antiflood_penalty TEXT DEFAULT 'mute',
+                antiflood_penalty_duration INTEGER DEFAULT 3600,
                 max_warnings INTEGER DEFAULT 3,
                 warn_penalty TEXT DEFAULT 'ban',
+                warn_penalty_duration INTEGER DEFAULT 3600,
                 warn_enabled INTEGER DEFAULT 0,
                 max_message_length INTEGER DEFAULT 0,
                 night_mode_enabled INTEGER DEFAULT 0,
                 night_mode_start TEXT DEFAULT '23:00',
                 night_mode_end TEXT DEFAULT '06:00',
                 night_mode_action TEXT DEFAULT 'mute',
+                night_mode_action_duration INTEGER DEFAULT 3600,
                 nsfw_enabled INTEGER DEFAULT 0,
                 nsfw_threshold REAL DEFAULT 0.7,
                 nsfw_filter INTEGER DEFAULT 0,
@@ -1451,8 +1456,11 @@ class Database:
             'delete_games', 'delete_voice', 'delete_video_note', 'delete_photos',
             'delete_penalty', 'delete_penalty_duration', 'delete_penalty_messages',
             'antiflood_enabled', 'antiflood_messages', 'antiflood_seconds', 'antiflood_penalty',
-            'max_warnings', 'warn_penalty', 'warn_enabled', 'max_message_length',
+            'antiflood_penalty_duration',
+            'max_warnings', 'warn_penalty', 'warn_penalty_duration', 'warn_enabled',
+            'max_message_length',
             'night_mode_enabled', 'night_mode_start', 'night_mode_end', 'night_mode_action',
+            'night_mode_action_duration',
             'nsfw_enabled', 'nsfw_threshold', 'nsfw_filter',
             'auto_approve_join', 'auto_reject_join',
             'mute_default_duration', 'ban_default_duration', 'warn_default_duration', 'restrict_default_duration',
@@ -1602,6 +1610,26 @@ class Database:
 
     async def reset_auto_replies(self, chat_id: int) -> bool:
         return await self.execute("DELETE FROM auto_replies WHERE chat_id = ?", (chat_id,))
+
+    async def export_auto_replies_to_file(self) -> Optional[str]:
+        """
+        تصدير جميع الردود التلقائية إلى ملف JSON وإرجاع مسار الملف.
+        """
+        try:
+            rows = await self.fetchall("SELECT * FROM auto_replies")
+            if not rows:
+                return None
+            timestamp = TimeUtils.utc_now().strftime('%Y%m%d_%H%M%S')
+            file_path = PATHS.BACKUPS / f"auto_replies_export_{timestamp}.json"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            def _write():
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump([dict(r) for r in rows], f, ensure_ascii=False, indent=2)
+            await asyncio.to_thread(_write)
+            return str(file_path)
+        except Exception as e:
+            logger.error(f"❌ Error in export_auto_replies_to_file: {e}", exc_info=True)
+            return None
 
     # =====================================================================
     # دوال الجدولة
@@ -2524,4 +2552,3 @@ async def get_db() -> Database:
 async def initialize_db() -> bool:
     """تهيئة قاعدة البيانات"""
     return await DB.initialize()
-

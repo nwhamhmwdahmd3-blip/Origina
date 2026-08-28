@@ -32,6 +32,8 @@ import json
 import time
 import shutil
 import re
+import os  # <-- إضافة للتصدير
+from pathlib import Path  # <-- إضافة للتصدير
 from typing import Optional, Dict, Any, List, Tuple
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ChatPermissions
@@ -713,7 +715,15 @@ class CallbackHandlers:
                     except (ValueError, IndexError):
                         await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
                         return
-                    col = {'mute': 'mute_default_duration', 'ban': 'ban_default_duration', 'restrict': 'restrict_default_duration'}.get(penalty_type, None)
+                    # توسيع قاموس col ليشمل الأنواع الجديدة
+                    col = {
+                        'mute': 'mute_default_duration',
+                        'ban': 'ban_default_duration',
+                        'restrict': 'restrict_default_duration',
+                        'antiflood': 'antiflood_penalty_duration',
+                        'night': 'night_mode_action_duration',
+                        'warn_penalty': 'warn_penalty_duration',
+                    }.get(penalty_type, None)
                     if col is None:
                         await _safe_answer(query, "❌ نوع عقوبة غير صالح", show_alert=True)
                         return
@@ -943,6 +953,7 @@ class CallbackHandlers:
                 [InlineKeyboardButton("✅ تفعيل/تعطيل", callback_data=f"sec_warn_toggle:{chat_id}")],
                 [InlineKeyboardButton("🔢 عدد التحذيرات", callback_data=f"sec_warn_count:{chat_id}")],
                 [InlineKeyboardButton("⚖️ عقوبة التحذير", callback_data=f"sec_warn_penalty:{chat_id}")],
+                [InlineKeyboardButton("⏱️ مدة العقوبة", callback_data=f"sec_warn_penalty_duration:{chat_id}")],  # <-- إضافة
                 [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
             ])
             await safe_edit(query, "⚠️ إدارة التحذيرات:", reply_markup=kb)
@@ -974,6 +985,7 @@ class CallbackHandlers:
             elif action == "enable_all":
                 settings = await DB.get_security_settings(chat_id)
                 update_data = {k: 1 for k in toggle_map.values()}
+                update_data['warn_enabled'] = 1  # <-- إضافة تفعيل التحذير
                 if settings.get('auto_reject_join'):
                     update_data['auto_approve_join'] = 0
                 else:
@@ -1085,6 +1097,18 @@ class CallbackHandlers:
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل المدة بالثواني:")
                 return
+            elif action == "antiflood_duration":  # <-- إضافة
+                context.user_data['penalty_type'] = 'antiflood'
+                await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'antiflood')
+                return
+            elif action == "night_duration":  # <-- إضافة
+                context.user_data['penalty_type'] = 'night'
+                await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'night')
+                return
+            elif action == "warn_penalty_duration":  # <-- إضافة
+                context.user_data['penalty_type'] = 'warn_penalty'
+                await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'warn_penalty')
+                return
             elif action == "set_night_start":
                 StateManager.set(user_id, UserState.WAIT_NIGHT_START)
                 context.user_data['sec_chat'] = chat_id
@@ -1186,7 +1210,7 @@ class CallbackHandlers:
             kb.append(row)
         kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")])
 
-        type_name = {'mute': 'كتم', 'ban': 'حظر', 'restrict': 'تقييد', 'kick': 'طرد'}.get(penalty_type, penalty_type)
+        type_name = {'mute': 'كتم', 'ban': 'حظر', 'restrict': 'تقييد', 'kick': 'طرد', 'antiflood': 'الفيضان', 'night': 'الوضع الليلي', 'warn_penalty': 'عقوبة التحذير'}.get(penalty_type, penalty_type)
         await safe_edit(query, f"⏱️ اختر مدة {type_name}:", reply_markup=InlineKeyboardMarkup(kb))
 
     @staticmethod
@@ -1203,7 +1227,8 @@ class CallbackHandlers:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("عدد الرسائل", callback_data=f"sec_set_antiflood_messages:{chat_id}"),
              InlineKeyboardButton("الثواني", callback_data=f"sec_set_antiflood_seconds:{chat_id}")],
-            [InlineKeyboardButton("نوع العقوبة", callback_data=f"sec_antiflood_penalty:{chat_id}")],
+            [InlineKeyboardButton("نوع العقوبة", callback_data=f"sec_antiflood_penalty:{chat_id}"),
+             InlineKeyboardButton("⏱️ مدة العقوبة", callback_data=f"sec_antiflood_duration:{chat_id}")],  # <-- إضافة
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🌊 إعدادات الفيضان:", reply_markup=kb)
@@ -1213,7 +1238,8 @@ class CallbackHandlers:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("وقت البدء", callback_data=f"sec_set_night_start:{chat_id}"),
              InlineKeyboardButton("وقت النهاية", callback_data=f"sec_set_night_end:{chat_id}")],
-            [InlineKeyboardButton("نوع الإجراء", callback_data=f"sec_night_action:{chat_id}")],
+            [InlineKeyboardButton("نوع الإجراء", callback_data=f"sec_night_action:{chat_id}"),
+             InlineKeyboardButton("⏱️ مدة الإجراء", callback_data=f"sec_night_duration:{chat_id}")],  # <-- إضافة
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🌙 إعدادات الوضع الليلي:", reply_markup=kb)
@@ -1555,9 +1581,19 @@ class CallbackHandlers:
                 return
 
             elif data == CB.ADMIN_EXPORT_REPLIES:
-                count = await DB.backup_auto_replies()
-                if count > 0:
-                    await safe_send(context.bot, user_id, f"✅ تم تصدير {count} رد")
+                # التعديل: تصدير وإرسال الملف
+                file_path = await DB.export_auto_replies_to_file()  # يجب تنفيذ هذه الدالة في database.py
+                if file_path:
+                    try:
+                        with open(file_path, 'rb') as f:
+                            await context.bot.send_document(
+                                chat_id=user_id,
+                                document=f,
+                                filename=Path(file_path).name
+                            )
+                        os.remove(file_path)
+                    except Exception as e:
+                        await safe_send(context.bot, user_id, f"❌ فشل الإرسال: {e}")
                 else:
                     await safe_edit(query, "📭 لا توجد ردود")
                 return

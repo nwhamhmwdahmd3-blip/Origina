@@ -9,7 +9,7 @@
 - المهام الخلفية مع إعادة تشغيل عند الفشل
 - دعم webhook و polling
 - فتح المنفذ تلقائيًا لتفعيل الخدمة على Render
-- أمر syncgroup أول الأوامر لتفعيل المجموعة
+- قوائم أوامر منفصلة للخاص والمجموعة
 """
 
 import asyncio
@@ -17,6 +17,7 @@ import os
 import logging
 import traceback
 import json
+import time
 
 from telegram import (
     BotCommandScopeAllPrivateChats,
@@ -192,11 +193,12 @@ async def main():
     )
 
     app = Application.builder().token(CONFIG.TOKEN).build()
+    # إضافة وقت بدء التشغيل
+    app.bot_data['start_time'] = time.monotonic()
     await app.initialize()
 
-    # ========== قائمة الأوامر ==========
-    commands = [
-        ("syncgroup", "🔗 تفعيل المجموعة"),
+    # ========== قائمة الأوامر الخاصة ==========
+    private_commands = [
         ("start", "🏠 القائمة الرئيسية"),
         ("help", "📚 المساعدة"),
         ("trial", "🎁 تجربة مجانية"),
@@ -211,17 +213,6 @@ async def main():
         ("set_min_interval", "⏱️ تعيين الحد الأدنى للفاصل"),
         ("gift_plans", "🎁 خطط الهدايا"),
         ("redeem_gift", "🎟️ استرداد كود هدية"),
-        ("security", "🛡️ إعدادات الأمان"),
-        ("panel", "📋 لوحة التحكم"),
-        ("lock", "🔒 قفل المجموعة"),
-        ("unlock", "🔓 فتح المجموعة"),
-        ("ban", "🚫 حظر مستخدم"),
-        ("mute", "🔇 كتم مستخدم"),
-        ("warn", "⚠️ تحذير مستخدم"),
-        ("kick", "👢 طرد مستخدم"),
-        ("restrict", "🔒 تقييد مستخدم"),
-        ("unban", "🔓 إلغاء حظر"),
-        ("pin", "📌 تثبيت رسالة"),
         ("mood", "🎭 تحليل المشاعر"),
         ("admin", "👑 لوحة الأدمن"),
         ("broadcast", "📨 بث جماعي"),
@@ -240,8 +231,25 @@ async def main():
         ("posts", "📋 منشوراتي"),
     ]
 
-    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
-    await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
+    # ========== قائمة أوامر المجموعة ==========
+    group_commands = [
+        ("syncgroup", "🔗 تفعيل المجموعة"),
+        ("security", "🛡️ إعدادات الأمان"),
+        ("panel", "📋 لوحة التحكم"),
+        ("lock", "🔒 قفل المجموعة"),
+        ("unlock", "🔓 فتح المجموعة"),
+        ("ban", "🚫 حظر مستخدم"),
+        ("mute", "🔇 كتم مستخدم"),
+        ("warn", "⚠️ تحذير مستخدم"),
+        ("kick", "👢 طرد مستخدم"),
+        ("restrict", "🔒 تقييد مستخدم"),
+        ("unban", "🔓 إلغاء حظر"),
+        ("pin", "📌 تثبيت رسالة"),
+    ]
+
+    # تعيين الأوامر حسب النطاق
+    await app.bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
+    await app.bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
 
     # ========== تسجيل المعالجات ==========
     # الأوامر الأساسية

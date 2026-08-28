@@ -19,6 +19,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - إصلاح تمرير kwargs في safe_send
 - دعم إرسال الوسائط في safe_send
 - تقصير نص إعدادات الأمان لمنع تجاوز حد تيليجرام
+- عرض مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
 """
 
 import asyncio
@@ -861,6 +862,8 @@ class KeyboardFactory:
             f"✅ موافقة: {st(settings.get('auto_approve_join', 0))} | ❌ رفض: {st(settings.get('auto_reject_join', 0))}\n",
             f"⏱️ كتم: {settings.get('mute_default_duration', 3600)}ث | 🚫 حظر: {settings.get('ban_default_duration', 0)}ث | 🔒 تقييد: {settings.get('restrict_default_duration', 1800)}ث",
             f"⚠️ مخالفات: {settings.get('violation_strikes', 3)} | ⏱️ مدة: {settings.get('violation_duration', 60)}ث",
+            f"🌊 مدة الفيضان: {settings.get('antiflood_penalty_duration', 3600)}ث | 🌙 مدة الليل: {settings.get('night_mode_action_duration', 3600)}ث",
+            f"⚖️ مدة عقوبة التحذير: {settings.get('warn_penalty_duration', 3600)}ث",
             "━━━━━━━━━━━━━━━━━━━━"
         ]
         return "\n".join(lines)
