@@ -21,6 +21,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - استبدال query.edit_message_text بـ safe_edit في نهاية _handle_security
 - إصلاح زر "كلمات محظورة" ليفتح قائمة إدارة الكلمات بدلاً من التبديل
 - تصحيح _safe_answer لتجاهل أخطاء answerCallbackQuery المكررة
+- إصلاح أزرار الردود التلقائية (تفعيل/تعطيل، للمشرفين فقط) مع رسائل تأكيد
 """
 
 import asyncio
@@ -65,9 +66,8 @@ async def _safe_answer(query, text=None, show_alert=False):
         else:
             await query.answer()
         return True
-    except Exception as e:
-        # تجاهل جميع أخطاء الردود لمنع تعطل حلقة المعالجة
-        logger.debug(f"Query answer failed: {e}")
+    except:
+        # تجاهل جميع الأخطاء بصمت
         return False
 
 
@@ -88,7 +88,6 @@ async def safe_edit(query, text, reply_markup=None, parse_mode=None):
         if "message is not modified" in error_msg:
             return True
         elif "message is too long" in error_msg:
-            # الرسالة طويلة جداً: نحذف القديمة ونرسل جديدة
             try:
                 await query.message.delete()
                 await query.message.chat.send_message(
@@ -493,10 +492,11 @@ class CallbackHandlers:
                     return
                 if await DB.delete_channel(user_id, ch_id):
                     await _safe_answer(query, "✅ تم الحذف")
+                    await CallbackHandlers._show_channel_list(update, context, query, user_id, lang)
+                    return
                 else:
                     await _safe_answer(query, "❌ فشل", show_alert=True)
-                await CallbackHandlers._show_channel_list(update, context, query, user_id, lang)
-                return
+                    return
 
             if data.startswith(CB.CH_STATS + ":"):
                 try:
@@ -564,10 +564,11 @@ class CallbackHandlers:
                 active = await DB.get_active_channel(user_id)
                 if active and await DB.delete_post(user_id, post_id, active):
                     await _safe_answer(query, "✅ تم الحذف")
+                    await CallbackHandlers._show_post_list(update, context, query, user_id, lang)
+                    return
                 else:
                     await _safe_answer(query, "❌ فشل", show_alert=True)
-                await CallbackHandlers._show_post_list(update, context, query, user_id, lang)
-                return
+                    return
 
             if base_data == CB.POST_CLEAR:
                 active = await DB.get_active_channel(user_id)
@@ -844,7 +845,6 @@ class CallbackHandlers:
                 [InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)]
             ])
             await safe_edit(query, "📭 لا توجد قنوات!", reply_markup=kb)
-            await _safe_answer(query)
             return
         page = int(context.user_data.get('channel_page', 0))
         per_page = 5
@@ -873,7 +873,6 @@ class CallbackHandlers:
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("ch_add", lang), callback_data=CB.CH_ADD)])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
         await safe_edit(query, text, reply_markup=InlineKeyboardMarkup(kb))
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_post_list(update, context, query, user_id, lang=None):
@@ -904,7 +903,6 @@ class CallbackHandlers:
         kb.append([InlineKeyboardButton("🧹 مسح الكل", callback_data=CB.POST_CLEAR)])
         kb.append([InlineKeyboardButton("🔙", callback_data=CB.BACK)])
         await safe_edit(query, text if posts else "📭 لا يوجد", reply_markup=InlineKeyboardMarkup(kb))
-        await _safe_answer(query)
 
     # ============ معالجات الأمان ============
     @staticmethod
@@ -966,7 +964,6 @@ class CallbackHandlers:
                 await DB.update_security_settings(chat_id, **{k: 0 for k in toggle_map.values()})
             elif action == "close":
                 await safe_delete_message(query)
-                await _safe_answer(query)
                 return
             elif action == "penalty_durations":
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang)
@@ -1084,7 +1081,6 @@ class CallbackHandlers:
             kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
 
             await safe_edit(query, text, reply_markup=kb)
-            await _safe_answer(query)
         except Exception as e:
             logger.error(f"خطأ في إعدادات الأمان: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
@@ -1099,7 +1095,6 @@ class CallbackHandlers:
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🚫 إدارة الكلمات المحظورة:", reply_markup=kb)
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_penalty_type_selection(update, context, query, chat_id, lang, setting_key):
@@ -1117,7 +1112,6 @@ class CallbackHandlers:
             kb.append([InlineKeyboardButton(label, callback_data=callback)])
         kb.append([InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")])
         await safe_edit(query, "🚫 اختر نوع العقوبة:", reply_markup=InlineKeyboardMarkup(kb))
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_penalty_durations(update, context, query, chat_id, lang, penalty_type='mute'):
@@ -1143,7 +1137,6 @@ class CallbackHandlers:
 
         type_name = {'mute': 'كتم', 'ban': 'حظر', 'restrict': 'تقييد', 'kick': 'طرد', 'warn': 'تحذير'}.get(penalty_type, penalty_type)
         await safe_edit(query, f"⏱️ اختر مدة {type_name}:", reply_markup=InlineKeyboardMarkup(kb))
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_violation_penalties(update, context, query, chat_id, lang):
@@ -1153,7 +1146,6 @@ class CallbackHandlers:
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🚨 إعدادات المخالفات:", reply_markup=kb)
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_antiflood_settings(update, context, query, chat_id, lang):
@@ -1164,7 +1156,6 @@ class CallbackHandlers:
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🌊 إعدادات الفيضان:", reply_markup=kb)
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_night_settings(update, context, query, chat_id, lang):
@@ -1175,26 +1166,22 @@ class CallbackHandlers:
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🌙 إعدادات الوضع الليلي:", reply_markup=kb)
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_auto_reply_menu(update, context, query, chat_id, lang):
         kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
         await safe_edit(query, "🤖 إعدادات الردود التلقائية:", reply_markup=kb)
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_advanced_actions(update, context, query, chat_id, lang):
         kb = KeyboardFactory.build("advanced_actions", chat_id=chat_id, lang=lang)
         await safe_edit(query, "🛠️ الإجراءات المتقدمة:", reply_markup=kb)
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_admin_logs(update, context, query, chat_id, lang):
         logs = await DB.get_admin_logs(chat_id, 10)
         text = "📋 سجل المشرفين\n\n" + "\n".join(f"• {l['admin_id']} → {l['action']}" for l in logs) if logs else "📭 لا يوجد"
         await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]]))
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_penalty_types(update, context, query, chat_id, lang):
@@ -1206,7 +1193,6 @@ class CallbackHandlers:
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🚫 اختر نوع العقوبة:", reply_markup=kb)
-        await _safe_answer(query)
 
     # ============ معالجات الأدمن الكاملة ============
     @staticmethod
@@ -1647,18 +1633,26 @@ class CallbackHandlers:
         try:
             if action == "toggle":
                 settings = await DB.get_auto_reply_settings(chat_id)
-                await DB.update_auto_reply_settings(chat_id, enabled=not settings.get('enabled', False))
+                new_status = not settings.get('enabled', False)
+                await DB.update_auto_reply_settings(chat_id, enabled=new_status)
                 kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
-                await query.edit_message_reply_markup(reply_markup=kb)
-                await _safe_answer(query, "✅ تم التحديث")
+                try:
+                    await query.edit_message_reply_markup(reply_markup=kb)
+                except:
+                    pass
+                await _safe_answer(query, f"✅ الردود التلقائية: {'مفعلة' if new_status else 'معطلة'}")
                 return
 
             elif action == "admins":
                 settings = await DB.get_auto_reply_settings(chat_id)
-                await DB.update_auto_reply_settings(chat_id, only_admins=not settings.get('only_admins', 0))
+                new_status = not settings.get('only_admins', 0)
+                await DB.update_auto_reply_settings(chat_id, only_admins=new_status)
                 kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
-                await query.edit_message_reply_markup(reply_markup=kb)
-                await _safe_answer(query, "✅ تم التحديث")
+                try:
+                    await query.edit_message_reply_markup(reply_markup=kb)
+                except:
+                    pass
+                await _safe_answer(query, f"✅ للمشرفين فقط: {'مفعل' if new_status else 'معطل'}")
                 return
 
             elif action == "add":
@@ -1675,7 +1669,7 @@ class CallbackHandlers:
 
             elif action == "reset":
                 await DB.reset_auto_replies(chat_id)
-                await _safe_answer(query, "✅ تم الحذف")
+                await safe_edit(query, "✅ تم الحذف")
                 return
 
             elif action == "list":
@@ -1736,14 +1730,12 @@ class CallbackHandlers:
             StateManager.set(user_id, UserState.WAIT_PUB_TIME)
             context.user_data['schedule_ch'] = ch_id
             await safe_edit(query, "🕐 أرسل الوقت HH:MM:")
-        await _safe_answer(query)
 
     @staticmethod
     async def _show_schedule_menu(update, context, query, ch_id, user_id):
         lang = await DB.get_user_language(user_id) or 'ar'
         kb = KeyboardFactory.build("channel_settings", chat_id=ch_id, lang=lang)
         await safe_edit(query, "📅 جدولة القناة", reply_markup=kb)
-        await _safe_answer(query)
 
     # ============ معالجات الإجراءات المتقدمة والعقوبات ============
     @staticmethod
@@ -1759,7 +1751,6 @@ class CallbackHandlers:
             await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
             return
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
             await _safe_answer(query, "❌ لا صلاحية", show_alert=True)
             return
 
@@ -1828,7 +1819,6 @@ class CallbackHandlers:
             await safe_edit(query, "🔓 تم فتح المجموعة")
         elif data == "panel_close":
             await safe_delete_message(query)
-        await _safe_answer(query)
 
     # ============ معالجات المسابقات ============
     @staticmethod
@@ -1879,7 +1869,6 @@ class CallbackHandlers:
                         await _safe_answer(query, "❌ فشل", show_alert=True)
                 else:
                     await safe_edit(query, "❌ لا يوجد مشاركون")
-            await _safe_answer(query)
         except Exception as e:
             logger.error(f"خطأ في المسابقات: {e}", exc_info=True)
             await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
@@ -1896,7 +1885,6 @@ class CallbackHandlers:
         elif query.data == CB.ADMIN_IMPORT_GITHUB:
             StateManager.set(user_id, UserState.WAIT_GITHUB_URL)
             await safe_edit(query, "📥 أرسل الرابط:")
-        await _safe_answer(query)
 
     # ============ النسخ الاحتياطي ============
     @staticmethod
