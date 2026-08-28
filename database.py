@@ -906,7 +906,7 @@ class Database:
     async def _init_default_data(self, conn: aiosqlite.Connection) -> None:
         """تهيئة البيانات الافتراضية"""
         default_plans = [
-            {"name": "تجربة", "description": "تجربة مجانية لمدة 30 يوم", "price": 0, "duration_days": 30, "max_channels": 100, "max_posts": 200, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
+            {"name": "تجربة", "description": "تجربة مجانية لمدة 30 يوم", "price": 0, "duration_days": 30, "max_channels": 2, "max_posts": 200, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
             {"name": "يوم", "description": "باقة يوم واحد", "price": 5, "duration_days": 1, "max_channels": 1, "max_posts": 50, "features": '{"auto_publish":true}', "is_gift": 0},
             {"name": "أسبوع", "description": "باقة 7 أيام", "price": 25, "duration_days": 7, "max_channels": 3, "max_posts": 300, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
             {"name": "شهر", "description": "باقة 30 يوم", "price": 75, "duration_days": 30, "max_channels": 10, "max_posts": 1500, "features": '{"auto_publish":true,"security":true,"support":true}', "is_gift": 0},
