@@ -29,6 +29,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ زيادة عدد القنوات في خطة التجربة إلى 100
 - ✅ إضافة أعمدة مدد العقوبات الجديدة (antiflood_penalty_duration, night_mode_action_duration, warn_penalty_duration)
 - ✅ إضافة دالة export_auto_replies_to_file لتصدير الردود التلقائية
+- ✅ إضافة فاصل زمني بالثواني بين القنوات عند النشر (توزيع تلقائي)
 """
 
 import sqlite3
@@ -906,7 +907,7 @@ class Database:
     async def _init_default_data(self, conn: aiosqlite.Connection) -> None:
         """تهيئة البيانات الافتراضية"""
         default_plans = [
-            {"name": "تجربة", "description": "تجربة مجانية لمدة 30 يوم", "price": 0, "duration_days": 30, "max_channels": 2, "max_posts": 200, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
+            {"name": "تجربة", "description": "تجربة مجانية لمدة 30 يوم", "price": 0, "duration_days": 30, "max_channels": 100, "max_posts": 200, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
             {"name": "يوم", "description": "باقة يوم واحد", "price": 5, "duration_days": 1, "max_channels": 1, "max_posts": 50, "features": '{"auto_publish":true}', "is_gift": 0},
             {"name": "أسبوع", "description": "باقة 7 أيام", "price": 25, "duration_days": 7, "max_channels": 3, "max_posts": 300, "features": '{"auto_publish":true,"security":true}', "is_gift": 0},
             {"name": "شهر", "description": "باقة 30 يوم", "price": 75, "duration_days": 30, "max_channels": 10, "max_posts": 1500, "features": '{"auto_publish":true,"security":true,"support":true}', "is_gift": 0},
@@ -1146,11 +1147,18 @@ class Database:
                         await conn.execute("UPDATE user_channels SET channel_name = ?, banned = 0 WHERE id = ?", (channel_name, ch_db_id))
                     # تعيين القناة كنشطة تلقائيًا (الجديدة أو المعاد تفعيلها)
                     await conn.execute("UPDATE users SET active_channel = ? WHERE user_id = ?", (ch_db_id, user_id))
+                    
+                    # ===== إضافة فاصل زمني عشوائي بين القنوات (0-11 دقيقة) =====
+                    import random
+                    delay_seconds = random.randint(0, 11 * 60)  # بين 0 و 11 دقيقة
+                    next_publish = TimeUtils.utc_now() + timedelta(minutes=12, seconds=delay_seconds)
+                    # ==========================================================
+                    
                     await conn.execute(
                         """INSERT INTO schedule (channel_db_id, schedule_type, interval_minutes, next_publish_date)
                            VALUES (?, 'interval_minutes', 12, ?)
                            ON CONFLICT(channel_db_id) DO NOTHING""",
-                        (ch_db_id, (TimeUtils.utc_now() + timedelta(minutes=12)).strftime('%Y-%m-%d %H:%M:%S'))
+                        (ch_db_id, next_publish.strftime('%Y-%m-%d %H:%M:%S'))
                     )
                     if is_new:
                         await conn.execute(
@@ -1657,10 +1665,17 @@ class Database:
         return await self.execute(query, tuple(values))
 
     async def update_next_publish(self, channel_db_id: int) -> bool:
+        """
+        حساب موعد النشر التالي مع إضافة فاصل زمني بالثواني بين القنوات.
+        يستخدم channel_db_id لتوزيع منتظم (فاصل 5 ثوانٍ بين كل قناة وأخرى).
+        """
         schedule = await self.get_schedule(channel_db_id)
         last_publish = await self.fetchval("SELECT last_publish_time FROM last_publish WHERE channel_db_id = ?", (channel_db_id,))
         last_time = TimeUtils.safe_parse_iso(last_publish) if last_publish else TimeUtils.utc_now()
+        
         schedule_type = schedule.get('schedule_type', 'interval_minutes')
+        
+        # حساب الوقت الأساسي حسب نوع الجدولة
         if schedule_type == 'interval_minutes':
             interval = max(1, schedule.get('interval_minutes', 12))
             next_date = last_time + timedelta(minutes=interval)
@@ -1673,6 +1688,15 @@ class Database:
         else:
             interval = 12
             next_date = last_time + timedelta(minutes=interval)
+        
+        # ===== إضافة فاصل زمني بالثواني بين القنوات =====
+        # الفاصل = 5 ثوانٍ بين كل قناة وأخرى (يمكن تعديل الرقم)
+        interval_seconds = 5
+        delay_seconds = (channel_db_id % 60) * interval_seconds
+        next_date += timedelta(seconds=delay_seconds)
+        # ================================================
+        
+        # التأكد من أن الوقت التالي ليس في الماضي
         counter = 0
         while next_date <= TimeUtils.utc_now() and counter < 100:
             if schedule_type == 'interval_minutes':
@@ -1684,7 +1708,11 @@ class Database:
             else:
                 next_date += timedelta(minutes=12)
             counter += 1
-        return await self.execute("UPDATE schedule SET next_publish_date = ? WHERE channel_db_id = ?", (next_date.strftime('%Y-%m-%d %H:%M:%S'), channel_db_id))
+        
+        return await self.execute(
+            "UPDATE schedule SET next_publish_date = ? WHERE channel_db_id = ?",
+            (next_date.strftime('%Y-%m-%d %H:%M:%S'), channel_db_id)
+        )
 
     async def update_last_publish(self, channel_db_id: int) -> bool:
         return await self.execute("INSERT OR REPLACE INTO last_publish (channel_db_id, last_publish_time) VALUES (?,?)", (channel_db_id, TimeUtils.sql_iso()))
