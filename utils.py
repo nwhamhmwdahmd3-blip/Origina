@@ -9,7 +9,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - دعم كامل لجميع الأزرار
 - دعم المشرفين المجهولين في is_authorized_in_group
 - معالجة TimedOut مع إعادة المحاولة في safe_send
-- كل قناة تنشر بشكل مستقل بفاصل 12 دقيقة
+- كل قناة تنشر بشكل مستقل بفاصل زمني من جدولها
 - حالة WAIT_MOOD لتحليل المشاعر
 - رسالة تأكيد تحميل الردود
 - دعم معاملات اختيارية في RateLimiter.acquire لمنع TypeError
@@ -18,7 +18,6 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - دعم TTL في AutoReplyCache
 - إصلاح تمرير kwargs في safe_send
 - دعم إرسال الوسائط في safe_send
-- تقصير نص إعدادات الأمان لمنع تجاوز حد تيليجرام
 - عرض مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
 """
 
@@ -1416,8 +1415,6 @@ class BackgroundTasks:
     async def auto_publish(bot) -> None:
         await asyncio.sleep(10)
         max_channels = getattr(CONFIG, 'MAX_CHANNELS_PER_CYCLE', 20)
-        min_interval_minutes = await get_min_publish_interval()
-        sleep_seconds = min_interval_minutes * 60
 
         while True:
             try:
@@ -1429,9 +1426,7 @@ class BackgroundTasks:
                 tasks = []
                 for ch in channels:
                     task = asyncio.create_task(
-                        BackgroundTasks._publish_channel_cycle(
-                            bot, ch, sleep_seconds
-                        )
+                        BackgroundTasks._publish_channel_cycle(bot, ch)
                     )
                     tasks.append(task)
 
@@ -1442,7 +1437,7 @@ class BackgroundTasks:
                 await asyncio.sleep(60)
 
     @staticmethod
-    async def _publish_channel_cycle(bot, ch, sleep_seconds):
+    async def _publish_channel_cycle(bot, ch):
         consecutive_failures = 0
         max_failures = 10
         while True:
@@ -1477,7 +1472,12 @@ class BackgroundTasks:
                     await DB.mark_post_published(post['id'])
                     await DB.update_last_publish(ch['id'])
                     await DB.update_next_publish(ch['id'])
-                    logger.info(f"✅ قناة {ch['id']} نشرت. انتظار {sleep_seconds//60} دقيقة...")
+
+                    # قراءة الفاصل الزمني الخاص بكل قناة من جدولها
+                    schedule = await DB.get_schedule(ch['id'])
+                    interval_minutes = max(1, schedule.get('interval_minutes', 12))
+                    sleep_seconds = interval_minutes * 60
+                    logger.info(f"✅ قناة {ch['id']} نشرت. انتظار {interval_minutes} دقيقة...")
                     await asyncio.sleep(sleep_seconds)
                 else:
                     await DB.increment_post_fail(post['id'])
