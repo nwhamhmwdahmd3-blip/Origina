@@ -24,6 +24,9 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - إصلاح أزرار الردود التلقائية (تفعيل/تعطيل، للمشرفين فقط)
 - إصلاح منطق أزرار التحذير: فصل نوع العقوبة عن المدة، وإزالة sec_penalty_warn من قائمة المد د
 - معالجة sec_warn_penalty_set داخل _handle_security مباشرة
+- توسيع set_duration ليشمل مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
+- إضافة debounce لمنع الضغط المتكرر السريع
+- إضافة رد فوري في safe_edit لمنع ظهور "يبحث"
 """
 
 import asyncio
@@ -32,8 +35,8 @@ import json
 import time
 import shutil
 import re
-import os  # <-- إضافة للتصدير
-from pathlib import Path  # <-- إضافة للتصدير
+import os
+from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ChatPermissions
@@ -77,11 +80,11 @@ async def _safe_answer(query, text=None, show_alert=False):
 
 async def safe_edit(query, text, reply_markup=None, parse_mode=None):
     """
-    تعديل رسالة، مع معالجة حالات:
-    - الرسالة غير معدلة (return True)
-    - الرسالة طويلة جداً (حذف وإرسال رسالة جديدة)
-    - أي خطأ آخر (return False)
+    تعديل رسالة، مع الرد الفوري على الاستعلام لمنع ظهور "يبحث".
     """
+    # الرد الفوري على الزر قبل أي إجراء
+    await _safe_answer(query)
+
     if not query or not query.message:
         return False
     try:
@@ -141,6 +144,15 @@ class CallbackHandlers:
         data = query.data
         if not data:
             return
+
+        # منع الضغط المتكرر السريع لنفس الزر
+        debounce_key = f"debounce_{data}"
+        now_time = time.monotonic()
+        last_time = context.user_data.get(debounce_key, 0)
+        if now_time - last_time < 1.5:
+            await _safe_answer(query, "⚠️ انتظر لحظة")
+            return
+        context.user_data[debounce_key] = now_time
 
         user_id = query.from_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
@@ -715,7 +727,6 @@ class CallbackHandlers:
                     except (ValueError, IndexError):
                         await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
                         return
-                    # توسيع قاموس col ليشمل الأنواع الجديدة
                     col = {
                         'mute': 'mute_default_duration',
                         'ban': 'ban_default_duration',
@@ -953,7 +964,7 @@ class CallbackHandlers:
                 [InlineKeyboardButton("✅ تفعيل/تعطيل", callback_data=f"sec_warn_toggle:{chat_id}")],
                 [InlineKeyboardButton("🔢 عدد التحذيرات", callback_data=f"sec_warn_count:{chat_id}")],
                 [InlineKeyboardButton("⚖️ عقوبة التحذير", callback_data=f"sec_warn_penalty:{chat_id}")],
-                [InlineKeyboardButton("⏱️ مدة العقوبة", callback_data=f"sec_warn_penalty_duration:{chat_id}")],  # <-- إضافة
+                [InlineKeyboardButton("⏱️ مدة العقوبة", callback_data=f"sec_warn_penalty_duration:{chat_id}")],
                 [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
             ])
             await safe_edit(query, "⚠️ إدارة التحذيرات:", reply_markup=kb)
@@ -985,7 +996,7 @@ class CallbackHandlers:
             elif action == "enable_all":
                 settings = await DB.get_security_settings(chat_id)
                 update_data = {k: 1 for k in toggle_map.values()}
-                update_data['warn_enabled'] = 1  # <-- إضافة تفعيل التحذير
+                update_data['warn_enabled'] = 1
                 if settings.get('auto_reject_join'):
                     update_data['auto_approve_join'] = 0
                 else:
@@ -1097,15 +1108,15 @@ class CallbackHandlers:
                 context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل المدة بالثواني:")
                 return
-            elif action == "antiflood_duration":  # <-- إضافة
+            elif action == "antiflood_duration":
                 context.user_data['penalty_type'] = 'antiflood'
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'antiflood')
                 return
-            elif action == "night_duration":  # <-- إضافة
+            elif action == "night_duration":
                 context.user_data['penalty_type'] = 'night'
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'night')
                 return
-            elif action == "warn_penalty_duration":  # <-- إضافة
+            elif action == "warn_penalty_duration":
                 context.user_data['penalty_type'] = 'warn_penalty'
                 await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'warn_penalty')
                 return
@@ -1228,7 +1239,7 @@ class CallbackHandlers:
             [InlineKeyboardButton("عدد الرسائل", callback_data=f"sec_set_antiflood_messages:{chat_id}"),
              InlineKeyboardButton("الثواني", callback_data=f"sec_set_antiflood_seconds:{chat_id}")],
             [InlineKeyboardButton("نوع العقوبة", callback_data=f"sec_antiflood_penalty:{chat_id}"),
-             InlineKeyboardButton("⏱️ مدة العقوبة", callback_data=f"sec_antiflood_duration:{chat_id}")],  # <-- إضافة
+             InlineKeyboardButton("⏱️ مدة العقوبة", callback_data=f"sec_antiflood_duration:{chat_id}")],
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🌊 إعدادات الفيضان:", reply_markup=kb)
@@ -1239,7 +1250,7 @@ class CallbackHandlers:
             [InlineKeyboardButton("وقت البدء", callback_data=f"sec_set_night_start:{chat_id}"),
              InlineKeyboardButton("وقت النهاية", callback_data=f"sec_set_night_end:{chat_id}")],
             [InlineKeyboardButton("نوع الإجراء", callback_data=f"sec_night_action:{chat_id}"),
-             InlineKeyboardButton("⏱️ مدة الإجراء", callback_data=f"sec_night_duration:{chat_id}")],  # <-- إضافة
+             InlineKeyboardButton("⏱️ مدة الإجراء", callback_data=f"sec_night_duration:{chat_id}")],
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🌙 إعدادات الوضع الليلي:", reply_markup=kb)
@@ -1581,8 +1592,7 @@ class CallbackHandlers:
                 return
 
             elif data == CB.ADMIN_EXPORT_REPLIES:
-                # التعديل: تصدير وإرسال الملف
-                file_path = await DB.export_auto_replies_to_file()  # يجب تنفيذ هذه الدالة في database.py
+                file_path = await DB.export_auto_replies_to_file()
                 if file_path:
                     try:
                         with open(file_path, 'rb') as f:
