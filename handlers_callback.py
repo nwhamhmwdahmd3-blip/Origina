@@ -958,6 +958,14 @@ class CallbackHandlers:
             await CallbackHandlers._show_banned_words_menu(update, context, query, chat_id, lang)
             return
 
+        # زر جديد: تبديل حذف الرسائل التي تحتوي على كلمات محظورة
+        if action == "toggle_banned_words":
+            settings = await DB.get_security_settings(chat_id)
+            new_val = 1 - settings.get('delete_banned_words', 0)
+            await DB.update_security_settings(chat_id, delete_banned_words=new_val)
+            await CallbackHandlers._show_banned_words_menu(update, context, query, chat_id, lang)
+            return
+
         # معالجة خاصة لزر "تحذيرات" لفتح قائمة إدارة التحذيرات
         if action == "warn":
             kb = InlineKeyboardMarkup([
@@ -1173,11 +1181,15 @@ class CallbackHandlers:
 
     @staticmethod
     async def _show_banned_words_menu(update, context, query, chat_id, lang):
-        """عرض قائمة إدارة الكلمات المحظورة"""
+        """عرض قائمة إدارة الكلمات المحظورة مع زر تبديل الحذف"""
+        settings = await DB.get_security_settings(chat_id)
+        is_enabled = settings.get('delete_banned_words', 0)
+        toggle_text = "✅ تفعيل الحذف" if not is_enabled else "❌ تعطيل الحذف"
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ إضافة كلمة", callback_data=f"ban_add:{chat_id}"),
              InlineKeyboardButton("📋 القائمة", callback_data=f"ban_list:{chat_id}")],
             [InlineKeyboardButton("🗑️ حذف كلمة", callback_data=f"ban_rem:{chat_id}")],
+            [InlineKeyboardButton(toggle_text, callback_data=f"sec_toggle_banned_words:{chat_id}")],
             [InlineKeyboardButton("🔙", callback_data=f"grp_set:{chat_id}")]
         ])
         await safe_edit(query, "🚫 إدارة الكلمات المحظورة:", reply_markup=kb)

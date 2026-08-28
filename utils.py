@@ -19,6 +19,8 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - إصلاح تمرير kwargs في safe_send
 - دعم إرسال الوسائط في safe_send
 - عرض مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
+- إضافة ثابت زر تبديل حذف الكلمات المحظورة (SEC_TOGGLE_BANNED_WORDS)
+- إضافة نص زر تبديل حذف الكلمات المحظورة في KeyboardFactory
 """
 
 import asyncio
@@ -446,6 +448,7 @@ class CB:
     SEC_PENALTY_RESTRICT = "sec_penalty_restrict"
     SEC_ANTIFLOOD_PENALTY = "sec_antiflood_penalty"
     SEC_NIGHT_ACTION = "sec_night_action"
+    SEC_TOGGLE_BANNED_WORDS = "sec_toggle_banned_words"  # <<=== المضاف حديثًا
 
     BAN_ADD = "ban_add"
     BAN_LIST = "ban_list"
@@ -610,6 +613,7 @@ class KeyboardFactory:
         "sec_voice": "🎤 صوتي",
         "sec_videonote": "🎥 فيديو نوت",
         "sec_banned_words": "🚫 كلمات محظورة",
+        "sec_toggle_banned_words": "✅ تفعيل الحذف / ❌ تعطيل الحذف",  # <<=== المضاف حديثًا
         "sec_welcome": "🎯 ترحيب",
         "sec_goodbye": "👋 وداع",
         "sec_night": "🌙 وضع ليلي",

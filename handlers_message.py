@@ -781,12 +781,14 @@ class MessageHandlers:
     async def _handle_global_ban_input(update, context):
         user_id = update.effective_user.id
         word = (update.effective_message.text or "").strip().lower()
-        added, _ = await DB.add_banned_word(word, -1, user_id)
-        if added:
+        success, duplicate = await DB.add_banned_word(word, -1, user_id)
+        if success:
             await invalidate_banned_words_cache(-1)
-            await safe_send(context.bot, user_id, f"✅ تمت الإضافة: {escape(word)}")
+            await safe_send(context.bot, user_id, f"✅ تمت إضافة الكلمة المحظورة: {escape(word)}")
+        elif duplicate:
+            await safe_send(context.bot, user_id, "❌ الكلمة موجودة بالفعل في القائمة العامة")
         else:
-            await safe_send(context.bot, user_id, "❌ فشل (قد تكون الكلمة موجودة أو تم الوصول للحد الأقصى)")
+            await safe_send(context.bot, user_id, "❌ تعذرت الإضافة (قد تكون تجاوزت الحد الأقصى للكلمات العامة)")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -807,12 +809,14 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
         word = (update.effective_message.text or "").strip().lower()
-        added, _ = await DB.add_banned_word(word, chat_id, user_id)
-        if added:
+        success, duplicate = await DB.add_banned_word(word, chat_id, user_id)
+        if success:
             await invalidate_banned_words_cache(chat_id)
-            await safe_send(context.bot, user_id, "✅ تمت الإضافة")
+            await safe_send(context.bot, user_id, f"✅ تمت إضافة الكلمة المحظورة: {escape(word)}")
+        elif duplicate:
+            await safe_send(context.bot, user_id, "❌ الكلمة موجودة بالفعل في قائمة المجموعة")
         else:
-            await safe_send(context.bot, user_id, "❌ فشل")
+            await safe_send(context.bot, user_id, "❌ تعذرت الإضافة، حاول مجددًا")
         StateManager.clear(user_id)
 
     @staticmethod

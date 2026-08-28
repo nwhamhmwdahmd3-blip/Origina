@@ -146,6 +146,7 @@
     "sec_voice": "🎤 صوتي",
     "sec_videonote": "🎥 فيديو ملاحظة",
     "sec_banned_words": "🚫 كلمات محظورة",
+    "sec_toggle_banned_words": "✅ تفعيل الحذف / ❌ تعطيل الحذف",
     "sec_welcome": "🎯 ترحيب",
     "sec_welcome_text": "📝 نص الترحيب",
     "sec_goodbye": "👋 وداع",
@@ -279,6 +280,7 @@
       "rows": [
         ["ban_add", "ban_list"],
         ["ban_rem"],
+        ["sec_toggle_banned_words"],
         ["back"]
       ]
     },
