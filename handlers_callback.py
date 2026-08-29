@@ -27,7 +27,8 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - توسيع set_duration ليشمل مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
 - إضافة debounce لمنع الضغط المتكرر السريع
 - إضافة رد فوري في safe_edit لمنع ظهور "يبحث"
-- تحسين أداء _handle_security بتقليل استعلامات قاعدة البيانات
+- إصلاح استدعاء متكرر في _handle_security عند تبديل التحذيرات
+- تحسين _handle_security لتقليل استعلامات قاعدة البيانات
 """
 
 import asyncio
@@ -1026,7 +1027,6 @@ class CallbackHandlers:
                 else:
                     update_data['auto_reject_join'] = 0
                 await DB.update_security_settings(chat_id, **update_data)
-                # تحديث محلي
                 settings.update(update_data)
                 text = KeyboardFactory._format_security_text(settings)
                 kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
@@ -1036,7 +1036,7 @@ class CallbackHandlers:
             elif action == "disable_all":
                 update_data = {k: 0 for k in toggle_map.values()}
                 await DB.update_security_settings(chat_id, **update_data)
-                settings = await DB.get_security_settings(chat_id)  # لا يمكن التحديث المحلي بسهولة لأننا لا نملك القيم الأصلية؛ يمكن جلبها مرة واحدة
+                settings = await DB.get_security_settings(chat_id)
                 text = KeyboardFactory._format_security_text(settings)
                 kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
                 await safe_edit(query, text, reply_markup=kb)
