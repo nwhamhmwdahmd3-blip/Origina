@@ -9,6 +9,8 @@ config.py - إعدادات البوت الأساسية (نسخة نهائية م
 - إنشاء المجلدات تلقائياً
 - التحقق من صحة الإعدادات
 - دعم المشرف المجهول افتراضياً
+- تنظيف التوكن من المسافات (إصلاح 1)
+- التحقق من العلاقة بين فترات النشر (إصلاح 2)
 """
 
 import os
@@ -46,7 +48,7 @@ def safe_bool(value: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class AppConfig:
     # ========== المتغيرات الأساسية (مطلوبة) ==========
-    TOKEN: str = os.getenv("BOT_TOKEN", "")
+    TOKEN: str = os.getenv("BOT_TOKEN", "").strip()  # إصلاح: تنظيف التوكن
     PRIMARY_OWNER_ID: int = safe_int(os.getenv("MAIN_ADMIN_ID", "0"))
     DEVELOPER_IDS: List[int] = field(default_factory=lambda: [
         id for id in [
@@ -130,6 +132,13 @@ class AppConfig:
 
         if self.MIN_PUBLISH_INTERVAL < 1:
             errors.append("MIN_PUBLISH_INTERVAL يجب أن يكون أكبر من 0")
+
+        # إصلاح: التحقق من العلاقة بين الفترات
+        if self.DEFAULT_PUBLISH_INTERVAL < self.MIN_PUBLISH_INTERVAL:
+            errors.append(
+                f"DEFAULT_PUBLISH_INTERVAL ({self.DEFAULT_PUBLISH_INTERVAL}) "
+                f"يجب أن يكون أكبر من أو يساوي MIN_PUBLISH_INTERVAL ({self.MIN_PUBLISH_INTERVAL})"
+            )
 
         if errors:
             error_msg = "\n".join(f"  • {e}" for e in errors)
