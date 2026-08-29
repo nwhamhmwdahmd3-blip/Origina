@@ -54,6 +54,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - منع الإجراءات الجماعية بمعرف -1
 - تحسين تحليل sec_penalty_
 - تحسين enable_all وdisable_all
+- إضافة معالجة أزرار sec_penalty_* داخل _handle_security (إصلاح الترتيب)
 """
 
 import asyncio
@@ -174,7 +175,6 @@ class CallbackHandlers:
         lang = await DB.get_user_language(user_id) or 'ar'
         start_time = time.monotonic()
 
-        # تهيئة start_time إذا لم تكن موجودة
         if 'start_time' not in context.bot_data:
             context.bot_data['start_time'] = time.monotonic()
 
@@ -997,6 +997,27 @@ class CallbackHandlers:
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             await _safe_answer(query, "❌ لا صلاحية", show_alert=True)
             return
+
+        # إصلاح أزرار اختيار العقوبة التلقائية (penalty_ban, penalty_mute, ...)
+        if action.startswith("penalty_"):
+            penalty_type = action.replace("penalty_", "")
+            if penalty_type in ['ban', 'mute', 'kick', 'restrict', 'none']:
+                if penalty_type == 'none':
+                    await DB.update_security_settings(chat_id, auto_penalty='none')
+                    await _safe_answer(query, "✅ تم تعطيل العقوبة التلقائية")
+                elif penalty_type == 'kick':
+                    await DB.update_security_settings(chat_id, auto_penalty='kick')
+                    await _safe_answer(query, "✅ تم تعيين العقوبة: طرد")
+                    settings = await DB.get_security_settings(chat_id)
+                    text = KeyboardFactory._format_security_text(settings)
+                    kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
+                    await safe_edit(query, text, reply_markup=kb)
+                else:
+                    await DB.update_security_settings(chat_id, auto_penalty=penalty_type)
+                    await _safe_answer(query, f"✅ تم تعيين العقوبة: {penalty_type}")
+                    # نعرض مدد العقوبة إذا كانت من الأنواع التي لها مدة
+                    # لكن بما أننا في قائمة اختيار النوع، يمكن الاكتفاء بالرسالة
+                return
 
         if action == "banned_words":
             await CallbackHandlers._show_banned_words_menu(update, context, query, chat_id, lang)
