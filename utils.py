@@ -12,15 +12,21 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - كل قناة تنشر بشكل مستقل بفاصل 12 دقيقة
 - حالة WAIT_MOOD لتحليل المشاعر
 - رسالة تأكيد تحميل الردود
+- دعم معاملات اختيارية في RateLimiter.acquire لمنع TypeError
+- إزالة رموز ** من نصوص الأمان لمنع 400 Bad Request
+- دمج استعلامات is_authorized_in_group لتقليل الوصول لقاعدة البيانات
+- دعم TTL في AutoReplyCache
+- إصلاح تمرير kwargs في safe_send
+- دعم إرسال الوسائط في safe_send
+- تقصير نص إعدادات الأمان لمنع تجاوز حد تيليجرام
+- عرض مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
 """
 
 import asyncio
-import os
 import re
 import json
 import time
 import html
-import shutil
 import logging
 import random
 import importlib
@@ -31,7 +37,6 @@ from enum import Enum, auto
 from collections import OrderedDict, deque
 from abc import ABC, abstractmethod
 
-# استيراد psutil مع معالجة عدم وجوده
 try:
     import psutil
 except ImportError:
@@ -57,8 +62,6 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 class TimeUtils:
-    """أدوات الوقت والتاريخ"""
-
     @staticmethod
     def utc_now() -> datetime:
         return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -80,11 +83,11 @@ class TimeUtils:
         return TimeUtils.utc_now().strftime('%Y-%m-%d %H:%M:%S')
 
     @staticmethod
-    def mecca_to_utc(dt: datetime) -> datetime:
+    def mecca_to_utc(dt: Optional[datetime]) -> Optional[datetime]:
         return dt - timedelta(hours=3) if dt else None
 
     @staticmethod
-    def utc_to_mecca(dt: datetime) -> datetime:
+    def utc_to_mecca(dt: Optional[datetime]) -> Optional[datetime]:
         return dt + timedelta(hours=3) if dt else None
 
     @staticmethod
@@ -105,8 +108,6 @@ class TimeUtils:
 # =====================================================================
 
 class TextUtils:
-    """أدوات معالجة النصوص"""
-
     @staticmethod
     def contains_link(text: Optional[str]) -> bool:
         if not text:
@@ -147,15 +148,13 @@ class TextUtils:
 # =====================================================================
 
 class RateLimiter:
-    """محدد معدل الطلبات"""
-
     def __init__(self, max_concurrent: int = 10, max_per_second: int = 30):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._last_calls = deque(maxlen=max_per_second * 2)
         self._lock = asyncio.Lock()
         self.max_per_second = max_per_second
 
-    async def acquire(self):
+    async def acquire(self, *args, **kwargs):
         async with self.semaphore:
             async with self._lock:
                 now = time.time()
@@ -176,8 +175,6 @@ RATE_LIMITER = RateLimiter(max_concurrent=15, max_per_second=30)
 # =====================================================================
 
 class MetricsCollector:
-    """جمع مقاييس الأداء"""
-
     def __init__(self):
         self.api_calls = deque(maxlen=1000)
         self.errors = deque(maxlen=1000)
@@ -213,20 +210,23 @@ METRICS = MetricsCollector()
 # =====================================================================
 
 class AutoReplyCache:
-    """كاش للردود التلقائية"""
-
-    def __init__(self, maxsize: int = 300):
+    def __init__(self, maxsize: int = 300, ttl: int = 300):
         self.cache = OrderedDict()
         self.maxsize = maxsize
+        self.ttl = ttl
 
     def get(self, key: str):
         if key in self.cache:
+            value, timestamp = self.cache[key]
+            if time.time() - timestamp > self.ttl:
+                del self.cache[key]
+                return None
             self.cache.move_to_end(key)
-            return self.cache[key]
+            return value
         return None
 
     def set(self, key: str, value: dict):
-        self.cache[key] = value
+        self.cache[key] = (value, time.time())
         if len(self.cache) > self.maxsize:
             self.cache.popitem(last=False)
 
@@ -240,7 +240,7 @@ class AutoReplyCache:
         self.cache.clear()
 
 
-_auto_reply_cache = AutoReplyCache(maxsize=300)
+_auto_reply_cache = AutoReplyCache(maxsize=300, ttl=300)
 
 
 # =====================================================================
@@ -248,8 +248,6 @@ _auto_reply_cache = AutoReplyCache(maxsize=300)
 # =====================================================================
 
 class TranslationManager:
-    """إدارة الترجمات"""
-
     _translations: Dict[str, Dict] = {}
     _locales_dir: str = str(Path(__file__).resolve().parent / "locales")
     _default_lang: str = "ar"
@@ -310,8 +308,6 @@ async def get_text(lang: str, key: str, **kwargs) -> str:
 # =====================================================================
 
 class UserState(Enum):
-    """حالات المستخدم - كاملة"""
-
     NONE = auto()
     ADDING_POSTS = auto()
     WAIT_CHANNEL = auto()
@@ -370,16 +366,14 @@ class UserState(Enum):
     WAIT_PENALTY_MUTE_DURATION = auto()
     WAIT_PENALTY_BAN_DURATION = auto()
     WAIT_PENALTY_RESTRICT_DURATION = auto()
-    # ✅ NEW: حالة تحليل المشاعر
     WAIT_MOOD = auto()
+    WAIT_RESTORE = auto()
 
 
 class StateManager:
-    """إدارة حالات المستخدمين - كاملة"""
-
     _states: Dict[int, UserState] = {}
     _timestamps: Dict[int, float] = {}
-    _timeout = 300  # 5 دقائق
+    _timeout = 300
 
     @classmethod
     def get(cls, user_id: int) -> UserState:
@@ -411,8 +405,6 @@ class StateManager:
 # =====================================================================
 
 class CB:
-    """ثوابت أزرار الكيبورد - كاملة"""
-
     MAIN = "main"
     BACK = "back"
     CANCEL = "cancel"
@@ -579,8 +571,6 @@ class CB:
 # =====================================================================
 
 class KeyboardFactory:
-    """مصنع الكيبوردات"""
-
     _configs: Dict[str, Dict] = {}
     _default_lang: str = "ar"
     _config_path_template: str = str(Path(__file__).resolve().parent / "buttons_config_{lang}.json")
@@ -597,6 +587,72 @@ class KeyboardFactory:
         "pub_all", "post_add", "post_pub", "post_list", "post_rec",
         "sec_antiflood_settings", "sec_night_settings",
         "sec_penalty_durations", "sec_close", "admin_uptime"
+    }
+
+    _default_texts = {
+        "back": "🔙 رجوع",
+        "main": "🌿 الرئيسية",
+        "add_group_button": "➕ أضف البوت لمجموعة",
+        "security_button": "⚙️ أمان {name}",
+        "ch_add": "➕ إضافة قناة",
+        "sec_links": "🔗 الروابط",
+        "sec_mentions": "👤 المعرفات",
+        "sec_slow": "🐢 بطيء",
+        "sec_flood": "🌊 الفيضان",
+        "sec_video": "🎬 فيديو",
+        "sec_audio": "🎵 موسيقى",
+        "sec_anim": "🎞️ متحرك",
+        "sec_service": "🛠️ خدمة",
+        "sec_doc": "📄 ملفات",
+        "sec_sticker": "🖼️ ملصقات",
+        "sec_forward": "📨 مُعاد",
+        "sec_poll": "📊 استطلاع",
+        "sec_game": "🎮 ألعاب",
+        "sec_voice": "🎤 صوتي",
+        "sec_videonote": "🎥 فيديو نوت",
+        "sec_banned_words": "🚫 كلمات محظورة",
+        "sec_welcome": "🎯 ترحيب",
+        "sec_goodbye": "👋 وداع",
+        "sec_night": "🌙 وضع ليلي",
+        "sec_approve_join": "✅ موافقة انضمام",
+        "sec_reject_join": "❌ رفض انضمام",
+        "sec_nsfw": "🔞 NSFW",
+        "sec_maxlen": "📏 طول الرسالة",
+        "sec_warn": "⚠️ تحذيرات",
+        "sec_penalty": "🚫 العقوبات",
+        "sec_del_pen": "🗑️ عقوبة الحذف",
+        "sec_adv_act": "🛠️ إجراءات متقدمة",
+        "sec_act_log": "📋 سجل المشرفين",
+        "sec_auto_reply_menu": "🤖 الردود التلقائية",
+        "sec_antiflood_settings": "🌊 إعدادات الفيضان",
+        "sec_night_settings": "🌙 إعدادات الليل",
+        "sec_penalty_durations": "⏱️ مدد العقوبات",
+        "sec_violation_penalties": "🚨 المخالفات",
+        "sec_enable_all": "✅ تفعيل الكل",
+        "sec_disable_all": "❌ تعطيل الكل",
+        "sec_close": "🔒 إغلاق",
+        "auto_reply_toggle": "🔘 تفعيل/تعطيل",
+        "auto_reply_admins": "👤 للمشرفين فقط",
+        "auto_reply_add": "➕ إضافة",
+        "auto_reply_del": "🗑️ حذف",
+        "auto_reply_list": "📋 القائمة",
+        "auto_reply_stats": "📊 إحصائيات",
+        "auto_reply_reset": "🔄 إعادة تعيين",
+        "act_ban": "🚫 حظر",
+        "act_mute": "🔇 كتم",
+        "act_warn": "⚠️ تحذير",
+        "act_kick": "👢 طرد",
+        "act_restrict": "🔒 تقييد",
+        "act_unban": "🔓 فك حظر",
+        "act_pin": "📌 تثبيت",
+        "act_log": "📋 سجل",
+        "pen_ban": "🚫 حظر",
+        "pen_mute": "🔇 كتم",
+        "pen_kick": "👢 طرد",
+        "pen_warn": "⚠️ تحذير",
+        "ban_add": "➕ إضافة كلمة",
+        "ban_list": "📋 القائمة",
+        "ban_rem": "🗑️ حذف كلمة",
     }
 
     @classmethod
@@ -621,7 +677,7 @@ class KeyboardFactory:
             else:
                 logger.warning("⚠️ buttons_config_ar.json غير موجود، سيتم استخدام إعدادات افتراضية")
                 default_config = {
-                    "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
+                    "texts": cls._default_texts,
                     "menus": {}
                 }
                 cls._configs[cls._default_lang] = default_config
@@ -632,7 +688,7 @@ class KeyboardFactory:
                 return cls._load_config_for_lang(cls._default_lang)
             else:
                 default_config = {
-                    "texts": {"back": "🔙 رجوع", "main": "🌿 الرئيسية"},
+                    "texts": cls._default_texts,
                     "menus": {}
                 }
                 cls._configs[cls._default_lang] = default_config
@@ -651,7 +707,10 @@ class KeyboardFactory:
     @classmethod
     def get_text(cls, key: str, lang: str = None) -> str:
         config = cls.get_config(lang)
-        return config.get("texts", {}).get(key, key)
+        text = config.get("texts", {}).get(key)
+        if text is not None:
+            return text
+        return cls._default_texts.get(key, key)
 
     @classmethod
     def get_menu(cls, menu_name: str, lang: str = None) -> List[List[str]]:
@@ -670,6 +729,13 @@ class KeyboardFactory:
                     ["back"]
                 ],
                 "auto_reply_manage": [
+                    ["auto_reply_toggle", "auto_reply_admins"],
+                    ["auto_reply_add", "auto_reply_del"],
+                    ["auto_reply_list", "auto_reply_stats"],
+                    ["auto_reply_reset"],
+                    ["back"]
+                ],
+                "auto_reply": [
                     ["auto_reply_toggle", "auto_reply_admins"],
                     ["auto_reply_add", "auto_reply_del"],
                     ["auto_reply_list", "auto_reply_stats"],
@@ -714,6 +780,45 @@ class KeyboardFactory:
                 "violation_penalties": [
                     ["sec_set_violation_strikes", "sec_set_violation_duration"],
                     ["back"]
+                ],
+                "settings": [
+                    ["toggle_auto", "toggle_rec"],
+                    ["reminder", "translation"],
+                    ["referral", "invoices"],
+                    ["back"]
+                ],
+                "plans": [
+                    ["buy_sub_1", "buy_sub_7"],
+                    ["buy_sub_30", "buy_sub_90"],
+                    ["buy_sub_365"],
+                    ["gift_plans", "redeem_gift"],
+                    ["back"]
+                ],
+                "reminder": [
+                    ["rem_sub", "rem_daily"],
+                    ["rem_weekly"],
+                    ["rem_days"],
+                    ["back"]
+                ],
+                "translation": [
+                    ["lang_ar", "lang_en"],
+                    ["trans_off"],
+                    ["back"]
+                ],
+                "channel_settings": [
+                    ["sched_min", "sched_hour"],
+                    ["sched_day", "sched_time"],
+                    ["back"]
+                ],
+                "admin": [
+                    ["admin_users", "admin_stats"],
+                    ["admin_banned", "admin_unban_all"],
+                    ["admin_channels", "admin_groups"],
+                    ["admin_grant_free", "admin_add_admin"],
+                    ["admin_broadcast", "admin_invoices"],
+                    ["admin_backup", "admin_restore"],
+                    ["admin_ram", "admin_metrics"],
+                    ["back"]
                 ]
             }
             if menu_name in default_menus:
@@ -747,27 +852,18 @@ class KeyboardFactory:
     def _format_security_text(cls, settings: dict) -> str:
         st = cls._status_icon
         lines = [
-            "🔐 **إعدادات الأمان**",
+            "🔐 إعدادات الأمان",
             "━━━━━━━━━━━━━━━━━━━━\n",
-            "🛡️ **الحماية**",
-            f"🔗 الروابط: {st(settings.get('delete_links', 0))}",
-            f"👤 المعرفات: {st(settings.get('mentions', 0))}",
-            f"🌊 الفيضان: {st(settings.get('antiflood_enabled', 0))}",
-            f"🌙 الوضع الليلي: {st(settings.get('night_mode_enabled', 0))}",
-            f"🔞 NSFW: {st(settings.get('nsfw_enabled', 0))}",
-            f"⚠️ التحذيرات: {st(settings.get('warn_enabled', 0))}\n",
-            "🎬 **المحتوى**",
-            f"🎬 فيديو: {st(settings.get('delete_videos', 0))}",
-            f"🎵 موسيقى: {st(settings.get('delete_audio', 0))}",
-            f"🎞️ متحرك: {st(settings.get('delete_animation', 0))}",
-            f"🎤 صوتي: {st(settings.get('delete_voice', 0))}",
-            f"🖼️ ملصقات: {st(settings.get('delete_stickers', 0))}",
-            f"📄 ملفات: {st(settings.get('delete_documents', 0))}",
-            f"📨 مُعاد: {st(settings.get('delete_forwarded', 0))}",
-            f"🛠️ خدمة: {st(settings.get('delete_service', 0))}\n",
-            "👋 **الترحيب**",
-            f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))}",
-            f"👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
+            f"🔗 روابط: {st(settings.get('delete_links', 0))} | 👤 معرفات: {st(settings.get('mentions', 0))}",
+            f"🌊 فيضان: {st(settings.get('antiflood_enabled', 0))} | 📊 رسائل: {settings.get('antiflood_messages', 5)} | ⏱️ ثواني: {settings.get('antiflood_seconds', 10)}",
+            f"📏 طول: {settings.get('max_message_length', 0)} | 🌙 ليلي: {st(settings.get('night_mode_enabled', 0))} | 🔞 NSFW: {st(settings.get('nsfw_enabled', 0))}",
+            f"⚠️ تحذيرات: {st(settings.get('warn_enabled', 0))} | 📊 حد: {settings.get('max_warnings', 3)}\n",
+            f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))} | 👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
+            f"✅ موافقة: {st(settings.get('auto_approve_join', 0))} | ❌ رفض: {st(settings.get('auto_reject_join', 0))}\n",
+            f"⏱️ كتم: {settings.get('mute_default_duration', 3600)}ث | 🚫 حظر: {settings.get('ban_default_duration', 0)}ث | 🔒 تقييد: {settings.get('restrict_default_duration', 1800)}ث",
+            f"⚠️ مخالفات: {settings.get('violation_strikes', 3)} | ⏱️ مدة: {settings.get('violation_duration', 60)}ث",
+            f"🌊 مدة الفيضان: {settings.get('antiflood_penalty_duration', 3600)}ث | 🌙 مدة الليل: {settings.get('night_mode_action_duration', 3600)}ث",
+            f"⚖️ مدة عقوبة التحذير: {settings.get('warn_penalty_duration', 3600)}ث",
             "━━━━━━━━━━━━━━━━━━━━"
         ]
         return "\n".join(lines)
@@ -835,22 +931,16 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
         pass
 
     if not authorized:
-        row = await DB.fetchone(
-            "SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?",
-            (chat_id, user_id)
-        )
-        if row:
-            authorized = True
-        else:
-            row2 = await DB.fetchone(
-                "SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?",
-                (chat_id, user_id)
-            )
-            if row2:
-                authorized = True
-            else:
-                if await DB.is_anonymous_admin(chat_id, user_id):
-                    authorized = True
+        row = await DB.fetchone("""
+            SELECT 1 FROM (
+                SELECT owner_id as user_id FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?
+                UNION
+                SELECT admin_id FROM hidden_admins WHERE chat_id=? AND admin_id=?
+                UNION
+                SELECT anonymous_id FROM anonymous_admins WHERE chat_id=? AND anonymous_id=?
+            ) LIMIT 1
+        """, (chat_id, user_id, chat_id, user_id, chat_id, user_id))
+        authorized = row is not None
 
     _auth_cache[cache_key] = authorized
     return authorized
@@ -886,26 +976,34 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 
 
 # =====================================================================
-# 12. إرسال آمن (مع معالجة TimedOut)
+# 12. إرسال آمن (مع معالجة TimedOut ودعم الوسائط)
 # =====================================================================
 
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode: str = None, **kwargs):
-    if not text:
-        return
+    if not text and not kwargs.get('photo') and not kwargs.get('video') and not kwargs.get('document') and not kwargs.get('audio') and not kwargs.get('voice') and not kwargs.get('animation') and not kwargs.get('sticker') and not kwargs.get('video_note'):
+        return None
+
     await RATE_LIMITER.acquire()
-    text = TextUtils.sanitize(text, max_len=4096)
+    text = TextUtils.sanitize(text, max_len=4096) if text else ""
+
     try:
-        return await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=parse_mode,
-            **kwargs
-        )
-    except TimedOut:
-        logger.warning("⚠️ Timed out، محاولة إعادة الإرسال...")
-        try:
-            await asyncio.sleep(1)
+        if 'photo' in kwargs:
+            return await bot.send_photo(chat_id=chat_id, photo=kwargs['photo'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'photo'})
+        elif 'video' in kwargs:
+            return await bot.send_video(chat_id=chat_id, video=kwargs['video'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'video'})
+        elif 'document' in kwargs:
+            return await bot.send_document(chat_id=chat_id, document=kwargs['document'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'document'})
+        elif 'audio' in kwargs:
+            return await bot.send_audio(chat_id=chat_id, audio=kwargs['audio'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'audio'})
+        elif 'voice' in kwargs:
+            return await bot.send_voice(chat_id=chat_id, voice=kwargs['voice'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'voice'})
+        elif 'animation' in kwargs:
+            return await bot.send_animation(chat_id=chat_id, animation=kwargs['animation'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'animation'})
+        elif 'sticker' in kwargs:
+            return await bot.send_sticker(chat_id=chat_id, sticker=kwargs['sticker'], reply_markup=reply_markup)
+        elif 'video_note' in kwargs:
+            return await bot.send_video_note(chat_id=chat_id, video_note=kwargs['video_note'], reply_markup=reply_markup)
+        else:
             return await bot.send_message(
                 chat_id=chat_id,
                 text=text,
@@ -913,6 +1011,34 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
                 parse_mode=parse_mode,
                 **kwargs
             )
+    except TimedOut:
+        logger.warning("⚠️ Timed out، محاولة إعادة الإرسال...")
+        try:
+            await asyncio.sleep(1)
+            if 'photo' in kwargs:
+                return await bot.send_photo(chat_id=chat_id, photo=kwargs['photo'], caption=text or None, reply_markup=reply_markup)
+            elif 'video' in kwargs:
+                return await bot.send_video(chat_id=chat_id, video=kwargs['video'], caption=text or None, reply_markup=reply_markup)
+            elif 'document' in kwargs:
+                return await bot.send_document(chat_id=chat_id, document=kwargs['document'], caption=text or None, reply_markup=reply_markup)
+            elif 'audio' in kwargs:
+                return await bot.send_audio(chat_id=chat_id, audio=kwargs['audio'], caption=text or None, reply_markup=reply_markup)
+            elif 'voice' in kwargs:
+                return await bot.send_voice(chat_id=chat_id, voice=kwargs['voice'], caption=text or None, reply_markup=reply_markup)
+            elif 'animation' in kwargs:
+                return await bot.send_animation(chat_id=chat_id, animation=kwargs['animation'], caption=text or None, reply_markup=reply_markup)
+            elif 'sticker' in kwargs:
+                return await bot.send_sticker(chat_id=chat_id, sticker=kwargs['sticker'], reply_markup=reply_markup)
+            elif 'video_note' in kwargs:
+                return await bot.send_video_note(chat_id=chat_id, video_note=kwargs['video_note'], reply_markup=reply_markup)
+            else:
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    **kwargs
+                )
         except Exception as e2:
             logger.error(f"❌ فشل الإرسال بعد المحاولة الثانية: {e2}")
             return None
@@ -1159,7 +1285,15 @@ async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[D
                 continue
             if overwrite:
                 await DB.execute("DELETE FROM auto_replies WHERE chat_id=? AND keyword=?", (chat_id, keyword))
-            await DB.add_auto_reply(chat_id, keyword, reply)
+            reply_type = item.get('reply_type', 'text')
+            media_id = item.get('media_file_id')
+            buttons = item.get('buttons')
+            await DB.add_auto_reply(
+                chat_id, keyword, reply,
+                reply_type=reply_type,
+                media_id=media_id,
+                buttons=json.dumps(buttons) if buttons else None
+            )
             count += 1
         _auto_reply_cache.invalidate()
         return count
@@ -1302,14 +1436,15 @@ class BackgroundTasks:
                     tasks.append(task)
 
                 await asyncio.gather(*tasks, return_exceptions=True)
-                
+
             except Exception as e:
                 logger.error(f"❌ Auto publish: {e}")
                 await asyncio.sleep(60)
 
     @staticmethod
     async def _publish_channel_cycle(bot, ch, sleep_seconds):
-        """دورة نشر مستقلة لكل قناة - كل قناة تنشر كل 12 دقيقة"""
+        consecutive_failures = 0
+        max_failures = 10
         while True:
             try:
                 has_sub = await DB.has_active_subscription(ch['user_id'])
@@ -1320,16 +1455,22 @@ class BackgroundTasks:
 
                 post = await DB.get_next_post(ch['id'])
                 if not post:
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_failures:
+                        logger.info(f"⏹️ إيقاف القناة {ch['id']} - لا توجد منشورات")
+                        break
                     auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
                     if auto_recycle:
                         await DB.reset_posts(ch['user_id'], ch['id'])
                         post = await DB.get_next_post(ch['id'])
                         if not post:
-                            await asyncio.sleep(60)
+                            await asyncio.sleep(60 * consecutive_failures)
                             continue
                     else:
-                        await asyncio.sleep(60)
+                        await asyncio.sleep(60 * consecutive_failures)
                         continue
+                else:
+                    consecutive_failures = 0
 
                 success = await BackgroundTasks._publish_post(bot, ch['channel_id'], post)
                 if success:
@@ -1467,6 +1608,19 @@ class BackgroundTasks:
                 await DB.expire_penalties()
             except Exception as e:
                 logger.error(f"❌ Expire penalties: {e}")
+
+    @staticmethod
+    async def cleanup_old_data() -> None:
+        """تنظيف البيانات القديمة"""
+        while True:
+            await asyncio.sleep(86400)
+            try:
+                await DB.execute("DELETE FROM admin_logs WHERE created_at < datetime('now', '-30 days')")
+                await DB.execute("DELETE FROM user_penalties WHERE created_at < datetime('now', '-60 days')")
+                await DB.execute("DELETE FROM payment_logs WHERE created_at < datetime('now', '-90 days')")
+                logger.info("✅ تم تنظيف البيانات القديمة")
+            except Exception as e:
+                logger.error(f"❌ Cleanup error: {e}")
 
 
 # =====================================================================
