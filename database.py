@@ -2,58 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية المحسّنة)
-- ✅ توحيد وحدات الوقت إلى دقائق في الإعدادات
-- ✅ إضافة حد يومي للإحالات
-- ✅ إضافة حد أقصى للكلمات المحظورة العامة
-- ✅ تحسينات في الأداء (استخدام asyncio.to_thread)
-- ✅ جميع الجداول والدوال الأساسية
-- ✅ إصلاح دوال الإحالات للتعامل مع عدم وجود بيانات
-- ✅ إصلاح get_channels_to_publish لدعم إعادة التدوير التلقائي
-- ✅ إعادة تدوير مباشرة عند نفاد المنشورات
-- ✅ إضافة جدول user_violations ودوال التصعيد التلقائي
-- ✅ استكمال الأعمدة الناقصة في group_security
-- ✅ إضافة جدول anonymous_admins ودوال المشرفين المجهولين
-- ✅ زيادة طول رموز الإحالة إلى 16 حرف
-- ✅ إعادة تعيين عداد الفشل تلقائياً
-- ✅ إصلاحات شاملة للأخطاء والاستثناءات
-- ✅ إضافة دوال الإدارة والتحقق المطلوبة من handlers_message.py
-- ✅ إصلاح مشكلة Deadlock الحرجة
-- ✅ إضافة دوال helper للعمل داخل connection موجود
-- ✅ تحديث VALID_PENALTY_TYPES لتشمل kick و warn
-- ✅ إضافة دالة get_general_stats للوحة الأدمن
-- ✅ إضافة خطة تجربة منفصلة
-- ✅ إضافة دالة get_unpublished_posts_count
-- ✅ تعيين القناة الجديدة كنشطة تلقائياً عند الإضافة
-- ✅ تعديل grant_subscription_days لاستخدام خطة الهدية عند عدم تحديد plan_id
-- ✅ زيادة عدد القنوات في خطة التجربة إلى 100
-- ✅ إضافة أعمدة مدد العقوبات الجديدة (antiflood_penalty_duration, night_mode_action_duration, warn_penalty_duration)
-- ✅ إضافة دالة export_auto_replies_to_file لتصدير الردود التلقائية
-- ✅ إضافة فاصل زمني بالثواني بين القنوات عند النشر (توزيع تلقائي)
-- ✅ إصلاح add_banned_word لالتقاط تكرار الكلمات بشكل صحيح
-- ✅ منع حفظ المنشورات المكررة في نفس القناة (نفس النص والوسائط)
-- ✅ تحسين الأقفال لتجنب Deadlock (استخدام الدوال المساعدة داخل نفس الاتصال)
-- ✅ إضافة دالة backup_database تستخدم sqlite3.backup
-- ✅ إضافة دوال تنظيف دورية (cleanup_old_logs, cleanup_old_penalties, vacuum_database)
-- ✅ تقصير رموز الإحالة وأكواد الهدايا
-- ✅ معالجة تصادم الرموز بإعادة المحاولة
-- ✅ تحسين VACUUM باستخدام wal_checkpoint
-- ✅ استبدال جميع datetime('now') بـ TimeUtils.sql_iso()
-- ✅ تسريع get_bot_stats باستخدام asyncio.gather
-- ✅ تحسين get_bot_stats لاستخدام اتصال واحد بدلاً من gather
-- ✅ تحسين update_next_publish لتقليل عدد الاتصالات
-- ✅ تحسين sync_anonymous_admins لتفادي فقدان البيانات
-- ✅ تحسين get_user_groups باستخدام EXISTS بدلاً من UNION
-- ✅ دمج get_general_stats مع get_bot_stats
-- ✅ إضافة نظام ترحيل (migration) لإضافة الأعمدة الناقصة
-- ✅ تحسينات إضافية: قفل في get_next_post، تنظيف بيانات المجموعة عند الحذف، تحسين sync_group_admins
-- ✅ إصلاح grant_subscription_days عند عدم وجود خطة هدية
-- ✅ إعادة تعيين عداد المخالفات تلقائيًا في increment_violation_count
-- ✅ إضافة فحوصات الأنواع في دوال التحديث ( _validate_kwargs )
-- ✅ تعديل add_posts لاحتساب حد max_posts على المنشورات غير المنشورة فقط
-- ✅ تعديل add_penalty بحيث لا تُستبدل التحذيرات ( warn ) بل تتراكم
-- ✅ توسيع delete_group لحذف بيانات user_penalties
-- ✅ إضافة الدالة _validate_kwargs (كانت مفقودة)
+database.py - قاعدة البيانات المتكاملة للبوت (النسخة النهائية المحسّنة والمصححة)
+- ✅ جميع التحسينات السابقة
+- ✅ إصلاح دالة get_user_groups للتعامل مع المشرفين المجهولين عبر user_id
+- ✅ إصلاح claim_referral_reward لاختيار أفضل خطة نشطة بدلاً من plan_id=1
+- ✅ إضافة عمود user_id في anonymous_admins مع التوافق مع الاستدعاءات القديمة
+- ✅ الحفاظ على جميع الوظائف والميزات
 """
 
 import sqlite3
@@ -215,12 +169,9 @@ class Database:
             logger.error(f"❌ _fetchval_in_conn error: {e}", exc_info=True)
             return default
 
-    # ✅ الدالة المفقودة: التحقق من أنواع kwargs
     @staticmethod
     def _validate_kwargs(kwargs: Dict[str, Any], type_map: Dict[str, type]) -> bool:
-        """
-        التحقق من أن القيم الممررة تطابق الأنواع المتوقعة.
-        """
+        """التحقق من أن القيم الممررة تطابق الأنواع المتوقعة."""
         for key, value in kwargs.items():
             expected_type = type_map.get(key)
             if expected_type is None:
@@ -294,7 +245,7 @@ class Database:
         try:
             async with self._get_connection() as conn:
                 await self._create_tables(conn)
-                await self._migrate_schema(conn)  # ترحيل المخطط إذا لزم
+                await self._migrate_schema(conn)
                 await self._create_indexes(conn)
                 await self._init_default_data(conn)
                 await self._import_banned_words(conn)
@@ -505,6 +456,7 @@ class Database:
                 chat_id INTEGER NOT NULL,
                 anonymous_id INTEGER NOT NULL,
                 added_by INTEGER,
+                user_id INTEGER,
                 added_at TEXT,
                 PRIMARY KEY (chat_id, anonymous_id)
             )
@@ -971,6 +923,9 @@ class Database:
             "auto_replies": [
                 ("usage_count", "INTEGER DEFAULT 0"),
             ],
+            "anonymous_admins": [
+                ("user_id", "INTEGER"),
+            ],
         }
 
         for table, columns in migrations.items():
@@ -1048,7 +1003,8 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_penalties_end_time ON user_penalties(end_time)",
             "CREATE INDEX IF NOT EXISTS idx_points_user ON user_points(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_anonymous_admins_chat ON anonymous_admins(chat_id)",
-            # فهارس إضافية لتحسين get_channels_to_publish
+            # فهارس إضافية
+            "CREATE INDEX IF NOT EXISTS idx_anonymous_admins_user ON anonymous_admins(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_user_channels_user_banned ON user_channels(user_id, banned)",
             "CREATE INDEX IF NOT EXISTS idx_schedule_next_channel ON schedule(next_publish_date, channel_db_id)",
             "CREATE INDEX IF NOT EXISTS idx_posts_channel_pub_fail ON posts(channel_db_id, published, fail_count)",
@@ -1119,7 +1075,7 @@ class Database:
     async def register_user(self, user_id: int, username: str = "", first_name: str = "") -> bool:
         try:
             async with self._get_connection() as conn:
-                for _ in range(3):  # إعادة المحاولة في حالة التصادم
+                for _ in range(3):
                     code = secrets.token_urlsafe(6)
                     try:
                         await conn.execute(
@@ -1417,7 +1373,7 @@ class Database:
                     if not plan_row:
                         return 0
 
-                    # فلترة المكررات داخل الدفعة الواردة
+                    # فلترة المكررات داخل الدفعة
                     unique_posts = []
                     seen_local = set()
                     for t, m, f in posts:
@@ -1426,7 +1382,7 @@ class Database:
                             seen_local.add(key)
                             unique_posts.append((t, m, f))
 
-                    # فلترة المكررات الموجودة بالفعل في قاعدة البيانات
+                    # فلترة المكررات الموجودة في قاعدة البيانات
                     final_posts = []
                     for t, m, f in unique_posts:
                         text_clean = (t or "")[:4096]
@@ -1443,7 +1399,7 @@ class Database:
                     if not final_posts:
                         return 0
 
-                    # ✅ تعديل: احتساب الحد على المنشورات غير المنشورة فقط
+                    # تطبيق حد max_posts على غير المنشور فقط
                     if plan_row['max_posts'] is not None:
                         cursor = await conn.execute(
                             "SELECT COUNT(*) FROM posts WHERE channel_db_id = ? AND published = 0",
@@ -1472,7 +1428,7 @@ class Database:
             return 0
 
     async def get_next_post(self, channel_db_id: int) -> Optional[Dict]:
-        async with self._lock:  # قفل لمنع التعارض عند إعادة التدوير
+        async with self._lock:
             post = await self.fetchone(
                 """SELECT p.id, p.text, p.media_type, p.media_file_id, p.fail_count
                    FROM posts p
@@ -1555,7 +1511,7 @@ class Database:
             return False
 
     async def get_user_groups(self, user_id: int) -> List[Dict]:
-        # تحسين باستخدام EXISTS بدلاً من UNION داخل IN
+        # تم إصلاح الشرط الخاص بالمشرفين المجهولين لاستخدام user_id
         return await self.fetchall(
             """SELECT DISTINCT bg.chat_id, bg.chat_name, bg.username, bg.banned
                FROM bot_groups bg
@@ -1564,23 +1520,19 @@ class Database:
                   OR EXISTS (SELECT 1 FROM hidden_owner_groups ho WHERE ho.chat_id = bg.chat_id AND ho.owner_id = ?)
                   OR EXISTS (SELECT 1 FROM hidden_admins ha WHERE ha.chat_id = bg.chat_id AND ha.admin_id = ?)
                   OR EXISTS (SELECT 1 FROM group_admins ga WHERE ga.chat_id = bg.chat_id AND ga.user_id = ?)
-                  OR EXISTS (SELECT 1 FROM anonymous_admins aa WHERE aa.chat_id = bg.chat_id AND aa.anonymous_id = ?)""",
+                  OR EXISTS (SELECT 1 FROM anonymous_admins aa WHERE aa.chat_id = bg.chat_id AND aa.user_id = ?)""",
             (user_id, user_id, user_id, user_id, user_id, user_id)
         )
 
     async def sync_group_admins(self, chat_id: int, admin_ids: List[int]) -> int:
         try:
             async with self._get_connection() as conn:
-                # حذف المشرفين غير الموجودين في القائمة الجديدة
                 existing = await self._fetchall_in_conn(conn, "SELECT user_id FROM group_admins WHERE chat_id = ?", (chat_id,))
                 existing_ids = {row['user_id'] for row in existing}
                 new_ids = set(admin_ids)
-                to_remove = existing_ids - new_ids
-                for uid in to_remove:
+                for uid in existing_ids - new_ids:
                     await conn.execute("DELETE FROM group_admins WHERE chat_id = ? AND user_id = ?", (chat_id, uid))
-                # إضافة الجدد
-                to_add = new_ids - existing_ids
-                for uid in to_add:
+                for uid in new_ids - existing_ids:
                     await conn.execute("INSERT OR IGNORE INTO group_admins (chat_id, user_id) VALUES (?,?)", (chat_id, uid))
             return len(admin_ids)
         except Exception as e:
@@ -1607,8 +1559,11 @@ class Database:
     # دوال المشرفين المجهولين
     # =====================================================================
 
-    async def add_anonymous_admin(self, chat_id: int, anonymous_id: int, added_by: int = None) -> bool:
-        return await self.execute("INSERT OR IGNORE INTO anonymous_admins (chat_id, anonymous_id, added_by, added_at) VALUES (?,?,?,?)", (chat_id, anonymous_id, added_by, TimeUtils.sql_iso()))
+    async def add_anonymous_admin(self, chat_id: int, anonymous_id: int, added_by: int = None, user_id: int = None) -> bool:
+        return await self.execute(
+            "INSERT OR IGNORE INTO anonymous_admins (chat_id, anonymous_id, added_by, user_id, added_at) VALUES (?,?,?,?,?)",
+            (chat_id, anonymous_id, added_by, user_id, TimeUtils.sql_iso())
+        )
 
     async def remove_anonymous_admin(self, chat_id: int, anonymous_id: int) -> bool:
         try:
@@ -1620,28 +1575,35 @@ class Database:
             return False
 
     async def get_anonymous_admins(self, chat_id: int) -> List[Dict]:
-        return await self.fetchall("SELECT anonymous_id, added_by, added_at FROM anonymous_admins WHERE chat_id = ? ORDER BY added_at DESC", (chat_id,))
+        return await self.fetchall("SELECT anonymous_id, user_id, added_by, added_at FROM anonymous_admins WHERE chat_id = ? ORDER BY added_at DESC", (chat_id,))
 
     async def is_anonymous_admin(self, chat_id: int, user_id: int) -> bool:
-        result = await self.fetchval("SELECT 1 FROM anonymous_admins WHERE chat_id = ? AND anonymous_id = ?", (chat_id, user_id))
+        # يدعم التحقق عبر anonymous_id أو user_id
+        result = await self.fetchval(
+            "SELECT 1 FROM anonymous_admins WHERE chat_id = ? AND (anonymous_id = ? OR user_id = ?)",
+            (chat_id, user_id, user_id)
+        )
         return result is not None
 
-    async def sync_anonymous_admins(self, chat_id: int, anonymous_ids: List[int], added_by: int = None) -> int:
+    async def sync_anonymous_admins(self, chat_id: int, anonymous_ids: List[int], added_by: int = None, user_id_map: Optional[Dict[int, int]] = None) -> int:
         try:
             async with self._lock:
                 async with self._get_connection() as conn:
-                    # تحديث أكثر أمانًا: نحذف فقط من لم يعد في القائمة ثم نضيف الجدد
                     existing = await self._fetchall_in_conn(conn, "SELECT anonymous_id FROM anonymous_admins WHERE chat_id = ?", (chat_id,))
                     existing_ids = {row['anonymous_id'] for row in existing}
                     new_ids = set(anonymous_ids)
-                    # حذف غير الموجودين
-                    to_remove = existing_ids - new_ids
-                    for anon_id in to_remove:
+                    for anon_id in existing_ids - new_ids:
                         await conn.execute("DELETE FROM anonymous_admins WHERE chat_id = ? AND anonymous_id = ?", (chat_id, anon_id))
-                    # إضافة الجدد
-                    to_add = new_ids - existing_ids
-                    for anon_id in to_add:
-                        await conn.execute("INSERT OR IGNORE INTO anonymous_admins (chat_id, anonymous_id, added_by, added_at) VALUES (?,?,?,?)", (chat_id, anon_id, added_by, TimeUtils.sql_iso()))
+                    for anon_id in new_ids:
+                        real_user_id = user_id_map.get(anon_id) if user_id_map else None
+                        await conn.execute(
+                            """INSERT INTO anonymous_admins (chat_id, anonymous_id, added_by, user_id, added_at)
+                               VALUES (?,?,?,?,?)
+                               ON CONFLICT(chat_id, anonymous_id) DO UPDATE SET
+                                   user_id = excluded.user_id,
+                                   added_by = excluded.added_by""",
+                            (chat_id, anon_id, added_by, real_user_id, TimeUtils.sql_iso())
+                        )
                 return len(anonymous_ids)
         except Exception as e:
             logger.error(f"❌ Error in sync_anonymous_admins: {e}", exc_info=True)
@@ -1687,7 +1649,6 @@ class Database:
                 logger.error(f"❌ Invalid column: {key}")
                 return False
 
-        # التحقق من الأنواع
         type_map = {
             'delete_links': int, 'mentions': int, 'slow_mode': int, 'slow_mode_seconds': int,
             'welcome_enabled': int, 'welcome_text': str, 'goodbye_enabled': int, 'goodbye_text': str,
@@ -1914,8 +1875,8 @@ class Database:
             'interval_minutes': int,
             'interval_hours': int,
             'interval_days': int,
-            'days_of_week': str,   # JSON string
-            'specific_dates': str, # JSON string
+            'days_of_week': str,
+            'specific_dates': str,
             'publish_time': str,
             'cron_expression': str,
             'next_publish_date': str
@@ -1929,7 +1890,6 @@ class Database:
         return await self.execute(query, tuple(values))
 
     async def update_next_publish(self, channel_db_id: int) -> bool:
-        # تحسين: دمج جلب الجدولة وآخر نشر في استعلام واحد
         async with self._get_connection() as conn:
             schedule = await self._fetchone_in_conn(conn, "SELECT * FROM schedule WHERE channel_db_id = ?", (channel_db_id,))
             if not schedule:
@@ -1979,39 +1939,57 @@ class Database:
 
     async def get_channels_to_publish(self, limit: int = 20) -> List[Dict]:
         return await self.fetchall(
-            """WITH active_subs AS (
-                   SELECT s.user_id, s.plan_id, p.max_channels, p.max_posts
-                   FROM subscriptions s
-                   JOIN plans p ON s.plan_id = p.id
-                   WHERE s.status = 'active' AND s.end_date > ?
-                   AND s.id = (
-                       SELECT id FROM subscriptions
-                       WHERE user_id = s.user_id AND status = 'active' AND end_date > ?
-                       ORDER BY (SELECT max_channels FROM plans WHERE id = subscriptions.plan_id) DESC,
-                                (SELECT max_posts FROM plans WHERE id = subscriptions.plan_id) DESC,
-                                end_date DESC
-                       LIMIT 1
-                   )
-               )
-               SELECT uc.id, uc.channel_id, uc.user_id, u.auto_publish, u.auto_recycle
-               FROM user_channels uc
-               JOIN users u ON uc.user_id = u.user_id
-               LEFT JOIN schedule s ON uc.id = s.channel_db_id
-               LEFT JOIN active_subs a ON uc.user_id = a.user_id
-               WHERE uc.banned = 0 
-                 AND u.banned = 0 
-                 AND u.auto_publish = 1
-                 AND (s.next_publish_date IS NULL OR s.next_publish_date <= ?)
-                 AND (
-                     EXISTS (SELECT 1 FROM posts p WHERE p.channel_db_id = uc.id AND p.published = 0 AND (p.fail_count IS NULL OR p.fail_count < 3))
-                     OR (u.auto_recycle = 1 AND EXISTS (SELECT 1 FROM posts p WHERE p.channel_db_id = uc.id AND p.published = 1))
-                 )
-                 AND a.user_id IS NOT NULL
-                 AND (a.max_channels IS NULL OR (SELECT COUNT(*) FROM user_channels WHERE user_id = uc.user_id AND banned = 0) <= a.max_channels)
-                 AND (a.max_posts IS NULL OR (SELECT COUNT(*) FROM posts WHERE channel_db_id = uc.id AND published = 0) <= a.max_posts)
-               ORDER BY COALESCE(s.next_publish_date, '1970-01-01 00:00:00') ASC
-               LIMIT ?""",
-            (TimeUtils.sql_iso(), TimeUtils.sql_iso(), TimeUtils.sql_iso(), limit)
+            """
+            WITH best_subscription AS (
+                SELECT s.user_id, s.plan_id, p.max_channels, p.max_posts,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY s.user_id 
+                           ORDER BY p.max_channels DESC, p.max_posts DESC, s.end_date DESC
+                       ) AS rn
+                FROM subscriptions s
+                JOIN plans p ON s.plan_id = p.id
+                WHERE s.status = 'active' AND s.end_date > ?
+            ),
+            active_subs AS (
+                SELECT user_id, plan_id, max_channels, max_posts
+                FROM best_subscription
+                WHERE rn = 1
+            ),
+            channel_counts AS (
+                SELECT user_id, COUNT(*) AS channel_count
+                FROM user_channels
+                WHERE banned = 0
+                GROUP BY user_id
+            ),
+            post_counts AS (
+                SELECT channel_db_id,
+                       SUM(CASE WHEN published = 0 THEN 1 ELSE 0 END) AS unpublished_count,
+                       SUM(CASE WHEN published = 1 THEN 1 ELSE 0 END) AS published_count,
+                       SUM(CASE WHEN published = 0 AND (fail_count IS NULL OR fail_count < 3) THEN 1 ELSE 0 END) AS publishable_unpublished_count
+                FROM posts
+                GROUP BY channel_db_id
+            )
+            SELECT uc.id, uc.channel_id, uc.user_id, u.auto_publish, u.auto_recycle
+            FROM user_channels uc
+            JOIN users u ON uc.user_id = u.user_id
+            LEFT JOIN schedule sch ON uc.id = sch.channel_db_id
+            INNER JOIN active_subs a ON uc.user_id = a.user_id
+            LEFT JOIN channel_counts cc ON uc.user_id = cc.user_id
+            LEFT JOIN post_counts pc ON uc.id = pc.channel_db_id
+            WHERE uc.banned = 0 
+              AND u.banned = 0 
+              AND u.auto_publish = 1
+              AND (sch.next_publish_date IS NULL OR sch.next_publish_date <= ?)
+              AND (
+                  (pc.publishable_unpublished_count > 0)
+                  OR (u.auto_recycle = 1 AND pc.published_count > 0)
+              )
+              AND (a.max_channels IS NULL OR COALESCE(cc.channel_count, 0) <= a.max_channels)
+              AND (a.max_posts IS NULL OR COALESCE(pc.unpublished_count, 0) <= a.max_posts)
+            ORDER BY COALESCE(sch.next_publish_date, '1970-01-01 00:00:00') ASC
+            LIMIT ?
+            """,
+            (TimeUtils.sql_iso(), TimeUtils.sql_iso(), limit)
         )
 
     # =====================================================================
@@ -2124,6 +2102,34 @@ class Database:
                     available = max(0, total_reward - claimed)
                     if available <= 0:
                         return 0
+
+                    # 🟢 اختيار أفضل خطة نشطة للمستخدم
+                    plan_id = await self._fetchval_in_conn(
+                        conn,
+                        """
+                        SELECT s.plan_id
+                        FROM subscriptions s
+                        JOIN plans p ON s.plan_id = p.id
+                        WHERE s.user_id = ? AND s.status = 'active' AND s.end_date > ?
+                        ORDER BY p.max_channels DESC, p.max_posts DESC, s.end_date DESC
+                        LIMIT 1
+                        """,
+                        (user_id, TimeUtils.sql_iso())
+                    )
+                    if not plan_id:
+                        # اختيار خطة هدية أو شهر كاحتياط
+                        plan_id = await self._fetchval_in_conn(
+                            conn,
+                            "SELECT id FROM plans WHERE is_gift = 1 AND is_active = 1 ORDER BY max_channels DESC LIMIT 1"
+                        )
+                        if not plan_id:
+                            plan_id = await self._fetchval_in_conn(
+                                conn,
+                                "SELECT id FROM plans WHERE name = 'شهر' AND is_active = 1 LIMIT 1"
+                            )
+                            if not plan_id:
+                                return 0
+
                     await conn.execute(
                         "UPDATE referral_rewards SET claimed_reward_days = claimed_reward_days + ? WHERE user_id = ?",
                         (available, user_id)
@@ -2141,7 +2147,7 @@ class Database:
                         """INSERT INTO subscriptions 
                            (user_id, plan_id, status, start_date, end_date, provider, created_at, updated_at)
                            VALUES (?,?,?,?,?,?,?,?)""",
-                        (user_id, 1, 'active', TimeUtils.sql_iso(), new_end.strftime('%Y-%m-%d %H:%M:%S'), 'referral', TimeUtils.sql_iso(), TimeUtils.sql_iso())
+                        (user_id, plan_id, 'active', TimeUtils.sql_iso(), new_end.strftime('%Y-%m-%d %H:%M:%S'), 'referral', TimeUtils.sql_iso(), TimeUtils.sql_iso())
                     )
                     await self._refresh_user_subscription_end(conn, user_id)
                     return available
@@ -2398,13 +2404,11 @@ class Database:
                     if not exists:
                         return False
                     if not plan_id:
-                        # ابحث عن خطة هدية نشطة أولاً
                         plan_id = await self._fetchval_in_conn(
                             conn,
                             "SELECT id FROM plans WHERE is_gift = 1 AND is_active = 1 ORDER BY max_channels DESC LIMIT 1"
                         )
                         if not plan_id:
-                            # إن لم توجد خطة هدية، ابحث عن خطة شهر عادية
                             plan_id = await self._fetchval_in_conn(
                                 conn,
                                 "SELECT id FROM plans WHERE name = 'شهر' AND is_active = 1 LIMIT 1"
@@ -2569,7 +2573,6 @@ class Database:
             if duration < 0:
                 duration = 0
             async with self._get_connection() as conn:
-                # ✅ تعديل: لا تُستبدل التحذيرات السابقة، بل تتراكم
                 if penalty_type != 'warn':
                     await conn.execute("UPDATE user_penalties SET status = 'removed' WHERE user_id = ? AND chat_id = ? AND penalty_type = ? AND status = 'active'", (user_id, chat_id, penalty_type))
                 start_time = TimeUtils.sql_iso()
@@ -2717,7 +2720,6 @@ class Database:
     async def increment_violation_count(self, user_id: int, chat_id: int) -> int:
         async with self._lock:
             async with self._get_connection() as conn:
-                # ✅ إعادة تعيين العداد إذا مر أكثر من 24 ساعة
                 last_time = await self._fetchval_in_conn(
                     conn,
                     "SELECT last_violation_time FROM user_violations WHERE user_id = ? AND chat_id = ?",
@@ -2787,7 +2789,6 @@ class Database:
     # =====================================================================
 
     async def get_bot_stats(self) -> Dict:
-        # استخدام اتصال واحد لتنفيذ جميع الاستعلامات
         async with self._get_connection() as conn:
             users = await self._fetchval_in_conn(conn, "SELECT COUNT(*) FROM users", default=0)
             channels = await self._fetchval_in_conn(conn, "SELECT COUNT(*) FROM user_channels", default=0)
@@ -2807,7 +2808,6 @@ class Database:
         }
 
     async def get_general_stats(self) -> Dict:
-        """إحصائيات عامة للوحة الأدمن (مدمجة مع get_bot_stats)"""
         async with self._get_connection() as conn:
             users = await self._fetchval_in_conn(conn, "SELECT COUNT(*) FROM users", default=0)
             channels = await self._fetchval_in_conn(conn, "SELECT COUNT(*) FROM user_channels", default=0)
@@ -2852,14 +2852,12 @@ class Database:
     # =====================================================================
 
     async def add_admin(self, admin_id: int, added_by: int) -> bool:
-        """إضافة مشرف للبوت"""
         return await self.execute(
             "INSERT OR IGNORE INTO bot_admins (user_id, added_by, added_at) VALUES (?,?,?)",
             (admin_id, added_by, TimeUtils.sql_iso())
         )
 
     async def remove_admin(self, admin_id: int) -> bool:
-        """إزالة مشرف من البوت"""
         try:
             async with self._get_connection() as conn:
                 cursor = await conn.execute("DELETE FROM bot_admins WHERE user_id = ?", (admin_id,))
@@ -2869,11 +2867,9 @@ class Database:
             return False
 
     async def get_admin_list(self) -> List[Dict]:
-        """جلب قائمة مشرفي البوت"""
         return await self.fetchall("SELECT user_id, added_by, added_at FROM bot_admins ORDER BY added_at DESC")
 
     async def mark_users_as_blocked(self, user_ids: List[int]) -> int:
-        """تحديث حالة المستخدمين كمحظورين"""
         if not user_ids:
             return 0
         try:
@@ -2885,19 +2881,15 @@ class Database:
             return 0
 
     async def check_contest_joined(self, contest_id: int, user_id: int) -> bool:
-        """التحقق من أن المستخدم مشترك في المسابقة"""
         result = await self.fetchval("SELECT 1 FROM contest_participants WHERE contest_id = ? AND user_id = ?", (contest_id, user_id))
         return result is not None
 
     async def get_channel_by_id(self, user_id: int, channel_id: int) -> Optional[Dict]:
-        """جلب قناة بواسطة معرف القناة (Telegram ID)"""
         return await self.fetchone("SELECT * FROM user_channels WHERE user_id = ? AND channel_id = ?", (user_id, channel_id))
 
     async def delete_group(self, chat_id: int) -> bool:
-        """حذف مجموعة من قاعدة البيانات مع كل بياناتها المرتبطة"""
         try:
             async with self._get_connection() as conn:
-                # حذف البيانات المرتبطة
                 tables = [
                     "user_groups_link",
                     "group_admins",
@@ -2915,12 +2907,11 @@ class Database:
                     "user_messages",
                     "admin_logs",
                     "violation_penalties",
-                    "user_penalties",   # ✅ أضفناها هنا
-                    "scheduled_posts",  # ✅ إن كانت تحتوي على chat_id
+                    "user_penalties",
+                    "scheduled_posts",
                 ]
                 for table in tables:
                     await conn.execute(f"DELETE FROM {table} WHERE chat_id = ?", (chat_id,))
-                # حذف المجموعة نفسها
                 await conn.execute("DELETE FROM bot_groups WHERE chat_id = ?", (chat_id,))
             return True
         except Exception as e:
@@ -2928,16 +2919,13 @@ class Database:
             return False
 
     async def is_channel_owner(self, user_id: int, channel_db_id: int) -> bool:
-        """التحقق من أن المستخدم يملك القناة"""
         result = await self.fetchval("SELECT 1 FROM user_channels WHERE id = ? AND user_id = ?", (channel_db_id, user_id))
         return result is not None
 
     async def count_user_posts(self, user_id: int, channel_db_id: int) -> int:
-        """عدد منشورات المستخدم في قناة معينة"""
         return await self.fetchval("SELECT COUNT(*) FROM posts WHERE channel_db_id = ?", (channel_db_id,), default=0)
 
     async def get_contest_by_id(self, contest_id: int) -> Optional[Dict]:
-        """جلب مسابقة بواسطة المعرف"""
         return await self.fetchone("SELECT * FROM contests WHERE id = ?", (contest_id,))
 
 
