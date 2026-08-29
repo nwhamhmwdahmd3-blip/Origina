@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-utils.py - الأدوات المساعدة للبوت (النسخة النهائية الكاملة والمكتملة)
+utils.py - الأدوات المساعدة للبوت (النسخة النهائية الكاملة والمصححة)
 =====================================================================
 جميع الدوال والفئات موجودة - جميع الحالات مكتملة - جميع الثوابت معرّفة
 - معالجة لغة off تلقائياً
 - دعم كامل لجميع الأزرار
-- دعم المشرفين المجهولين في is_authorized_in_group
+- دعم المشرفين المجهولين في is_authorized_in_group (باستخدام user_id)
 - معالجة TimedOut مع إعادة المحاولة في safe_send
 - كل قناة تنشر بشكل مستقل بفاصل 12 دقيقة
 - حالة WAIT_MOOD لتحليل المشاعر
@@ -938,9 +938,9 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
                 UNION
                 SELECT admin_id FROM hidden_admins WHERE chat_id=? AND admin_id=?
                 UNION
-                SELECT anonymous_id FROM anonymous_admins WHERE chat_id=? AND anonymous_id=?
+                SELECT user_id FROM anonymous_admins WHERE chat_id=? AND (user_id=? OR (user_id IS NULL AND anonymous_id=?))
             ) LIMIT 1
-        """, (chat_id, user_id, chat_id, user_id, chat_id, user_id))
+        """, (chat_id, user_id, chat_id, user_id, chat_id, user_id, user_id))
         authorized = row is not None
 
     _auth_cache[cache_key] = authorized
@@ -1418,7 +1418,7 @@ class BackgroundTasks:
         """نشر منشور واحد في قناة ثم الخروج (بدون حلقة لا نهائية)"""
         consecutive_failures = 0
         max_failures = 10
-        
+
         try:
             has_sub = await DB.has_active_subscription(ch['user_id'])
             if not has_sub:
@@ -1463,7 +1463,7 @@ class BackgroundTasks:
             try:
                 # جلب القنوات الجاهزة
                 channels = await DB.get_channels_to_publish(max_channels)
-                
+
                 if not channels:
                     await asyncio.sleep(60)
                     continue
@@ -1473,7 +1473,7 @@ class BackgroundTasks:
                     # إذا كانت القناة لها مهمة نشطة بالفعل، لا تنشئ جديدة
                     if channel_id in active_tasks and not active_tasks[channel_id].done():
                         continue
-                    
+
                     # إنشاء مهمة جديدة للقناة
                     task = asyncio.create_task(
                         BackgroundTasks._publish_single_channel(
@@ -1602,6 +1602,14 @@ class BackgroundTasks:
                         admins = await bot.get_chat_administrators(chat_id)
                         admin_ids = [a.user.id for a in admins if a.user and not a.user.is_bot]
                         await DB.sync_group_admins(chat_id, admin_ids)
+                        # مزامنة المشرفين المجهولين
+                        anonymous_ids = [a.user.id for a in admins if a.user and a.user.is_bot and a.status == 'administrator']
+                        if anonymous_ids:
+                            user_id_map = {}
+                            # محاولة الحصول على user_id الحقيقي من خلال كشف المصدر
+                            # في هذه النسخة لن نتمكن من معرفة user_id الفعلي، لذلك نمرر None
+                            # وسيتم الاعتماد على anonymous_id كمعرف مؤقت
+                            await DB.sync_anonymous_admins(chat_id, anonymous_ids, added_by=CONFIG.PRIMARY_OWNER_ID, user_id_map=user_id_map)
                     except:
                         pass
             except Exception as e:
