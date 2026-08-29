@@ -20,6 +20,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - دعم إرسال الوسائط في safe_send
 - تقصير نص إعدادات الأمان لمنع تجاوز حد تيليجرام
 - عرض مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
+- إصلاح auto_publish لدعم جميع القنوات بشكل دائم (إزالة الحلقة اللانهائية)
 """
 
 import asyncio
@@ -1413,80 +1414,88 @@ class BackgroundTasks:
             return False
 
     @staticmethod
+    async def _publish_single_channel(bot, ch, sleep_seconds):
+        """نشر منشور واحد في قناة ثم الخروج (بدون حلقة لا نهائية)"""
+        consecutive_failures = 0
+        max_failures = 10
+        
+        try:
+            has_sub = await DB.has_active_subscription(ch['user_id'])
+            if not has_sub:
+                logger.info(f"⏭️ تخطي القناة {ch['id']} لانتهاء الاشتراك")
+                return
+
+            post = await DB.get_next_post(ch['id'])
+            if not post:
+                auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
+                if auto_recycle:
+                    await DB.reset_posts(ch['user_id'], ch['id'])
+                    post = await DB.get_next_post(ch['id'])
+                    if not post:
+                        return
+                else:
+                    return
+
+            success = await BackgroundTasks._publish_post(bot, ch['channel_id'], post)
+            if success:
+                await DB.mark_post_published(post['id'])
+                await DB.update_last_publish(ch['id'])
+                await DB.update_next_publish(ch['id'])
+                logger.info(f"✅ قناة {ch['id']} نشرت. انتظار {sleep_seconds//60} دقيقة...")
+                # لا ننام، نخرج فوراً ليعيد الجلب
+            else:
+                await DB.increment_post_fail(post['id'])
+
+        except Exception as e:
+            logger.error(f"❌ خطأ في قناة {ch.get('id', 'غير معروفة')}: {e}")
+
+    @staticmethod
     async def auto_publish(bot) -> None:
         await asyncio.sleep(10)
         max_channels = getattr(CONFIG, 'MAX_CHANNELS_PER_CYCLE', 20)
         min_interval_minutes = await get_min_publish_interval()
         sleep_seconds = min_interval_minutes * 60
 
+        # قائمة لتخزين المهام النشطة لكل قناة
+        active_tasks = {}
+
         while True:
             try:
+                # جلب القنوات الجاهزة
                 channels = await DB.get_channels_to_publish(max_channels)
+                
                 if not channels:
                     await asyncio.sleep(60)
                     continue
 
-                tasks = []
                 for ch in channels:
+                    channel_id = ch['id']
+                    # إذا كانت القناة لها مهمة نشطة بالفعل، لا تنشئ جديدة
+                    if channel_id in active_tasks and not active_tasks[channel_id].done():
+                        continue
+                    
+                    # إنشاء مهمة جديدة للقناة
                     task = asyncio.create_task(
-                        BackgroundTasks._publish_channel_cycle(
+                        BackgroundTasks._publish_single_channel(
                             bot, ch, sleep_seconds
                         )
                     )
-                    tasks.append(task)
+                    active_tasks[channel_id] = task
 
-                await asyncio.gather(*tasks, return_exceptions=True)
+                # تنظيف المهام المنتهية
+                for cid in list(active_tasks.keys()):
+                    if active_tasks[cid].done():
+                        try:
+                            active_tasks[cid].result()
+                        except Exception as e:
+                            logger.error(f"❌ خطأ في مهمة القناة {cid}: {e}")
+                        del active_tasks[cid]
 
-            except Exception as e:
-                logger.error(f"❌ Auto publish: {e}")
+                # انتظار قليل قبل الدورة التالية
                 await asyncio.sleep(60)
 
-    @staticmethod
-    async def _publish_channel_cycle(bot, ch, sleep_seconds):
-        consecutive_failures = 0
-        max_failures = 10
-        while True:
-            try:
-                has_sub = await DB.has_active_subscription(ch['user_id'])
-                if not has_sub:
-                    logger.info(f"⏭️ تخطي القناة {ch['id']} لانتهاء الاشتراك")
-                    await asyncio.sleep(300)
-                    continue
-
-                post = await DB.get_next_post(ch['id'])
-                if not post:
-                    consecutive_failures += 1
-                    if consecutive_failures >= max_failures:
-                        logger.info(f"⏹️ إيقاف القناة {ch['id']} - لا توجد منشورات")
-                        break
-                    auto_recycle = await DB.get_auto_recycle_status(ch['user_id'])
-                    if auto_recycle:
-                        await DB.reset_posts(ch['user_id'], ch['id'])
-                        post = await DB.get_next_post(ch['id'])
-                        if not post:
-                            await asyncio.sleep(60 * consecutive_failures)
-                            continue
-                    else:
-                        await asyncio.sleep(60 * consecutive_failures)
-                        continue
-                else:
-                    consecutive_failures = 0
-
-                success = await BackgroundTasks._publish_post(bot, ch['channel_id'], post)
-                if success:
-                    await DB.mark_post_published(post['id'])
-                    await DB.update_last_publish(ch['id'])
-                    await DB.update_next_publish(ch['id'])
-                    logger.info(f"✅ قناة {ch['id']} نشرت. انتظار {sleep_seconds//60} دقيقة...")
-                    await asyncio.sleep(sleep_seconds)
-                else:
-                    await DB.increment_post_fail(post['id'])
-                    await asyncio.sleep(5)
-
-            except asyncio.CancelledError:
-                break
             except Exception as e:
-                logger.error(f"❌ خطأ في قناة {ch.get('id', 'غير معروفة')}: {e}")
+                logger.error(f"❌ خطأ في auto_publish: {e}")
                 await asyncio.sleep(60)
 
     @staticmethod
