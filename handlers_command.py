@@ -96,7 +96,6 @@ class CommandHandlers:
                 else:
                     chat = await context.bot.get_chat(f"@{force_ch}")
                 member = await context.bot.get_chat_member(chat.id, user_id)
-                # ✅ السماح فقط للأعضاء الفعليين (member) والمشرفين والمالك
                 if member.status not in ['member', 'administrator', 'creator']:
                     invite_link = None
                     try:
@@ -276,9 +275,9 @@ class CommandHandlers:
             return
         text = "🏆 <b>المسابقات النشطة</b>\n\n"
         for c in contests:
-            text += f"• <b>{c['title']}</b>\n"
-            text += f"  🎁 {c['prize']}\n"
-            text += f"  📅 {c['end_date'][:10]}\n"
+            text += f"• <b>{escape(c['title'])}</b>\n"
+            text += f"  🎁 {escape(c['prize'])}\n"
+            text += f"  📅 {escape(c['end_date'][:10])}\n"
             text += f"  👥 المشاركون: {c.get('participants', 0)}\n\n"
         kb = KeyboardFactory.build("contests", lang=lang)
         await safe_send(context.bot, user_id, text, reply_markup=kb, parse_mode='HTML')
@@ -694,13 +693,17 @@ class CommandHandlers:
         is_admin = False
         real_user_id = user_id
 
-        for admin in all_admins:
-            if admin.user.id == user_id:
-                is_admin = True
-                real_user_id = admin.user.id
-                break
+        # ✅ دعم Anonymous Admin بشكل كامل:
+        if update.message and update.message.sender_chat and update.message.sender_chat.id == chat_id:
+            is_admin = True
+            real_user_id = update.message.sender_chat.id
+        else:
+            for admin in all_admins:
+                if admin.user.id == user_id:
+                    is_admin = True
+                    real_user_id = admin.user.id
+                    break
 
-        # دعم المشرف المجهول عبر ANONYMOUS_ADMIN_ID
         if not is_admin and hasattr(CONFIG, 'ANONYMOUS_ADMIN_ID') and user_id == CONFIG.ANONYMOUS_ADMIN_ID:
             is_admin = True
             real_user_id = user_id
@@ -749,7 +752,7 @@ class CommandHandlers:
             logger.error(f"❌ فشل مزامنة المشرفين: {e}")
             admin_count = 0
 
-        # رسالة النجاح - نسخة جميلة
+        # رسالة النجاح - نسخة جميلة وخالية من الأخطاء
         msg = (
             f"🎉 <b>تم تفعيل المجموعة بنجاح!</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -842,7 +845,6 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
 
-        # ✅ التحقق من صلاحيات البوت باستخدام can_act
         perms = await check_bot_permissions(context.bot, chat_id)
         if not perms.get('can_act', False):
             await safe_send(context.bot, user_id, "❌ البوت لا يملك الصلاحيات الكافية.")
@@ -893,7 +895,6 @@ class CommandHandlers:
         success, msg = await apply_penalty(context.bot, chat_id, target, action, duration_seconds, reason, user_id)
         await safe_send(context.bot, user_id, msg)
 
-        # ✅ إبطال كاش الصلاحيات بعد تطبيق العقوبة
         if success:
             await invalidate_auth_cache(chat_id=chat_id, user_id=target)
 
