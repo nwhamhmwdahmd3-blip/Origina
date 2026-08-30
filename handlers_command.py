@@ -13,6 +13,7 @@ handlers_command.py - معالجات الأوامر (CommandHandlers) - النس
 import asyncio
 import logging
 from typing import Optional
+from html import escape
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -95,6 +96,7 @@ class CommandHandlers:
                 else:
                     chat = await context.bot.get_chat(f"@{force_ch}")
                 member = await context.bot.get_chat_member(chat.id, user_id)
+                # ✅ السماح فقط للأعضاء الفعليين (member) والمشرفين والمالك
                 if member.status not in ['member', 'administrator', 'creator']:
                     invite_link = None
                     try:
@@ -272,14 +274,14 @@ class CommandHandlers:
         if not contests:
             await safe_send(context.bot, user_id, "📭 لا توجد مسابقات نشطة")
             return
-        text = "🏆 **المسابقات النشطة**\n\n"
+        text = "🏆 <b>المسابقات النشطة</b>\n\n"
         for c in contests:
-            text += f"• **{c['title']}**\n"
+            text += f"• <b>{c['title']}</b>\n"
             text += f"  🎁 {c['prize']}\n"
             text += f"  📅 {c['end_date'][:10]}\n"
             text += f"  👥 المشاركون: {c.get('participants', 0)}\n\n"
         kb = KeyboardFactory.build("contests", lang=lang)
-        await safe_send(context.bot, user_id, text, reply_markup=kb)
+        await safe_send(context.bot, user_id, text, reply_markup=kb, parse_mode='HTML')
 
     # ========== الأوامر الإضافية الجديدة ==========
 
@@ -288,26 +290,29 @@ class CommandHandlers:
         """الأمر /mood - تحليل المشاعر"""
         user_id = update.effective_user.id
         args = context.args or []
-        
+
         if not args:
             StateManager.set(user_id, UserState.WAIT_MOOD)
             await safe_send(context.bot, user_id, "📝 أرسل النص الذي تريد تحليل مشاعره:")
             return
-        
+
         text = " ".join(args)
         from handlers_message import analyze_sentiment
+        if analyze_sentiment is None:
+            await safe_send(context.bot, user_id, "❌ خدمة تحليل المشاعر غير متاحة حالياً")
+            return
         result = analyze_sentiment(text)
-        
+
         response = (
-            f"{result['emoji']} **تحليل المشاعر**\n\n"
-            f"📝 النص: `{text[:100]}`\n"
-            f"🎯 النتيجة: {result['sentiment']}\n\n"
+            f"{result['emoji']} <b>تحليل المشاعر</b>\n\n"
+            f"📝 النص: <code>{escape(text[:100])}</code>\n"
+            f"🎯 النتيجة: <b>{escape(result['sentiment'])}</b>\n\n"
             f"😊 إيجابي: {result['positive_percent']:.0f}%\n"
             f"😔 سلبي: {result['negative_percent']:.0f}%\n"
             f"📊 الكلمات: {result['total_words']}"
         )
-        
-        await safe_send(context.bot, user_id, response)
+
+        await safe_send(context.bot, user_id, response, parse_mode='HTML')
 
     @staticmethod
     async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -320,7 +325,7 @@ class CommandHandlers:
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("👑 لوحة الأدمن", callback_data=CB.ADMIN)
         ]])
-        await safe_send(context.bot, user_id, "👑 **لوحة الأدمن**\n\nاضغط الزر أدناه:", reply_markup=kb)
+        await safe_send(context.bot, user_id, "👑 <b>لوحة الأدمن</b>\n\nاضغط الزر أدناه:", reply_markup=kb, parse_mode='HTML')
 
     @staticmethod
     async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -421,8 +426,8 @@ class CommandHandlers:
         if not backups:
             await safe_send(context.bot, user_id, "📭 لا توجد نسخ")
             return
-        text = "🔄 **النسخ المتاحة:**\n\n" + "\n".join(b.name for b in backups[:10])
-        await safe_send(context.bot, user_id, text)
+        text = "🔄 <b>النسخ المتاحة:</b>\n\n" + "\n".join(b.name for b in backups[:10])
+        await safe_send(context.bot, user_id, text, parse_mode='HTML')
 
     @staticmethod
     async def auto_publish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -448,10 +453,10 @@ class CommandHandlers:
         if not channels:
             await safe_send(context.bot, user_id, "📭 لا توجد قنوات")
             return
-        text = "📡 **قنواتك:**\n\n"
+        text = "📡 <b>قنواتك:</b>\n\n"
         for ch in channels:
-            text += f"• {ch['channel_name']} (`{ch['channel_id']}`)\n"
-        await safe_send(context.bot, user_id, text)
+            text += f"• {escape(ch['channel_name'])} (<code>{ch['channel_id']}</code>)\n"
+        await safe_send(context.bot, user_id, text, parse_mode='HTML')
 
     @staticmethod
     async def posts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -465,10 +470,10 @@ class CommandHandlers:
         if not posts:
             await safe_send(context.bot, user_id, "📭 لا توجد منشورات")
             return
-        text = "📋 **منشوراتك:**\n\n"
+        text = "📋 <b>منشوراتك:</b>\n\n"
         for p in posts:
-            text += f"• `{p['id']}`: {(p['text'] or '')[:30]}\n"
-        await safe_send(context.bot, user_id, text)
+            text += f"• <code>{p['id']}</code>: {(escape(p['text'] or '')[:30])}\n"
+        await safe_send(context.bot, user_id, text, parse_mode='HTML')
 
     # ========== أوامر المجموعات ==========
 
@@ -551,7 +556,7 @@ class CommandHandlers:
         chat_id = update.effective_chat.id
         await DB.execute("INSERT OR IGNORE INTO hidden_owner_groups (chat_id, owner_id, is_hidden) VALUES (?,?,1)", (chat_id, owner_id))
         invalidate_auth_cache(chat_id, owner_id)
-        await safe_send(context.bot, user_id, f"✅ تم تسجيل `{owner_id}` كمالك مخفي")
+        await safe_send(context.bot, user_id, f"✅ تم تسجيل <code>{owner_id}</code> كمالك مخفي", parse_mode='HTML')
 
     @staticmethod
     async def remove_hidden_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -568,7 +573,7 @@ class CommandHandlers:
         chat_id = update.effective_chat.id
         await DB.execute("DELETE FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, owner_id))
         invalidate_auth_cache(chat_id, owner_id)
-        await safe_send(context.bot, user_id, f"✅ تم إزالة `{owner_id}`")
+        await safe_send(context.bot, user_id, f"✅ تم إزالة <code>{owner_id}</code>", parse_mode='HTML')
 
     @staticmethod
     async def add_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -593,7 +598,7 @@ class CommandHandlers:
             return
         await DB.add_hidden_admin(chat_id, admin_id, user_id)
         invalidate_auth_cache(chat_id, admin_id)
-        await safe_send(context.bot, user_id, f"✅ تم إضافة `{admin_id}` كمشرف مخفي")
+        await safe_send(context.bot, user_id, f"✅ تم إضافة <code>{admin_id}</code> كمشرف مخفي", parse_mode='HTML')
 
     @staticmethod
     async def remove_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -614,7 +619,7 @@ class CommandHandlers:
             return
         await DB.execute("DELETE FROM hidden_admins WHERE chat_id=? AND admin_id=?", (chat_id, admin_id))
         invalidate_auth_cache(chat_id, admin_id)
-        await safe_send(context.bot, user_id, f"✅ تم إزالة `{admin_id}`")
+        await safe_send(context.bot, user_id, f"✅ تم إزالة <code>{admin_id}</code>", parse_mode='HTML')
 
     @staticmethod
     async def list_hidden_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -629,12 +634,12 @@ class CommandHandlers:
             return
         owners = await DB.fetchall("SELECT owner_id FROM hidden_owner_groups WHERE chat_id=?", (chat_id,))
         admins = await DB.fetchall("SELECT admin_id FROM hidden_admins WHERE chat_id=?", (chat_id,))
-        text = "👤 **المخفيون**\n"
+        text = "👤 <b>المخفيون</b>\n"
         for o in owners:
-            text += f"👑 `{o['owner_id']}`\n"
+            text += f"👑 <code>{o['owner_id']}</code>\n"
         for a in admins:
-            text += f"🛡️ `{a['admin_id']}`\n"
-        await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد")
+            text += f"🛡️ <code>{a['admin_id']}</code>\n"
+        await safe_send(context.bot, user_id, text if owners or admins else "📭 لا يوجد", parse_mode='HTML')
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -655,17 +660,18 @@ class CommandHandlers:
             if bot_member.status != 'administrator':
                 await safe_send(
                     context.bot, user_id,
-                    "❌ **البوت ليس مشرفاً في المجموعة!**\n\n"
+                    "❌ <b>البوت ليس مشرفاً في المجموعة!</b>\n\n"
                     "يجب ترقية البوت إلى مشرف أولاً:\n"
                     "1. افتح إعدادات المجموعة\n"
                     "2. اختر «المشرفون»\n"
                     "3. أضف البوت كمشرف\n"
-                    "4. منحه صلاحية حذف الرسائل على الأقل"
+                    "4. منحه صلاحية حذف الرسائل على الأقل",
+                    parse_mode='HTML'
                 )
                 return
         except Exception as e:
             logger.error(f"❌ فشل التحقق من حالة البوت: {e}")
-            await safe_send(context.bot, user_id, f"❌ فشل التحقق من حالة البوت: {str(e)[:50]}")
+            await safe_send(context.bot, user_id, f"❌ فشل التحقق من حالة البوت: {escape(str(e)[:50])}")
             return
 
         # جلب المشرفين
@@ -700,7 +706,7 @@ class CommandHandlers:
             real_user_id = user_id
 
         if not is_admin:
-            await safe_send(context.bot, user_id, "❌ **أنت لست مشرفاً في هذه المجموعة!**")
+            await safe_send(context.bot, user_id, "❌ <b>أنت لست مشرفاً في هذه المجموعة!</b>", parse_mode='HTML')
             return
 
         # تسجيل المجموعة
@@ -743,25 +749,33 @@ class CommandHandlers:
             logger.error(f"❌ فشل مزامنة المشرفين: {e}")
             admin_count = 0
 
-        # رسالة النجاح
-        msg = f"✅ **تم تفعيل المجموعة!**\n\n"
-        msg += f"📌 {chat_name}\n"
-        msg += f"🆔 `{chat_id}`\n"
+        # رسالة النجاح - نسخة جميلة
+        msg = (
+            f"🎉 <b>تم تفعيل المجموعة بنجاح!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📌 <b>المجموعة:</b> {escape(chat_name)}\n"
+            f"🆔 <b>المعرف:</b> <code>{chat_id}</code>\n"
+        )
         if creator_id:
-            msg += f"👑 المالك: `{creator_id}`\n"
-        msg += f"👤 مشرف: `{real_user_id}`\n"
-        msg += f"👥 {admin_count} مشرف"
+            msg += f"👑 <b>المالك:</b> <code>{creator_id}</code>\n"
+        msg += f"👤 <b>مشرف:</b> <code>{real_user_id}</code>\n"
+        msg += f"👥 <b>المشرفون:</b> {admin_count}\n"
+        msg += (
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🛡️ <b>الحماية:</b> مفعّلة\n"
+            f"💡 استخدم /security للإعدادات"
+        )
 
         try:
-            await safe_send(context.bot, user_id, msg)
+            await safe_send(context.bot, user_id, msg, parse_mode='HTML')
         except BadRequest as e:
             if "User_bot_to_bot_disabled" in str(e):
-                await safe_send(context.bot, chat_id, msg)
+                await safe_send(context.bot, chat_id, msg, parse_mode='HTML')
             else:
                 logger.error(f"❌ فشل إرسال رسالة التأكيد: {e}")
 
-        # إرسال رسالة في المجموعة
-        sent_msg = await safe_send(context.bot, chat_id, "🤖 **تم تفعيل البوت!**")
+        # إرسال رسالة في المجموعة وحذفها
+        sent_msg = await safe_send(context.bot, chat_id, "🤖 <b>تم تفعيل البوت!</b>", parse_mode='HTML')
         if sent_msg:
             try:
                 await asyncio.sleep(5)
@@ -873,7 +887,7 @@ class CommandHandlers:
                 await safe_send(context.bot, user_id, "✅ تم إلغاء الحظر")
             except Exception as e:
                 logger.error(f"❌ فشل إلغاء الحظر: {e}")
-                await safe_send(context.bot, user_id, f"❌ فشل إلغاء الحظر: {str(e)[:50]}")
+                await safe_send(context.bot, user_id, f"❌ فشل إلغاء الحظر: {escape(str(e)[:50])}")
             return
 
         success, msg = await apply_penalty(context.bot, chat_id, target, action, duration_seconds, reason, user_id)
@@ -948,7 +962,7 @@ class CommandHandlers:
 
         success = await DB.grant_subscription_days(target_id, days, plan_id=plan_id, provider='manual')
         if success:
-            await safe_send(context.bot, user_id, f"✅ تم منح {days} يوم للمستخدم `{_mask_id(target_id)}`")
+            await safe_send(context.bot, user_id, f"✅ تم منح {days} يوم للمستخدم <code>{_mask_id(target_id)}</code>", parse_mode='HTML')
         else:
             await safe_send(context.bot, user_id, "❌ فشل المنح - تحقق من السجلات")
 
@@ -971,12 +985,15 @@ class CommandHandlers:
             )])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
 
-        text = "💎 **شراء كود هدية**\n\nاختر المدة المناسبة:\n\n"
-        text += "• بعد الدفع، ستحصل على كود فريد.\n"
-        text += "• يمكنك إرسال الكود لأي شخص.\n"
-        text += "• الشخص الذي يستخدم الكود يحصل على اشتراك مجاني."
+        text = (
+            "💎 <b>شراء كود هدية</b>\n\n"
+            "اختر المدة المناسبة:\n\n"
+            "• بعد الدفع، ستحصل على كود فريد.\n"
+            "• يمكنك إرسال الكود لأي شخص.\n"
+            "• الشخص الذي يستخدم الكود يحصل على اشتراك مجاني."
+        )
 
-        await safe_send(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(kb))
+        await safe_send(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
 
     @staticmethod
     async def redeem_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -986,7 +1003,7 @@ class CommandHandlers:
 
         args = context.args or []
         if not args:
-            await safe_send(context.bot, user_id, "📝 أرسل الكود: `/redeem_gift <الكود>`")
+            await safe_send(context.bot, user_id, "📝 أرسل الكود: <code>/redeem_gift &lt;الكود&gt;</code>", parse_mode='HTML')
             return
 
         code = args[0].strip()
@@ -998,7 +1015,7 @@ class CommandHandlers:
         success, days = await DB.redeem_gift_code(user_id, code)
 
         if success and days > 0:
-            await safe_send(context.bot, user_id, f"🎉 **تم تفعيل الاشتراك بنجاح!**\n\n✅ {days} يوم اشتراك مجاني.")
+            await safe_send(context.bot, user_id, f"🎉 <b>تم تفعيل الاشتراك بنجاح!</b>\n\n✅ {days} يوم اشتراك مجاني.", parse_mode='HTML')
         elif days == -1:
             await safe_send(context.bot, user_id, "❌ لا يمكنك استخدام كود هدية قمت بإنشائه بنفسك.")
         else:

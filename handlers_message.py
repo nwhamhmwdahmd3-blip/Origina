@@ -25,6 +25,9 @@ handlers_message.py - معالجات الرسائل - النسخة النهائ�
 - تحسين التحقق من صلاحيات البوت عند إضافة قناة
 - تحقق مسبق من صحة التاريخ عند إنشاء مسابقة
 - إضافة دعم استعادة النسخة الاحتياطية من ملف مرفوع
+- تجاهل خطأ User_already_participant في طلبات الانضمام
+- حذف رسائل الانضمام والمغادرة عند تفعيل delete_service
+- تأخير بسيط بين معالجة طلبات الانضمام لتجنب حدود تيليجرام
 """
 
 import asyncio
@@ -265,6 +268,16 @@ class MessageHandlers:
 
         METRICS.increment_messages()
         settings = await get_security_settings_cached(chat_id)
+
+        # ✅ حذف رسائل الخدمة (انضمام/مغادرة) إذا كان delete_service مفعلاً
+        if settings.get('delete_service'):
+            if message.new_chat_members or message.left_chat_member:
+                try:
+                    await message.delete()
+                    logger.debug(f"🗑️ حذف رسالة انضمام/مغادرة في {chat_id}")
+                except Exception as e:
+                    logger.debug(f"تعذر حذف رسالة الخدمة: {e}")
+                return
 
         if settings.get('delete_links'):
             if TextUtils.contains_link(full_text):
@@ -1739,6 +1752,7 @@ class MessageHandlers:
 
         if settings.get('auto_reject_join'):
             try:
+                await asyncio.sleep(0.05)  # تأخير بسيط لتجنب حدود تيليجرام
                 await context.bot.decline_chat_join_request(chat_id, user_id)
                 return
             except Exception as e:
@@ -1746,6 +1760,12 @@ class MessageHandlers:
 
         if settings.get('auto_approve_join'):
             try:
+                await asyncio.sleep(0.05)  # تأخير بسيط لتجنب حدود تيليجرام
                 await context.bot.approve_chat_join_request(chat_id, user_id)
             except Exception as e:
-                logger.warning(f"فشل الموافقة على طلب الانضمام: {e}")
+                error_msg = str(e)
+                if "User_already_participant" in error_msg or "already participant" in error_msg.lower():
+                    # تجاهل الخطأ بهدوء، المستخدم انضم بالفعل
+                    pass
+                else:
+                    logger.warning(f"فشل الموافقة على طلب الانضمام: {e}")
