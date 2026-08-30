@@ -270,6 +270,7 @@ class MessageHandlers:
         settings = await get_security_settings_cached(chat_id)
 
         # ✅ حذف رسائل الخدمة (انضمام/مغادرة) إذا كان delete_service مفعلاً
+        # ملاحظة: غالبًا رسائل الخدمة تصل إلى handle_service وليس هنا، لكن نضيف الفحص للاحتياط
         if settings.get('delete_service'):
             if message.new_chat_members or message.left_chat_member:
                 try:
@@ -616,7 +617,6 @@ class MessageHandlers:
         if count > 0:
             await safe_send(context.bot, user_id, "✅ تمت إضافة المنشور")
         else:
-            # رسالة موحدة توضح الاحتمالين
             await safe_send(
                 context.bot, user_id,
                 "❌ لم تتم إضافة المنشور.\n"
@@ -1719,21 +1719,32 @@ class MessageHandlers:
 
     @staticmethod
     async def handle_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """معالجة رسائل الخدمة (انضمام/مغادرة)"""
+        """معالجة رسائل الخدمة (انضمام/مغادرة) مع دعم الحذف"""
         if not update.effective_chat or not update.effective_message:
             return
         chat_id = update.effective_chat.id
         settings = await get_security_settings_cached(chat_id)
+        message = update.effective_message
 
-        if update.effective_message.new_chat_members and settings.get('welcome_enabled'):
-            for member in update.effective_message.new_chat_members:
+        # ✅ حذف رسائل الانضمام والمغادرة إذا كان delete_service مفعلاً
+        if settings.get('delete_service'):
+            if message.new_chat_members or message.left_chat_member:
+                try:
+                    await message.delete()
+                    logger.debug(f"🗑️ حذف رسالة خدمة في {chat_id}")
+                except Exception as e:
+                    logger.debug(f"تعذر حذف رسالة الخدمة: {e}")
+                return
+
+        if message.new_chat_members and settings.get('welcome_enabled'):
+            for member in message.new_chat_members:
                 welcome_text = settings.get('welcome_text', 'مرحباً {user} 🤍')
                 welcome_text = welcome_text.replace('{user}', escape(member.first_name or "عضو"))
                 welcome_text = welcome_text.replace('{chat}', escape(update.effective_chat.title or "المجموعة"))
                 await safe_send(context.bot, chat_id, welcome_text, parse_mode='HTML')
 
-        if update.effective_message.left_chat_member and settings.get('goodbye_enabled'):
-            member = update.effective_message.left_chat_member
+        if message.left_chat_member and settings.get('goodbye_enabled'):
+            member = message.left_chat_member
             goodbye_text = settings.get('goodbye_text', 'وداعاً {user} 👋')
             goodbye_text = goodbye_text.replace('{user}', escape(member.first_name or "عضو"))
             goodbye_text = goodbye_text.replace('{chat}', escape(update.effective_chat.title or "المجموعة"))
