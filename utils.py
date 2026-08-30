@@ -23,6 +23,7 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - إصلاح auto_publish لدعم جميع القنوات بشكل دائم (إزالة الحلقة اللانهائية)
 - إضافة إشعار عند نجاح النشر التلقائي
 - تحسين رسالة تحميل ملف الردود لتظهر في السجلات
+- إظهار حالة حذف رسائل الخدمة في ملخص الأمان
 """
 
 import asyncio
@@ -605,7 +606,7 @@ class KeyboardFactory:
         "sec_video": "🎬 فيديو",
         "sec_audio": "🎵 موسيقى",
         "sec_anim": "🎞️ متحرك",
-        "sec_service": "🛠️ خدمة",
+        "sec_service": "🗑️ رسائل الخدمة",
         "sec_doc": "📄 ملفات",
         "sec_sticker": "🖼️ ملصقات",
         "sec_forward": "📨 مُعاد",
@@ -862,6 +863,7 @@ class KeyboardFactory:
             f"📏 طول: {settings.get('max_message_length', 0)} | 🌙 ليلي: {st(settings.get('night_mode_enabled', 0))} | 🔞 NSFW: {st(settings.get('nsfw_enabled', 0))}",
             f"⚠️ تحذيرات: {st(settings.get('warn_enabled', 0))} | 📊 حد: {settings.get('max_warnings', 3)}\n",
             f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))} | 👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
+            f"🗑️ رسائل الخدمة: {st(settings.get('delete_service', 0))}",
             f"✅ موافقة: {st(settings.get('auto_approve_join', 0))} | ❌ رفض: {st(settings.get('auto_reject_join', 0))}\n",
             f"⏱️ كتم: {settings.get('mute_default_duration', 3600)}ث | 🚫 حظر: {settings.get('ban_default_duration', 0)}ث | 🔒 تقييد: {settings.get('restrict_default_duration', 1800)}ث",
             f"⚠️ مخالفات: {settings.get('violation_strikes', 3)} | ⏱️ مدة: {settings.get('violation_duration', 60)}ث",
@@ -1343,7 +1345,6 @@ def load_replies_from_file() -> dict:
 
 _REPLIES_FROM_FILE = load_replies_from_file()
 
-# إضافة رسالة تأكيدية بعد التحميل مباشرة
 if _REPLIES_FROM_FILE:
     logger.info(f"✅ تم تحميل ملف الردود بنجاح: {len(_REPLIES_FROM_FILE)} رد متاح")
 else:
@@ -1425,7 +1426,6 @@ class BackgroundTasks:
 
     @staticmethod
     async def _publish_single_channel(bot, ch, sleep_seconds):
-        """نشر منشور واحد في قناة ثم الخروج (بدون حلقة لا نهائية)"""
         consecutive_failures = 0
         max_failures = 10
 
@@ -1452,14 +1452,12 @@ class BackgroundTasks:
                 await DB.update_last_publish(ch['id'])
                 await DB.update_next_publish(ch['id'])
                 logger.info(f"✅ قناة {ch['id']} نشرت. انتظار {sleep_seconds//60} دقيقة...")
-                # ✨ إضافة: إشعار المستخدم
                 try:
                     user_id = ch.get('user_id')
                     if user_id:
                         await safe_send(bot, user_id, f"✅ تم نشر منشور في قناتك")
                 except Exception as e:
                     logger.warning(f"تعذر إرسال إشعار النشر للمستخدم {user_id}: {e}")
-                # لا ننام، نخرج فوراً ليعيد الجلب
             else:
                 await DB.increment_post_fail(post['id'])
 
@@ -1473,12 +1471,10 @@ class BackgroundTasks:
         min_interval_minutes = await get_min_publish_interval()
         sleep_seconds = min_interval_minutes * 60
 
-        # قائمة لتخزين المهام النشطة لكل قناة
         active_tasks = {}
 
         while True:
             try:
-                # جلب القنوات الجاهزة
                 channels = await DB.get_channels_to_publish(max_channels)
 
                 if not channels:
@@ -1487,11 +1483,9 @@ class BackgroundTasks:
 
                 for ch in channels:
                     channel_id = ch['id']
-                    # إذا كانت القناة لها مهمة نشطة بالفعل، لا تنشئ جديدة
                     if channel_id in active_tasks and not active_tasks[channel_id].done():
                         continue
 
-                    # إنشاء مهمة جديدة للقناة
                     task = asyncio.create_task(
                         BackgroundTasks._publish_single_channel(
                             bot, ch, sleep_seconds
@@ -1499,7 +1493,6 @@ class BackgroundTasks:
                     )
                     active_tasks[channel_id] = task
 
-                # تنظيف المهام المنتهية
                 for cid in list(active_tasks.keys()):
                     if active_tasks[cid].done():
                         try:
@@ -1508,7 +1501,6 @@ class BackgroundTasks:
                             logger.error(f"❌ خطأ في مهمة القناة {cid}: {e}")
                         del active_tasks[cid]
 
-                # انتظار قليل قبل الدورة التالية
                 await asyncio.sleep(60)
 
             except Exception as e:
@@ -1619,13 +1611,9 @@ class BackgroundTasks:
                         admins = await bot.get_chat_administrators(chat_id)
                         admin_ids = [a.user.id for a in admins if a.user and not a.user.is_bot]
                         await DB.sync_group_admins(chat_id, admin_ids)
-                        # مزامنة المشرفين المجهولين
                         anonymous_ids = [a.user.id for a in admins if a.user and a.user.is_bot and a.status == 'administrator']
                         if anonymous_ids:
                             user_id_map = {}
-                            # محاولة الحصول على user_id الحقيقي من خلال كشف المصدر
-                            # في هذه النسخة لن نتمكن من معرفة user_id الفعلي، لذلك نمرر None
-                            # وسيتم الاعتماد على anonymous_id كمعرف مؤقت
                             await DB.sync_anonymous_admins(chat_id, anonymous_ids, added_by=CONFIG.PRIMARY_OWNER_ID, user_id_map=user_id_map)
                     except:
                         pass
@@ -1645,7 +1633,6 @@ class BackgroundTasks:
 
     @staticmethod
     async def cleanup_old_data() -> None:
-        """تنظيف البيانات القديمة"""
         while True:
             await asyncio.sleep(86400)
             try:
