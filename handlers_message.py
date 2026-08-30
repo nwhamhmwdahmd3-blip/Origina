@@ -24,6 +24,7 @@ handlers_message.py - معالجات الرسائل - النسخة النهائ�
 - تحسين رسالة فشل إضافة منشور
 - تحسين التحقق من صلاحيات البوت عند إضافة قناة
 - تحقق مسبق من صحة التاريخ عند إنشاء مسابقة
+- إضافة دعم استعادة النسخة الاحتياطية من ملف مرفوع
 """
 
 import asyncio
@@ -32,6 +33,7 @@ import time
 import os
 import re
 import json
+import shutil
 import tempfile
 from html import escape
 from typing import Optional
@@ -41,7 +43,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest, TimedOut
 
-from config import CONFIG
+from config import CONFIG, PATHS
 from database import DB, TimeUtils
 from utils import (
     TextUtils, safe_send, is_authorized_in_group,
@@ -223,6 +225,7 @@ class MessageHandlers:
                 UserState.WAIT_VIOLATION_STRIKES: MessageHandlers._handle_violation_strikes_input,
                 UserState.WAIT_VIOLATION_DURATION: MessageHandlers._handle_violation_duration_input,
                 UserState.WAIT_REDEEM_GIFT: MessageHandlers._handle_redeem_gift_input,
+                UserState.WAIT_RESTORE: MessageHandlers._handle_restore_input,
             }
 
             handler = handlers.get(state)
@@ -692,8 +695,12 @@ class MessageHandlers:
             StateManager.clear(user_id)
             return
         text = (update.effective_message.text or "").strip()
-        await DB.set_setting('force_subscribe_channel', text)
-        await safe_send(context.bot, user_id, f"✅ تم تعيين: {escape(text)}")
+        if text.lower() == 'none':
+            await DB.set_setting('force_subscribe_channel', '')
+            await safe_send(context.bot, user_id, "✅ تم تعطيل الاشتراك الإجباري")
+        else:
+            await DB.set_setting('force_subscribe_channel', text)
+            await safe_send(context.bot, user_id, f"✅ تم تعيين: {escape(text)}")
         StateManager.clear(user_id)
 
     @staticmethod
@@ -1647,6 +1654,51 @@ class MessageHandlers:
         else:
             await safe_send(context.bot, user_id, "❌ الكود غير صالح أو مستخدم بالفعل")
         StateManager.clear(user_id)
+
+    @staticmethod
+    async def _handle_restore_input(update, context):
+        """معالج استعادة النسخة الاحتياطية من ملف مرفوع"""
+        user_id = update.effective_user.id
+        if not CONFIG.is_developer(user_id):
+            await safe_send(context.bot, user_id, "❌ غير مصرح")
+            StateManager.clear(user_id)
+            return
+
+        doc = update.effective_message.document
+        if not doc:
+            await safe_send(context.bot, user_id, "❌ أرسل ملف قاعدة البيانات (.db)")
+            StateManager.clear(user_id)
+            return
+
+        if not doc.file_name.endswith('.db'):
+            await safe_send(context.bot, user_id, "❌ يجب أن يكون الملف بامتداد .db")
+            StateManager.clear(user_id)
+            return
+
+        tmp_path = None
+        try:
+            file = await doc.get_file()
+            tmp_path = os.path.join(tempfile.gettempdir(), f"restore_{user_id}_{int(time.time())}.db")
+            await file.download_to_drive(tmp_path)
+
+            # نسخة أمان قبل الاستعادة
+            pre_restore = PATHS.BACKUPS / f"pre_restore_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
+            shutil.copy2(PATHS.DB, pre_restore)
+
+            # الاستعادة
+            shutil.copy2(tmp_path, PATHS.DB)
+
+            await safe_send(context.bot, user_id, "✅ تمت الاستعادة بنجاح!\nأعد تشغيل البوت لتفعيل التغييرات.")
+        except Exception as e:
+            logger.error(f"فشل استعادة النسخة: {e}")
+            await safe_send(context.bot, user_id, f"❌ فشل الاستعادة: {str(e)[:100]}")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            StateManager.clear(user_id)
 
     # =================================================================
     # رسائل الخدمة

@@ -79,6 +79,9 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - تحسين safe_edit بعدم الاعتماد على query._bot
 - تهيئة start_time في البداية
 - إضافة معالج ADMIN_RESTORE لاستعادة النسخ الاحتياطية (اختياري)
+- إضافة استعادة نسخة احتياطية من ملف يرفعه المستخدم
+- إضافة زر تعطيل الاشتراك الإجباري
+- إضافة التحقق من صحة ملف JSON قبل الاستيراد
 """
 
 import asyncio
@@ -113,7 +116,7 @@ MAX_CONCURRENT_PUBLISH = 3
 
 ACTIVE_TASKS = weakref.WeakSet()
 
-# تهيئة start_time في حالة عدم وجودها
+
 async def _init_start_time(context: ContextTypes.DEFAULT_TYPE):
     if 'start_time' not in context.bot_data:
         context.bot_data['start_time'] = time.monotonic()
@@ -1708,8 +1711,23 @@ class CallbackHandlers:
                 return
 
             elif data == CB.ADMIN_RESTORE:
-                # تم تحويل الاستعادة اليدوية إلى عرض النسخ المتاحة
+                # إعطاء خيارين: عرض النسخ أو طلب رفع ملف من الجهاز
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📂 عرض النسخ المتاحة", callback_data="admin_show_backups")],
+                    [InlineKeyboardButton("📤 رفع نسخة من الجهاز", callback_data="admin_upload_backup")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
+                ])
+                await safe_edit(query, "🔄 استعادة النسخ الاحتياطية:", reply_markup=kb, bot=context.bot)
+                return
+
+            elif data == "admin_show_backups":
                 await CallbackHandlers._show_restore_backups(update, context, query, user_id)
+                return
+
+            elif data == "admin_upload_backup":
+                # طلب رفع نسخة احتياطية من جهاز المستخدم
+                StateManager.set(user_id, UserState.WAIT_RESTORE)
+                await safe_edit(query, "📂 أرسل ملف النسخة الاحتياطية (بصيغة .db):", bot=context.bot)
                 return
 
             elif data == CB.ADMIN_RESTORE_SEL:
@@ -1826,7 +1844,12 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_SET_FORCE:
                 StateManager.set(user_id, UserState.WAIT_FORCE)
-                await safe_edit(query, "🔒 أرسل معرف قناة الاشتراك الإجباري:", bot=context.bot)
+                await safe_edit(query, "🔒 أرسل معرف قناة الاشتراك الإجباري:\n(أو أرسل 'none' لتعطيله)", bot=context.bot)
+                return
+
+            elif data == "admin_disable_force":
+                await DB.set_force_subscribe_channel(None)
+                await safe_edit(query, "✅ تم تعطيل الاشتراك الإجباري", bot=context.bot)
                 return
 
             elif data == CB.ADMIN_REFRESH_CACHE:
