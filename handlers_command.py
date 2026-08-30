@@ -769,13 +769,21 @@ class CommandHandlers:
             f"💡 استخدم /security للإعدادات"
         )
 
-        try:
-            await safe_send(context.bot, user_id, msg, parse_mode='HTML')
-        except BadRequest as e:
-            if "User_bot_to_bot_disabled" in str(e):
-                await safe_send(context.bot, chat_id, msg, parse_mode='HTML')
-            else:
-                logger.error(f"❌ فشل إرسال رسالة التأكيد: {e}")
+        # ✅ إذا كان المشرف مجهولًا، لا نرسل له رسالة خاصة، نكتفي بالرسالة في المجموعة
+        is_anonymous = (
+            update.message and
+            update.message.sender_chat and
+            update.message.sender_chat.id == chat_id
+        )
+
+        if not is_anonymous:
+            try:
+                await safe_send(context.bot, user_id, msg, parse_mode='HTML')
+            except BadRequest as e:
+                if "User_bot_to_bot_disabled" in str(e):
+                    await safe_send(context.bot, chat_id, msg, parse_mode='HTML')
+                else:
+                    logger.error(f"❌ فشل إرسال رسالة التأكيد: {e}")
 
         # إرسال رسالة في المجموعة وحذفها
         sent_msg = await safe_send(context.bot, chat_id, "🤖 <b>تم تفعيل البوت!</b>", parse_mode='HTML')
