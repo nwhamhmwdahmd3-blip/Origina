@@ -21,6 +21,8 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - تقصير نص إعدادات الأمان لمنع تجاوز حد تيليجرام
 - عرض مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
 - إصلاح auto_publish لدعم جميع القنوات بشكل دائم (إزالة الحلقة اللانهائية)
+- إضافة إشعار عند نجاح النشر التلقائي
+- تحسين رسالة تحميل ملف الردود لتظهر في السجلات
 """
 
 import asyncio
@@ -1327,12 +1329,12 @@ def load_replies_from_file() -> dict:
         importlib.reload(replies)
         replies_data = replies.REPLIES
         if replies_data:
-            logger.info(f"✅ تم تحميل الردود: {len(replies_data)} رد تلقائي")
+            logger.info(f"✅ تم تحميل ملف الردود: {len(replies_data)} رد تلقائي")
         else:
-            logger.warning("⚠️ ملف replies.py فارغ")
+            logger.warning("⚠️ ملف replies.py موجود لكنه فارغ")
         return replies_data
     except ImportError:
-        logger.info("ℹ️ لا يوجد replies.py")
+        logger.info("ℹ️ لا يوجد replies.py - سيتم تخطي تحميل ملف الردود")
         return {}
     except Exception as e:
         logger.error(f"❌ خطأ في تحميل replies.py: {e}")
@@ -1340,6 +1342,12 @@ def load_replies_from_file() -> dict:
 
 
 _REPLIES_FROM_FILE = load_replies_from_file()
+
+# إضافة رسالة تأكيدية بعد التحميل مباشرة
+if _REPLIES_FROM_FILE:
+    logger.info(f"✅ تم تحميل ملف الردود بنجاح: {len(_REPLIES_FROM_FILE)} رد متاح")
+else:
+    logger.info("ℹ️ لا توجد ردود محملة من ملف replies.py")
 
 
 def get_reply_from_file(keyword: str) -> Optional[str]:
@@ -1374,6 +1382,8 @@ def get_reply_from_file(keyword: str) -> Optional[str]:
 def reload_replies_from_file() -> dict:
     global _REPLIES_FROM_FILE
     _REPLIES_FROM_FILE = load_replies_from_file()
+    if _REPLIES_FROM_FILE:
+        logger.info(f"✅ تم إعادة تحميل ملف الردود: {len(_REPLIES_FROM_FILE)} رد")
     return _REPLIES_FROM_FILE
 
 
@@ -1442,6 +1452,13 @@ class BackgroundTasks:
                 await DB.update_last_publish(ch['id'])
                 await DB.update_next_publish(ch['id'])
                 logger.info(f"✅ قناة {ch['id']} نشرت. انتظار {sleep_seconds//60} دقيقة...")
+                # ✨ إضافة: إشعار المستخدم
+                try:
+                    user_id = ch.get('user_id')
+                    if user_id:
+                        await safe_send(bot, user_id, f"✅ تم نشر منشور في قناتك")
+                except Exception as e:
+                    logger.warning(f"تعذر إرسال إشعار النشر للمستخدم {user_id}: {e}")
                 # لا ننام، نخرج فوراً ليعيد الجلب
             else:
                 await DB.increment_post_fail(post['id'])
