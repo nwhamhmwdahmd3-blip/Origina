@@ -51,7 +51,10 @@
     "admin_metrics": "📈 مقاييس الأداء",
     "admin_backup": "💾 نسخ احتياطي",
     "admin_restore": "🔄 استعادة نسخة",
-    "admin_restore_sel": "📂 اختيار",
+    "admin_restore_sel": "📂 اختيار نسخة",
+    "admin_show_backups": "📂 عرض النسخ المتاحة",
+    "admin_upload_backup": "📤 رفع نسخة من الجهاز",
+    "admin_disable_force": "🔓 تعطيل الاشتراك الإجباري",
     "admin_send_update": "📢 إرسال تحديث",
     "admin_set_update_ch": "📢 تعيين قناة التحديثات",
     "admin_show_update": "👀 عرض قناة التحديثات",
@@ -177,7 +180,29 @@
     "sched_min": "⏱️ بالدقائق",
     "sched_hour": "🕐 بالساعات",
     "sched_day": "📅 بالأيام",
-    "sched_time": "🕒 وقت محدد"
+    "sched_time": "🕒 وقت محدد",
+    "sec_set_antiflood_messages": "🔢 عدد الرسائل",
+    "sec_set_antiflood_seconds": "⏱️ الثواني",
+    "sec_set_night_start": "🌙 وقت البدء",
+    "sec_set_night_end": "🌙 وقت النهاية",
+    "sec_set_violation_strikes": "📊 عدد المخالفات",
+    "sec_set_violation_duration": "⏱️ مدة عقوبة المخالفة",
+    "sec_set_warn_count": "🔢 عدد التحذيرات",
+    "sec_set_maxlen": "📏 الحد الأقصى",
+    "sec_set_welcome_text": "📝 نص الترحيب",
+    "sec_set_goodbye_text": "📝 نص الوداع",
+    "sec_set_slow_mode_seconds": "⏱️ مدة الوضع البطيء",
+    "sec_set_penalty_duration": "⏱️ مدة العقوبة",
+    "sec_antiflood_duration": "⏱️ مدة عقوبة الفيضان",
+    "sec_night_duration": "⏱️ مدة إجراء الليل",
+    "sec_warn_penalty_duration": "⏱️ مدة عقوبة التحذير",
+    "sec_set_antiflood_penalty": "🚫 نوع عقوبة الفيضان",
+    "sec_set_night_action": "🌙 إجراء الليل",
+    "sec_penalty_none": "🚫 بدون عقوبة",
+    "sec_penalty_ban": "🚫 حظر",
+    "sec_penalty_mute": "🔇 كتم",
+    "sec_penalty_kick": "👢 طرد",
+    "sec_penalty_restrict": "🔒 تقييد"
   },
   "menus": {
     "main_menu": {
@@ -233,6 +258,7 @@
         ["admin_send_update", "admin_set_update_ch"],
         ["admin_show_update"],
         ["admin_force_sub", "admin_set_force"],
+        ["admin_disable_force"],
         ["admin_broadcast"],
         ["admin_tickets", "admin_del_tickets"],
         ["admin_log_ch", "admin_set_log_ch"],
@@ -254,6 +280,7 @@
       "rows": [
         ["sec_links", "sec_mentions"],
         ["sec_slow", "sec_slow_mode_seconds"],
+        ["sec_set_slow_mode_seconds"],
         ["sec_flood", "sec_antiflood_settings"],
         ["sec_video", "sec_audio"],
         ["sec_anim", "sec_service"],
@@ -262,14 +289,22 @@
         ["sec_game", "sec_voice"],
         ["sec_videonote", "sec_banned_words"],
         ["sec_welcome", "sec_welcome_text"],
+        ["sec_set_welcome_text"],
         ["sec_goodbye", "sec_goodbye_text"],
+        ["sec_set_goodbye_text"],
         ["sec_night", "sec_night_settings"],
         ["sec_approve_join", "sec_reject_join"],
         ["sec_nsfw"],
-        ["sec_maxlen", "sec_warn"],
+        ["sec_maxlen", "sec_set_maxlen"],
+        ["sec_warn", "sec_warn_count"],
+        ["sec_set_warn_count"],
+        ["sec_warn_penalty", "sec_set_warn_penalty"],
+        ["sec_warn_penalty_duration"],
         ["sec_penalty", "sec_del_pen"],
+        ["sec_set_penalty_duration"],
         ["sec_penalty_durations"],
         ["sec_violation_penalties"],
+        ["sec_set_violation_strikes", "sec_set_violation_duration"],
         ["sec_adv_act", "sec_act_log"],
         ["sec_auto_reply_menu"],
         ["sec_enable_all", "sec_disable_all"],
@@ -345,6 +380,36 @@
       "rows": [
         ["sched_min", "sched_hour"],
         ["sched_day", "sched_time"],
+        ["back"]
+      ]
+    },
+    "antiflood_settings": {
+      "rows": [
+        ["sec_set_antiflood_messages", "sec_set_antiflood_seconds"],
+        ["sec_set_antiflood_penalty"],
+        ["sec_antiflood_duration"],
+        ["back"]
+      ]
+    },
+    "night_settings": {
+      "rows": [
+        ["sec_set_night_start", "sec_set_night_end"],
+        ["sec_set_night_action"],
+        ["sec_night_duration"],
+        ["back"]
+      ]
+    },
+    "warn_settings": {
+      "rows": [
+        ["sec_warn_count", "sec_set_warn_count"],
+        ["sec_warn_penalty", "sec_set_warn_penalty"],
+        ["sec_warn_penalty_duration"],
+        ["back"]
+      ]
+    },
+    "violation_penalties": {
+      "rows": [
+        ["sec_set_violation_strikes", "sec_set_violation_duration"],
         ["back"]
       ]
     }
