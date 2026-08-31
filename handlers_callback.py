@@ -785,7 +785,8 @@ class CallbackHandlers:
 
             if data.startswith("lang_"):
                 lang_set = data.split("_")[-1]
-                if lang_set in ['ar', 'en', 'fr', 'tr', 'zh', 'ru', 'de', 'es', 'it', 'pt', 'ja', 'ko', 'off']:
+                if lang_set in ['ar', 'en', 'fr', 'tr', 'zh', 'ru', 'de', 'es', 'it', 'pt', 'ja', 'ko', 'fa', 'ur', 'nl', 'pl', 'hi', 'off']:
+
                     await DB.set_user_language(user_id, lang_set)
                     await _safe_answer(query, f"✅ {lang_set}")
                     await CommandHandlers.start(update, context)
