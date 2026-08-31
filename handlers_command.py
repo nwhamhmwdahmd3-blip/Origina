@@ -121,7 +121,9 @@ class CommandHandlers:
         lang = await DB.get_user_language(user_id) or 'ar'
         active = await DB.get_active_channel(user_id)
         cnt = 0
-        ch_display = "لا توجد قنوات"
+        ch_display = await get_text(lang, 'no_active_channel')
+        if ch_display == 'no_active_channel':
+            ch_display = "لا توجد قنوات"
         if active:
             cnt = await DB.get_unpublished_posts_count(user_id, active)
             ch_info = await DB.get_channel_info(user_id, active)
@@ -130,11 +132,25 @@ class CommandHandlers:
 
         groups = len(await DB.get_user_groups(user_id))
         has_sub = await DB.has_active_subscription(user_id)
-        sub_text = "✅ مفعل" if has_sub else "❌ غير مفعل"
+        sub_active_text = await get_text(lang, 'subscription_active')
+        sub_inactive_text = await get_text(lang, 'subscription_inactive')
+        if sub_active_text == 'subscription_active':
+            sub_active_text = "✅ مفعل"
+        if sub_inactive_text == 'subscription_inactive':
+            sub_inactive_text = "❌ غير مفعل"
+        sub_text = sub_active_text if has_sub else sub_inactive_text
+
         auto = await DB.get_auto_publish_status(user_id)
-        auto_text = "مفعل" if auto else "معطل"
+        enabled_text = await get_text(lang, 'enabled')
+        disabled_text = await get_text(lang, 'disabled')
+        if enabled_text == 'enabled':
+            enabled_text = "مفعل"
+        if disabled_text == 'disabled':
+            disabled_text = "معطل"
+        auto_text = enabled_text if auto else disabled_text
+
         recycle = await DB.get_auto_recycle_status(user_id)
-        recycle_text = "مفعل" if recycle else "معطل"
+        recycle_text = enabled_text if recycle else disabled_text
 
         # بناء لوحة المفاتيح
         kb_rows = KeyboardFactory.get_menu("main_menu", lang)
@@ -277,10 +293,11 @@ class CommandHandlers:
         text = "🏆 <b>المسابقات النشطة</b>\n\n"
         kb = []
         for c in contests:
+            end_date = c.get('end_date') or ''
             text += (
                 f"• <b>{escape(c['title'])}</b>\n"
                 f"  🎁 {escape(c['prize'])}\n"
-                f"  📅 {escape(c['end_date'][:10])}\n"
+                f"  📅 {escape(end_date[:10])}\n"
                 f"  👥 المشاركون: {c.get('participants', 0)}\n\n"
             )
             kb.append([
