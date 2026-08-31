@@ -248,6 +248,12 @@ class AutoReplyCache:
 
 _auto_reply_cache = AutoReplyCache(maxsize=300, ttl=300)
 
+# تعريف الكاشات المفقودة هنا
+_security_settings_cache = {}
+_security_settings_time = {}
+_auto_reply_settings_cache = {}
+_auto_reply_settings_time = {}
+
 
 # =====================================================================
 # 6. الترجمات
@@ -687,10 +693,7 @@ class KeyboardFactory:
                 return cls._load_config_for_lang(cls._default_lang)
             else:
                 logger.warning("⚠️ buttons_config_ar.json غير موجود، سيتم استخدام إعدادات افتراضية")
-                default_config = {
-                    "texts": cls._default_texts,
-                    "menus": {}
-                }
+                default_config = {"texts": cls._default_texts, "menus": {}}
                 cls._configs[cls._default_lang] = default_config
                 return default_config
         except Exception as e:
@@ -698,10 +701,7 @@ class KeyboardFactory:
             if lang != cls._default_lang:
                 return cls._load_config_for_lang(cls._default_lang)
             else:
-                default_config = {
-                    "texts": cls._default_texts,
-                    "menus": {}
-                }
+                default_config = {"texts": cls._default_texts, "menus": {}}
                 cls._configs[cls._default_lang] = default_config
                 return default_config
 
@@ -734,102 +734,47 @@ class KeyboardFactory:
 
         if not rows:
             default_menus = {
-                "banned_words": [
-                    ["ban_add", "ban_list"],
-                    ["ban_rem"],
-                    ["back"]
-                ],
+                "banned_words": [["ban_add", "ban_list"], ["ban_rem"], ["back"]],
                 "auto_reply_manage": [
                     ["auto_reply_toggle", "auto_reply_admins"],
                     ["auto_reply_add", "auto_reply_del"],
                     ["auto_reply_list", "auto_reply_stats"],
-                    ["auto_reply_reset"],
-                    ["back"]
+                    ["auto_reply_reset"], ["back"]
                 ],
                 "auto_reply": [
                     ["auto_reply_toggle", "auto_reply_admins"],
                     ["auto_reply_add", "auto_reply_del"],
                     ["auto_reply_list", "auto_reply_stats"],
-                    ["auto_reply_reset"],
-                    ["back"]
+                    ["auto_reply_reset"], ["back"]
                 ],
                 "security": [
-                    ["sec_links", "sec_mentions"],
-                    ["sec_slow", "sec_flood"],
-                    ["sec_video", "sec_audio"],
-                    ["sec_anim", "sec_service"],
-                    ["sec_doc", "sec_sticker"],
-                    ["sec_forward", "sec_poll"],
-                    ["sec_game", "sec_voice"],
-                    ["sec_videonote", "sec_banned_words"],
-                    ["sec_welcome", "sec_goodbye"],
-                    ["sec_night", "sec_approve_join"],
-                    ["sec_reject_join", "sec_nsfw"],
-                    ["sec_maxlen", "sec_warn"],
-                    ["sec_penalty", "sec_del_pen"],
-                    ["sec_adv_act", "sec_act_log"],
-                    ["sec_auto_reply_menu"],
-                    ["sec_antiflood_settings", "sec_night_settings"],
-                    ["sec_penalty_durations"],
-                    ["sec_violation_penalties"],
-                    ["sec_enable_all", "sec_disable_all"],
-                    ["sec_close"]
+                    ["sec_links", "sec_mentions"], ["sec_slow", "sec_flood"],
+                    ["sec_video", "sec_audio"], ["sec_anim", "sec_service"],
+                    ["sec_doc", "sec_sticker"], ["sec_forward", "sec_poll"],
+                    ["sec_game", "sec_voice"], ["sec_videonote", "sec_banned_words"],
+                    ["sec_welcome", "sec_goodbye"], ["sec_night", "sec_approve_join"],
+                    ["sec_reject_join", "sec_nsfw"], ["sec_maxlen", "sec_warn"],
+                    ["sec_penalty", "sec_del_pen"], ["sec_adv_act", "sec_act_log"],
+                    ["sec_auto_reply_menu"], ["sec_antiflood_settings", "sec_night_settings"],
+                    ["sec_penalty_durations"], ["sec_violation_penalties"],
+                    ["sec_enable_all", "sec_disable_all"], ["sec_close"]
                 ],
-                "penalty": [
-                    ["pen_ban", "pen_mute"],
-                    ["pen_kick", "pen_warn"],
-                    ["back"]
-                ],
+                "penalty": [["pen_ban", "pen_mute"], ["pen_kick", "pen_warn"], ["back"]],
                 "advanced_actions": [
-                    ["act_ban", "act_mute"],
-                    ["act_warn", "act_kick"],
-                    ["act_restrict", "act_unban"],
-                    ["act_pin"],
-                    ["act_log"],
-                    ["back"]
+                    ["act_ban", "act_mute"], ["act_warn", "act_kick"],
+                    ["act_restrict", "act_unban"], ["act_pin"], ["act_log"], ["back"]
                 ],
-                "violation_penalties": [
-                    ["sec_set_violation_strikes", "sec_set_violation_duration"],
-                    ["back"]
-                ],
-                "settings": [
-                    ["toggle_auto", "toggle_rec"],
-                    ["reminder", "translation"],
-                    ["referral", "invoices"],
-                    ["back"]
-                ],
-                "plans": [
-                    ["buy_sub_1", "buy_sub_7"],
-                    ["buy_sub_30", "buy_sub_90"],
-                    ["buy_sub_365"],
-                    ["gift_plans", "redeem_gift"],
-                    ["back"]
-                ],
-                "reminder": [
-                    ["rem_sub", "rem_daily"],
-                    ["rem_weekly"],
-                    ["rem_days"],
-                    ["back"]
-                ],
-                "translation": [
-                    ["lang_ar", "lang_en"],
-                    ["trans_off"],
-                    ["back"]
-                ],
-                "channel_settings": [
-                    ["sched_min", "sched_hour"],
-                    ["sched_day", "sched_time"],
-                    ["back"]
-                ],
+                "violation_penalties": [["sec_set_violation_strikes", "sec_set_violation_duration"], ["back"]],
+                "settings": [["toggle_auto", "toggle_rec"], ["reminder", "translation"], ["referral", "invoices"], ["back"]],
+                "plans": [["buy_sub_1", "buy_sub_7"], ["buy_sub_30", "buy_sub_90"], ["buy_sub_365"], ["gift_plans", "redeem_gift"], ["back"]],
+                "reminder": [["rem_sub", "rem_daily"], ["rem_weekly"], ["rem_days"], ["back"]],
+                "translation": [["lang_ar", "lang_en"], ["trans_off"], ["back"]],
+                "channel_settings": [["sched_min", "sched_hour"], ["sched_day", "sched_time"], ["back"]],
                 "admin": [
-                    ["admin_users", "admin_stats"],
-                    ["admin_banned", "admin_unban_all"],
-                    ["admin_channels", "admin_groups"],
-                    ["admin_grant_free", "admin_add_admin"],
-                    ["admin_broadcast", "admin_invoices"],
-                    ["admin_backup", "admin_restore"],
-                    ["admin_ram", "admin_metrics"],
-                    ["back"]
+                    ["admin_users", "admin_stats"], ["admin_banned", "admin_unban_all"],
+                    ["admin_channels", "admin_groups"], ["admin_grant_free", "admin_add_admin"],
+                    ["admin_broadcast", "admin_invoices"], ["admin_backup", "admin_restore"],
+                    ["admin_ram", "admin_metrics"], ["back"]
                 ]
             }
             if menu_name in default_menus:
@@ -1645,8 +1590,11 @@ class BackgroundTasks:
             await asyncio.sleep(3600)
             try:
                 _security_settings_cache.clear()
+                _security_settings_time.clear()
                 _auto_reply_settings_cache.clear()
+                _auto_reply_settings_time.clear()
                 _banned_words_cache.clear()
+                _banned_words_cache_time.clear()
                 _auto_reply_cache.clear()
                 _auth_cache.clear()
                 logger.info("✅ تم تنظيف الكاش المؤقت")
