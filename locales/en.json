@@ -1,4 +1,5 @@
 {
+  "main_menu": "🌿 Relax Manager\n\n👤 User: {user_id}\n👥 Groups: {groups}\n📡 Active channel: {channel}\n📥 Unpublished posts: {pending}\n📤 Auto publish: {auto}\n♻️ Auto recycle: {recycle}\n💎 Subscription: {sub}\n\nChoose from the menu:",
   "welcome": "👋 Welcome to the bot!",
   "help": "❓ Bot Help",
   "language_set": "✅ Language set to: English",
