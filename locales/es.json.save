@@ -1,0 +1,7 @@
+{
+  "main_menu": "👋 Bienvenido {user_id}!\n\n📊 Mis grupos: {groups}\n💎 Suscripción: {sub}\n📡 Canal activo: {channel}\n📝 Publicaciones pendientes: {pending}\n📤 Publicación automática: {auto}\n♻️ Reciclaje automático: {recycle}\n\n🤖 {bot_name} a su servicio!",
+  "help_text": "📚 **Ayuda**\n\n/start – Menú principal\n/help – Este mensaje\n/trial – Prueba gratuita\n/subscribe – Suscripciones\n/support – Soporte técnico\n/language – Cambiar idioma\n/developer – Información del desarrollador\n\n🔹 Para grupos:\n/syncgroup – Activar bot\n/security – Configuración de seguridad\n/panel – Panel de control\n\n🔹 Para administradores:\n/ban, /mute, /warn, /kick, /restrict, /unban, /pin",
+  "trial_used": "❌ Ya has utilizado el período de prueba.",
+  "trial_activated": "🎁 {days} días de prueba activados! Disfruta de las funciones.",
+  "plan_selector": "💎 **Elige tu plan**\n\nPlanes disponibles:",
+  "send_support_message": "📞 **Soporte técnico**\n\nEnvía tu mensaje y te responderemos lo antes 
