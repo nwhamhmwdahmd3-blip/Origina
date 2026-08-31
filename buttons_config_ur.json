@@ -1,0 +1,395 @@
+{
+  "texts": {
+    "main": "🌿 مین مینیو",
+    "back": "🔙 واپس",
+    "cancel": "❌ منسوخ کریں",
+    "settings": "⚙️ ترتیبات",
+    "toggle_auto": "📤 خودکار اشاعت",
+    "toggle_rec": "♻️ خودکار ری سائیکل",
+    "ch_list": "📡 میرے چینلز",
+    "ch_add": "➕ چینل شامل کریں",
+    "ch_stats": "📊 اعداد و شمار",
+    "ch_del": "🗑️ حذف کریں",
+    "ch_sel": "📌 منتخب کریں",
+    "sched_btn": "📅 شیڈول",
+    "add_group_button": "➕ گروپ شامل کریں",
+    "security_button": "🛡️ سیکیورٹی",
+    "groups": "👥 میرے گروپس",
+    "post_add": "📥 پوسٹس شامل کریں",
+    "post_pub": "📤 پوسٹ شائع کریں",
+    "post_list": "📋 میری پوسٹس",
+    "post_rec": "♻️ ری سائیکل",
+    "post_del": "🗑️ پوسٹ حذف کریں",
+    "post_clear": "🧹 سب صاف کریں",
+    "pub_all": "📤 سب شائع کریں",
+    "plans": "💎 پلانز",
+    "subscribe": "💎 سبسکرائب کریں",
+    "gift_plans": "🎁 تحفہ کوڈ خریدیں",
+    "redeem_gift": "🎟️ تحفہ کوڈ استعمال کریں",
+    "support": "📞 سپورٹ",
+    "support_ticket": "📝 سپورٹ ٹکٹ",
+    "developer": "👨‍💻 ڈویلپر",
+    "help": "📚 مدد",
+    "language": "🌐 زبان",
+    "trial": "🎁 مفت آزمائش",
+    "admin_panel_btn": "👑 ایڈمن پینل",
+    "admin_users": "👥 صارفین",
+    "admin_banned": "⛔ پابندی والے صارفین",
+    "admin_unban_all": "🔓 سب کو غیر پابند کریں",
+    "admin_channels": "📡 چینلز (ایڈمن)",
+    "admin_banned_ch": "🚫 پابندی والے چینلز",
+    "admin_activate_ch": "✅ چینلز فعال کریں",
+    "admin_groups": "👥 گروپس (ایڈمن)",
+    "admin_banned_gr": "🚫 پابندی والے گروپس",
+    "admin_unban_gr": "🔓 گروپس غیر پابند کریں",
+    "admin_add_admin": "➕ ایڈمن شامل کریں",
+    "admin_rem_admin": "➖ ایڈمن ہٹائیں",
+    "admin_list_admins": "👑 ایڈمن فہرست",
+    "admin_ram": "🖥️ ریم استعمال",
+    "admin_stats": "📊 اعداد و شمار",
+    "admin_uptime": "⏳ اپ ٹائم",
+    "admin_metrics": "📈 کارکردگی میٹرکس",
+    "admin_backup": "💾 بیک اپ",
+    "admin_restore": "🔄 بحالی",
+    "admin_restore_sel": "📂 بیک اپ منتخب کریں",
+    "admin_show_backups": "📂 دستیاب بیک اپ دکھائیں",
+    "admin_upload_backup": "📤 بیک اپ اپ لوڈ کریں",
+    "admin_disable_force": "🔓 جبری سبسکرپشن غیر فعال کریں",
+    "admin_send_update": "📢 اپ ڈیٹ بھیجیں",
+    "admin_set_update_ch": "📢 اپ ڈیٹ چینل مقرر کریں",
+    "admin_show_update": "👀 اپ ڈیٹ چینل دکھائیں",
+    "admin_force_sub": "🔒 جبری سبسکرپشن",
+    "admin_set_force": "🔒 جبری سبسکرپشن مقرر کریں",
+    "admin_broadcast": "📨 نشریاتی پیغام",
+    "admin_tickets": "🎫 ٹکٹس",
+    "admin_del_tickets": "🗑️ ٹکٹس حذف کریں",
+    "admin_log_ch": "📋 لاگ چینل",
+    "admin_set_log_ch": "📋 لاگ چینل مقرر کریں",
+    "admin_replies": "💬 خودکار جوابات",
+    "admin_add_reply": "➕ جواب شامل کریں",
+    "admin_list_replies": "📋 جوابات کی فہرست",
+    "admin_del_reply": "🗑️ جواب حذف کریں",
+    "admin_banned_words": "🚫 ممنوعہ الفاظ",
+    "admin_add_banned": "➕ لفظ شامل کریں",
+    "admin_list_banned": "📋 الفاظ کی فہرست",
+    "admin_rem_banned": "🗑️ لفظ حذف کریں",
+    "admin_create_contest": "🏆 مقابلہ بنائیں",
+    "admin_declare_winner": "🏆 فاتح کا اعلان کریں",
+    "admin_declare_winner_sel": "🏆 مقابلہ منتخب کریں",
+    "admin_del_contest": "🗑️ مقابلہ حذف کریں",
+    "admin_export_replies": "📤 جوابات برآمد کریں",
+    "admin_import_replies": "📥 جوابات درآمد کریں",
+    "admin_import_github": "🐙 GitHub سے درآمد کریں",
+    "admin_refresh_cache": "🔄 کیشے تازہ کریں",
+    "admin_invoices": "🧾 رسیدیں",
+    "admin_payment_logs": "📊 ادائیگی لاگز",
+    "admin_grant_free": "🎁 مفت سبسکرپشن دیں",
+    "contest_winners": "🏆 فاتحین",
+    "contests": "🏆 مقابلے",
+    "contest_join": "✍️ شرکت",
+    "reminder": "⏰ یاد دہانیاں",
+    "rem_sub": "🔔 سبسکرپشن یاد دہانی",
+    "rem_daily": "📊 روزانہ رپورٹ",
+    "rem_weekly": "📈 ہفتہ وار رپورٹ",
+    "rem_days": "📅 دنوں کی تعداد",
+    "rem_lang": "🌐 یاد دہانی کی زبان",
+    "translation": "🌐 ترجمہ",
+    "trans_off": "❌ ترجمہ غیر فعال کریں",
+    "trans_set": "✅ مقرر کریں",
+    "referral": "🔗 حوالہ جات",
+    "ref_claim": "🎁 انعام حاصل کریں",
+    "ref_list": "📋 حوالہ شدہ فہرست",
+    "invoices": "🧾 میری رسیدیں",
+    "buy_sub_1": "🗓️ 1 دن",
+    "buy_sub_7": "🗓️ 1 ہفتہ",
+    "buy_sub_30": "🗓️ 1 مہینہ",
+    "buy_sub_90": "🗓️ 3 ماہ",
+    "buy_sub_365": "🗓️ 1 سال",
+    "auto_reply_add": "➕ جواب شامل کریں",
+    "auto_reply_del": "🗑️ جواب حذف کریں",
+    "auto_reply_list": "📋 جوابات کی فہرست",
+    "auto_reply_stats": "📊 اعداد و شمار",
+    "auto_reply_toggle": "🔄 آن/آف",
+    "auto_reply_admins": "👤 صرف ایڈمنز",
+    "auto_reply_reset": "🗑️ سب ری سیٹ کریں",
+    "auto_reply_menu": "📝 خودکار جوابات",
+    "penalty": "⚖️ سزائیں",
+    "pen_ban": "🚫 پابندی",
+    "pen_mute": "🔇 خاموشی",
+    "pen_kick": "👢 باہر نکالیں",
+    "pen_warn": "⚠️ تنبیہ",
+    "ban_add": "➕ لفظ شامل کریں",
+    "ban_list": "📋 الفاظ کی فہرست",
+    "ban_rem": "🗑️ لفظ حذف کریں",
+    "act_ban": "🚫 پابندی",
+    "act_mute": "🔇 خاموشی",
+    "act_warn": "⚠️ تنبیہ",
+    "act_kick": "👢 باہر نکالیں",
+    "act_restrict": "🔒 پابندی لگائیں",
+    "act_unban": "🔓 غیر پابند کریں",
+    "act_pin": "📌 پن کریں",
+    "act_log": "📜 کارروائی لاگ",
+    "panel_lock": "🔒 گروپ لاک کریں",
+    "panel_unlock": "🔓 گروپ ان لاک کریں",
+    "panel_close": "❌ پینل بند کریں",
+    "sec_links": "🔗 لنکس",
+    "sec_mentions": "👤 تذکرے",
+    "sec_slow": "🐌 سست موڈ",
+    "sec_slow_mode_seconds": "⏱️ سست موڈ سیکنڈ",
+    "sec_flood": "🌊 فلڈ",
+    "sec_video": "🎬 ویڈیو",
+    "sec_audio": "🎵 موسیقی",
+    "sec_anim": "🎞️ اینیمیشن",
+    "sec_service": "🗑️ سروس پیغامات",
+    "sec_doc": "📄 دستاویزات",
+    "sec_sticker": "🖼️ اسٹیکرز",
+    "sec_forward": "📨 فارورڈ شدہ",
+    "sec_poll": "📊 پول",
+    "sec_game": "🎮 کھیل",
+    "sec_voice": "🎤 آواز",
+    "sec_videonote": "🎥 ویڈیو نوٹ",
+    "sec_banned_words": "🚫 ممنوعہ الفاظ",
+    "sec_toggle_banned_words": "✅ حذف فعال / ❌ حذف غیر فعال",
+    "sec_welcome": "🎯 خوش آمدید",
+    "sec_welcome_text": "📝 خوش آمدید متن",
+    "sec_goodbye": "👋 الوداع",
+    "sec_goodbye_text": "📝 الوداع متن",
+    "sec_night": "🌙 رات",
+    "sec_approve_join": "✅ شمولیت منظور کریں",
+    "sec_reject_join": "❌ شمولیت مسترد کریں",
+    "sec_nsfw": "🔞 NSFW",
+    "sec_maxlen": "📏 زیادہ سے زیادہ لمبائی",
+    "sec_warn": "⚠️ تنبیہات",
+    "sec_warn_count": "🔢 تنبیہات کی تعداد",
+    "sec_warn_penalty": "⚖️ تنبیہ سزا",
+    "sec_warn_penalty_duration": "⏱️ تنبیہ سزا کی مدت",
+    "sec_penalty": "⚖️ سزائیں",
+    "sec_del_pen": "⚖️ حذف سزا",
+    "sec_adv_act": "🛠️ اعلی درجے کی کارروائیاں",
+    "sec_act_log": "📜 لاگ",
+    "sec_auto_reply_menu": "📝 خودکار جوابات",
+    "sec_antiflood_settings": "🌊 فلڈ ترتیبات",
+    "sec_night_settings": "🌙 رات کی ترتیبات",
+    "sec_penalty_durations": "⏳ سزا کی مدت",
+    "sec_violation_penalties": "⚖️ خلاف ورزی سزائیں",
+    "sec_enable_all": "✅ سب فعال کریں",
+    "sec_disable_all": "❌ سب غیر فعال کریں",
+    "sec_close": "❌ بند کریں",
+    "status_only": "📊 حالت",
+    "reminder_subscription_expires": "⚠️ آپ کی سبسکرپشن {days} دنوں میں ختم ہو جائے گی",
+    "sched_min": "⏱️ منٹ",
+    "sched_hour": "🕐 گھنٹے",
+    "sched_day": "📅 دن",
+    "sched_time": "🕒 مخصوص وقت",
+    "sec_set_antiflood_messages": "🔢 پیغامات کی تعداد",
+    "sec_set_antiflood_seconds": "⏱️ سیکنڈ",
+    "sec_set_night_start": "🌙 آغاز کا وقت",
+    "sec_set_night_end": "🌙 اختتام کا وقت",
+    "sec_set_violation_strikes": "📊 خلاف ورزیوں کی تعداد",
+    "sec_set_violation_duration": "⏱️ خلاف ورزی سزا کی مدت",
+    "sec_antiflood_duration": "⏱️ فلڈ سزا کی مدت",
+    "sec_night_duration": "⏱️ رات کی کارروائی کی مدت",
+    "sec_set_antiflood_penalty": "🚫 فلڈ سزا کی قسم",
+    "sec_set_night_action": "🌙 رات کی کارروائی",
+    "sec_penalty_none": "🚫 کوئی سزا نہیں",
+    "sec_penalty_ban": "🚫 پابندی",
+    "sec_penalty_mute": "🔇 خاموشی",
+    "sec_penalty_kick": "👢 باہر نکالیں",
+    "sec_penalty_restrict": "🔒 پابندی لگائیں"
+  },
+  "menus": {
+    "main_menu": {
+      "rows": [
+        ["ch_list", "groups"],
+        ["post_add", "post_pub"],
+        ["post_list", "post_rec"],
+        ["pub_all"],
+        ["plans", "subscribe"],
+        ["gift_plans", "redeem_gift"],
+        ["support", "developer"],
+        ["help", "language"],
+        ["trial", "contests"],
+        ["settings"]
+      ]
+    },
+    "settings": {
+      "rows": [
+        ["toggle_auto", "toggle_rec"],
+        ["translation", "reminder"],
+        ["referral", "invoices"],
+        ["back"]
+      ]
+    },
+    "plans": {
+      "rows": [
+        ["buy_sub_1", "buy_sub_7"],
+        ["buy_sub_30", "buy_sub_90"],
+        ["buy_sub_365"],
+        ["back"]
+      ]
+    },
+    "support": {
+      "rows": [
+        ["support_ticket"],
+        ["back"]
+      ]
+    },
+    "admin_panel": {
+      "rows": [
+        ["admin_users", "admin_banned"],
+        ["admin_unban_all"],
+        ["admin_channels", "admin_banned_ch"],
+        ["admin_activate_ch"],
+        ["admin_groups", "admin_banned_gr"],
+        ["admin_unban_gr"],
+        ["admin_add_admin", "admin_rem_admin"],
+        ["admin_list_admins"],
+        ["admin_ram", "admin_stats"],
+        ["admin_uptime"],
+        ["admin_metrics"],
+        ["admin_backup", "admin_restore"],
+        ["admin_send_update", "admin_set_update_ch"],
+        ["admin_show_update"],
+        ["admin_force_sub", "admin_set_force"],
+        ["admin_disable_force"],
+        ["admin_broadcast"],
+        ["admin_tickets", "admin_del_tickets"],
+        ["admin_log_ch", "admin_set_log_ch"],
+        ["admin_replies"],
+        ["admin_add_reply", "admin_list_replies"],
+        ["admin_del_reply"],
+        ["admin_banned_words", "admin_add_banned"],
+        ["admin_list_banned", "admin_rem_banned"],
+        ["admin_create_contest", "admin_declare_winner"],
+        ["admin_export_replies", "admin_import_replies"],
+        ["admin_import_github"],
+        ["admin_refresh_cache"],
+        ["admin_invoices", "admin_payment_logs"],
+        ["admin_grant_free"],
+        ["back"]
+      ]
+    },
+    "security": {
+      "rows": [
+        ["sec_links", "sec_mentions"],
+        ["sec_slow", "sec_slow_mode_seconds"],
+        ["sec_flood", "sec_antiflood_settings"],
+        ["sec_video", "sec_audio"],
+        ["sec_anim", "sec_service"],
+        ["sec_doc", "sec_sticker"],
+        ["sec_forward", "sec_poll"],
+        ["sec_game", "sec_voice"],
+        ["sec_videonote", "sec_banned_words"],
+        ["sec_welcome", "sec_welcome_text"],
+        ["sec_goodbye", "sec_goodbye_text"],
+        ["sec_night", "sec_night_settings"],
+        ["sec_approve_join", "sec_reject_join"],
+        ["sec_nsfw"],
+        ["sec_maxlen", "sec_warn"],
+        ["sec_warn_count"],
+        ["sec_warn_penalty", "sec_warn_penalty_duration"],
+        ["sec_penalty", "sec_del_pen"],
+        ["sec_penalty_durations"],
+        ["sec_violation_penalties"],
+        ["sec_adv_act", "sec_act_log"],
+        ["sec_auto_reply_menu"],
+        ["sec_enable_all", "sec_disable_all"],
+        ["sec_close"]
+      ]
+    },
+    "banned_words": {
+      "rows": [
+        ["ban_add", "ban_list"],
+        ["ban_rem"],
+        ["sec_toggle_banned_words"],
+        ["back"]
+      ]
+    },
+    "penalty": {
+      "rows": [
+        ["pen_ban", "pen_mute"],
+        ["pen_kick", "pen_warn"],
+        ["back"]
+      ]
+    },
+    "advanced_actions": {
+      "rows": [
+        ["act_ban", "act_mute"],
+        ["act_warn", "act_kick"],
+        ["act_restrict", "act_unban"],
+        ["act_pin"],
+        ["act_log"],
+        ["back"]
+      ]
+    },
+    "auto_reply_manage": {
+      "rows": [
+        ["auto_reply_toggle", "auto_reply_admins"],
+        ["auto_reply_add", "auto_reply_del"],
+        ["auto_reply_list", "auto_reply_stats"],
+        ["auto_reply_reset"],
+        ["back"]
+      ]
+    },
+    "translation": {
+      "rows": [
+        ["trans_off"],
+        ["back"]
+      ]
+    },
+    "referral": {
+      "rows": [
+        ["ref_claim", "ref_list"],
+        ["back"]
+      ]
+    },
+    "reminder": {
+      "rows": [
+        ["rem_sub", "rem_daily"],
+        ["rem_weekly", "rem_days"],
+        ["back"]
+      ]
+    },
+    "contests": {
+      "rows": [
+        ["contest_winners"],
+        ["back"]
+      ]
+    },
+    "panel": {
+      "rows": [
+        ["panel_lock", "panel_unlock"],
+        ["panel_close"]
+      ]
+    },
+    "channel_settings": {
+      "rows": [
+        ["sched_min", "sched_hour"],
+        ["sched_day", "sched_time"],
+        ["back"]
+      ]
+    },
+    "antiflood_settings": {
+      "rows": [
+        ["sec_set_antiflood_messages", "sec_set_antiflood_seconds"],
+        ["sec_set_antiflood_penalty"],
+        ["sec_antiflood_duration"],
+        ["back"]
+      ]
+    },
+    "night_settings": {
+      "rows": [
+        ["sec_set_night_start", "sec_set_night_end"],
+        ["sec_set_night_action"],
+        ["sec_night_duration"],
+        ["back"]
+      ]
+    },
+    "violation_penalties": {
+      "rows": [
+        ["sec_set_violation_strikes", "sec_set_violation_duration"],
+        ["back"]
+      ]
+    }
+  }
+}
