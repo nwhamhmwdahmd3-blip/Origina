@@ -266,21 +266,41 @@ class CommandHandlers:
 
     @staticmethod
     async def contests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /contests - المسابقات النشطة"""
+        """الأمر /contests - المسابقات النشطة مع أزرار المشاركة"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
         contests = await DB.get_active_contests(10)
         if not contests:
             await safe_send(context.bot, user_id, "📭 لا توجد مسابقات نشطة")
             return
+
         text = "🏆 <b>المسابقات النشطة</b>\n\n"
+        kb = []
         for c in contests:
-            text += f"• <b>{escape(c['title'])}</b>\n"
-            text += f"  🎁 {escape(c['prize'])}\n"
-            text += f"  📅 {escape(c['end_date'][:10])}\n"
-            text += f"  👥 المشاركون: {c.get('participants', 0)}\n\n"
-        kb = KeyboardFactory.build("contests", lang=lang)
-        await safe_send(context.bot, user_id, text, reply_markup=kb, parse_mode='HTML')
+            text += (
+                f"• <b>{escape(c['title'])}</b>\n"
+                f"  🎁 {escape(c['prize'])}\n"
+                f"  📅 {escape(c['end_date'][:10])}\n"
+                f"  👥 المشاركون: {c.get('participants', 0)}\n\n"
+            )
+            kb.append([
+                InlineKeyboardButton(
+                    f"✍️ المشاركة في {escape(c['title'])[:20]}",
+                    callback_data=f"{CB.CONTEST_JOIN}:{c['id']}"
+                )
+            ])
+
+        kb.append([
+            InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)
+        ])
+
+        await safe_send(
+            context.bot,
+            user_id,
+            text,
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode='HTML'
+        )
 
     # ========== الأوامر الإضافية الجديدة ==========
 
@@ -653,7 +673,6 @@ class CommandHandlers:
 
         logger.info(f"🔍 محاولة تسجيل المجموعة: chat_id={chat_id}, user_id={user_id}")
 
-        # التحقق من أن البوت مشرف أولاً
         try:
             bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
             if bot_member.status != 'administrator':
@@ -673,7 +692,6 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, f"❌ فشل التحقق من حالة البوت: {escape(str(e)[:50])}")
             return
 
-        # جلب المشرفين
         try:
             all_admins = await context.bot.get_chat_administrators(chat_id)
             logger.info(f"🔍 عدد المشرفين: {len(all_admins)}")
@@ -682,18 +700,15 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ فشل جلب المشرفين")
             return
 
-        # البحث عن المالك
         creator_id = None
         for admin in all_admins:
             if admin.status == 'creator' and not admin.user.is_bot:
                 creator_id = admin.user.id
                 break
 
-        # التحقق من المستخدم
         is_admin = False
         real_user_id = user_id
 
-        # ✅ دعم Anonymous Admin بشكل كامل:
         if update.message and update.message.sender_chat and update.message.sender_chat.id == chat_id:
             is_admin = True
             real_user_id = update.message.sender_chat.id
@@ -712,7 +727,6 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ <b>أنت لست مشرفاً في هذه المجموعة!</b>", parse_mode='HTML')
             return
 
-        # تسجيل المجموعة
         try:
             await DB.register_group(chat_id, chat_name, creator_id or real_user_id, update.effective_chat.username)
             logger.info("✅ تم تسجيل المجموعة")
@@ -721,7 +735,6 @@ class CommandHandlers:
             await safe_send(context.bot, user_id, "❌ فشل تسجيل المجموعة")
             return
 
-        # ربط المستخدم
         try:
             if creator_id:
                 await DB.execute(
@@ -743,7 +756,6 @@ class CommandHandlers:
         except Exception as e:
             logger.error(f"❌ فشل ربط المستخدم: {e}")
 
-        # مزامنة المشرفين
         try:
             admin_ids = [a.user.id for a in all_admins if a.user and not a.user.is_bot and a.user.id != chat_id]
             admin_count = await DB.sync_group_admins(chat_id, admin_ids)
@@ -752,7 +764,6 @@ class CommandHandlers:
             logger.error(f"❌ فشل مزامنة المشرفين: {e}")
             admin_count = 0
 
-        # رسالة النجاح - نسخة جميلة وخالية من الأخطاء
         msg = (
             f"🎉 <b>تم تفعيل المجموعة بنجاح!</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -769,7 +780,6 @@ class CommandHandlers:
             f"💡 استخدم /security للإعدادات"
         )
 
-        # ✅ إذا كان المشرف مجهولًا، لا نرسل له رسالة خاصة، نكتفي بالرسالة في المجموعة
         is_anonymous = (
             update.message and
             update.message.sender_chat and
@@ -785,7 +795,6 @@ class CommandHandlers:
                 else:
                     logger.error(f"❌ فشل إرسال رسالة التأكيد: {e}")
 
-        # إرسال رسالة في المجموعة وحذفها
         sent_msg = await safe_send(context.bot, chat_id, "🤖 <b>تم تفعيل البوت!</b>", parse_mode='HTML')
         if sent_msg:
             try:
