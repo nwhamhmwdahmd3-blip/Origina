@@ -16,72 +16,16 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - دعم 12 لغة في أزرار الترجمة كما في النسخة الأصلية
 - إزالة تكرار toggle_map
 - إضافة معالج المقاييس (Metrics) بشكل فعلي
-- إضافة معالجات الأزرار النادرة (admin_restore_sel, sec_antiflood_penalty, sec_night_action, post_clear)
-- تعديل safe_edit لمعالجة الرسائل الطويلة (حذف وإرسال بديل) لمنع مشكلة "يضل يبحث"
-- استبدال query.edit_message_text بـ safe_edit في نهاية _handle_security
-- إصلاح زر "كلمات محظورة" ليفتح قائمة إدارة الكلمات بدلاً من التبديل
-- تصحيح _safe_answer لتجاهل أخطاء answerCallbackQuery المكررة
-- إصلاح أزرار الردود التلقائية (تفعيل/تعطيل، للمشرفين فقط)
-- إصلاح منطق أزرار التحذير: فصل نوع العقوبة عن المدة، وإزالة sec_penalty_warn من قائمة المد د
-- معالجة sec_warn_penalty_set داخل _handle_security مباشرة
-- توسيع set_duration ليشمل مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
-- إضافة debounce لمنع الضغط المتكرر السريع
-- إضافة رد فوري في safe_edit لمنع ظهور "يبحث"
-- إصلاح استدعاء متكرر في _handle_security عند تبديل التحذيرات
-- تحسين _handle_security لتقليل استعلامات قاعدة البيانات
-- إصلاح أزرار sec_set_antiflood_penalty و sec_set_night_action
-- إصلاح استخراج chat_id في sec_warn_penalty_set
-- إصلاح شامل لبناء callback لأزرار العقوبات
-- استخدام DB.backup_database للنسخ الاحتياطي
-- دعم auto_penalty='none'
-- إصلاح set_night_mode_action
-- إزالة خيار warn من عقوبات الفيضان والوضع الليلي
-- إصلاح إدارة الكلمات المحظورة العامة
-- نقل فحص الصلاحية في الردود التلقائية
-- تنظيف الحالة عند إغلاق اللوحة
-- التحقق من نجاح النسخ الاحتياطي
-- تنظيف الحالة عند فشل الانضمام للمسابقة
-- إضافة حالة منفصلة لعدد المخالفات
-- إضافة زر تعطيل العقوبة التلقائية
-- إخفاء مدد التحذير غير المنطقية
-- التحقق من صحة ملف JSON قبل الاستيراد
-- تنظيف الحالة بعد الإجراءات
-- إصلاح جميع مشاكل return المفقودة
-- حماية من Path Traversal
-- تهيئة start_time
-- إزالة الكود الميت
-- إصلاح عقوبة الطرد (kick) بدون مدد
-- منع الإجراءات الجماعية بمعرف -1
-- تحسين تحليل sec_penalty_
-- تحسين enable_all وdisable_all
-- إضافة معالجة أزرار sec_penalty_* داخل _handle_security (إصلاح الترتيب)
+- إضافة معالجات الأزرار النادرة
 - إضافة حظر/فك حظر يدوي للقنوات والمجموعات من لوحة الأدمن
 - إصلاح عرض مدد الطرد (kick) بعدم عرضها نهائيًا
 - إصلاح حدود الصفحات في القوائم
 - تخزين مرجع لمهمة النسخ الاحتياطي
 - تحديث نص الردود التلقائية عند التبديل
 - إرسال النص المصاحب للوسائط التي لا تدعم caption
-- إصلاح safe_edit عند الطول الزائد (حفظ chat_id قبل الحذف)
-- تحديث القوائم بعد حظر/فك حظر القنوات والمجموعات بدون تكرار
-- حذف الملف المؤقت في finally عند فشل إرسال التصدير
-- تخزين مرجع مهمة النشر الجماعي PUB_ALL
-- معالجة فشل النص المصاحب بشكل منفصل في _publish_single
+- إصلاح safe_edit عند الطول الزائد
 - تجنب عرض قائمة المدد لعقوبة الطرد
-- مغادرة المجموعة عند حظرها مع رسائل أوضح
-- استخدام query.id في debounce_key
-- إعادة تعيين channel_page عند تحديث القنوات
-- تقليل استعلامات قاعدة البيانات المتكررة في TOGGLE_AUTO و TOGGLE_REC و REM_TOGGLE
-- إضافة حماية من None في get_reminder_settings و get_auto_reply_settings
-- قفل النسخ الاحتياطي باستخدام asyncio.Lock لمنع التزامن
-- التحقق من نوع DB.backup_database قبل await
-- إضافة فحوصات أولية لـ query و data قبل أي معالجة
-- إزالة استيراد re غير المستخدم
-- تحسين safe_edit بعدم الاعتماد على query._bot
-- تهيئة start_time في البداية
-- إضافة معالج ADMIN_RESTORE لاستعادة النسخ الاحتياطية (اختياري)
-- إضافة استعادة نسخة احتياطية من ملف يرفعه المستخدم
-- إضافة زر تعطيل الاشتراك الإجباري
-- إضافة التحقق من صحة ملف JSON قبل الاستيراد
+- تصحيح ترجمة النصوص الثابتة
 """
 
 import asyncio
@@ -89,6 +33,7 @@ import logging
 import json
 import time
 import shutil
+import re
 import os
 import weakref
 from pathlib import Path
@@ -117,11 +62,6 @@ MAX_CONCURRENT_PUBLISH = 3
 ACTIVE_TASKS = weakref.WeakSet()
 
 
-async def _init_start_time(context: ContextTypes.DEFAULT_TYPE):
-    if 'start_time' not in context.bot_data:
-        context.bot_data['start_time'] = time.monotonic()
-
-
 async def _safe_answer(query, text=None, show_alert=False):
     if not query:
         return False
@@ -133,6 +73,17 @@ async def _safe_answer(query, text=None, show_alert=False):
         return True
     except:
         return False
+
+
+async def _trans(key, lang, default_ar):
+    """جلب النص المترجم مع fallback للعربية"""
+    try:
+        text = await get_text(lang, key)
+        if not text or text == key:
+            return default_ar
+        return text
+    except:
+        return default_ar
 
 
 async def safe_edit(query, text, reply_markup=None, parse_mode=None, bot=None):
@@ -181,16 +132,6 @@ async def safe_delete_message(query_or_message):
         pass
 
 
-async def _send_text_safely(bot, chat_id, text):
-    if not text:
-        return
-    if len(text) <= MAX_MESSAGE_LENGTH:
-        await bot.send_message(chat_id, text)
-    else:
-        for i in range(0, len(text), MAX_MESSAGE_LENGTH):
-            await bot.send_message(chat_id, text[i:i+MAX_MESSAGE_LENGTH])
-
-
 def _mask_id(id_value, prefix=3, suffix=2):
     if id_value is None:
         return "***"
@@ -210,12 +151,9 @@ class CallbackHandlers:
     async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if not query:
-            logger.warning("⚠️ Received update without callback_query")
             return
-
         data = query.data
         if not data:
-            logger.warning("⚠️ Received callback_query without data")
             return
 
         debounce_key = f"debounce_{query.id}"
@@ -230,7 +168,8 @@ class CallbackHandlers:
         lang = await DB.get_user_language(user_id) or 'ar'
         start_time = time.monotonic()
 
-        await _init_start_time(context)
+        if 'start_time' not in context.bot_data:
+            context.bot_data['start_time'] = time.monotonic()
 
         base_data = data
         if ':' in data:
@@ -252,7 +191,7 @@ class CallbackHandlers:
         try:
             # ========== أساسيات ==========
             if base_data == "status_only":
-                await _safe_answer(query, "لا تغيير")
+                await _safe_answer(query, await _trans('status', lang, "📊 الحالة"))
                 return
 
             if base_data in [CB.MAIN, CB.BACK]:
@@ -279,10 +218,10 @@ class CallbackHandlers:
             if base_data == CB.TRIAL:
                 await _safe_answer(query, "🔄 جارٍ التفعيل...")
                 if await DB.has_used_trial(user_id):
-                    await safe_edit(query, await get_text(lang, 'trial_used'), bot=context.bot)
+                    await safe_edit(query, await _trans('trial_used', lang, "❌ لقد استخدمت التجربة المجانية بالفعل."), bot=context.bot)
                     return
                 days = await DB.activate_trial(user_id)
-                text = await get_text(lang, 'trial_activated', days=days) if days > 0 else "❌ تعذر تفعيل التجربة"
+                text = await _trans('trial_activated', lang, "✅ تم تفعيل التجربة المجانية لمدة {days} يوم").format(days=days) if days > 0 else await _trans('trial_failed', lang, "❌ تعذر تفعيل التجربة")
                 await safe_edit(query, text, bot=context.bot)
                 return
 
@@ -320,43 +259,50 @@ class CallbackHandlers:
             if base_data == CB.SETTINGS:
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
+                settings_title = await _trans('settings_title', lang, "⚙️ الإعدادات")
+                auto_label = await _trans('auto_publish_status', lang, "📤 النشر")
+                recycle_label = await _trans('auto_recycle_status', lang, "♻️ التدوير")
                 kb = KeyboardFactory.build("settings", lang=lang)
-                await safe_edit(query, f"⚙️ الإعدادات\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb, bot=context.bot)
+                await safe_edit(query, f"{settings_title}\n\n{auto_label}: {auto}\n{recycle_label}: {rec}", reply_markup=kb, bot=context.bot)
                 return
 
             if base_data == CB.TOGGLE_AUTO:
                 cur = await DB.get_auto_publish_status(user_id)
-                new_status = not cur
-                await DB.set_auto_publish(user_id, new_status)
-                auto = "✅" if new_status else "❌"
+                await DB.set_auto_publish(user_id, not cur)
+                auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
+                settings_title = await _trans('settings_title', lang, "⚙️ الإعدادات")
+                auto_label = await _trans('auto_publish_status', lang, "📤 النشر")
+                recycle_label = await _trans('auto_recycle_status', lang, "♻️ التدوير")
                 kb = KeyboardFactory.build("settings", lang=lang)
-                await safe_edit(query, f"⚙️ الإعدادات\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb, bot=context.bot)
+                await safe_edit(query, f"{settings_title}\n\n{auto_label}: {auto}\n{recycle_label}: {rec}", reply_markup=kb, bot=context.bot)
                 return
 
             if base_data == CB.TOGGLE_REC:
                 cur = await DB.get_auto_recycle_status(user_id)
-                new_status = not cur
-                await DB.set_auto_recycle(user_id, new_status)
+                await DB.set_auto_recycle(user_id, not cur)
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
-                rec = "✅" if new_status else "❌"
+                rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
+                settings_title = await _trans('settings_title', lang, "⚙️ الإعدادات")
+                auto_label = await _trans('auto_publish_status', lang, "📤 النشر")
+                recycle_label = await _trans('auto_recycle_status', lang, "♻️ التدوير")
                 kb = KeyboardFactory.build("settings", lang=lang)
-                await safe_edit(query, f"⚙️ الإعدادات\n\n📤 النشر: {auto}\n♻️ التدوير: {rec}", reply_markup=kb, bot=context.bot)
+                await safe_edit(query, f"{settings_title}\n\n{auto_label}: {auto}\n{recycle_label}: {rec}", reply_markup=kb, bot=context.bot)
                 return
 
             # ========== الباقات والدفع ==========
             if base_data == CB.PLANS:
-                await safe_edit(query, await get_text(lang, 'plan_selector'), reply_markup=KeyboardFactory.build("plans", lang=lang), bot=context.bot)
+                await safe_edit(query, await _trans('plan_selector', lang, "💎 اختر باقة:"), reply_markup=KeyboardFactory.build("plans", lang=lang), bot=context.bot)
                 return
 
             if base_data == "gift_plans":
                 plans = await DB.get_gift_plans()
                 if not plans:
-                    await safe_edit(query, "📭 لا توجد خطط", bot=context.bot)
+                    await safe_edit(query, await _trans('no_gift_plans', lang, "📭 لا توجد خطط هدايا"), bot=context.bot)
                     return
                 kb = [[InlineKeyboardButton(f"🎁 {p['days']} يوم - {p['price']} ⭐", callback_data=f"buy_gift:{p['id']}")] for p in plans]
                 kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
-                await safe_edit(query, "💎 شراء كود هدية", reply_markup=InlineKeyboardMarkup(kb), bot=context.bot)
+                await safe_edit(query, await _trans('gift_plans_text', lang, "💎 اختر خطة هدية:"), reply_markup=InlineKeyboardMarkup(kb), bot=context.bot)
                 return
 
             if base_data == "redeem_gift":
@@ -439,7 +385,7 @@ class CallbackHandlers:
             if base_data == CB.INVOICES:
                 invoices = await DB.get_user_invoices(user_id, 10)
                 if not invoices:
-                    await safe_edit(query, "📭 لا توجد فواتير", bot=context.bot)
+                    await safe_edit(query, await _trans('no_invoices', lang, "📭 لا توجد فواتير"), bot=context.bot)
                     return
                 text = "🧾 فواتيري\n\n" + "\n".join(f"• #{inv['number']} - {inv['amount']} ⭐" for inv in invoices)
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.BACK)]]), bot=context.bot)
@@ -480,21 +426,14 @@ class CallbackHandlers:
 
             # ========== التذكيرات ==========
             if base_data in [CB.REM_TOGGLE_SUB, CB.REM_TOGGLE_DAILY, CB.REM_TOGGLE_WEEKLY]:
-                settings = await DB.get_reminder_settings(user_id) or {}
-
+                settings = await DB.get_reminder_settings(user_id)
                 if base_data == CB.REM_TOGGLE_SUB:
-                    new_val = not settings.get('subscription_reminder', False)
-                    settings['subscription_reminder'] = new_val
-                    await DB.update_reminder_settings(user_id, subscription_reminder=new_val)
+                    await DB.update_reminder_settings(user_id, subscription_reminder=not settings.get('subscription_reminder', False))
                 elif base_data == CB.REM_TOGGLE_DAILY:
-                    new_val = not settings.get('daily_stats_reminder', False)
-                    settings['daily_stats_reminder'] = new_val
-                    await DB.update_reminder_settings(user_id, daily_stats_reminder=new_val)
+                    await DB.update_reminder_settings(user_id, daily_stats_reminder=not settings.get('daily_stats_reminder', False))
                 elif base_data == CB.REM_TOGGLE_WEEKLY:
-                    new_val = not settings.get('weekly_report', False)
-                    settings['weekly_report'] = new_val
-                    await DB.update_reminder_settings(user_id, weekly_report=new_val)
-
+                    await DB.update_reminder_settings(user_id, weekly_report=not settings.get('weekly_report', False))
+                settings = await DB.get_reminder_settings(user_id)
                 text = (
                     f"⏰ التذكيرات\n\n"
                     f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
@@ -505,7 +444,7 @@ class CallbackHandlers:
                 return
 
             if base_data == CB.REMINDER:
-                settings = await DB.get_reminder_settings(user_id) or {}
+                settings = await DB.get_reminder_settings(user_id)
                 text = (
                     f"⏰ التذكيرات\n\n"
                     f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
@@ -599,7 +538,7 @@ class CallbackHandlers:
                     await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
                     return
                 if await DB.delete_channel(user_id, ch_id):
-                    await _safe_answer(query, "✅ تم الحذف")
+                    await _safe_answer(query, await _trans('deleted_success', lang, "✅ تم الحذف"))
                     context.user_data['channel_page'] = 0
                     await CallbackHandlers._show_channel_list(update, context, query, user_id, lang)
                     return
@@ -672,7 +611,7 @@ class CallbackHandlers:
                     return
                 active = await DB.get_active_channel(user_id)
                 if active and await DB.delete_post(user_id, post_id, active):
-                    await _safe_answer(query, "✅ تم الحذف")
+                    await _safe_answer(query, await _trans('deleted_success', lang, "✅ تم الحذف"))
                     await CallbackHandlers._show_post_list(update, context, query, user_id, lang)
                     return
                 else:
@@ -745,7 +684,7 @@ class CallbackHandlers:
             # ========== لوحة الأدمن ==========
             if base_data == CB.ADMIN:
                 if not CONFIG.is_developer(user_id):
-                    await _safe_answer(query, "❌ غير مصرح", show_alert=True)
+                    await _safe_answer(query, await _trans('unauthorized', lang, "❌ غير مصرح"), show_alert=True)
                     return
                 kb = KeyboardFactory.build("admin_panel", lang=lang)
                 await safe_edit(query, "👑 لوحة الأدمن", reply_markup=kb, bot=context.bot)
@@ -760,7 +699,7 @@ class CallbackHandlers:
                 if CONFIG.is_developer(user_id):
                     await CallbackHandlers._handle_admin(update, context, query, user_id, lang)
                 else:
-                    await _safe_answer(query, "❌ غير مصرح", show_alert=True)
+                    await _safe_answer(query, await _trans('unauthorized', lang, "❌ غير مصرح"), show_alert=True)
                 return
 
             if data.startswith("auto_reply_") or data.startswith("auto_reply_menu:"):
@@ -786,7 +725,6 @@ class CallbackHandlers:
             if data.startswith("lang_"):
                 lang_set = data.split("_")[-1]
                 if lang_set in ['ar', 'en', 'fr', 'tr', 'zh', 'ru', 'de', 'es', 'it', 'pt', 'ja', 'ko', 'fa', 'ur', 'nl', 'pl', 'hi', 'off']:
-
                     await DB.set_user_language(user_id, lang_set)
                     await _safe_answer(query, f"✅ {lang_set}")
                     await CommandHandlers.start(update, context)
@@ -812,7 +750,7 @@ class CallbackHandlers:
                 await CallbackHandlers._show_post_list(update, context, query, user_id, lang)
                 return
 
-            # ========== set_duration (مع نوع العقوبة) ==========
+            # ========== set_duration ==========
             if data.startswith("set_duration:"):
                 parts_data = data.split(":")
                 if len(parts_data) >= 4:
@@ -841,11 +779,8 @@ class CallbackHandlers:
                         else:
                             await DB.update_security_settings(chat_id, auto_penalty='kick')
                             await _safe_answer(query, "✅ تم تعيين العقوبة: طرد")
-
                         settings = await DB.get_security_settings(chat_id)
-                        text = KeyboardFactory._format_security_text(settings)
-                        kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                        await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                        await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                         return
 
                     col = col_map.get(penalty_type)
@@ -856,9 +791,7 @@ class CallbackHandlers:
                     await DB.update_security_settings(chat_id, **{col: duration})
                     await _safe_answer(query, f"✅ تم تعيين المدة: {duration} ثانية")
                     settings = await DB.get_security_settings(chat_id)
-                    text = KeyboardFactory._format_security_text(settings)
-                    kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                    await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                    await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                     return
 
             # ========== sec_penalty_ ==========
@@ -873,14 +806,12 @@ class CallbackHandlers:
                 if penalty_type in ['mute', 'ban', 'restrict', 'kick', 'none']:
                     if penalty_type == 'none':
                         await DB.update_security_settings(chat_id, auto_penalty='none')
-                        await _safe_answer(query, "✅ تم تعطيل العقوبة التلقائية")
+                        await _safe_answer(query, await _trans('no_penalty', lang, "🚫 بدون عقوبة"))
                     elif penalty_type == 'kick':
                         await DB.update_security_settings(chat_id, auto_penalty='kick')
                         await _safe_answer(query, "✅ تم تعيين العقوبة: طرد")
                         settings = await DB.get_security_settings(chat_id)
-                        text = KeyboardFactory._format_security_text(settings)
-                        kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                        await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                        await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                     else:
                         context.user_data['penalty_type'] = penalty_type
                         await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, penalty_type)
@@ -889,7 +820,7 @@ class CallbackHandlers:
                     await _safe_answer(query, "❌ نوع عقوبة غير صالح", show_alert=True)
                     return
 
-            # ========== معالجات اللوحة الخاصة (panel) ==========
+            # ========== معالجات اللوحة الخاصة ==========
             if data in ["panel_lock", "panel_unlock", "panel_close"]:
                 await CallbackHandlers._handle_panel(update, context, query, user_id, data)
                 return
@@ -927,7 +858,7 @@ class CallbackHandlers:
                 await bot.send_voice(ch_tele, media_file_id)
                 if text:
                     try:
-                        await _send_text_safely(bot, ch_tele, text)
+                        await bot.send_message(ch_tele, text)
                     except Exception as e:
                         logger.warning(f"فشل إرسال النص المصاحب للصوت: {e}")
             elif media_type == 'animation' and media_file_id:
@@ -936,14 +867,14 @@ class CallbackHandlers:
                 await bot.send_sticker(ch_tele, media_file_id)
                 if text:
                     try:
-                        await _send_text_safely(bot, ch_tele, text)
+                        await bot.send_message(ch_tele, text)
                     except Exception as e:
                         logger.warning(f"فشل إرسال النص المصاحب للملصق: {e}")
             elif media_type == 'video_note' and media_file_id:
                 await bot.send_video_note(ch_tele, media_file_id)
                 if text:
                     try:
-                        await _send_text_safely(bot, ch_tele, text)
+                        await bot.send_message(ch_tele, text)
                     except Exception as e:
                         logger.warning(f"فشل إرسال النص المصاحب لفيديو نوت: {e}")
             else:
@@ -959,13 +890,11 @@ class CallbackHandlers:
             await DB.update_next_publish(ch_db_id)
             return True
         except RetryAfter as e:
-            logger.warning(f"RetryAfter: sleeping {e.retry_after}s")
             await asyncio.sleep(e.retry_after)
             if post.get('id'):
                 await DB.increment_post_fail(post['id'])
             return False
         except Forbidden as e:
-            logger.warning(f"Forbidden: {e}")
             await DB.execute("UPDATE user_channels SET banned=1 WHERE id=?", (ch_db_id,))
             if post.get('id'):
                 await DB.increment_post_fail(post['id'])
@@ -1122,20 +1051,17 @@ class CallbackHandlers:
             await _safe_answer(query, "❌ لا صلاحية", show_alert=True)
             return
 
-        # إصلاح أزرار اختيار العقوبة التلقائية (penalty_ban, penalty_mute, ...)
         if action.startswith("penalty_"):
             penalty_type = action.replace("penalty_", "")
             if penalty_type in ['ban', 'mute', 'kick', 'restrict', 'none']:
                 if penalty_type == 'none':
                     await DB.update_security_settings(chat_id, auto_penalty='none')
-                    await _safe_answer(query, "✅ تم تعطيل العقوبة التلقائية")
+                    await _safe_answer(query, await _trans('no_penalty', lang, "🚫 بدون عقوبة"))
                 elif penalty_type == 'kick':
                     await DB.update_security_settings(chat_id, auto_penalty='kick')
                     await _safe_answer(query, "✅ تم تعيين العقوبة: طرد")
                     settings = await DB.get_security_settings(chat_id)
-                    text = KeyboardFactory._format_security_text(settings)
-                    kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                    await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                    await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                 else:
                     await DB.update_security_settings(chat_id, auto_penalty=penalty_type)
                     await _safe_answer(query, f"✅ تم تعيين العقوبة: {penalty_type}")
@@ -1192,9 +1118,7 @@ class CallbackHandlers:
                     settings['auto_reject_join'] = 0
                 elif action == "reject_join" and new_val:
                     settings['auto_approve_join'] = 0
-                text = KeyboardFactory._format_security_text(settings)
-                kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                 return
 
             elif action == "enable_all":
@@ -1205,9 +1129,7 @@ class CallbackHandlers:
                 update_data['warn_enabled'] = 1
                 await DB.update_security_settings(chat_id, **update_data)
                 settings.update(update_data)
-                text = KeyboardFactory._format_security_text(settings)
-                kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                 return
 
             elif action == "disable_all":
@@ -1215,9 +1137,7 @@ class CallbackHandlers:
                 update_data['warn_enabled'] = 0
                 await DB.update_security_settings(chat_id, **update_data)
                 settings = await DB.get_security_settings(chat_id)
-                text = KeyboardFactory._format_security_text(settings)
-                kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                 return
 
             elif action == "close":
@@ -1231,9 +1151,7 @@ class CallbackHandlers:
                 new_val = 1 - settings.get('warn_enabled', 0)
                 await DB.update_security_settings(chat_id, warn_enabled=new_val)
                 settings['warn_enabled'] = new_val
-                text = KeyboardFactory._format_security_text(settings)
-                kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                 return
 
             elif action == "warn_count":
@@ -1253,9 +1171,7 @@ class CallbackHandlers:
                         await DB.update_security_settings(chat_id, warn_penalty=penalty_type)
                         await _safe_answer(query, f"✅ تم تعيين عقوبة التحذير: {penalty_type}")
                         settings = await DB.get_security_settings(chat_id)
-                        text = KeyboardFactory._format_security_text(settings)
-                        kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                        await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                        await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                     else:
                         await _safe_answer(query, "❌ نوع عقوبة غير صالح", show_alert=True)
                 except Exception:
@@ -1284,9 +1200,7 @@ class CallbackHandlers:
                     await DB.update_security_settings(chat_id, antiflood_penalty=penalty_type)
                     await _safe_answer(query, f"✅ تم تعيين عقوبة الفيضان: {penalty_type}")
                     settings = await DB.get_security_settings(chat_id)
-                    text = KeyboardFactory._format_security_text(settings)
-                    kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                    await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                    await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                 return
 
             elif action == "set_night_action" or action == "set_night_mode_action":
@@ -1295,9 +1209,7 @@ class CallbackHandlers:
                     await DB.update_security_settings(chat_id, night_mode_action=penalty_type)
                     await _safe_answer(query, f"✅ تم تعيين إجراء الوضع الليلي: {penalty_type}")
                     settings = await DB.get_security_settings(chat_id)
-                    text = KeyboardFactory._format_security_text(settings)
-                    kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-                    await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+                    await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
                 return
 
             elif action == "night_settings":
@@ -1344,8 +1256,8 @@ class CallbackHandlers:
                 return
 
             elif action == "set_violation_duration":
-                StateManager.set(user_id, UserState.WAIT_PENALTY_DURATION)
-                context.user_data['adv_chat'] = chat_id
+                StateManager.set(user_id, UserState.WAIT_VIOLATION_DURATION)
+                context.user_data['sec_chat'] = chat_id
                 await safe_edit(query, "⏱️ أرسل مدة العقوبة بالدقائق:", bot=context.bot)
                 return
 
@@ -1460,9 +1372,7 @@ class CallbackHandlers:
         if penalty_type == 'kick':
             await _safe_answer(query, "✅ عقوبة الطرد لا تحتاج مدة")
             settings = await DB.get_security_settings(chat_id)
-            text = KeyboardFactory._format_security_text(settings)
-            kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
-            await safe_edit(query, text, reply_markup=kb, bot=context.bot)
+            await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
             return
 
         durations = [
@@ -1485,11 +1395,8 @@ class CallbackHandlers:
             kb.append(row)
         kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=f"grp_set:{chat_id}")])
         type_name = {
-            'mute': 'كتم',
-            'ban': 'حظر',
-            'restrict': 'تقييد',
-            'antiflood': 'الفيضان',
-            'night': 'الوضع الليلي',
+            'mute': 'كتم', 'ban': 'حظر', 'restrict': 'تقييد',
+            'antiflood': 'الفيضان', 'night': 'الوضع الليلي',
             'warn_penalty': 'عقوبة التحذير'
         }.get(penalty_type, penalty_type)
         await safe_edit(query, f"⏱️ اختر مدة {type_name}:", reply_markup=InlineKeyboardMarkup(kb), bot=context.bot)
@@ -1557,7 +1464,7 @@ class CallbackHandlers:
     @staticmethod
     async def _handle_admin(update, context, query, user_id, lang=None):
         if not CONFIG.is_developer(user_id):
-            await _safe_answer(query, "❌ غير مصرح", show_alert=True)
+            await _safe_answer(query, await _trans('unauthorized', lang or 'ar', "❌ غير مصرح"), show_alert=True)
             return
 
         if not lang:
@@ -1625,7 +1532,6 @@ class CallbackHandlers:
                     new_val = 0 if row['banned'] else 1
                     await DB.execute("UPDATE user_channels SET banned=? WHERE id=?", (new_val, ch_db_id))
                     await _safe_answer(query, f"✅ تم {'فك الحظر' if new_val==0 else 'حظر'} القناة")
-                    context.user_data['channel_page'] = 0
                     await CallbackHandlers._show_admin_channels(update, context, query, user_id, lang)
                 return
 
@@ -1645,10 +1551,8 @@ class CallbackHandlers:
                     if new_val == 1:
                         try:
                             await context.bot.leave_chat(chat_id)
-                            logger.info(f"✅ غادر البوت المجموعة {chat_id}")
                             leave_msg = "تم حظر المجموعة ومغادرتها"
                         except Exception as e:
-                            logger.warning(f"⚠️ تعذر مغادرة المجموعة {chat_id}: {e}")
                             leave_msg = "تم حظر المجموعة (تعذر المغادرة)"
                     else:
                         leave_msg = "تم فك حظر المجموعة"
@@ -1691,44 +1595,14 @@ class CallbackHandlers:
                 return
 
             elif data == CB.ADMIN_BACKUP:
-                if 'backup_lock' not in context.bot_data:
-                    context.bot_data['backup_lock'] = asyncio.Lock()
-
-                lock = context.bot_data['backup_lock']
-
-                if lock.locked():
-                    await _safe_answer(query, "⏳ النسخ الاحتياطي قيد التنفيذ بالفعل", show_alert=True)
-                    return
-
                 await _safe_answer(query, "⏳ جارٍ النسخ...")
-
-                async def backup_wrapper():
-                    async with lock:
-                        await CallbackHandlers._do_backup_safe(context, user_id)
-
-                task = asyncio.create_task(backup_wrapper())
+                task = asyncio.create_task(CallbackHandlers._do_backup(context, user_id))
                 ACTIVE_TASKS.add(task)
-                task.add_done_callback(lambda t: ACTIVE_TASKS.discard(t))
+                task.add_done_callback(ACTIVE_TASKS.discard)
                 return
 
             elif data == CB.ADMIN_RESTORE:
-                # إعطاء خيارين: عرض النسخ أو طلب رفع ملف من الجهاز
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📂 عرض النسخ المتاحة", callback_data="admin_show_backups")],
-                    [InlineKeyboardButton("📤 رفع نسخة من الجهاز", callback_data="admin_upload_backup")],
-                    [InlineKeyboardButton("🔙 رجوع", callback_data=CB.ADMIN)]
-                ])
-                await safe_edit(query, "🔄 استعادة النسخ الاحتياطية:", reply_markup=kb, bot=context.bot)
-                return
-
-            elif data == "admin_show_backups":
                 await CallbackHandlers._show_restore_backups(update, context, query, user_id)
-                return
-
-            elif data == "admin_upload_backup":
-                # طلب رفع نسخة احتياطية من جهاز المستخدم
-                StateManager.set(user_id, UserState.WAIT_RESTORE)
-                await safe_edit(query, "📂 أرسل ملف النسخة الاحتياطية (بصيغة .db):", bot=context.bot)
                 return
 
             elif data == CB.ADMIN_RESTORE_SEL:
@@ -1750,7 +1624,6 @@ class CallbackHandlers:
                     shutil.copy2(backup_file, PATHS.DB)
                     await safe_edit(query, "✅ تمت الاستعادة بنجاح! أعد تشغيل البوت لتفعيل التغييرات.", bot=context.bot)
                 except Exception as e:
-                    logger.error(f"❌ فشل الاستعادة: {e}")
                     await safe_edit(query, f"❌ فشل الاستعادة: {str(e)[:100]}", bot=context.bot)
                 return
 
@@ -1761,22 +1634,19 @@ class CallbackHandlers:
                 return
 
             elif data == CB.ADMIN_METRICS:
-                try:
-                    stats = await DB.get_general_stats()
-                    text = (
-                        f"📊 مقاييس النظام\n\n"
-                        f"👥 المستخدمون: {stats['users']}\n"
-                        f"📡 القنوات: {stats['channels']}\n"
-                        f"👥 المجموعات: {stats['groups']}\n"
-                        f"📝 المنشورات: {stats['posts']}\n"
-                        f"✅ المنشورة: {stats['published']}\n"
-                        f"🧾 الفواتير: {stats['invoices']}\n"
-                        f"🎫 تذاكر معلقة: {stats['tickets']}\n"
-                        f"💾 حجم قاعدة البيانات: {PATHS.DB.stat().st_size / 1024:.1f} KB"
-                    )
-                    await safe_edit(query, text, bot=context.bot)
-                except Exception as e:
-                    await safe_edit(query, f"❌ تعذر جلب المقاييس: {e}", bot=context.bot)
+                stats = await DB.get_general_stats()
+                text = (
+                    f"📊 مقاييس النظام\n\n"
+                    f"👥 المستخدمون: {stats['users']}\n"
+                    f"📡 القنوات: {stats['channels']}\n"
+                    f"👥 المجموعات: {stats['groups']}\n"
+                    f"📝 المنشورات: {stats['posts']}\n"
+                    f"✅ المنشورة: {stats['published']}\n"
+                    f"🧾 الفواتير: {stats['invoices']}\n"
+                    f"🎫 تذاكر معلقة: {stats['tickets']}\n"
+                    f"💾 حجم قاعدة البيانات: {PATHS.DB.stat().st_size / 1024:.1f} KB"
+                )
+                await safe_edit(query, text, bot=context.bot)
                 return
 
             elif data == CB.ADMIN_UPTIME:
@@ -1845,12 +1715,7 @@ class CallbackHandlers:
 
             elif data == CB.ADMIN_SET_FORCE:
                 StateManager.set(user_id, UserState.WAIT_FORCE)
-                await safe_edit(query, "🔒 أرسل معرف قناة الاشتراك الإجباري:\n(أو أرسل 'none' لتعطيله)", bot=context.bot)
-                return
-
-            elif data == "admin_disable_force":
-                await DB.set_force_subscribe_channel(None)
-                await safe_edit(query, "✅ تم تعطيل الاشتراك الإجباري", bot=context.bot)
+                await safe_edit(query, "🔒 أرسل معرف قناة الاشتراك الإجباري:", bot=context.bot)
                 return
 
             elif data == CB.ADMIN_REFRESH_CACHE:
@@ -2103,7 +1968,7 @@ class CallbackHandlers:
 
         try:
             if action == "toggle":
-                settings = await DB.get_auto_reply_settings(chat_id) or {}
+                settings = await DB.get_auto_reply_settings(chat_id)
                 new_status = not settings.get('enabled', False)
                 await DB.update_auto_reply_settings(chat_id, enabled=new_status)
                 kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
@@ -2116,9 +1981,8 @@ class CallbackHandlers:
                 return
 
             elif action == "admins":
-                settings = await DB.get_auto_reply_settings(chat_id) or {}
+                settings = await DB.get_auto_reply_settings(chat_id)
                 new_status = not settings.get('only_admins', 0)
-                settings['only_admins'] = new_status
                 await DB.update_auto_reply_settings(chat_id, only_admins=new_status)
                 kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
                 text = (
@@ -2374,33 +2238,18 @@ class CallbackHandlers:
     # ============ النسخ الاحتياطي ============
     @staticmethod
     async def _do_backup(context, user_id):
-        await CallbackHandlers._do_backup_safe(context, user_id)
-
-    @staticmethod
-    async def _do_backup_safe(context, user_id):
         try:
             PATHS.BACKUPS.mkdir(parents=True, exist_ok=True)
             backup_file = PATHS.BACKUPS / f"backup_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
-
-            if asyncio.iscoroutinefunction(DB.backup_database):
-                success = await DB.backup_database(backup_file)
-            else:
-                success = DB.backup_database(backup_file)
-
+            success = await DB.backup_database(backup_file)
             if not success:
                 await safe_send(context.bot, user_id, "❌ فشل النسخ الاحتياطي")
                 return
-
             backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
             for old in backups[MAX_BACKUPS:]:
-                try:
-                    old.unlink(missing_ok=True)
-                except Exception:
-                    pass
-
+                old.unlink(missing_ok=True)
             with open(backup_file, 'rb') as f:
                 await context.bot.send_document(chat_id=user_id, document=f, filename=backup_file.name)
-
         except Exception as e:
             logger.error(f"❌ فشل النسخ: {e}")
             await safe_send(context.bot, user_id, f"❌ فشل النسخ: {str(e)[:100]}")
