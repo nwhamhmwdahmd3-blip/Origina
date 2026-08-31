@@ -43,3 +43,6 @@ error_report.txt
 lang/
 bot.py.save
 bot.py.save
+handlers_callback.backup.py
+handlers_callback.stable.py
+*.save
