@@ -13,7 +13,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - عدّاد النشر الجماعي دقيق
 - استخدام parse_mode آمن (نص عادي بدون Markdown)
 - معالجات خاصة لأزرار الانضمام تمنع التعارض بين الموافقة والرفض
-- دعم 12 لغة في أزرار الترجمة كما في النسخة الأصلية
+- دعم 12+ لغة في أزرار الترجمة
 - إزالة تكرار toggle_map
 - إضافة معالج المقاييس (Metrics) بشكل فعلي
 - إضافة معالجات الأزرار النادرة
@@ -26,6 +26,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - إصلاح safe_edit عند الطول الزائد
 - تجنب عرض قائمة المدد لعقوبة الطرد
 - تصحيح ترجمة النصوص الثابتة
+- إزالة استيراد re غير المستخدم
 """
 
 import asyncio
@@ -33,7 +34,6 @@ import logging
 import json
 import time
 import shutil
-import re
 import os
 import weakref
 from pathlib import Path
@@ -221,7 +221,14 @@ class CallbackHandlers:
                     await safe_edit(query, await _trans('trial_used', lang, "❌ لقد استخدمت التجربة المجانية بالفعل."), bot=context.bot)
                     return
                 days = await DB.activate_trial(user_id)
-                text = await _trans('trial_activated', lang, "✅ تم تفعيل التجربة المجانية لمدة {days} يوم").format(days=days) if days > 0 else await _trans('trial_failed', lang, "❌ تعذر تفعيل التجربة")
+                if days > 0:
+                    text = await _trans('trial_activated', lang, "✅ تم تفعيل التجربة المجانية لمدة {days} يوم")
+                    try:
+                        text = text.format(days=days)
+                    except:
+                        text = f"✅ تم تفعيل التجربة المجانية لمدة {days} يوم"
+                else:
+                    text = await _trans('trial_failed', lang, "❌ تعذر تفعيل التجربة")
                 await safe_edit(query, text, bot=context.bot)
                 return
 
@@ -398,16 +405,28 @@ class CallbackHandlers:
                 if code.startswith('ref_'):
                     code = code[4:]
                 link = f"https://t.me/{CONFIG.BOT_USERNAME}?start=ref_{code}"
+
+                referral_title = await _trans('referral_title', lang, "🔗 نظام الإحالات")
+                referral_link_label = await _trans('referral_link_label', lang, "📎 رابطك:")
+                referral_referred = await _trans('referral_referred', lang, "👥 المُحالين:")
+                referral_available = await _trans('referral_available', lang, "🎁 الأيام المتاحة:")
+                days_suffix = await _trans('days_suffix', lang, "يوم")
+
                 text = (
-                    f"🔗 نظام الإحالات\n\n"
-                    f"📎 رابطك:\n{link}\n\n"
-                    f"👥 المُحالين: {stats['total']}\n"
-                    f"🎁 الأيام المتاحة: {stats['available']} يوم"
+                    f"{referral_title}\n\n"
+                    f"{referral_link_label}\n{link}\n\n"
+                    f"{referral_referred} {stats['total']}\n"
+                    f"{referral_available} {stats['available']} {days_suffix}"
                 )
+
+                ref_claim_btn = KeyboardFactory.get_text("ref_claim", lang)
+                ref_list_btn = KeyboardFactory.get_text("ref_list", lang)
+                back_btn = KeyboardFactory.get_text("back", lang)
+
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎁 صرف", callback_data=CB.REF_CLAIM),
-                     InlineKeyboardButton("📋 قائمة", callback_data=CB.REF_LIST)],
-                    [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
+                    [InlineKeyboardButton(ref_claim_btn, callback_data=CB.REF_CLAIM),
+                     InlineKeyboardButton(ref_list_btn, callback_data=CB.REF_LIST)],
+                    [InlineKeyboardButton(back_btn, callback_data=CB.BACK)]
                 ])
                 await safe_edit(query, text, reply_markup=kb, bot=context.bot)
                 return
@@ -426,14 +445,20 @@ class CallbackHandlers:
 
             # ========== التذكيرات ==========
             if base_data in [CB.REM_TOGGLE_SUB, CB.REM_TOGGLE_DAILY, CB.REM_TOGGLE_WEEKLY]:
-                settings = await DB.get_reminder_settings(user_id)
+                settings = await DB.get_reminder_settings(user_id) or {}
                 if base_data == CB.REM_TOGGLE_SUB:
-                    await DB.update_reminder_settings(user_id, subscription_reminder=not settings.get('subscription_reminder', False))
+                    new_val = not settings.get('subscription_reminder', False)
+                    settings['subscription_reminder'] = new_val
+                    await DB.update_reminder_settings(user_id, subscription_reminder=new_val)
                 elif base_data == CB.REM_TOGGLE_DAILY:
-                    await DB.update_reminder_settings(user_id, daily_stats_reminder=not settings.get('daily_stats_reminder', False))
+                    new_val = not settings.get('daily_stats_reminder', False)
+                    settings['daily_stats_reminder'] = new_val
+                    await DB.update_reminder_settings(user_id, daily_stats_reminder=new_val)
                 elif base_data == CB.REM_TOGGLE_WEEKLY:
-                    await DB.update_reminder_settings(user_id, weekly_report=not settings.get('weekly_report', False))
-                settings = await DB.get_reminder_settings(user_id)
+                    new_val = not settings.get('weekly_report', False)
+                    settings['weekly_report'] = new_val
+                    await DB.update_reminder_settings(user_id, weekly_report=new_val)
+
                 text = (
                     f"⏰ التذكيرات\n\n"
                     f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
@@ -444,7 +469,7 @@ class CallbackHandlers:
                 return
 
             if base_data == CB.REMINDER:
-                settings = await DB.get_reminder_settings(user_id)
+                settings = await DB.get_reminder_settings(user_id) or {}
                 text = (
                     f"⏰ التذكيرات\n\n"
                     f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
@@ -474,6 +499,8 @@ class CallbackHandlers:
                      InlineKeyboardButton("🇵🇹 Português", callback_data="lang_pt")],
                     [InlineKeyboardButton("🇯🇵 日本語", callback_data="lang_ja"),
                      InlineKeyboardButton("🇰🇷 한국어", callback_data="lang_ko")],
+                    [InlineKeyboardButton("🇮🇷 فارسی", callback_data="lang_fa"),
+                     InlineKeyboardButton("🇵🇰 اردو", callback_data="lang_ur")],
                     [InlineKeyboardButton("❌ إيقاف الترجمة", callback_data=CB.TRANS_OFF)],
                     [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
                 ])
@@ -1968,7 +1995,7 @@ class CallbackHandlers:
 
         try:
             if action == "toggle":
-                settings = await DB.get_auto_reply_settings(chat_id)
+                settings = await DB.get_auto_reply_settings(chat_id) or {}
                 new_status = not settings.get('enabled', False)
                 await DB.update_auto_reply_settings(chat_id, enabled=new_status)
                 kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
@@ -1981,7 +2008,7 @@ class CallbackHandlers:
                 return
 
             elif action == "admins":
-                settings = await DB.get_auto_reply_settings(chat_id)
+                settings = await DB.get_auto_reply_settings(chat_id) or {}
                 new_status = not settings.get('only_admins', 0)
                 await DB.update_auto_reply_settings(chat_id, only_admins=new_status)
                 kb = KeyboardFactory.build("auto_reply", chat_id=chat_id, lang=lang)
