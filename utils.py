@@ -24,6 +24,8 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - إضافة إشعار عند نجاح النشر التلقائي
 - تحسين رسالة تحميل ملف الردود لتظهر في السجلات
 - إظهار حالة حذف رسائل الخدمة في ملخص الأمان
+- تنظيف دوري للكاش والبيانات القديمة
+- دعم لغات إضافية (فارسي، أردو، هولندي، بولندي، هندي)
 """
 
 import asyncio
@@ -299,7 +301,12 @@ class TranslationManager:
             "it": "Italiano 🇮🇹",
             "pt": "Português 🇵🇹",
             "ja": "日本語 🇯🇵",
-            "ko": "한국어 🇰🇷"
+            "ko": "한국어 🇰🇷",
+            "fa": "فارسی 🇮🇷",
+            "ur": "اردو 🇵🇰",
+            "nl": "Nederlands 🇳🇱",
+            "pl": "Polski 🇵🇱",
+            "hi": "हिन्दी 🇮🇳"
         }
 
 
@@ -1633,15 +1640,26 @@ class BackgroundTasks:
 
     @staticmethod
     async def cleanup_old_data() -> None:
+        """تنظيف البيانات القديمة والكاش المؤقت"""
         while True:
-            await asyncio.sleep(86400)
+            await asyncio.sleep(3600)
+            try:
+                _security_settings_cache.clear()
+                _auto_reply_settings_cache.clear()
+                _banned_words_cache.clear()
+                _auto_reply_cache.clear()
+                _auth_cache.clear()
+                logger.info("✅ تم تنظيف الكاش المؤقت")
+            except Exception as e:
+                logger.error(f"❌ فشل تنظيف الكاش: {e}")
+
             try:
                 await DB.execute("DELETE FROM admin_logs WHERE created_at < datetime('now', '-30 days')")
                 await DB.execute("DELETE FROM user_penalties WHERE created_at < datetime('now', '-60 days')")
                 await DB.execute("DELETE FROM payment_logs WHERE created_at < datetime('now', '-90 days')")
                 logger.info("✅ تم تنظيف البيانات القديمة")
             except Exception as e:
-                logger.error(f"❌ Cleanup error: {e}")
+                logger.error(f"❌ فشل تنظيف قاعدة البيانات: {e}")
 
 
 # =====================================================================
