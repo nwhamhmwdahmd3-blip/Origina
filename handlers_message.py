@@ -9,7 +9,6 @@ handlers_message.py - معالجات الرسائل - النسخة النهائ�
 - دعم كامل للنصوص والوسائط
 - إصلاح استخراج معرف القناة في _handle_adding_posts
 - إصلاح معالجة نتيجة get_all_users في _handle_broadcast_input
-- إصلاح استدعاءات DB.execute الخاطئة
 - مدة العقوبة بالدقائق
 - دعم الوسائط في الردود التلقائية
 - معالجة جميع الحالات الجديدة
@@ -270,7 +269,6 @@ class MessageHandlers:
         settings = await get_security_settings_cached(chat_id)
 
         # ✅ حذف رسائل الخدمة (انضمام/مغادرة) إذا كان delete_service مفعلاً
-        # ملاحظة: غالبًا رسائل الخدمة تصل إلى handle_service وليس هنا، لكن نضيف الفحص للاحتياط
         if settings.get('delete_service'):
             if message.new_chat_members or message.left_chat_member:
                 try:
@@ -617,6 +615,7 @@ class MessageHandlers:
         if count > 0:
             await safe_send(context.bot, user_id, "✅ تمت إضافة المنشور")
         else:
+            # رسالة موحدة توضح الاحتمالين
             await safe_send(
                 context.bot, user_id,
                 "❌ لم تتم إضافة المنشور.\n"
@@ -1005,7 +1004,6 @@ class MessageHandlers:
         prize = context.user_data.get('contest_prize', '')
         date = update.effective_message.text or ""
 
-        # تحقق مسبق من صيغة التاريخ
         try:
             datetime.fromisoformat(date)
         except ValueError:
@@ -1581,7 +1579,6 @@ class MessageHandlers:
 
     @staticmethod
     async def _handle_penalty_duration_input(update, context):
-        """معالج مدة العقوبة بالدقائق"""
         user_id = update.effective_user.id
         chat_id = context.user_data.get('adv_chat') or context.user_data.get('sec_chat')
         if not chat_id:
@@ -1605,7 +1602,6 @@ class MessageHandlers:
 
     @staticmethod
     async def _handle_violation_strikes_input(update, context):
-        """معالج عدد المخالفات"""
         user_id = update.effective_user.id
         chat_id = context.user_data.get('sec_chat')
         if not chat_id:
@@ -1628,7 +1624,6 @@ class MessageHandlers:
 
     @staticmethod
     async def _handle_violation_duration_input(update, context):
-        """معالج مدة عقوبة المخالفات بالدقائق"""
         user_id = update.effective_user.id
         chat_id = context.user_data.get('sec_chat')
         if not chat_id:
@@ -1652,7 +1647,6 @@ class MessageHandlers:
 
     @staticmethod
     async def _handle_redeem_gift_input(update, context):
-        """معالج استرداد كود الهدية"""
         user_id = update.effective_user.id
         code = (update.effective_message.text or "").strip()
         if not code:
@@ -1670,7 +1664,6 @@ class MessageHandlers:
 
     @staticmethod
     async def _handle_restore_input(update, context):
-        """معالج استعادة النسخة الاحتياطية من ملف مرفوع"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             await safe_send(context.bot, user_id, "❌ غير مصرح")
@@ -1694,11 +1687,9 @@ class MessageHandlers:
             tmp_path = os.path.join(tempfile.gettempdir(), f"restore_{user_id}_{int(time.time())}.db")
             await file.download_to_drive(tmp_path)
 
-            # نسخة أمان قبل الاستعادة
             pre_restore = PATHS.BACKUPS / f"pre_restore_{TimeUtils.mecca_now().strftime('%Y%m%d_%H%M%S')}.db"
             shutil.copy2(PATHS.DB, pre_restore)
 
-            # الاستعادة
             shutil.copy2(tmp_path, PATHS.DB)
 
             await safe_send(context.bot, user_id, "✅ تمت الاستعادة بنجاح!\nأعد تشغيل البوت لتفعيل التغييرات.")
@@ -1763,7 +1754,7 @@ class MessageHandlers:
 
         if settings.get('auto_reject_join'):
             try:
-                await asyncio.sleep(0.05)  # تأخير بسيط لتجنب حدود تيليجرام
+                await asyncio.sleep(0.05)
                 await context.bot.decline_chat_join_request(chat_id, user_id)
                 return
             except Exception as e:
@@ -1771,12 +1762,11 @@ class MessageHandlers:
 
         if settings.get('auto_approve_join'):
             try:
-                await asyncio.sleep(0.05)  # تأخير بسيط لتجنب حدود تيليجرام
+                await asyncio.sleep(0.05)
                 await context.bot.approve_chat_join_request(chat_id, user_id)
             except Exception as e:
                 error_msg = str(e)
                 if "User_already_participant" in error_msg or "already participant" in error_msg.lower():
-                    # تجاهل الخطأ بهدوء، المستخدم انضم بالفعل
                     pass
                 else:
                     logger.warning(f"فشل الموافقة على طلب الانضمام: {e}")
