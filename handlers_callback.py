@@ -26,7 +26,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - إصلاح safe_edit عند الطول الزائد
 - تجنب عرض قائمة المدد لعقوبة الطرد
 - تصحيح ترجمة النصوص الثابتة
-- إزالة استيراد re غير المستخدم
+- ترجمة قسم التذكيرات بالكامل
 """
 
 import asyncio
@@ -459,22 +459,33 @@ class CallbackHandlers:
                     settings['weekly_report'] = new_val
                     await DB.update_reminder_settings(user_id, weekly_report=new_val)
 
+                reminder_title = await _trans('reminder_title', lang, "⏰ التذكيرات")
+                rem_sub_label = await _trans('rem_sub_label', lang, "🔔 الاشتراك")
+                rem_daily_label = await _trans('rem_daily_label', lang, "📊 يومي")
+                rem_weekly_label = await _trans('rem_weekly_label', lang, "📈 أسبوعي")
+
                 text = (
-                    f"⏰ التذكيرات\n\n"
-                    f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
-                    f"📊 يومي: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
-                    f"📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
+                    f"{reminder_title}\n\n"
+                    f"{rem_sub_label}: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
+                    f"{rem_daily_label}: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
+                    f"{rem_weekly_label}: {'✅' if settings.get('weekly_report') else '❌'}"
                 )
                 await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang), bot=context.bot)
                 return
 
             if base_data == CB.REMINDER:
                 settings = await DB.get_reminder_settings(user_id) or {}
+
+                reminder_title = await _trans('reminder_title', lang, "⏰ التذكيرات")
+                rem_sub_label = await _trans('rem_sub_label', lang, "🔔 الاشتراك")
+                rem_daily_label = await _trans('rem_daily_label', lang, "📊 يومي")
+                rem_weekly_label = await _trans('rem_weekly_label', lang, "📈 أسبوعي")
+
                 text = (
-                    f"⏰ التذكيرات\n\n"
-                    f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
-                    f"📊 يومي: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
-                    f"📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
+                    f"{reminder_title}\n\n"
+                    f"{rem_sub_label}: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
+                    f"{rem_daily_label}: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
+                    f"{rem_weekly_label}: {'✅' if settings.get('weekly_report') else '❌'}"
                 )
                 await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang), bot=context.bot)
                 return
