@@ -58,6 +58,17 @@ def _mask_id(id_value, prefix=3, suffix=2):
     return s[:prefix] + "***" + s[-suffix:] if len(s) > prefix + suffix else s[:prefix] + "***"
 
 
+async def _trans(key, lang, default_ar):
+    """جلب النص المترجم مع fallback للعربية"""
+    try:
+        text = await get_text(lang, key)
+        if not text or text == key:
+            return default_ar
+        return text
+    except:
+        return default_ar
+
+
 class CommandHandlers:
     """جميع معالجات الأوامر"""
 
@@ -121,9 +132,7 @@ class CommandHandlers:
         lang = await DB.get_user_language(user_id) or 'ar'
         active = await DB.get_active_channel(user_id)
         cnt = 0
-        ch_display = await get_text(lang, 'no_active_channel')
-        if ch_display == 'no_active_channel':
-            ch_display = "لا توجد قنوات"
+        ch_display = await _trans('no_active_channel', lang, "لا توجد قنوات")
         if active:
             cnt = await DB.get_unpublished_posts_count(user_id, active)
             ch_info = await DB.get_channel_info(user_id, active)
@@ -132,21 +141,13 @@ class CommandHandlers:
 
         groups = len(await DB.get_user_groups(user_id))
         has_sub = await DB.has_active_subscription(user_id)
-        sub_active_text = await get_text(lang, 'subscription_active')
-        sub_inactive_text = await get_text(lang, 'subscription_inactive')
-        if sub_active_text == 'subscription_active':
-            sub_active_text = "✅ مفعل"
-        if sub_inactive_text == 'subscription_inactive':
-            sub_inactive_text = "❌ غير مفعل"
+        sub_active_text = await _trans('subscription_active', lang, "✅ مفعل")
+        sub_inactive_text = await _trans('subscription_inactive', lang, "❌ غير مفعل")
         sub_text = sub_active_text if has_sub else sub_inactive_text
 
         auto = await DB.get_auto_publish_status(user_id)
-        enabled_text = await get_text(lang, 'enabled')
-        disabled_text = await get_text(lang, 'disabled')
-        if enabled_text == 'enabled':
-            enabled_text = "مفعل"
-        if disabled_text == 'disabled':
-            disabled_text = "معطل"
+        enabled_text = await _trans('enabled', lang, "مفعل")
+        disabled_text = await _trans('disabled', lang, "معطل")
         auto_text = enabled_text if auto else disabled_text
 
         recycle = await DB.get_auto_recycle_status(user_id)
@@ -191,44 +192,41 @@ class CommandHandlers:
 
     @staticmethod
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /help - المساعدة"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
-        await safe_send(context.bot, user_id, await get_text(lang, 'help_text'))
+        help_text = await _trans('help_text', lang, "❓ المساعدة")
+        await safe_send(context.bot, user_id, help_text)
 
     @staticmethod
     async def trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /trial - تفعيل التجربة المجانية"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
         if await DB.has_used_trial(user_id):
-            await safe_send(context.bot, user_id, await get_text(lang, 'trial_used'))
+            await safe_send(context.bot, user_id, await _trans('trial_used', lang, "❌ لقد استخدمت التجربة المجانية بالفعل."))
             return
         days = await DB.activate_trial(user_id)
         if days > 0:
-            await safe_send(context.bot, user_id, await get_text(lang, 'trial_activated', days=days))
+            msg = await _trans('trial_activated', lang, "✅ تم تفعيل التجربة المجانية لمدة {days} يوم").format(days=days)
         else:
-            await safe_send(context.bot, user_id, "❌ تعذر تفعيل التجربة")
+            msg = await _trans('trial_failed', lang, "❌ تعذر تفعيل التجربة")
+        await safe_send(context.bot, user_id, msg)
 
     @staticmethod
     async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /subscribe - عرض الباقات"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
         kb = KeyboardFactory.build("plans", lang=lang)
-        await safe_send(context.bot, user_id, await get_text(lang, 'plan_selector'), reply_markup=kb)
+        await safe_send(context.bot, user_id, await _trans('plan_selector', lang, "💎 اختر باقة:"), reply_markup=kb)
 
     @staticmethod
     async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /support - الدعم الفني"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
         kb = KeyboardFactory.build("support", lang=lang)
-        await safe_send(context.bot, user_id, await get_text(lang, 'send_support_message'), reply_markup=kb)
+        await safe_send(context.bot, user_id, await _trans('send_support_message', lang, "📞 أرسل رسالة الدعم"), reply_markup=kb)
 
     @staticmethod
     async def developer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /developer - معلومات المطور"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
         text = await get_text(lang, 'developer_info',
@@ -239,25 +237,19 @@ class CommandHandlers:
 
     @staticmethod
     async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /stats - إحصائيات البوت (للمطورين فقط)"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            await safe_send(context.bot, user_id, await _trans('unauthorized', lang, "❌ غير مصرح"))
             return
         stats = await DB.get_bot_stats()
-        text = f"👥 المستخدمون: {stats.get('users',0)}\n"
-        text += f"📡 القنوات: {stats.get('channels',0)}\n"
-        text += f"👥 المجموعات: {stats.get('groups',0)}\n"
-        text += f"📝 المنشورات: {stats.get('posts',0)}\n"
-        text += f"✅ المنشورة: {stats.get('published',0)}\n"
-        text += f"💎 الاشتراكات النشطة: {stats.get('active_subs',0)}\n"
-        text += f"🎫 التذاكر المعلقة: {stats.get('tickets',0)}"
+        text = await _trans('stats_message', lang,
+            "📊 **الإحصائيات**\n\n👥 المستخدمون: {users}\n📡 القنوات: {channels}\n👥 المجموعات: {groups}\n📝 المنشورات: {posts}\n✅ المنشورة: {published}\n💎 الاشتراكات النشطة: {active_subs}\n🎫 التذاكر: {tickets}"
+        ).format(users=stats.get('users',0), channels=stats.get('channels',0), groups=stats.get('groups',0), posts=stats.get('posts',0), published=stats.get('published',0), active_subs=stats.get('active_subs',0), tickets=stats.get('tickets',0))
         await safe_send(context.bot, user_id, text)
 
     @staticmethod
     async def language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /language - تغيير اللغة"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
         available = TranslationManager.get_available_languages()
@@ -273,36 +265,42 @@ class CommandHandlers:
         back_text = KeyboardFactory.get_text("back", lang)
         buttons.append([InlineKeyboardButton(back_text, callback_data=CB.BACK)])
         kb = InlineKeyboardMarkup(buttons)
-        await safe_send(context.bot, user_id, f"🌐 اختر اللغة:\n\nالحالية: {lang}", reply_markup=kb)
+        current_lang = await _trans('current_language', lang, "الحالية")
+        choose_lang = await _trans('choose_language', lang, "🌐 اختر اللغة:")
+        await safe_send(context.bot, user_id, f"{choose_lang}\n\n{current_lang}: {lang}", reply_markup=kb)
 
     @staticmethod
     async def replies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /replies - الردود التلقائية"""
-        await safe_send(context.bot, update.effective_user.id, "📚 الردود التلقائية تعمل!")
+        user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
+        await safe_send(context.bot, user_id, await _trans('replies_work', lang, "📚 الردود التلقائية تعمل!"))
 
     @staticmethod
     async def contests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /contests - المسابقات النشطة مع أزرار المشاركة"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
         contests = await DB.get_active_contests(10)
         if not contests:
-            await safe_send(context.bot, user_id, "📭 لا توجد مسابقات نشطة")
+            await safe_send(context.bot, user_id, await _trans('no_contests', lang, "📭 لا توجد مسابقات نشطة"))
             return
 
-        text = "🏆 <b>المسابقات النشطة</b>\n\n"
+        text = "🏆 <b>" + await _trans('active_contests', lang, "المسابقات النشطة") + "</b>\n\n"
         kb = []
         for c in contests:
             end_date = c.get('end_date') or ''
+            title = escape(c.get('title', ''))
+            prize = escape(c.get('prize', ''))
+            participants = c.get('participants', 0)
             text += (
-                f"• <b>{escape(c['title'])}</b>\n"
-                f"  🎁 {escape(c['prize'])}\n"
+                f"• <b>{title}</b>\n"
+                f"  🎁 {prize}\n"
                 f"  📅 {escape(end_date[:10])}\n"
-                f"  👥 المشاركون: {c.get('participants', 0)}\n\n"
+                f"  👥 {await _trans('participants', lang, 'المشاركون')}: {participants}\n\n"
             )
+            join_text = await _trans('join_contest', lang, "✍️ المشاركة")
             kb.append([
                 InlineKeyboardButton(
-                    f"✍️ المشاركة في {escape(c['title'])[:20]}",
+                    f"{join_text} {title[:20]}",
                     callback_data=f"{CB.CONTEST_JOIN}:{c['id']}"
                 )
             ])
@@ -311,202 +309,179 @@ class CommandHandlers:
             InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)
         ])
 
-        await safe_send(
-            context.bot,
-            user_id,
-            text,
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode='HTML'
-        )
-
-    # ========== الأوامر الإضافية الجديدة ==========
+        await safe_send(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
 
     @staticmethod
     async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /mood - تحليل المشاعر"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         args = context.args or []
 
         if not args:
             StateManager.set(user_id, UserState.WAIT_MOOD)
-            await safe_send(context.bot, user_id, "📝 أرسل النص الذي تريد تحليل مشاعره:")
+            await safe_send(context.bot, user_id, await _trans('send_mood_text', lang, "📝 أرسل النص الذي تريد تحليل مشاعره:"))
             return
 
         text = " ".join(args)
         from handlers_message import analyze_sentiment
         if analyze_sentiment is None:
-            await safe_send(context.bot, user_id, "❌ خدمة تحليل المشاعر غير متاحة حالياً")
+            await safe_send(context.bot, user_id, await _trans('mood_unavailable', lang, "❌ خدمة تحليل المشاعر غير متاحة حالياً"))
             return
         result = analyze_sentiment(text)
 
         response = (
-            f"{result['emoji']} <b>تحليل المشاعر</b>\n\n"
-            f"📝 النص: <code>{escape(text[:100])}</code>\n"
-            f"🎯 النتيجة: <b>{escape(result['sentiment'])}</b>\n\n"
-            f"😊 إيجابي: {result['positive_percent']:.0f}%\n"
-            f"😔 سلبي: {result['negative_percent']:.0f}%\n"
-            f"📊 الكلمات: {result['total_words']}"
+            f"{result['emoji']} <b>{await _trans('mood_analysis', lang, 'تحليل المشاعر')}</b>\n\n"
+            f"📝 {await _trans('mood_text', lang, 'النص')}: <code>{escape(text[:100])}</code>\n"
+            f"🎯 {await _trans('mood_result', lang, 'النتيجة')}: <b>{escape(result['sentiment'])}</b>\n\n"
+            f"😊 {await _trans('mood_positive', lang, 'إيجابي')}: {result['positive_percent']:.0f}%\n"
+            f"😔 {await _trans('mood_negative', lang, 'سلبي')}: {result['negative_percent']:.0f}%\n"
+            f"📊 {await _trans('mood_words', lang, 'الكلمات')}: {result['total_words']}"
         )
-
         await safe_send(context.bot, user_id, response, parse_mode='HTML')
 
     @staticmethod
     async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /admin - لوحة الأدمن"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            await safe_send(context.bot, user_id, await _trans('unauthorized', lang, "❌ غير مصرح"))
             return
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("👑 لوحة الأدمن", callback_data=CB.ADMIN)
+            InlineKeyboardButton(await _trans('admin_panel_btn', lang, "👑 لوحة الأدمن"), callback_data=CB.ADMIN)
         ]])
-        await safe_send(context.bot, user_id, "👑 <b>لوحة الأدمن</b>\n\nاضغط الزر أدناه:", reply_markup=kb, parse_mode='HTML')
+        await safe_send(context.bot, user_id, await _trans('open_admin_panel', lang, "👑 لوحة الأدمن\n\nاضغط الزر أدناه:"), reply_markup=kb, parse_mode='HTML')
 
     @staticmethod
     async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /broadcast - بدء البث الجماعي"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            await safe_send(context.bot, user_id, await _trans('unauthorized', lang, "❌ غير مصرح"))
             return
         StateManager.set(user_id, UserState.WAIT_BROADCAST)
-        await safe_send(context.bot, user_id, "📨 أرسل الرسالة التي تريد بثها:")
+        await safe_send(context.bot, user_id, await _trans('send_broadcast', lang, "📨 أرسل الرسالة التي تريد بثها:"))
 
     @staticmethod
     async def set_force(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /set_force - تعيين الاشتراك الإجباري"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             return
-        StateManager.set(user_id, UserState.WAIT_FORCE)
-        await safe_send(context.bot, user_id, "🔒 أرسل معرف القناة:")
+        await safe_send(context.bot, user_id, await _trans('send_channel_id', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "🔒 أرسل معرف القناة:"))
 
     @staticmethod
     async def set_update_ch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /set_update_ch - تعيين قناة التحديثات"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             return
-        StateManager.set(user_id, UserState.WAIT_UPDATE_CH)
-        await safe_send(context.bot, user_id, "📢 أرسل معرف قناة التحديثات:")
+        await safe_send(context.bot, user_id, await _trans('send_update_channel', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "📢 أرسل معرف قناة التحديثات:"))
 
     @staticmethod
     async def set_log_ch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /set_log_ch - تعيين قناة السجلات"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             return
-        StateManager.set(user_id, UserState.WAIT_LOG_CH)
-        await safe_send(context.bot, user_id, "📋 أرسل معرف قناة السجلات:")
+        await safe_send(context.bot, user_id, await _trans('send_log_channel', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "📋 أرسل معرف قناة السجلات:"))
 
     @staticmethod
     async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /add_admin - إضافة مشرف للبوت"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             return
-        StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
-        await safe_send(context.bot, user_id, "👑 أرسل معرف المشرف:")
+        await safe_send(context.bot, user_id, await _trans('send_admin_id', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "👑 أرسل معرف المشرف:"))
 
     @staticmethod
     async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /remove_admin - إزالة مشرف من البوت"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             return
-        StateManager.set(user_id, UserState.WAIT_ADMIN_REM)
-        await safe_send(context.bot, user_id, "🗑️ أرسل معرف المشرف:")
+        await safe_send(context.bot, user_id, await _trans('send_admin_id_remove', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "🗑️ أرسل معرف المشرف:"))
 
     @staticmethod
     async def export_replies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /export_replies - تصدير الردود"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             return
         count = await export_auto_replies(-1)
-        await safe_send(context.bot, user_id, f"✅ تم تصدير {count} رد")
+        await safe_send(context.bot, user_id, f"✅ {count}")
 
     @staticmethod
     async def import_replies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /import_replies - استيراد الردود"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             return
         StateManager.set(user_id, UserState.WAIT_IMPORT_FILE)
-        await safe_send(context.bot, user_id, "📤 أرسل ملف JSON:")
+        await safe_send(context.bot, user_id, await _trans('send_json', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "📤 أرسل ملف JSON:"))
 
     @staticmethod
     async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /backup - نسخ احتياطي"""
         user_id = update.effective_user.id
         if not CONFIG.is_developer(user_id):
             return
-        await safe_send(context.bot, user_id, "⏳ جارٍ النسخ الاحتياطي...")
+        await safe_send(context.bot, user_id, await _trans('backup_start', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "⏳ جارٍ النسخ الاحتياطي..."))
         try:
             from utils import BackgroundTasks
             asyncio.create_task(BackgroundTasks._do_backup())
-            await safe_send(context.bot, user_id, "✅ تم أخذ نسخة احتياطية")
+            await safe_send(context.bot, user_id, await _trans('backup_done', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "✅ تم أخذ نسخة احتياطية"))
         except Exception as e:
-            logger.error(f"❌ فشل النسخ الاحتياطي: {e}")
-            await safe_send(context.bot, user_id, f"❌ فشل النسخ الاحتياطي: {str(e)[:50]}")
+            await safe_send(context.bot, user_id, f"❌ {str(e)[:50]}")
 
     @staticmethod
     async def restore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /restore - عرض النسخ الاحتياطية"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
             return
         backups = sorted(PATHS.BACKUPS.glob("backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
         if not backups:
-            await safe_send(context.bot, user_id, "📭 لا توجد نسخ")
+            await safe_send(context.bot, user_id, await _trans('no_backups', lang, "📭 لا توجد نسخ"))
             return
-        text = "🔄 <b>النسخ المتاحة:</b>\n\n" + "\n".join(b.name for b in backups[:10])
+        text = "🔄 <b>" + await _trans('available_backups', lang, "النسخ المتاحة:") + "</b>\n\n" + "\n".join(b.name for b in backups[:10])
         await safe_send(context.bot, user_id, text, parse_mode='HTML')
 
     @staticmethod
     async def auto_publish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /auto_publish - تبديل النشر التلقائي"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         cur = await DB.get_auto_publish_status(user_id)
         await DB.set_auto_publish(user_id, not cur)
-        await safe_send(context.bot, user_id, f"✅ النشر التلقائي: {'مفعل' if not cur else 'معطل'}")
+        status = await _trans('enabled', lang, "مفعل") if not cur else await _trans('disabled', lang, "معطل")
+        await safe_send(context.bot, user_id, f"✅ {await _trans('auto_publish_status', lang, 'النشر التلقائي')}: {status}")
 
     @staticmethod
     async def auto_recycle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /auto_recycle - تبديل التدوير التلقائي"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         cur = await DB.get_auto_recycle_status(user_id)
         await DB.set_auto_recycle(user_id, not cur)
-        await safe_send(context.bot, user_id, f"✅ التدوير التلقائي: {'مفعل' if not cur else 'معطل'}")
+        status = await _trans('enabled', lang, "مفعل") if not cur else await _trans('disabled', lang, "معطل")
+        await safe_send(context.bot, user_id, f"✅ {await _trans('auto_recycle_status', lang, 'التدوير التلقائي')}: {status}")
 
     @staticmethod
     async def channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /channels - عرض القنوات"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         channels = await DB.get_user_channels(user_id)
         if not channels:
-            await safe_send(context.bot, user_id, "📭 لا توجد قنوات")
+            await safe_send(context.bot, user_id, await _trans('no_channels', lang, "📭 لا توجد قنوات"))
             return
-        text = "📡 <b>قنواتك:</b>\n\n"
+        text = "📡 <b>" + await _trans('your_channels', lang, "قنواتك:") + "</b>\n\n"
         for ch in channels:
             text += f"• {escape(ch['channel_name'])} (<code>{ch['channel_id']}</code>)\n"
         await safe_send(context.bot, user_id, text, parse_mode='HTML')
 
     @staticmethod
     async def posts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /posts - عرض المنشورات"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         active = await DB.get_active_channel(user_id)
         if not active:
-            await safe_send(context.bot, user_id, "❌ لا توجد قناة نشطة")
+            await safe_send(context.bot, user_id, await _trans('no_active_channel', lang, "❌ لا توجد قناة نشطة"))
             return
         posts = await DB.get_user_posts(user_id, active, 10)
         if not posts:
-            await safe_send(context.bot, user_id, "📭 لا توجد منشورات")
+            await safe_send(context.bot, user_id, await _trans('no_posts', lang, "📭 لا توجد منشورات"))
             return
-        text = "📋 <b>منشوراتك:</b>\n\n"
+        text = "📋 <b>" + await _trans('your_posts', lang, "منشوراتك:") + "</b>\n\n"
         for p in posts:
             text += f"• <code>{p['id']}</code>: {(escape(p['text'] or '')[:30])}\n"
         await safe_send(context.bot, user_id, text, parse_mode='HTML')
@@ -515,16 +490,14 @@ class CommandHandlers:
 
     @staticmethod
     async def security(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /security - إعدادات الأمان للمجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
-            return
         lang = await DB.get_user_language(user_id) or 'ar'
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, await _trans('unauthorized', lang, "❌ غير مصرح"))
+            return
         context.user_data['security_chat_id'] = chat_id
         settings = await DB.get_security_settings(chat_id)
         text = KeyboardFactory._format_security_text(settings)
@@ -533,51 +506,46 @@ class CommandHandlers:
 
     @staticmethod
     async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /panel - لوحة تحكم المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
-        if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
-            return
         lang = await DB.get_user_language(user_id) or 'ar'
+        if not await is_authorized_in_group(context.bot, chat_id, user_id):
+            await safe_send(context.bot, user_id, await _trans('unauthorized', lang, "❌ غير مصرح"))
+            return
         kb = KeyboardFactory.build("panel", chat_id=chat_id, lang=lang)
-        await safe_send(context.bot, user_id, "📋 لوحة تحكم المجموعة", reply_markup=kb)
+        await safe_send(context.bot, user_id, await _trans('group_panel', lang, "📋 لوحة تحكم المجموعة"), reply_markup=kb)
 
     @staticmethod
     async def lock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /lock - قفل المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             return
         await DB.execute("INSERT OR REPLACE INTO chat_locks (chat_id, locked, locked_at, locked_by) VALUES (?,1,?,?)",
                          (chat_id, TimeUtils.sql_iso(), user_id))
-        await safe_send(context.bot, user_id, "🔒 تم القفل")
+        await safe_send(context.bot, user_id, await _trans('group_locked', lang, "🔒 تم القفل"))
 
     @staticmethod
     async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """الأمر /unlock - فتح المجموعة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             return
         await DB.execute("DELETE FROM chat_locks WHERE chat_id=?", (chat_id,))
-        await safe_send(context.bot, user_id, "🔓 تم الفتح")
+        await safe_send(context.bot, user_id, await _trans('group_unlocked', lang, "🔓 تم الفتح"))
 
     @staticmethod
     async def register_hidden_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تسجيل مالك مخفي"""
         user_id = update.effective_user.id
         if user_id != CONFIG.PRIMARY_OWNER_ID:
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
         if not context.args:
             await safe_send(context.bot, user_id, "📝 /register_hidden_owner <user_id>")
@@ -596,7 +564,6 @@ class CommandHandlers:
 
     @staticmethod
     async def remove_hidden_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """إزالة مالك مخفي"""
         user_id = update.effective_user.id
         if user_id != CONFIG.PRIMARY_OWNER_ID:
             return
@@ -613,7 +580,6 @@ class CommandHandlers:
 
     @staticmethod
     async def add_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """إضافة مشرف مخفي"""
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
@@ -621,8 +587,6 @@ class CommandHandlers:
             row = await DB.fetchone("SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?", (chat_id, user_id))
             is_owner = row is not None
         if not is_owner:
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
             return
         if not context.args:
             return
@@ -638,7 +602,6 @@ class CommandHandlers:
 
     @staticmethod
     async def remove_hidden_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """إزالة مشرف مخفي"""
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
@@ -659,7 +622,6 @@ class CommandHandlers:
 
     @staticmethod
     async def list_hidden_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض المخفيين"""
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         is_owner = user_id == CONFIG.PRIMARY_OWNER_ID
@@ -679,7 +641,6 @@ class CommandHandlers:
 
     @staticmethod
     async def syncgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """مزامنة المجموعة مع البوت - مع دعم المشرفين المخفيين"""
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
             await safe_send(context.bot, update.effective_user.id, "❌ هذا الأمر للمجموعات فقط")
             return
@@ -705,15 +666,12 @@ class CommandHandlers:
                 )
                 return
         except Exception as e:
-            logger.error(f"❌ فشل التحقق من حالة البوت: {e}")
-            await safe_send(context.bot, user_id, f"❌ فشل التحقق من حالة البوت: {escape(str(e)[:50])}")
+            await safe_send(context.bot, user_id, f"❌ {escape(str(e)[:50])}")
             return
 
         try:
             all_admins = await context.bot.get_chat_administrators(chat_id)
-            logger.info(f"🔍 عدد المشرفين: {len(all_admins)}")
         except Exception as e:
-            logger.error(f"❌ فشل جلب المشرفين: {e}")
             await safe_send(context.bot, user_id, "❌ فشل جلب المشرفين")
             return
 
@@ -746,9 +704,7 @@ class CommandHandlers:
 
         try:
             await DB.register_group(chat_id, chat_name, creator_id or real_user_id, update.effective_chat.username)
-            logger.info("✅ تم تسجيل المجموعة")
         except Exception as e:
-            logger.error(f"❌ فشل تسجيل المجموعة: {e}")
             await safe_send(context.bot, user_id, "❌ فشل تسجيل المجموعة")
             return
 
@@ -769,16 +725,13 @@ class CommandHandlers:
                 (real_user_id, chat_id)
             )
             invalidate_auth_cache(chat_id, real_user_id)
-            logger.info(f"✅ تم ربط المستخدم {real_user_id} بالمجموعة")
         except Exception as e:
             logger.error(f"❌ فشل ربط المستخدم: {e}")
 
         try:
             admin_ids = [a.user.id for a in all_admins if a.user and not a.user.is_bot and a.user.id != chat_id]
             admin_count = await DB.sync_group_admins(chat_id, admin_ids)
-            logger.info(f"✅ تم مزامنة {admin_count} مشرف")
         except Exception as e:
-            logger.error(f"❌ فشل مزامنة المشرفين: {e}")
             admin_count = 0
 
         msg = (
@@ -809,16 +762,14 @@ class CommandHandlers:
             except BadRequest as e:
                 if "User_bot_to_bot_disabled" in str(e):
                     await safe_send(context.bot, chat_id, msg, parse_mode='HTML')
-                else:
-                    logger.error(f"❌ فشل إرسال رسالة التأكيد: {e}")
 
         sent_msg = await safe_send(context.bot, chat_id, "🤖 <b>تم تفعيل البوت!</b>", parse_mode='HTML')
         if sent_msg:
             try:
                 await asyncio.sleep(5)
                 await sent_msg.delete()
-            except Exception as e:
-                logger.warning(f"⚠️ فشل حذف رسالة التفعيل: {e}")
+            except Exception:
+                pass
 
     # ========== أوامر الإشراف ==========
 
@@ -848,7 +799,6 @@ class CommandHandlers:
 
     @staticmethod
     async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تثبيت رسالة"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
@@ -868,20 +818,19 @@ class CommandHandlers:
 
     @staticmethod
     async def _moderation_command(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
-        """معالجة أوامر الإشراف"""
         if update.effective_chat.type not in ['group', 'supergroup']:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
 
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            await safe_send(context.bot, user_id, await _trans('unauthorized', lang, "❌ غير مصرح"))
             return
 
         perms = await check_bot_permissions(context.bot, chat_id)
         if not perms.get('can_act', False):
-            await safe_send(context.bot, user_id, "❌ البوت لا يملك الصلاحيات الكافية.")
+            await safe_send(context.bot, user_id, await _trans('insufficient_permissions', lang, "❌ البوت لا يملك الصلاحيات الكافية."))
             return
 
         args = context.args or []
@@ -894,11 +843,11 @@ class CommandHandlers:
             if target <= 0:
                 raise ValueError
         except (ValueError, TypeError):
-            await safe_send(context.bot, user_id, "❌ معرف غير صالح")
+            await safe_send(context.bot, user_id, await _trans('invalid_id', lang, "❌ معرف غير صالح"))
             return
 
         if await is_authorized_in_group(context.bot, chat_id, target):
-            await safe_send(context.bot, user_id, "❌ لا يمكن معاملة مشرف")
+            await safe_send(context.bot, user_id, await _trans('cannot_moderate_admin', lang, "❌ لا يمكن معاملة مشرف"))
             return
 
         reason_parts = []
@@ -920,15 +869,13 @@ class CommandHandlers:
             try:
                 await context.bot.unban_chat_member(chat_id, target)
                 await DB.remove_penalties_for_user(target, chat_id, penalty_type='ban')
-                await safe_send(context.bot, user_id, "✅ تم إلغاء الحظر")
+                await safe_send(context.bot, user_id, await _trans('unban_success', lang, "✅ تم إلغاء الحظر"))
             except Exception as e:
-                logger.error(f"❌ فشل إلغاء الحظر: {e}")
-                await safe_send(context.bot, user_id, f"❌ فشل إلغاء الحظر: {escape(str(e)[:50])}")
+                await safe_send(context.bot, user_id, f"❌ {escape(str(e)[:50])}")
             return
 
         success, msg = await apply_penalty(context.bot, chat_id, target, action, duration_seconds, reason, user_id)
         await safe_send(context.bot, user_id, msg)
-
         if success:
             await invalidate_auth_cache(chat_id=chat_id, user_id=target)
 
@@ -936,42 +883,36 @@ class CommandHandlers:
 
     @staticmethod
     async def set_min_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """تعيين الحد الأدنى للفاصل الزمني (للمطورين)"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            await safe_send(context.bot, user_id, await _trans('unauthorized', lang, "❌ غير مصرح"))
             return
-
         args = context.args or []
         if not args:
-            await safe_send(context.bot, user_id, "📝 /set_min_interval <دقائق>\nمثال: /set_min_interval 15")
+            await safe_send(context.bot, user_id, "📝 /set_min_interval <دقائق>")
             return
-
         try:
             val = int(args[0])
             if val < 1:
-                await safe_send(context.bot, user_id, "❌ الحد الأدنى يجب أن يكون 1 دقيقة على الأقل")
+                await safe_send(context.bot, user_id, "❌ الحد الأدنى يجب أن يكون 1 دقيقة")
                 return
             await DB.set_setting('min_publish_interval', str(val))
-            await safe_send(context.bot, user_id, f"✅ تم تعيين الحد الأدنى إلى {val} دقيقة\n🔄 أعد تشغيل البوت لتطبيق التغيير")
+            await safe_send(context.bot, user_id, f"✅ تم تعيين الحد الأدنى إلى {val} دقيقة")
         except ValueError:
-            await safe_send(context.bot, user_id, "❌ قيمة غير صالحة، أدخل رقماً")
+            await safe_send(context.bot, user_id, "❌ قيمة غير صالحة")
 
     @staticmethod
     async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """منح اشتراك (للمطورين)"""
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
-            lang = await DB.get_user_language(user_id) or 'ar'
-            await safe_send(context.bot, user_id, await get_text(lang, 'unauthorized'))
+            await safe_send(context.bot, user_id, await _trans('unauthorized', lang, "❌ غير مصرح"))
             return
-
         args = context.args or []
         if len(args) < 2:
             await safe_send(context.bot, user_id, "📝 /grant <user_id> <days>")
             return
-
         try:
             target_id = int(args[0])
             days = int(args[1])
@@ -980,78 +921,53 @@ class CommandHandlers:
         except (ValueError, TypeError):
             await safe_send(context.bot, user_id, "❌ قيم غير صالحة")
             return
-
         user_row = await DB.fetchone("SELECT user_id FROM users WHERE user_id=?", (target_id,))
         if not user_row:
-            await safe_send(context.bot, user_id, "❌ المستخدم غير موجود في قاعدة البيانات")
+            await safe_send(context.bot, user_id, "❌ المستخدم غير موجود")
             return
-
         plan_row = await DB.fetchone("SELECT id FROM plans WHERE is_gift=1 LIMIT 1")
         if not plan_row:
             plan_row = await DB.fetchone("SELECT id FROM plans WHERE is_active=1 AND is_gift=0 LIMIT 1")
         plan_id = plan_row['id'] if plan_row else None
-
         if plan_id is None:
-            await safe_send(context.bot, user_id, "❌ لا توجد خطط متاحة للمنح")
+            await safe_send(context.bot, user_id, "❌ لا توجد خطط")
             return
-
         success = await DB.grant_subscription_days(target_id, days, plan_id=plan_id, provider='manual')
         if success:
             await safe_send(context.bot, user_id, f"✅ تم منح {days} يوم للمستخدم <code>{_mask_id(target_id)}</code>", parse_mode='HTML')
         else:
-            await safe_send(context.bot, user_id, "❌ فشل المنح - تحقق من السجلات")
+            await safe_send(context.bot, user_id, "❌ فشل المنح")
 
     @staticmethod
     async def gift_plans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """عرض خطط الهدايا"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
-
         plans = await DB.get_gift_plans()
         if not plans:
-            await safe_send(context.bot, user_id, "📭 لا توجد خطط متاحة حالياً.")
+            await safe_send(context.bot, user_id, await _trans('no_gift_plans', lang, "📭 لا توجد خطط هدايا"))
             return
-
         kb = []
         for plan in plans:
-            kb.append([InlineKeyboardButton(
-                f"🎁 {plan['days']} يوم - {plan['price']} ⭐",
-                callback_data=f"buy_gift:{plan['id']}"
-            )])
+            kb.append([InlineKeyboardButton(f"🎁 {plan['days']} يوم - {plan['price']} ⭐", callback_data=f"buy_gift:{plan['id']}")])
         kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
-
-        text = (
-            "💎 <b>شراء كود هدية</b>\n\n"
-            "اختر المدة المناسبة:\n\n"
-            "• بعد الدفع، ستحصل على كود فريد.\n"
-            "• يمكنك إرسال الكود لأي شخص.\n"
-            "• الشخص الذي يستخدم الكود يحصل على اشتراك مجاني."
-        )
-
-        await safe_send(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        await safe_send(context.bot, user_id, await _trans('gift_plans_text', lang, "💎 اختر خطة هدية:"), reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
 
     @staticmethod
     async def redeem_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """استخدام كود هدية"""
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
-
         args = context.args or []
         if not args:
-            await safe_send(context.bot, user_id, "📝 أرسل الكود: <code>/redeem_gift &lt;الكود&gt;</code>", parse_mode='HTML')
+            await safe_send(context.bot, user_id, await _trans('send_gift_code', lang, "📝 أرسل الكود: /redeem_gift <الكود>"))
             return
-
         code = args[0].strip()
-
         if len(code) < 4 or len(code) > 50:
-            await safe_send(context.bot, user_id, "❌ كود غير صالح")
+            await safe_send(context.bot, user_id, await _trans('invalid_gift_code', lang, "❌ كود غير صالح"))
             return
-
         success, days = await DB.redeem_gift_code(user_id, code)
-
         if success and days > 0:
-            await safe_send(context.bot, user_id, f"🎉 <b>تم تفعيل الاشتراك بنجاح!</b>\n\n✅ {days} يوم اشتراك مجاني.", parse_mode='HTML')
+            await safe_send(context.bot, user_id, await _trans('gift_redeemed_success', lang, f"🎉 تم تفعيل اشتراك {days} يوم"), parse_mode='HTML')
         elif days == -1:
-            await safe_send(context.bot, user_id, "❌ لا يمكنك استخدام كود هدية قمت بإنشائه بنفسك.")
+            await safe_send(context.bot, user_id, await _trans('cannot_redeem_own', lang, "❌ لا يمكنك استخدام كودك الخاص"))
         else:
-            await safe_send(context.bot, user_id, "❌ كود غير صالح أو مستخدم مسبقاً.")
+            await safe_send(context.bot, user_id, await _trans('gift_invalid', lang, "❌ كود غير صالح"))
