@@ -1,0 +1,395 @@
+{
+  "texts": {
+    "main": "🌿 Menu główne",
+    "back": "🔙 Wstecz",
+    "cancel": "❌ Anuluj",
+    "settings": "⚙️ Ustawienia",
+    "toggle_auto": "📤 Automatyczne publikowanie",
+    "toggle_rec": "♻️ Automatyczny recykling",
+    "ch_list": "📡 Moje kanały",
+    "ch_add": "➕ Dodaj kanał",
+    "ch_stats": "📊 Statystyki",
+    "ch_del": "🗑️ Usuń",
+    "ch_sel": "📌 Wybierz",
+    "sched_btn": "📅 Harmonogram",
+    "add_group_button": "➕ Dodaj grupę",
+    "security_button": "🛡️ Bezpieczeństwo",
+    "groups": "👥 Moje grupy",
+    "post_add": "📥 Dodaj posty",
+    "post_pub": "📤 Opublikuj post",
+    "post_list": "📋 Moje posty",
+    "post_rec": "♻️ Recykling",
+    "post_del": "🗑️ Usuń post",
+    "post_clear": "🧹 Wyczyść wszystko",
+    "pub_all": "📤 Opublikuj wszystko",
+    "plans": "💎 Plany",
+    "subscribe": "💎 Subskrybuj",
+    "gift_plans": "🎁 Kup kod prezentowy",
+    "redeem_gift": "🎟️ Użyj kodu prezentowego",
+    "support": "📞 Wsparcie",
+    "support_ticket": "📝 Zgłoszenie wsparcia",
+    "developer": "👨‍💻 Programista",
+    "help": "📚 Pomoc",
+    "language": "🌐 Język",
+    "trial": "🎁 Darmowa wersja próbna",
+    "admin_panel_btn": "👑 Panel administratora",
+    "admin_users": "👥 Użytkownicy",
+    "admin_banned": "⛔ Zablokowani użytkownicy",
+    "admin_unban_all": "🔓 Odblokuj wszystkich",
+    "admin_channels": "📡 Kanały (Admin)",
+    "admin_banned_ch": "🚫 Zablokowane kanały",
+    "admin_activate_ch": "✅ Aktywuj kanały",
+    "admin_groups": "👥 Grupy (Admin)",
+    "admin_banned_gr": "🚫 Zablokowane grupy",
+    "admin_unban_gr": "🔓 Odblokuj grupy",
+    "admin_add_admin": "➕ Dodaj administratora",
+    "admin_rem_admin": "➖ Usuń administratora",
+    "admin_list_admins": "👑 Lista administratorów",
+    "admin_ram": "🖥️ Zużycie RAM",
+    "admin_stats": "📊 Statystyki",
+    "admin_uptime": "⏳ Czas pracy",
+    "admin_metrics": "📈 Metryki wydajności",
+    "admin_backup": "💾 Kopia zapasowa",
+    "admin_restore": "🔄 Przywróć",
+    "admin_restore_sel": "📂 Wybierz kopię zapasową",
+    "admin_show_backups": "📂 Pokaż dostępne kopie",
+    "admin_upload_backup": "📤 Prześlij kopię",
+    "admin_disable_force": "🔓 Wyłącz wymuszoną subskrypcję",
+    "admin_send_update": "📢 Wyślij aktualizację",
+    "admin_set_update_ch": "📢 Ustaw kanał aktualizacji",
+    "admin_show_update": "👀 Pokaż kanał aktualizacji",
+    "admin_force_sub": "🔒 Wymuszona subskrypcja",
+    "admin_set_force": "🔒 Ustaw wymuszoną subskrypcję",
+    "admin_broadcast": "📨 Wiadomość rozgłoszeniowa",
+    "admin_tickets": "🎫 Zgłoszenia",
+    "admin_del_tickets": "🗑️ Usuń zgłoszenia",
+    "admin_log_ch": "📋 Kanał logów",
+    "admin_set_log_ch": "📋 Ustaw kanał logów",
+    "admin_replies": "💬 Automatyczne odpowiedzi",
+    "admin_add_reply": "➕ Dodaj odpowiedź",
+    "admin_list_replies": "📋 Lista odpowiedzi",
+    "admin_del_reply": "🗑️ Usuń odpowiedź",
+    "admin_banned_words": "🚫 Zakazane słowa",
+    "admin_add_banned": "➕ Dodaj słowo",
+    "admin_list_banned": "📋 Lista słów",
+    "admin_rem_banned": "🗑️ Usuń słowo",
+    "admin_create_contest": "🏆 Utwórz konkurs",
+    "admin_declare_winner": "🏆 Ogłoś zwycięzcę",
+    "admin_declare_winner_sel": "🏆 Wybierz konkurs",
+    "admin_del_contest": "🗑️ Usuń konkurs",
+    "admin_export_replies": "📤 Eksportuj odpowiedzi",
+    "admin_import_replies": "📥 Importuj odpowiedzi",
+    "admin_import_github": "🐙 Importuj z GitHuba",
+    "admin_refresh_cache": "🔄 Odśwież pamięć podręczną",
+    "admin_invoices": "🧾 Faktury",
+    "admin_payment_logs": "📊 Logi płatności",
+    "admin_grant_free": "🎁 Przyznaj darmową subskrypcję",
+    "contest_winners": "🏆 Zwycięzcy",
+    "contests": "🏆 Konkursy",
+    "contest_join": "✍️ Dołącz",
+    "reminder": "⏰ Przypomnienia",
+    "rem_sub": "🔔 Przypomnienie o subskrypcji",
+    "rem_daily": "📊 Raport dzienny",
+    "rem_weekly": "📈 Raport tygodniowy",
+    "rem_days": "📅 Liczba dni",
+    "rem_lang": "🌐 Język przypomnień",
+    "translation": "🌐 Tłumaczenie",
+    "trans_off": "❌ Wyłącz tłumaczenie",
+    "trans_set": "✅ Ustaw",
+    "referral": "🔗 Polecenia",
+    "ref_claim": "🎁 Odbierz nagrodę",
+    "ref_list": "📋 Lista poleconych",
+    "invoices": "🧾 Moje faktury",
+    "buy_sub_1": "🗓️ 1 dzień",
+    "buy_sub_7": "🗓️ 1 tydzień",
+    "buy_sub_30": "🗓️ 1 miesiąc",
+    "buy_sub_90": "🗓️ 3 miesiące",
+    "buy_sub_365": "🗓️ 1 rok",
+    "auto_reply_add": "➕ Dodaj odpowiedź",
+    "auto_reply_del": "🗑️ Usuń odpowiedź",
+    "auto_reply_list": "📋 Lista odpowiedzi",
+    "auto_reply_stats": "📊 Statystyki",
+    "auto_reply_toggle": "🔄 Włącz/Wyłącz",
+    "auto_reply_admins": "👤 Tylko administratorzy",
+    "auto_reply_reset": "🗑️ Resetuj wszystko",
+    "auto_reply_menu": "📝 Automatyczne odpowiedzi",
+    "penalty": "⚖️ Kary",
+    "pen_ban": "🚫 Zablokuj",
+    "pen_mute": "🔇 Wycisz",
+    "pen_kick": "👢 Wyrzuć",
+    "pen_warn": "⚠️ Ostrzeż",
+    "ban_add": "➕ Dodaj słowo",
+    "ban_list": "📋 Lista słów",
+    "ban_rem": "🗑️ Usuń słowo",
+    "act_ban": "🚫 Zablokuj",
+    "act_mute": "🔇 Wycisz",
+    "act_warn": "⚠️ Ostrzeż",
+    "act_kick": "👢 Wyrzuć",
+    "act_restrict": "🔒 Ogranicz",
+    "act_unban": "🔓 Odblokuj",
+    "act_pin": "📌 Przypnij",
+    "act_log": "📜 Dziennik akcji",
+    "panel_lock": "🔒 Zablokuj grupę",
+    "panel_unlock": "🔓 Odblokuj grupę",
+    "panel_close": "❌ Zamknij panel",
+    "sec_links": "🔗 Linki",
+    "sec_mentions": "👤 Wzmianki",
+    "sec_slow": "🐌 Tryb wolny",
+    "sec_slow_mode_seconds": "⏱️ Sekundy trybu wolnego",
+    "sec_flood": "🌊 Powódź",
+    "sec_video": "🎬 Wideo",
+    "sec_audio": "🎵 Muzyka",
+    "sec_anim": "🎞️ Animacja",
+    "sec_service": "🗑️ Wiadomości serwisowe",
+    "sec_doc": "📄 Dokumenty",
+    "sec_sticker": "🖼️ Naklejki",
+    "sec_forward": "📨 Przekazane",
+    "sec_poll": "📊 Ankieta",
+    "sec_game": "🎮 Gra",
+    "sec_voice": "🎤 Głos",
+    "sec_videonote": "🎥 Notatka wideo",
+    "sec_banned_words": "🚫 Zakazane słowa",
+    "sec_toggle_banned_words": "✅ Włącz usuwanie / ❌ Wyłącz usuwanie",
+    "sec_welcome": "🎯 Powitanie",
+    "sec_welcome_text": "📝 Tekst powitania",
+    "sec_goodbye": "👋 Pożegnanie",
+    "sec_goodbye_text": "📝 Tekst pożegnania",
+    "sec_night": "🌙 Noc",
+    "sec_approve_join": "✅ Zatwierdź dołączenie",
+    "sec_reject_join": "❌ Odrzuć dołączenie",
+    "sec_nsfw": "🔞 NSFW",
+    "sec_maxlen": "📏 Maksymalna długość",
+    "sec_warn": "⚠️ Ostrzeżenia",
+    "sec_warn_count": "🔢 Liczba ostrzeżeń",
+    "sec_warn_penalty": "⚖️ Kara za ostrzeżenie",
+    "sec_warn_penalty_duration": "⏱️ Czas trwania kary",
+    "sec_penalty": "⚖️ Kary",
+    "sec_del_pen": "⚖️ Kara usunięcia",
+    "sec_adv_act": "🛠️ Zaawansowane akcje",
+    "sec_act_log": "📜 Dziennik",
+    "sec_auto_reply_menu": "📝 Automatyczne odpowiedzi",
+    "sec_antiflood_settings": "🌊 Ustawienia powodzi",
+    "sec_night_settings": "🌙 Ustawienia nocy",
+    "sec_penalty_durations": "⏳ Czas trwania kar",
+    "sec_violation_penalties": "⚖️ Kary za naruszenia",
+    "sec_enable_all": "✅ Włącz wszystko",
+    "sec_disable_all": "❌ Wyłącz wszystko",
+    "sec_close": "❌ Zamknij",
+    "status_only": "📊 Status",
+    "reminder_subscription_expires": "⚠️ Twoja subskrypcja wygasa za {days} dni",
+    "sched_min": "⏱️ Minuty",
+    "sched_hour": "🕐 Godziny",
+    "sched_day": "📅 Dni",
+    "sched_time": "🕒 Określony czas",
+    "sec_set_antiflood_messages": "🔢 Liczba wiadomości",
+    "sec_set_antiflood_seconds": "⏱️ Sekundy",
+    "sec_set_night_start": "🌙 Czas rozpoczęcia",
+    "sec_set_night_end": "🌙 Czas zakończenia",
+    "sec_set_violation_strikes": "📊 Liczba naruszeń",
+    "sec_set_violation_duration": "⏱️ Czas trwania kary",
+    "sec_antiflood_duration": "⏱️ Czas trwania kary za powódź",
+    "sec_night_duration": "⏱️ Czas trwania akcji nocnej",
+    "sec_set_antiflood_penalty": "🚫 Typ kary za powódź",
+    "sec_set_night_action": "🌙 Akcja nocna",
+    "sec_penalty_none": "🚫 Brak kary",
+    "sec_penalty_ban": "🚫 Zablokuj",
+    "sec_penalty_mute": "🔇 Wycisz",
+    "sec_penalty_kick": "👢 Wyrzuć",
+    "sec_penalty_restrict": "🔒 Ogranicz"
+  },
+  "menus": {
+    "main_menu": {
+      "rows": [
+        ["ch_list", "groups"],
+        ["post_add", "post_pub"],
+        ["post_list", "post_rec"],
+        ["pub_all"],
+        ["plans", "subscribe"],
+        ["gift_plans", "redeem_gift"],
+        ["support", "developer"],
+        ["help", "language"],
+        ["trial", "contests"],
+        ["settings"]
+      ]
+    },
+    "settings": {
+      "rows": [
+        ["toggle_auto", "toggle_rec"],
+        ["translation", "reminder"],
+        ["referral", "invoices"],
+        ["back"]
+      ]
+    },
+    "plans": {
+      "rows": [
+        ["buy_sub_1", "buy_sub_7"],
+        ["buy_sub_30", "buy_sub_90"],
+        ["buy_sub_365"],
+        ["back"]
+      ]
+    },
+    "support": {
+      "rows": [
+        ["support_ticket"],
+        ["back"]
+      ]
+    },
+    "admin_panel": {
+      "rows": [
+        ["admin_users", "admin_banned"],
+        ["admin_unban_all"],
+        ["admin_channels", "admin_banned_ch"],
+        ["admin_activate_ch"],
+        ["admin_groups", "admin_banned_gr"],
+        ["admin_unban_gr"],
+        ["admin_add_admin", "admin_rem_admin"],
+        ["admin_list_admins"],
+        ["admin_ram", "admin_stats"],
+        ["admin_uptime"],
+        ["admin_metrics"],
+        ["admin_backup", "admin_restore"],
+        ["admin_send_update", "admin_set_update_ch"],
+        ["admin_show_update"],
+        ["admin_force_sub", "admin_set_force"],
+        ["admin_disable_force"],
+        ["admin_broadcast"],
+        ["admin_tickets", "admin_del_tickets"],
+        ["admin_log_ch", "admin_set_log_ch"],
+        ["admin_replies"],
+        ["admin_add_reply", "admin_list_replies"],
+        ["admin_del_reply"],
+        ["admin_banned_words", "admin_add_banned"],
+        ["admin_list_banned", "admin_rem_banned"],
+        ["admin_create_contest", "admin_declare_winner"],
+        ["admin_export_replies", "admin_import_replies"],
+        ["admin_import_github"],
+        ["admin_refresh_cache"],
+        ["admin_invoices", "admin_payment_logs"],
+        ["admin_grant_free"],
+        ["back"]
+      ]
+    },
+    "security": {
+      "rows": [
+        ["sec_links", "sec_mentions"],
+        ["sec_slow", "sec_slow_mode_seconds"],
+        ["sec_flood", "sec_antiflood_settings"],
+        ["sec_video", "sec_audio"],
+        ["sec_anim", "sec_service"],
+        ["sec_doc", "sec_sticker"],
+        ["sec_forward", "sec_poll"],
+        ["sec_game", "sec_voice"],
+        ["sec_videonote", "sec_banned_words"],
+        ["sec_welcome", "sec_welcome_text"],
+        ["sec_goodbye", "sec_goodbye_text"],
+        ["sec_night", "sec_night_settings"],
+        ["sec_approve_join", "sec_reject_join"],
+        ["sec_nsfw"],
+        ["sec_maxlen", "sec_warn"],
+        ["sec_warn_count"],
+        ["sec_warn_penalty", "sec_warn_penalty_duration"],
+        ["sec_penalty", "sec_del_pen"],
+        ["sec_penalty_durations"],
+        ["sec_violation_penalties"],
+        ["sec_adv_act", "sec_act_log"],
+        ["sec_auto_reply_menu"],
+        ["sec_enable_all", "sec_disable_all"],
+        ["sec_close"]
+      ]
+    },
+    "banned_words": {
+      "rows": [
+        ["ban_add", "ban_list"],
+        ["ban_rem"],
+        ["sec_toggle_banned_words"],
+        ["back"]
+      ]
+    },
+    "penalty": {
+      "rows": [
+        ["pen_ban", "pen_mute"],
+        ["pen_kick", "pen_warn"],
+        ["back"]
+      ]
+    },
+    "advanced_actions": {
+      "rows": [
+        ["act_ban", "act_mute"],
+        ["act_warn", "act_kick"],
+        ["act_restrict", "act_unban"],
+        ["act_pin"],
+        ["act_log"],
+        ["back"]
+      ]
+    },
+    "auto_reply_manage": {
+      "rows": [
+        ["auto_reply_toggle", "auto_reply_admins"],
+        ["auto_reply_add", "auto_reply_del"],
+        ["auto_reply_list", "auto_reply_stats"],
+        ["auto_reply_reset"],
+        ["back"]
+      ]
+    },
+    "translation": {
+      "rows": [
+        ["trans_off"],
+        ["back"]
+      ]
+    },
+    "referral": {
+      "rows": [
+        ["ref_claim", "ref_list"],
+        ["back"]
+      ]
+    },
+    "reminder": {
+      "rows": [
+        ["rem_sub", "rem_daily"],
+        ["rem_weekly", "rem_days"],
+        ["back"]
+      ]
+    },
+    "contests": {
+      "rows": [
+        ["contest_winners"],
+        ["back"]
+      ]
+    },
+    "panel": {
+      "rows": [
+        ["panel_lock", "panel_unlock"],
+        ["panel_close"]
+      ]
+    },
+    "channel_settings": {
+      "rows": [
+        ["sched_min", "sched_hour"],
+        ["sched_day", "sched_time"],
+        ["back"]
+      ]
+    },
+    "antiflood_settings": {
+      "rows": [
+        ["sec_set_antiflood_messages", "sec_set_antiflood_seconds"],
+        ["sec_set_antiflood_penalty"],
+        ["sec_antiflood_duration"],
+        ["back"]
+      ]
+    },
+    "night_settings": {
+      "rows": [
+        ["sec_set_night_start", "sec_set_night_end"],
+        ["sec_set_night_action"],
+        ["sec_night_duration"],
+        ["back"]
+      ]
+    },
+    "violation_penalties": {
+      "rows": [
+        ["sec_set_violation_strikes", "sec_set_violation_duration"],
+        ["back"]
+      ]
+    }
+  }
+}
