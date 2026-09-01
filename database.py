@@ -15,6 +15,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ استعادة قاعدة البيانات من نسخة احتياطية
 - ✅ تحسين get_channels_to_publish لاستخدام publishable_unpublished_count
 - ✅ ترتيب المنشورات حسب الأقل فشلاً أولاً لضمان عدالة النشر
+- ✅ إصلاح استدعاءات _get_user_lock مع await
 """
 
 import sqlite3
@@ -1349,7 +1350,7 @@ class Database:
 
     async def activate_trial(self, user_id: int) -> int:
         try:
-            async with self._get_user_lock(user_id):
+            async with await self._get_user_lock(user_id):
                 now = TimeUtils.utc_now()
                 trial_end = now + timedelta(days=30)
                 async with self._get_connection() as conn:
@@ -1428,7 +1429,7 @@ class Database:
     async def add_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
         try:
             channel_id = int(channel_id)
-            async with self._get_user_lock(user_id):
+            async with await self._get_user_lock(user_id):
                 async with self._get_connection() as conn:
                     cursor = await conn.execute(
                         """SELECT p.max_channels
@@ -1549,7 +1550,7 @@ class Database:
         try:
             if not posts:
                 return 0
-            async with self._get_user_lock(user_id):
+            async with await self._get_user_lock(user_id):
                 async with self._get_connection() as conn:
                     cursor = await conn.execute("SELECT 1 FROM user_channels WHERE id = ? AND user_id = ? AND banned = 0", (channel_db_id, user_id))
                     if not await cursor.fetchone():
@@ -1619,7 +1620,7 @@ class Database:
             return 0
 
     async def get_next_post(self, channel_db_id: int) -> Optional[Dict]:
-        async with self._get_channel_lock(channel_db_id):
+        async with await self._get_channel_lock(channel_db_id):
             post = await self.fetchone(
                 """SELECT p.id, p.text, p.media_type, p.media_file_id, p.fail_count
                    FROM posts p
@@ -2318,7 +2319,7 @@ class Database:
 
     async def claim_referral_reward(self, user_id: int) -> int:
         try:
-            async with self._get_user_lock(user_id):
+            async with await self._get_user_lock(user_id):
                 async with self._get_connection() as conn:
                     await conn.execute("INSERT OR IGNORE INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) VALUES (?, 0, 0, 0, NULL)", (user_id,))
                     reward = await self._fetchone_in_conn(
@@ -2588,7 +2589,7 @@ class Database:
     async def redeem_gift_code(self, user_id: int, code: str) -> tuple:
         try:
             code = code.strip()
-            async with self._get_user_lock(user_id):
+            async with await self._get_user_lock(user_id):
                 async with self._get_connection() as conn:
                     cursor = await conn.execute("SELECT * FROM gift_codes WHERE code = ?", (code,))
                     gift_code = await cursor.fetchone()
@@ -2628,7 +2629,7 @@ class Database:
         try:
             if days <= 0:
                 return False
-            async with self._get_user_lock(user_id):
+            async with await self._get_user_lock(user_id):
                 async with self._get_connection() as conn:
                     exists = await self._fetchval_in_conn(conn, "SELECT 1 FROM users WHERE user_id = ?", (user_id,))
                     if not exists:
@@ -2671,7 +2672,7 @@ class Database:
             plan = await self.get_plan(plan_id)
             if not plan:
                 return 0
-            async with self._get_user_lock(user_id):
+            async with await self._get_user_lock(user_id):
                 async with self._get_connection() as conn:
                     current_end = await self._fetchval_in_conn(
                         conn,
@@ -2737,7 +2738,7 @@ class Database:
 
     async def activate_subscription_with_payment(self, user_id: int, invoice_number: str, payment_id: str, plan_id: int) -> bool:
         try:
-            async with self._get_user_lock(user_id):
+            async with await self._get_user_lock(user_id):
                 async with self._get_connection() as conn:
                     cursor = await conn.execute("SELECT * FROM invoices WHERE number = ? AND user_id = ? AND status = 'pending'", (invoice_number, user_id))
                     invoice = await cursor.fetchone()
