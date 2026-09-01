@@ -27,6 +27,9 @@ handlers_message.py - معالجات الرسائل - النسخة النهائ�
 - تجاهل خطأ User_already_participant في طلبات الانضمام
 - حذف رسائل الانضمام والمغادرة عند تفعيل delete_service
 - تأخير بسيط بين معالجة طلبات الانضمام لتجنب حدود تيليجرام
+- دمج نظام الكاش الموحد cache.py
+- استخدام safe_send الموحدة في الردود التلقائية
+- إزالة المتغيرات غير المستخدمة
 """
 
 import asyncio
@@ -57,6 +60,7 @@ from utils import (
     reload_replies_from_file, _increment_usage_async,
     fetch_json_from_url, import_auto_replies,
 )
+from cache import settings_cache, banned_words_cache, auth_cache
 
 try:
     from replies import analyze_sentiment
@@ -68,51 +72,38 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # =====================================================================
-# الكاش
+# دوال الكاش الجديدة (مبنية على cache.py)
 # =====================================================================
-
-_security_settings_cache = {}
-_security_settings_time = {}
-_auto_reply_settings_cache = {}
-_auto_reply_settings_time = {}
 
 async def get_security_settings_cached(chat_id: int) -> dict:
     """جلب إعدادات الأمان مع التخزين المؤقت"""
-    now = time.time()
-    if chat_id in _security_settings_cache and (now - _security_settings_time.get(chat_id, 0)) < 30:
-        return _security_settings_cache[chat_id]
+    cached = await settings_cache.get_security(chat_id)
+    if cached is not None:
+        return cached
     settings = await DB.get_security_settings(chat_id)
-    _security_settings_cache[chat_id] = settings
-    _security_settings_time[chat_id] = now
+    await settings_cache.set_security(chat_id, settings)
     return settings
 
 async def get_auto_reply_settings_cached(chat_id: int) -> dict:
     """جلب إعدادات الردود التلقائية مع التخزين المؤقت"""
-    now = time.time()
-    if chat_id in _auto_reply_settings_cache and (now - _auto_reply_settings_time.get(chat_id, 0)) < 60:
-        return _auto_reply_settings_cache[chat_id]
+    cached = await settings_cache.get_auto_reply_settings(chat_id)
+    if cached is not None:
+        return cached
     settings = await DB.get_auto_reply_settings(chat_id)
-    _auto_reply_settings_cache[chat_id] = settings
-    _auto_reply_settings_time[chat_id] = now
+    await settings_cache.set_auto_reply_settings(chat_id, settings)
     return settings
 
 async def invalidate_security_cache(chat_id: int = None) -> None:
     """إبطال الكاش الأمني"""
-    if chat_id:
-        _security_settings_cache.pop(chat_id, None)
-        _security_settings_time.pop(chat_id, None)
-    else:
-        _security_settings_cache.clear()
-        _security_settings_time.clear()
+    await settings_cache.invalidate_security(chat_id)
 
 async def invalidate_auto_reply_cache(chat_id: int = None) -> None:
     """إبطال كاش الردود التلقائية"""
-    if chat_id:
-        _auto_reply_settings_cache.pop(chat_id, None)
-        _auto_reply_settings_time.pop(chat_id, None)
-    else:
-        _auto_reply_settings_cache.clear()
-        _auto_reply_settings_time.clear()
+    await settings_cache.invalidate_auto_reply(chat_id)
+
+# =====================================================================
+# دوال مساعدة أخرى
+# =====================================================================
 
 async def _delete_after_delay(bot, chat_id: int, message_id: int, delay: int = 10):
     """حذف رسالة بعد تأخير"""
@@ -436,22 +427,19 @@ class MessageHandlers:
                 media_id = reply.get('reply_media_id')
 
                 try:
-                    if reply_type == 'photo' and media_id:
-                        await context.bot.send_photo(chat_id=chat_id, photo=media_id, caption=reply_text or None)
-                    elif reply_type == 'video' and media_id:
-                        await context.bot.send_video(chat_id=chat_id, video=media_id, caption=reply_text or None)
-                    elif reply_type == 'document' and media_id:
-                        await context.bot.send_document(chat_id=chat_id, document=media_id, caption=reply_text or None)
-                    elif reply_type == 'audio' and media_id:
-                        await context.bot.send_audio(chat_id=chat_id, audio=media_id, caption=reply_text or None)
-                    elif reply_type == 'voice' and media_id:
-                        await context.bot.send_voice(chat_id=chat_id, voice=media_id)
-                    elif reply_type == 'animation' and media_id:
-                        await context.bot.send_animation(chat_id=chat_id, animation=media_id, caption=reply_text or None)
-                    elif reply_type == 'sticker' and media_id:
-                        await context.bot.send_sticker(chat_id=chat_id, sticker=media_id)
-                    elif reply_type == 'video_note' and media_id:
-                        await context.bot.send_video_note(chat_id=chat_id, video_note=media_id)
+                    if reply_type in ['photo', 'video', 'document', 'audio', 'animation']:
+                        await safe_send(
+                            context.bot,
+                            chat_id,
+                            reply_text,
+                            **{reply_type: media_id} if media_id else {}
+                        )
+                    elif reply_type == 'voice':
+                        await safe_send(context.bot, chat_id, "", voice=media_id)
+                    elif reply_type == 'sticker':
+                        await safe_send(context.bot, chat_id, "", sticker=media_id)
+                    elif reply_type == 'video_note':
+                        await safe_send(context.bot, chat_id, "", video_note=media_id)
                     else:
                         await safe_send(context.bot, chat_id, reply_text)
                 except Exception as e:

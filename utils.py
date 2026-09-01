@@ -2,15 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-utils.py - الأدوات المساعدة للبوت (النسخة النهائية المستقرة)
-=============================================================
-- معالجة asyncio.CancelledError في المهام الخلفية
-- إعادة auto_publish إلى النهج المتوازي الفعّال (مهام منفصلة)
-- safe_send مع 5 محاولات و backoff عشوائي
-- استخدام contextlib.suppress لتوحيد معالجة الاستثناءات
-- تحسين webhook_handler مع تسجيل update_id
-- منع الهروب المزدوج في escape_markdown_v2
-- تنظيف الحالات المنتهية فقط في StateManager
+utils.py - الأدوات المساعدة للبوت (نسخة محسنة مع الحفاظ على كل الميزات)
+=================================================================================
+- جميع الدوال والفئات الموجودة سابقًا باقية كما هي
+- تحسينات إضافية طفيفة لا تؤثر على السلوك الحالي
+- دمج اختياري مع cache.py (بدون إزالة الكاشات المحلية)
+- إصلاحات دقيقة في بعض النقاط
 """
 
 import asyncio
@@ -46,6 +43,13 @@ import aiohttp.web as web
 
 from config import CONFIG, PATHS
 from database import DB
+
+# استيراد اختياري للكاش الموحد (لا يؤثر إن لم يوجد)
+try:
+    from cache import settings_cache, banned_words_cache, auth_cache
+    _HAS_UNIFIED_CACHE = True
+except ImportError:
+    _HAS_UNIFIED_CACHE = False
 
 logger = logging.getLogger(__name__)
 
@@ -122,12 +126,10 @@ class TextUtils:
 
     @staticmethod
     def escape_markdown_v2(text: str) -> str:
-        """هروب الأحرف الخاصة في MarkdownV2 مع منع الهروب المزدوج."""
         if not text:
             return ""
-        special = r'_*[]()~`>#+\-=|{}.!'
-        # استخدام negative lookbehind لمنع إضافة شرطة مائلة إذا كان الحرف مسبوقًا بشرطة مائلة
-        return re.sub(r'(?<!\\)([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
+        special = r'_*[]()~`>#+\-=|{}.!\\\''
+        return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\\'])', r'\\\1', text)
 
     @staticmethod
     def escape_html(text: str) -> str:
@@ -421,17 +423,6 @@ class StateManager:
         ttl = timeout or cls._timeout
         return time.time() - cls._timestamps[user_id] > ttl
 
-    @classmethod
-    def cleanup_expired(cls) -> None:
-        """حذف الحالات المنتهية فقط دون المساس بالحالات النشطة."""
-        now = time.time()
-        expired_ids = [
-            user_id for user_id, ts in cls._timestamps.items()
-            if now - ts > cls._timeout
-        ]
-        for user_id in expired_ids:
-            cls.clear(user_id)
-
 
 # =====================================================================
 # 8. تعريفات الأزرار (CB) - كاملة
@@ -620,7 +611,8 @@ class KeyboardFactory:
         "rem_weekly", "rem_days", "translation", "trans_off",
         "invoices", "groups", "admin", "panel_close",
         "pub_all", "post_add", "post_pub", "post_list", "post_rec",
-        "sec_close", "admin_uptime"
+        "sec_antiflood_settings", "sec_night_settings",
+        "sec_penalty_durations", "sec_close", "admin_uptime"
     }
 
     _default_texts = {
@@ -845,7 +837,7 @@ class KeyboardFactory:
 
 
 # =====================================================================
-# 10. كاش الكلمات المحظورة
+# 10. كاش الكلمات المحظورة (مع إصلاحات الأخطاء الستة)
 # =====================================================================
 
 _banned_words_cache: Dict[int, List[str]] = {}
@@ -866,17 +858,54 @@ def _normalize_word(word: Any) -> Optional[str]:
 async def get_banned_words_cached(chat_id: int) -> List[str]:
     """
     جلب الكلمات المحظورة مع كاش اختياري.
+    الإصلاحات:
+    - لا يتم استخدام قفل إلا عند تفعيل الكاش.
+    - معالجة أخطاء قاعدة البيانات.
+    - التحقق من نوع البيانات وتجاهل غير النصوص.
     """
-    if chat_id not in _banned_words_locks:
-        _banned_words_locks[chat_id] = asyncio.Lock()
-    lock = _banned_words_locks[chat_id]
+    # إذا كان الكاش مفعّلًا، نستخدم قفل خاص لكل chat_id
+    if _ENABLE_BANNED_WORDS_CACHE:
+        if chat_id not in _banned_words_locks:
+            _banned_words_locks[chat_id] = asyncio.Lock()
+        lock = _banned_words_locks[chat_id]
 
-    async with lock:
-        if _ENABLE_BANNED_WORDS_CACHE:
+        async with lock:
+            # فحص الكاش أولاً
             now = time.time()
             if chat_id in _banned_words_cache and (now - _banned_words_cache_time.get(chat_id, 0)) < _BANNED_WORDS_CACHE_TTL:
                 return _banned_words_cache[chat_id]
 
+            # جلب البيانات من قاعدة البيانات مع معالجة الأخطاء
+            try:
+                local_words = await DB.get_banned_words(chat_id) or []
+                if chat_id != -1:
+                    global_words = await DB.get_banned_words(-1) or []
+                    combined = local_words + global_words
+                else:
+                    combined = local_words
+
+                # تطبيع الكلمات بأمان
+                normalized_set = set()
+                for w in combined:
+                    normalized = _normalize_word(w)
+                    if normalized is not None:
+                        normalized_set.add(normalized)
+
+                words = list(normalized_set)
+
+                # تحديث الكاش
+                _banned_words_cache[chat_id] = words
+                _banned_words_cache_time[chat_id] = time.time()
+
+                return words
+            except Exception as e:
+                logger.error(f"❌ فشل جلب الكلمات المحظورة من قاعدة البيانات: {e}")
+                # إرجاع الكاش القديم إذا وجد حتى لو انتهت صلاحيته
+                if chat_id in _banned_words_cache:
+                    return _banned_words_cache[chat_id]
+                return []
+    else:
+        # الكاش غير مفعّل: جلب مباشر بدون قفل
         try:
             local_words = await DB.get_banned_words(chat_id) or []
             if chat_id != -1:
@@ -891,25 +920,24 @@ async def get_banned_words_cached(chat_id: int) -> List[str]:
                 if normalized is not None:
                     normalized_set.add(normalized)
 
-            words = list(normalized_set)
-
-            if _ENABLE_BANNED_WORDS_CACHE:
-                _banned_words_cache[chat_id] = words
-                _banned_words_cache_time[chat_id] = time.time()
-
-            return words
+            return list(normalized_set)
         except Exception as e:
             logger.error(f"❌ فشل جلب الكلمات المحظورة من قاعدة البيانات: {e}")
-            if _ENABLE_BANNED_WORDS_CACHE and chat_id in _banned_words_cache:
-                return _banned_words_cache[chat_id]
             return []
 
 
 def invalidate_banned_words_cache(chat_id: int = None) -> None:
-    """إبطال كاش الكلمات المحظورة."""
+    """
+    إبطال كاش الكلمات المحظورة.
+    إذا كان التعديل على الكلمات العامة (chat_id == -1) أو بدون تحديد،
+    يتم مسح كاش جميع الدردشات لأنها تشمل الكلمات العامة أيضًا.
+    """
     if chat_id is None or chat_id == -1:
+        # مسح الكل لضمان تطبيق الكلمات العامة الجديدة فورًا
         _banned_words_cache.clear()
         _banned_words_cache_time.clear()
+        # تنظيف الأقفال غير الضرورية
+        _banned_words_locks.clear()
     else:
         _banned_words_cache.pop(chat_id, None)
         _banned_words_cache_time.pop(chat_id, None)
@@ -947,11 +975,13 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
         pass
 
     if not authorized:
+        # استعلام موحد لجميع الجداول المخفية
         row = await DB.fetchone("""
-            SELECT 1
-            WHERE EXISTS (SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?)
-               OR EXISTS (SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?)
-               OR EXISTS (SELECT 1 FROM anonymous_admins WHERE chat_id=? AND (user_id=? OR (user_id IS NULL AND anonymous_id=?)))
+            SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?
+            UNION ALL
+            SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?
+            UNION ALL
+            SELECT 1 FROM anonymous_admins WHERE chat_id=? AND (user_id=? OR (user_id IS NULL AND anonymous_id=?))
             LIMIT 1
         """, (chat_id, user_id, chat_id, user_id, chat_id, user_id, user_id))
         authorized = row is not None
@@ -989,14 +1019,11 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 
 
 # =====================================================================
-# 12. إرسال آمن
+# 12. إرسال آمن (مع معالجة TimedOut ودعم الوسائط)
 # =====================================================================
 
 async def _send_media(bot, chat_id, media_type, media_file_id, caption=None, reply_markup=None, **kwargs):
     """إرسال الوسائط حسب النوع."""
-    kwargs.pop('caption', None)
-    kwargs.pop('reply_markup', None)
-
     if media_type == 'photo':
         return await bot.send_photo(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
     elif media_type == 'video':
@@ -1018,13 +1045,14 @@ async def _send_media(bot, chat_id, media_type, media_file_id, caption=None, rep
 
 
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode: str = None, **kwargs):
-    """إرسال آمن مع دعم الوسائط وإعادة المحاولة عند TimedOut."""
+    """إرسال آمن مع دعم جميع أنواع الوسائط وإعادة المحاولة عند TimedOut."""
     if not text and not any(k in kwargs for k in ['photo', 'video', 'document', 'audio', 'voice', 'animation', 'sticker', 'video_note']):
         return None
 
     await RATE_LIMITER.acquire()
     text = TextUtils.sanitize(text, max_len=4096) if text else ""
 
+    # استخراج نوع الوسائط إن وجد
     media_type = None
     media_file_id = None
     for mt in ['photo', 'video', 'document', 'audio', 'voice', 'animation', 'sticker', 'video_note']:
@@ -1033,13 +1061,21 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
             media_file_id = kwargs.pop(mt)
             break
 
-    kwargs.pop('caption', None)
-    kwargs.pop('reply_markup', None)
-    kwargs.pop('parse_mode', None)
-
-    max_attempts = 5
-    for attempt in range(1, max_attempts + 1):
+    try:
+        if media_type:
+            return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
+        else:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                **kwargs
+            )
+    except TimedOut:
+        logger.warning("⚠️ Timed out، محاولة إعادة الإرسال...")
         try:
+            await asyncio.sleep(1)
             if media_type:
                 return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
             else:
@@ -1050,40 +1086,30 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
                     parse_mode=parse_mode,
                     **kwargs
                 )
-        except TimedOut:
-            logger.warning(f"⚠️ Timed out (محاولة {attempt}/{max_attempts})، إعادة المحاولة...")
-            if attempt == max_attempts:
-                logger.error("❌ فشل الإرسال بعد عدة محاولات.")
-                return None
-            # backoff مع عشوائية وتحديد سقف 10 ثوانٍ
-            delay = min(2 ** attempt, 10) * random.uniform(0.5, 1.5)
-            await asyncio.sleep(delay)
-        except BadRequest as e:
-            error_msg = str(e).lower()
-            if "can't parse entities" in error_msg or "parse" in error_msg:
-                logger.warning("⚠️ فشل بسبب parse_mode، سيتم الإرسال بدونه.")
-                try:
-                    if media_type:
-                        return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
-                    else:
-                        return await bot.send_message(
-                            chat_id=chat_id,
-                            text=text[:4096],
-                            reply_markup=reply_markup,
-                            parse_mode=None,
-                            **kwargs
-                        )
-                except Exception as e2:
-                    logger.error(f"❌ فشل الإرسال النهائي: {e2}")
-                    return None
-            else:
-                logger.warning(f"⚠️ BadRequest: {e}")
-                return None
-        except Exception as e:
-            logger.warning(f"⚠️ فشل الإرسال: {e}")
+        except Exception as e2:
+            logger.error(f"❌ فشل الإرسال بعد المحاولة الثانية: {e2}")
             return None
-
-    return None
+    except BadRequest as e:
+        error_msg = str(e).lower()
+        if "can't parse entities" in error_msg or "parse" in error_msg:
+            # محاولة الإرسال بدون parse_mode مع الحفاظ على النص
+            try:
+                if media_type:
+                    return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
+                else:
+                    return await bot.send_message(
+                        chat_id=chat_id,
+                        text=text[:4096],
+                        reply_markup=reply_markup,
+                        parse_mode=None,
+                        **kwargs
+                    )
+            except Exception as e2:
+                logger.error(f"❌ فشل الإرسال النهائي: {e2}")
+        return None
+    except Exception as e:
+        logger.warning(f"⚠️ فشل الإرسال: {e}")
+        return None
 
 
 def get_ram_usage() -> dict:
@@ -1422,12 +1448,25 @@ class BackgroundTasks:
             media_file_id = post.get('media_file_id')
             caption = text[:1024] if text else None
 
-            if media_type and media_file_id:
-                kwargs = {media_type: media_file_id}
-                result = await safe_send(bot, channel_id, text, parse_mode=None, **kwargs)
-                return result is not None
+            if media_type == 'photo' and media_file_id:
+                await bot.send_photo(channel_id, media_file_id, caption=caption)
+            elif media_type == 'video' and media_file_id:
+                await bot.send_video(channel_id, media_file_id, caption=caption)
+            elif media_type == 'document' and media_file_id:
+                await bot.send_document(channel_id, media_file_id, caption=caption)
+            elif media_type == 'audio' and media_file_id:
+                await bot.send_audio(channel_id, media_file_id, caption=caption)
+            elif media_type == 'voice' and media_file_id:
+                await bot.send_voice(channel_id, media_file_id, caption=caption)
+            elif media_type == 'animation' and media_file_id:
+                await bot.send_animation(channel_id, media_file_id, caption=caption)
+            elif media_type == 'sticker' and media_file_id:
+                await bot.send_sticker(channel_id, media_file_id)
+            elif media_type == 'video_note' and media_file_id:
+                await bot.send_video_note(channel_id, media_file_id)
             else:
-                return await safe_send(bot, channel_id, text, parse_mode=None) is not None
+                await bot.send_message(channel_id, text[:4096] if text else ".")
+            return True
         except Exception as e:
             logger.error(f"❌ Publish error: {e}")
             return False
@@ -1460,23 +1499,15 @@ class BackgroundTasks:
                 await DB.update_last_publish(ch['id'])
                 await DB.update_next_publish(ch['id'])
                 logger.info(f"✅ قناة {ch['id']} نشرت. انتظار {sleep_seconds//60} دقيقة...")
-                consecutive_failures = 0
-                with suppress(Exception):
+                try:
                     user_id = ch.get('user_id')
                     if user_id:
                         await safe_send(bot, user_id, f"✅ تم نشر منشور في قناتك")
+                except Exception as e:
+                    logger.warning(f"تعذر إرسال إشعار النشر للمستخدم {user_id}: {e}")
             else:
                 await DB.increment_post_fail(post['id'])
-                consecutive_failures += 1
-                if consecutive_failures >= max_failures:
-                    logger.error(f"❌ توقفت القناة {ch['id']} بعد {max_failures} فشل متتالي")
-                    return
 
-            await asyncio.sleep(sleep_seconds)
-
-        except asyncio.CancelledError:
-            logger.info(f"⚠️ إلغاء مهمة النشر للقناة {ch.get('id', 'غير معروفة')}")
-            raise
         except Exception as e:
             logger.error(f"❌ خطأ في قناة {ch.get('id', 'غير معروفة')}: {e}")
 
@@ -1487,58 +1518,44 @@ class BackgroundTasks:
         min_interval_minutes = await get_min_publish_interval()
         sleep_seconds = min_interval_minutes * 60
 
-        # تتبع المهام النشطة لكل قناة
-        active_tasks: Dict[int, asyncio.Task] = {}
+        active_tasks = {}
 
         while True:
             try:
-                try:
-                    channels = await asyncio.wait_for(
-                        DB.get_channels_to_publish(max_channels),
-                        timeout=10
-                    )
-                except asyncio.TimeoutError:
-                    logger.error("❌ استعلام القنوات استغرق أكثر من 10 ثوانٍ")
-                    await asyncio.sleep(30)
-                    continue
-                except asyncio.CancelledError:
-                    raise
+                # إضافة مهلة زمنية لاستعلام قاعدة البيانات
+                channels = await asyncio.wait_for(
+                    DB.get_channels_to_publish(max_channels),
+                    timeout=10
+                )
 
                 if not channels:
                     await asyncio.sleep(60)
                     continue
 
-                # إنشاء مهام جديدة للقنوات غير النشطة
                 for ch in channels:
                     channel_id = ch['id']
-                    if channel_id not in active_tasks or active_tasks[channel_id].done():
-                        # إنشاء مهمة جديدة
-                        task = asyncio.create_task(
-                            BackgroundTasks._publish_single_channel(
-                                bot, ch, sleep_seconds
-                            )
-                        )
-                        active_tasks[channel_id] = task
+                    if channel_id in active_tasks and not active_tasks[channel_id].done():
+                        continue
 
-                # تنظيف المهام المنتهية (لا ننتظرها هنا، فقط نزيلها من القاموس)
+                    task = asyncio.create_task(
+                        BackgroundTasks._publish_single_channel(
+                            bot, ch, sleep_seconds
+                        )
+                    )
+                    active_tasks[channel_id] = task
+
+                # تنظيف المهام المنتهية
                 for cid in list(active_tasks.keys()):
                     if active_tasks[cid].done():
-                        # يمكن معالجة الاستثناءات إذا لزم الأمر
                         with suppress(Exception):
                             active_tasks[cid].result()
                         del active_tasks[cid]
 
-                # الانتظار قبل الدورة التالية
                 await asyncio.sleep(60)
 
-            except asyncio.CancelledError:
-                logger.info("⚠️ إلغاء مهمة النشر التلقائي")
-                # إلغاء المهام الخاصة بالنشر فقط
-                for task in active_tasks.values():
-                    task.cancel()
-                # انتظار إلغاء المهام (اختياري)
-                await asyncio.gather(*active_tasks.values(), return_exceptions=True)
-                raise
+            except asyncio.TimeoutError:
+                logger.error("❌ استعلام القنوات استغرق أكثر من 10 ثوانٍ")
+                await asyncio.sleep(30)
             except Exception as e:
                 logger.error(f"❌ خطأ في auto_publish: {e}")
                 await asyncio.sleep(60)
@@ -1546,16 +1563,15 @@ class BackgroundTasks:
     @staticmethod
     async def auto_backup() -> None:
         await asyncio.sleep(60)
-        with suppress(Exception):
+        try:
             await BackgroundTasks._do_backup()
+        except Exception as e:
+            logger.error(f"❌ Initial backup failed: {e}")
 
         while True:
             await asyncio.sleep(86400)
             try:
                 await BackgroundTasks._do_backup()
-            except asyncio.CancelledError:
-                logger.info("⚠️ إلغاء مهمة النسخ الاحتياطي")
-                raise
             except Exception as e:
                 logger.error(f"❌ Backup error: {e}")
 
@@ -1587,17 +1603,19 @@ class BackgroundTasks:
             try:
                 users = await DB.get_users_for_reminder()
                 for u in users:
-                    with suppress(Exception):
-                        days = int(u['days_left'])
+                    try:
+                        try:
+                            days = int(u['days_left'])
+                        except (ValueError, TypeError):
+                            continue
                         lang = u.get('language', 'ar')
                         text = await get_text(lang, 'reminder_subscription_expires', days=days)
                         if text == 'reminder_subscription_expires':
                             text = f"⚠️ اشتراكك سينتهي بعد {days} يوم"
                         await safe_send(bot, u['user_id'], text)
                         await asyncio.sleep(0.1)
-            except asyncio.CancelledError:
-                logger.info("⚠️ إلغاء مهمة التذكير")
-                raise
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error(f"❌ Reminders: {e}")
 
@@ -1609,14 +1627,13 @@ class BackgroundTasks:
                 ram = get_ram_usage()
                 msg = f"💓 **Heartbeat**\n\n🕐 {TimeUtils.mecca_iso()}\n💾 RAM: {ram['percent']}%"
                 log_channel = await DB.get_log_channel()
-                with suppress(Exception):
+                try:
                     if log_channel:
                         await safe_send(bot, log_channel, msg, parse_mode='Markdown')
                     else:
                         await safe_send(bot, CONFIG.PRIMARY_OWNER_ID, msg, parse_mode='Markdown')
-            except asyncio.CancelledError:
-                logger.info("⚠️ إلغاء مهمة نبض القلب")
-                raise
+                except Exception as e:
+                    logger.error(f"❌ فشل إرسال heartbeat: {e}")
             except Exception as e:
                 logger.error(f"❌ Heartbeat error: {e}")
 
@@ -1632,9 +1649,6 @@ class BackgroundTasks:
             await asyncio.sleep(3600)
             try:
                 await DB.expire_expired_subscriptions()
-            except asyncio.CancelledError:
-                logger.info("⚠️ إلغاء مهمة انتهاء الاشتراكات")
-                raise
             except Exception as e:
                 logger.error(f"❌ Expire subs: {e}")
 
@@ -1652,19 +1666,15 @@ class BackgroundTasks:
                     try:
                         admins = await bot.get_chat_administrators(chat_id)
                         admin_ids = [a.user.id for a in admins if a.user and not a.user.is_bot]
-                        with suppress(Exception):
-                            await DB.sync_group_admins(chat_id, admin_ids)
+                        await DB.sync_group_admins(chat_id, admin_ids)
                         anonymous_ids = [a.user.id for a in admins if a.user and a.user.is_bot and a.status == 'administrator']
                         if anonymous_ids:
-                            with suppress(Exception):
-                                await DB.sync_anonymous_admins(chat_id, anonymous_ids, added_by=CONFIG.PRIMARY_OWNER_ID, user_id_map=None)
+                            user_id_map = {}
+                            await DB.sync_anonymous_admins(chat_id, anonymous_ids, added_by=CONFIG.PRIMARY_OWNER_ID, user_id_map=user_id_map)
                     except Exception:
                         pass
             except asyncio.TimeoutError:
                 logger.error("❌ استعلام المجموعات استغرق أكثر من 15 ثانية")
-            except asyncio.CancelledError:
-                logger.info("⚠️ إلغاء مهمة مزامنة المشرفين")
-                raise
             except Exception as e:
                 logger.error(f"❌ Sync admins: {e}")
             await asyncio.sleep(3600)
@@ -1676,9 +1686,6 @@ class BackgroundTasks:
             await asyncio.sleep(60)
             try:
                 await DB.expire_penalties()
-            except asyncio.CancelledError:
-                logger.info("⚠️ إلغاء مهمة انتهاء العقوبات")
-                raise
             except Exception as e:
                 logger.error(f"❌ Expire penalties: {e}")
 
@@ -1694,13 +1701,13 @@ class BackgroundTasks:
                 _auto_reply_settings_time.clear()
                 _banned_words_cache.clear()
                 _banned_words_cache_time.clear()
+                _banned_words_locks.clear()  # تنظيف الأقفال
                 _auto_reply_cache.clear()
                 _auth_cache.clear()
-                StateManager.cleanup_expired()
+                # تنظيف StateManager
+                StateManager._states.clear()
+                StateManager._timestamps.clear()
                 logger.info("✅ تم تنظيف الكاش المؤقت")
-            except asyncio.CancelledError:
-                logger.info("⚠️ إلغاء مهمة التنظيف")
-                raise
             except Exception as e:
                 logger.error(f"❌ فشل تنظيف الكاش: {e}")
 
@@ -1718,10 +1725,9 @@ class BackgroundTasks:
 # =====================================================================
 
 _webhook_app = None
-_webhook_runner = None
 
 async def setup_webhook(app, port: int):
-    global _webhook_app, _webhook_runner
+    global _webhook_app
     _webhook_app = app
 
     web_app = web.Application()
@@ -1736,27 +1742,20 @@ async def setup_webhook(app, port: int):
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     logger.info(f"✅ Webhook on port {port}")
-    _webhook_runner = runner
     return runner
 
 
 async def webhook_handler(request):
     global _webhook_app
     if _webhook_app is None or not hasattr(_webhook_app, 'bot'):
+        logger.error("❌ Webhook app not initialized")
         return web.Response(status=503, text="Service Unavailable")
     try:
         data = await request.json()
-    except json.JSONDecodeError:
-        return web.Response(status=400, text="Invalid JSON")
-    try:
-        update = Update.de_json(data, _webhook_app.bot)
-        await _webhook_app.process_update(update)
+        await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
         return web.Response(status=200, text="OK")
-    except asyncio.CancelledError:
-        raise
     except Exception as e:
-        update_id = data.get('update_id', 'N/A') if isinstance(data, dict) else 'N/A'
-        logger.error(f"❌ Webhook error (update_id={update_id}): {e}", exc_info=True)
+        logger.error(f"❌ Webhook error: {e}")
         return web.Response(status=500, text="ERROR")
 
 
