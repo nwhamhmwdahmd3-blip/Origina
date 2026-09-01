@@ -70,6 +70,8 @@
   "send_db": "❌ Send database file (.db)",
   "db_extension": "❌ File must be .db",
   "restore_success": "✅ Restore successful!\nRestart the bot to apply changes.",
+  "subscription_active": "✅ Active",
+  "subscription_inactive": "❌ Inactive",
   "mood_analysis": "🎭 Mood Analysis",
   "mood_text": "📝 Text",
   "mood_result": "🎯 Result",
