@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – البوت الرئيسي (نسخة نهائية مصححة)
+🌿 Relax Manager – البوت الرئيسي (نسخة نهائية محسّنة)
 - إصلاحات أمنية في معالجة الدفع
 - تسجيل جميع الأوامر
 - دعم video_note
@@ -10,6 +10,8 @@
 - دعم webhook و polling
 - فتح المنفذ تلقائيًا لتفعيل الخدمة على Render
 - قوائم أوامر منفصلة للخاص والمجموعة
+- تحسين تسجيل الأخطاء والمرونة
+- تنظيف دوري لأقفال المستخدمين
 """
 
 import asyncio
@@ -55,7 +57,8 @@ async def _validate_invoice_for_payment(user_id: int, payload: str):
     """التحقق من صحة الفاتورة للدفع"""
     try:
         data = json.loads(payload)
-    except:
+    except json.JSONDecodeError:
+        logger.error(f"❌ Invalid JSON payload: {payload}")
         return None, None, None
 
     invoice_number = data.get('invoice')
@@ -64,15 +67,18 @@ async def _validate_invoice_for_payment(user_id: int, payload: str):
 
     invoice = await DB.get_invoice(invoice_number)
     if not invoice or invoice['user_id'] != user_id or invoice['status'] != 'pending':
+        logger.warning(f"❌ Invoice invalid or not pending for user {user_id}: {invoice_number}")
         return None, None, None
 
     payment_type = data.get('type')
     if payment_type not in ('subscription', 'gift'):
+        logger.warning(f"❌ Unknown payment type: {payment_type}")
         return None, None, None
 
     plan_id = data.get('plan_id') or data.get('gift_plan_id')
     plan = await DB.get_plan(plan_id) if payment_type == 'subscription' else await DB.get_gift_plan(plan_id)
     if not plan:
+        logger.warning(f"❌ Plan not found: {plan_id}")
         return None, None, None
 
     return invoice, plan, data
@@ -90,24 +96,27 @@ async def pre_checkout(update, context):
         logger.warning(f"❌ Pre-checkout rejected for user {user_id}")
         try:
             await query.answer(ok=False, error_message="الفاتورة غير صالحة أو انتهت صلاحيتها.")
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"❌ Failed to answer pre-checkout rejection: {e}")
         return
 
+    # التحقق من المبلغ
     if hasattr(query, 'total_amount'):
         expected_amount = plan.get('price')
-        if expected_amount is not None and query.total_amount != expected_amount:
+        # السماح بالدفع إذا كان السعر 0 (تجربة مجانية) أو مطابق
+        if expected_amount is not None and expected_amount > 0 and query.total_amount != expected_amount:
+            logger.warning(f"❌ Amount mismatch for user {user_id}: expected {expected_amount}, got {query.total_amount}")
             try:
                 await query.answer(ok=False, error_message="المبلغ غير مطابق لسعر الخطة.")
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"❌ Failed to answer amount mismatch: {e}")
             return
 
     try:
         await query.answer(ok=True)
         logger.info(f"✅ Pre-checkout success: {query.id}")
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"❌ Failed to answer pre-checkout success: {e}")
 
 
 async def successful_payment(update, context):
@@ -122,10 +131,13 @@ async def successful_payment(update, context):
     invoice, plan, data = await _validate_invoice_for_payment(user_id, payload)
 
     if invoice is None or plan is None:
+        logger.error(f"❌ Payment processing failed: invalid invoice or plan for user {user_id}")
         await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع.")
         return
 
-    if plan.get('price') != total_amount:
+    # التحقق من المبلغ (مع السماح بالتجربة المجانية)
+    if plan.get('price', 0) > 0 and plan.get('price') != total_amount:
+        logger.error(f"❌ Amount mismatch in successful payment for user {user_id}: invoice {invoice['number']}")
         await safe_send(context.bot, user_id, "❌ المبلغ المدفوع غير مطابق.")
         return
 
@@ -133,25 +145,37 @@ async def successful_payment(update, context):
     payment_id = telegram_payment_charge_id or provider_payment_charge_id
 
     if payment_type == 'subscription':
-        success = await DB.activate_subscription_with_payment(
-            user_id=user_id,
-            invoice_number=invoice['number'],
-            payment_id=payment_id,
-            plan_id=plan['id']
-        )
-        if success:
-            await DB.add_payment_log(user_id, 'xtr', 'subscription_paid', {'invoice': invoice['number'], 'plan_id': plan['id']})
-            await safe_send(context.bot, user_id, f"✅ تم تفعيل اشتراك {plan['name']} بنجاح!")
-        else:
-            await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع.")
+        try:
+            success = await DB.activate_subscription_with_payment(
+                user_id=user_id,
+                invoice_number=invoice['number'],
+                payment_id=payment_id,
+                plan_id=plan['id']
+            )
+            if success:
+                await DB.add_payment_log(user_id, 'xtr', 'subscription_paid', {'invoice': invoice['number'], 'plan_id': plan['id']})
+                await safe_send(context.bot, user_id, f"✅ تم تفعيل اشتراك {plan['name']} بنجاح!")
+                logger.info(f"✅ Subscription activated for user {user_id}, plan {plan['id']}")
+            else:
+                await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع.")
+                logger.error(f"❌ Failed to activate subscription for user {user_id}, invoice {invoice['number']}")
+        except Exception as e:
+            logger.exception(f"❌ Exception in subscription payment: {e}")
+            await safe_send(context.bot, user_id, "❌ حدث خطأ غير متوقع.")
 
     elif payment_type == 'gift':
-        code = await DB.create_gift_code(plan_id=plan['id'], creator_id=user_id)
-        if code:
-            await DB.mark_invoice_paid(invoice['number'], payment_id)
-            await safe_send(context.bot, user_id, f"🎉 تم شراء كود الهدية!\n🎁 الكود: `{code}`\n📅 المدة: {plan['days']} يوم")
-        else:
-            await safe_send(context.bot, user_id, "❌ حدث خطأ في توليد كود الهدية.")
+        try:
+            code = await DB.create_gift_code(plan_id=plan['id'], creator_id=user_id)
+            if code:
+                await DB.mark_invoice_paid(invoice['number'], payment_id)
+                await safe_send(context.bot, user_id, f"🎉 تم شراء كود الهدية!\n🎁 الكود: `{code}`\n📅 المدة: {plan['days']} يوم")
+                logger.info(f"✅ Gift code created for user {user_id}, plan {plan['id']}")
+            else:
+                await safe_send(context.bot, user_id, "❌ حدث خطأ في توليد كود الهدية.")
+                logger.error(f"❌ Failed to create gift code for user {user_id}, invoice {invoice['number']}")
+        except Exception as e:
+            logger.exception(f"❌ Exception in gift payment: {e}")
+            await safe_send(context.bot, user_id, "❌ حدث خطأ غير متوقع.")
 
 
 async def main():
@@ -170,8 +194,14 @@ async def main():
 
     # تسجيل المطورين
     for dev_id in CONFIG.DEVELOPER_IDS:
-        await DB.register_user(dev_id)
-    await DB.register_user(CONFIG.PRIMARY_OWNER_ID)
+        try:
+            await DB.register_user(dev_id)
+        except Exception as e:
+            logger.error(f"❌ Failed to register developer {dev_id}: {e}")
+    try:
+        await DB.register_user(CONFIG.PRIMARY_OWNER_ID)
+    except Exception as e:
+        logger.error(f"❌ Failed to register owner: {e}")
 
     # تحميل الإعدادات
     KeyboardFactory.load_config()
@@ -345,11 +375,25 @@ async def main():
             try:
                 await task_func(*args)
             except asyncio.CancelledError:
+                logger.info(f"🛑 مهمة {task_name} أُلغيت")
                 raise
             except Exception as e:
                 logger.error(f"❌ Task {task_name} crashed: {e}", exc_info=True)
                 logger.info(f"🔄 إعادة تشغيل المهمة {task_name} بعد 5 ثوانٍ...")
                 await asyncio.sleep(5)
+
+    # مهمة تنظيف الأقفال غير المستخدمة
+    async def cleanup_locks():
+        while True:
+            try:
+                await DB.cleanup_user_locks(max_idle_seconds=3600)
+                # يمكن إضافة تنظيف أقفال القنوات هنا إذا أضفنا دالة في DB
+                await asyncio.sleep(3600)  # كل ساعة
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"❌ cleanup_locks failed: {e}")
+                await asyncio.sleep(60)
 
     tasks = [
         asyncio.create_task(run_task_with_retry(BackgroundTasks.auto_publish, app.bot, task_name="auto_publish")),
@@ -360,6 +404,7 @@ async def main():
         asyncio.create_task(run_task_with_retry(BackgroundTasks.expire_subscriptions, task_name="expire_subscriptions")),
         asyncio.create_task(run_task_with_retry(BackgroundTasks.sync_admins_periodically, app.bot, task_name="sync_admins")),
         asyncio.create_task(run_task_with_retry(BackgroundTasks.expire_penalties_periodically, task_name="expire_penalties")),
+        asyncio.create_task(run_task_with_retry(cleanup_locks, task_name="cleanup_locks")),
     ]
 
     # ========== بدء التشغيل ==========
