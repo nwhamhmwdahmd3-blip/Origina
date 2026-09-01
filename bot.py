@@ -12,6 +12,7 @@
 - قوائم أوامر منفصلة للخاص والمجموعة
 - تحسين تسجيل الأخطاء والمرونة
 - تنظيف دوري لأقفال المستخدمين
+- دمج نظام الكاش الموحد cache.py
 """
 
 import asyncio
@@ -38,6 +39,7 @@ from utils import (
     TranslationManager, KeyboardFactory, BackgroundTasks,
     ErrorHandler, setup_webhook, safe_send
 )
+from cache import cache_cleanup_task
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -387,7 +389,6 @@ async def main():
         while True:
             try:
                 await DB.cleanup_user_locks(max_idle_seconds=3600)
-                # يمكن إضافة تنظيف أقفال القنوات هنا إذا أضفنا دالة في DB
                 await asyncio.sleep(3600)  # كل ساعة
             except asyncio.CancelledError:
                 raise
@@ -404,6 +405,7 @@ async def main():
         asyncio.create_task(run_task_with_retry(BackgroundTasks.expire_subscriptions, task_name="expire_subscriptions")),
         asyncio.create_task(run_task_with_retry(BackgroundTasks.sync_admins_periodically, app.bot, task_name="sync_admins")),
         asyncio.create_task(run_task_with_retry(BackgroundTasks.expire_penalties_periodically, task_name="expire_penalties")),
+        asyncio.create_task(run_task_with_retry(cache_cleanup_task, task_name="cache_cleanup")),
         asyncio.create_task(run_task_with_retry(cleanup_locks, task_name="cleanup_locks")),
     ]
 
