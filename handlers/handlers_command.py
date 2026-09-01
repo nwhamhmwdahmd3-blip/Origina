@@ -8,6 +8,8 @@ handlers_command.py - معالجات الأوامر (CommandHandlers) - النس
 + الأوامر الإضافية: /admin /broadcast /set_force /set_update_ch /set_log_ch
 + /add_admin /remove_admin /export_replies /import_replies /backup /restore
 + /auto_publish /auto_recycle /channels /posts /mood
++ ربط جميع النصوص الثابتة بنظام الترجمة _trans
++ إصلاح تمرير متغيرات القائمة الرئيسية
 """
 
 import asyncio
@@ -181,12 +183,17 @@ class CommandHandlers:
 
         kb = InlineKeyboardMarkup(keyboard)
 
-        title = await get_text(lang, 'main_menu',
-                               user_id=user_id, groups=groups,
-                               sub=sub_text, channel=ch_display,
-                               pending=cnt, auto=auto_text,
-                               recycle=recycle_text,
-                               bot_name=CONFIG.BOT_NAME)
+        title = await get_text(
+            lang,
+            'main_menu',
+            user_name=f"<code>{user_id}</code>",
+            groups_count=groups,
+            active_channel=ch_display,
+            unpublished_posts=cnt,
+            auto_publish=auto_text,
+            auto_recycle=recycle_text,
+            subscription_status=sub_text
+        )
 
         await safe_send(context.bot, user_id, title, reply_markup=kb)
 
@@ -364,41 +371,52 @@ class CommandHandlers:
     @staticmethod
     async def set_force(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
             return
-        await safe_send(context.bot, user_id, await _trans('send_channel_id', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "🔒 أرسل معرف القناة:"))
+        StateManager.set(user_id, UserState.WAIT_FORCE)
+        await safe_send(context.bot, user_id, await _trans('send_channel_id', lang, "🔒 أرسل معرف القناة:"))
 
     @staticmethod
     async def set_update_ch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
             return
-        await safe_send(context.bot, user_id, await _trans('send_update_channel', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "📢 أرسل معرف قناة التحديثات:"))
+        StateManager.set(user_id, UserState.WAIT_UPDATE_CH)
+        await safe_send(context.bot, user_id, await _trans('send_update_channel', lang, "📢 أرسل معرف قناة التحديثات:"))
 
     @staticmethod
     async def set_log_ch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
             return
-        await safe_send(context.bot, user_id, await _trans('send_log_channel', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "📋 أرسل معرف قناة السجلات:"))
+        StateManager.set(user_id, UserState.WAIT_LOG_CH)
+        await safe_send(context.bot, user_id, await _trans('send_log_channel', lang, "📋 أرسل معرف قناة السجلات:"))
 
     @staticmethod
     async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
             return
-        await safe_send(context.bot, user_id, await _trans('send_admin_id', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "👑 أرسل معرف المشرف:"))
+        StateManager.set(user_id, UserState.WAIT_ADMIN_ADD)
+        await safe_send(context.bot, user_id, await _trans('send_admin_id', lang, "👑 أرسل معرف المشرف:"))
 
     @staticmethod
     async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
             return
-        await safe_send(context.bot, user_id, await _trans('send_admin_id_remove', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "🗑️ أرسل معرف المشرف:"))
+        StateManager.set(user_id, UserState.WAIT_ADMIN_REM)
+        await safe_send(context.bot, user_id, await _trans('send_admin_id_remove', lang, "🗑️ أرسل معرف المشرف:"))
 
     @staticmethod
     async def export_replies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
             return
         count = await export_auto_replies(-1)
@@ -407,21 +425,23 @@ class CommandHandlers:
     @staticmethod
     async def import_replies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
             return
         StateManager.set(user_id, UserState.WAIT_IMPORT_FILE)
-        await safe_send(context.bot, user_id, await _trans('send_json', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "📤 أرسل ملف JSON:"))
+        await safe_send(context.bot, user_id, await _trans('send_json', lang, "📤 أرسل ملف JSON:"))
 
     @staticmethod
     async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not CONFIG.is_developer(user_id):
             return
-        await safe_send(context.bot, user_id, await _trans('backup_start', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "⏳ جارٍ النسخ الاحتياطي..."))
+        await safe_send(context.bot, user_id, await _trans('backup_start', lang, "⏳ جارٍ النسخ الاحتياطي..."))
         try:
             from utils import BackgroundTasks
             asyncio.create_task(BackgroundTasks._do_backup())
-            await safe_send(context.bot, user_id, await _trans('backup_done', lang if (lang := await DB.get_user_language(user_id) or 'ar') else 'ar', "✅ تم أخذ نسخة احتياطية"))
+            await safe_send(context.bot, user_id, await _trans('backup_done', lang, "✅ تم أخذ نسخة احتياطية"))
         except Exception as e:
             await safe_send(context.bot, user_id, f"❌ {str(e)[:50]}")
 
@@ -803,16 +823,17 @@ class CommandHandlers:
             return
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
+        lang = await DB.get_user_language(user_id) or 'ar'
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             return
         if update.message.reply_to_message:
             perms = await check_bot_permissions(context.bot, chat_id)
             if not perms.get('can_pin_messages', False):
-                await safe_send(context.bot, user_id, "❌ البوت لا يملك صلاحية تثبيت الرسائل.")
+                await safe_send(context.bot, user_id, await _trans('no_pin_permission', lang, "❌ البوت لا يملك صلاحية تثبيت الرسائل."))
                 return
             try:
                 await context.bot.pin_chat_message(chat_id, update.message.reply_to_message.message_id)
-                await safe_send(context.bot, user_id, "📌 تم التثبيت")
+                await safe_send(context.bot, user_id, await _trans('pinned_success', lang, "📌 تم التثبيت"))
             except Exception as e:
                 logger.error(f"❌ فشل التثبيت: {e}")
 
