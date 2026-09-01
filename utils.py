@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-utils.py - الأدوات المساعدة للبوت (النسخة النهائية الكاملة والمصححة)
-=====================================================================
+utils.py - الأدوات المساعدة للبوت (النسخة النهائية الكاملة والمصححة مع تحسينات)
+=================================================================================
 جميع الدوال والفئات موجودة - جميع الحالات مكتملة - جميع الثوابت معرّفة
 - معالجة لغة off تلقائياً
 - دعم كامل لجميع الأزرار
 - دعم المشرفين المجهولين في is_authorized_in_group (باستخدام user_id)
-- معالجة TimedOut مع إعادة المحاولة في safe_send
+- معالجة TimedOut مع إعادة المحاولة في safe_send (موحدة الكود)
 - كل قناة تنشر بشكل مستقل بفاصل 12 دقيقة
 - حالة WAIT_MOOD لتحليل المشاعر
 - رسالة تأكيد تحميل الردود
@@ -17,15 +17,29 @@ utils.py - الأدوات المساعدة للبوت (النسخة النهائ
 - دمج استعلامات is_authorized_in_group لتقليل الوصول لقاعدة البيانات
 - دعم TTL في AutoReplyCache
 - إصلاح تمرير kwargs في safe_send
-- دعم إرسال الوسائط في safe_send
+- دعم إرسال الوسائط في safe_send (مع توحيد الكود)
 - تقصير نص إعدادات الأمان لمنع تجاوز حد تيليجرام
 - عرض مدد العقوبات الجديدة (فيضان، ليلي، تحذير)
 - إصلاح auto_publish لدعم جميع القنوات بشكل دائم (إزالة الحلقة اللانهائية)
 - إضافة إشعار عند نجاح النشر التلقائي
 - تحسين رسالة تحميل ملف الردود لتظهر في السجلات
 - إظهار حالة حذف رسائل الخدمة في ملخص الأمان
-- تنظيف دوري للكاش والبيانات القديمة
+- تنظيف دوري للكاش والبيانات القديمة (يشمل StateManager)
 - دعم لغات إضافية (فارسي، أردو، هولندي، بولندي، هندي)
+
+تحسينات إضافية:
+- توحيد استعلام الصلاحيات لتقليل الحمل
+- استخدام lru_cache في TranslationManager
+- توحيد كود safe_send لتقليل التكرار
+- إصلاح heartbeat بإضافة parse_mode
+- استخدام contextlib.suppress بدلاً من try/except الفارغ
+
+إصلاحات الكلمات المحظورة:
+- إبطال كاش جميع الدردشات عند تعديل الكلمات العامة
+- إضافة قفل لكل chat_id فقط عند تفعيل الكاش
+- التحقق من نوع البيانات والتحويل الآمن
+- معالجة أخطاء قاعدة البيانات
+- تنظيف الأقفال عند تنظيف الكاش العام
 """
 
 import asyncio
@@ -42,6 +56,8 @@ from typing import Optional, List, Dict, Tuple, Any, Union
 from enum import Enum, auto
 from collections import OrderedDict, deque
 from abc import ABC, abstractmethod
+from functools import lru_cache
+from contextlib import suppress
 
 try:
     import psutil
@@ -68,6 +84,7 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 class TimeUtils:
+    """أدوات الوقت والتاريخ."""
     @staticmethod
     def utc_now() -> datetime:
         return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -114,6 +131,7 @@ class TimeUtils:
 # =====================================================================
 
 class TextUtils:
+    """أدوات معالجة النصوص."""
     @staticmethod
     def contains_link(text: Optional[str]) -> bool:
         if not text:
@@ -154,6 +172,7 @@ class TextUtils:
 # =====================================================================
 
 class RateLimiter:
+    """محدد معدل الإرسال."""
     def __init__(self, max_concurrent: int = 10, max_per_second: int = 30):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._last_calls = deque(maxlen=max_per_second * 2)
@@ -161,6 +180,7 @@ class RateLimiter:
         self.max_per_second = max_per_second
 
     async def acquire(self, *args, **kwargs):
+        """اكتساب إذن الإرسال مع احترام الحد الأقصى."""
         async with self.semaphore:
             async with self._lock:
                 now = time.time()
@@ -181,6 +201,7 @@ RATE_LIMITER = RateLimiter(max_concurrent=15, max_per_second=30)
 # =====================================================================
 
 class MetricsCollector:
+    """جمع إحصائيات الأداء."""
     def __init__(self):
         self.api_calls = deque(maxlen=1000)
         self.errors = deque(maxlen=1000)
@@ -216,6 +237,7 @@ METRICS = MetricsCollector()
 # =====================================================================
 
 class AutoReplyCache:
+    """كاش للردود التلقائية مع TTL."""
     def __init__(self, maxsize: int = 300, ttl: int = 300):
         self.cache = OrderedDict()
         self.maxsize = maxsize
@@ -260,12 +282,15 @@ _auto_reply_settings_time = {}
 # =====================================================================
 
 class TranslationManager:
+    """إدارة الترجمات متعددة اللغات."""
     _translations: Dict[str, Dict] = {}
     _locales_dir: str = str(Path(__file__).resolve().parent / "locales")
     _default_lang: str = "ar"
 
     @classmethod
-    def load_translation(cls, lang: str) -> Dict:
+    @lru_cache(maxsize=32)
+    def _load_translation_cached(cls, lang: str) -> Dict:
+        """تحميل ملف الترجمة مع التخزين المؤقت."""
         if lang == 'off':
             lang = cls._default_lang
         if lang in cls._translations:
@@ -275,10 +300,15 @@ class TranslationManager:
             with open(file_path, "r", encoding="utf-8") as f:
                 cls._translations[lang] = json.load(f)
                 return cls._translations[lang]
-        except:
+        except Exception:
             if lang != cls._default_lang:
-                return cls.load_translation(cls._default_lang)
+                return cls._load_translation_cached(cls._default_lang)
             return {}
+
+    @classmethod
+    def load_translation(cls, lang: str) -> Dict:
+        """واجهة متوافقة مع الكود القديم."""
+        return cls._load_translation_cached(lang)
 
     @classmethod
     def get_text(cls, lang: str, key: str, **kwargs) -> str:
@@ -325,6 +355,7 @@ async def get_text(lang: str, key: str, **kwargs) -> str:
 # =====================================================================
 
 class UserState(Enum):
+    """حالات المستخدم."""
     NONE = auto()
     ADDING_POSTS = auto()
     WAIT_CHANNEL = auto()
@@ -388,6 +419,7 @@ class UserState(Enum):
 
 
 class StateManager:
+    """إدارة حالات المستخدم مع مهلة زمنية."""
     _states: Dict[int, UserState] = {}
     _timestamps: Dict[int, float] = {}
     _timeout = 300
@@ -422,6 +454,7 @@ class StateManager:
 # =====================================================================
 
 class CB:
+    """ثوابت بيانات الأزرار."""
     MAIN = "main"
     BACK = "back"
     CANCEL = "cancel"
@@ -588,6 +621,7 @@ class CB:
 # =====================================================================
 
 class KeyboardFactory:
+    """مصنع لوحات المفاتيح."""
     _configs: Dict[str, Dict] = {}
     _default_lang: str = "ar"
     _config_path_template: str = str(Path(__file__).resolve().parent / "buttons_config_{lang}.json")
@@ -674,6 +708,7 @@ class KeyboardFactory:
 
     @classmethod
     def _load_config_for_lang(cls, lang: str) -> Dict:
+        """تحميل إعدادات الأزرار للغة معينة."""
         if lang == 'off':
             lang = cls._default_lang
 
@@ -827,41 +862,117 @@ class KeyboardFactory:
 
 
 # =====================================================================
-# 10. كاش الكلمات المحظورة
+# 10. كاش الكلمات المحظورة (مع إصلاحات الأخطاء الستة)
 # =====================================================================
 
 _banned_words_cache: Dict[int, List[str]] = {}
 _banned_words_cache_time: Dict[int, float] = {}
+_banned_words_locks: Dict[int, asyncio.Lock] = {}
 _BANNED_WORDS_CACHE_TTL = getattr(CONFIG, 'BANNED_WORDS_CACHE_TTL', 60)
+_ENABLE_BANNED_WORDS_CACHE = getattr(CONFIG, 'ENABLE_BANNED_WORDS_CACHE', False)
+
+
+def _normalize_word(word: Any) -> Optional[str]:
+    """تحويل الكلمة إلى نص صغير بدون مسافات، وتجاهل غير النصوص."""
+    if not isinstance(word, str):
+        return None
+    word = word.strip().lower()
+    return word if word else None
+
 
 async def get_banned_words_cached(chat_id: int) -> List[str]:
-    if not CONFIG.ENABLE_BANNED_WORDS_CACHE:
-        return await DB.get_banned_words(chat_id)
+    """
+    جلب الكلمات المحظورة مع كاش اختياري.
+    الإصلاحات:
+    - لا يتم استخدام قفل إلا عند تفعيل الكاش.
+    - معالجة أخطاء قاعدة البيانات.
+    - التحقق من نوع البيانات وتجاهل غير النصوص.
+    """
+    # إذا كان الكاش مفعّلًا، نستخدم قفل خاص لكل chat_id
+    if _ENABLE_BANNED_WORDS_CACHE:
+        if chat_id not in _banned_words_locks:
+            _banned_words_locks[chat_id] = asyncio.Lock()
+        lock = _banned_words_locks[chat_id]
 
-    now = time.time()
-    if chat_id in _banned_words_cache and (now - _banned_words_cache_time.get(chat_id, 0)) < _BANNED_WORDS_CACHE_TTL:
-        return _banned_words_cache[chat_id]
+        async with lock:
+            # فحص الكاش أولاً
+            now = time.time()
+            if chat_id in _banned_words_cache and (now - _banned_words_cache_time.get(chat_id, 0)) < _BANNED_WORDS_CACHE_TTL:
+                return _banned_words_cache[chat_id]
 
-    words = await DB.get_banned_words(chat_id)
-    _banned_words_cache[chat_id] = words
-    _banned_words_cache_time[chat_id] = now
-    return words
+            # جلب البيانات من قاعدة البيانات مع معالجة الأخطاء
+            try:
+                local_words = await DB.get_banned_words(chat_id) or []
+                if chat_id != -1:
+                    global_words = await DB.get_banned_words(-1) or []
+                    combined = local_words + global_words
+                else:
+                    combined = local_words
+
+                # تطبيع الكلمات بأمان
+                normalized_set = set()
+                for w in combined:
+                    normalized = _normalize_word(w)
+                    if normalized is not None:
+                        normalized_set.add(normalized)
+
+                words = list(normalized_set)
+
+                # تحديث الكاش
+                _banned_words_cache[chat_id] = words
+                _banned_words_cache_time[chat_id] = time.time()
+
+                return words
+            except Exception as e:
+                logger.error(f"❌ فشل جلب الكلمات المحظورة من قاعدة البيانات: {e}")
+                # إرجاع الكاش القديم إذا وجد حتى لو انتهت صلاحيته
+                if chat_id in _banned_words_cache:
+                    return _banned_words_cache[chat_id]
+                return []
+    else:
+        # الكاش غير مفعّل: جلب مباشر بدون قفل
+        try:
+            local_words = await DB.get_banned_words(chat_id) or []
+            if chat_id != -1:
+                global_words = await DB.get_banned_words(-1) or []
+                combined = local_words + global_words
+            else:
+                combined = local_words
+
+            normalized_set = set()
+            for w in combined:
+                normalized = _normalize_word(w)
+                if normalized is not None:
+                    normalized_set.add(normalized)
+
+            return list(normalized_set)
+        except Exception as e:
+            logger.error(f"❌ فشل جلب الكلمات المحظورة من قاعدة البيانات: {e}")
+            return []
 
 
 def invalidate_banned_words_cache(chat_id: int = None) -> None:
-    if chat_id is not None:
-        _banned_words_cache.pop(chat_id, None)
-        _banned_words_cache_time.pop(chat_id, None)
-    else:
+    """
+    إبطال كاش الكلمات المحظورة.
+    إذا كان التعديل على الكلمات العامة (chat_id == -1) أو بدون تحديد،
+    يتم مسح كاش جميع الدردشات لأنها تشمل الكلمات العامة أيضًا.
+    """
+    if chat_id is None or chat_id == -1:
+        # مسح الكل لضمان تطبيق الكلمات العامة الجديدة فورًا
         _banned_words_cache.clear()
         _banned_words_cache_time.clear()
+        # تنظيف الأقفال غير الضرورية
+        _banned_words_locks.clear()
+    else:
+        _banned_words_cache.pop(chat_id, None)
+        _banned_words_cache_time.pop(chat_id, None)
 
 
 async def get_min_publish_interval() -> int:
     val = await DB.get_setting('min_publish_interval', str(CONFIG.MIN_PUBLISH_INTERVAL))
     try:
         return max(1, int(val))
-    except:
+    except (ValueError, TypeError):
         return CONFIG.MIN_PUBLISH_INTERVAL
 
 
@@ -872,6 +983,7 @@ async def get_min_publish_interval() -> int:
 _auth_cache = TTLCache(maxsize=CONFIG.AUTH_CACHE_SIZE, ttl=CONFIG.AUTH_CACHE_TTL)
 
 async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
+    """التحقق من صلاحيات المستخدم في المجموعة."""
     if user_id == CONFIG.PRIMARY_OWNER_ID:
         return True
 
@@ -884,18 +996,18 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
             authorized = True
-    except:
+    except Exception:
         pass
 
     if not authorized:
+        # استعلام موحد لجميع الجداول المخفية
         row = await DB.fetchone("""
-            SELECT 1 FROM (
-                SELECT owner_id as user_id FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?
-                UNION
-                SELECT admin_id FROM hidden_admins WHERE chat_id=? AND admin_id=?
-                UNION
-                SELECT user_id FROM anonymous_admins WHERE chat_id=? AND (user_id=? OR (user_id IS NULL AND anonymous_id=?))
-            ) LIMIT 1
+            SELECT 1 FROM hidden_owner_groups WHERE chat_id=? AND owner_id=?
+            UNION ALL
+            SELECT 1 FROM hidden_admins WHERE chat_id=? AND admin_id=?
+            UNION ALL
+            SELECT 1 FROM anonymous_admins WHERE chat_id=? AND (user_id=? OR (user_id IS NULL AND anonymous_id=?))
+            LIMIT 1
         """, (chat_id, user_id, chat_id, user_id, chat_id, user_id, user_id))
         authorized = row is not None
 
@@ -904,7 +1016,7 @@ async def is_authorized_in_group(bot, chat_id: int, user_id: int) -> bool:
 
 
 def invalidate_auth_cache(chat_id: int = None, user_id: int = None) -> None:
-    try:
+    with suppress(Exception):
         if chat_id and user_id:
             _auth_cache.pop(f"auth_{chat_id}_{user_id}", None)
         elif chat_id:
@@ -913,11 +1025,10 @@ def invalidate_auth_cache(chat_id: int = None, user_id: int = None) -> None:
                     _auth_cache.pop(k, None)
         else:
             _auth_cache.clear()
-    except:
-        pass
 
 
 async def check_bot_permissions(bot, chat_id: int) -> dict:
+    """فحص صلاحيات البوت في المجموعة."""
     try:
         me = await bot.get_chat_member(chat_id, bot.id)
         if me.status not in ['administrator', 'creator']:
@@ -936,30 +1047,48 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 # 12. إرسال آمن (مع معالجة TimedOut ودعم الوسائط)
 # =====================================================================
 
+async def _send_media(bot, chat_id, media_type, media_file_id, caption=None, reply_markup=None, **kwargs):
+    """إرسال الوسائط حسب النوع."""
+    if media_type == 'photo':
+        return await bot.send_photo(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
+    elif media_type == 'video':
+        return await bot.send_video(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
+    elif media_type == 'document':
+        return await bot.send_document(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
+    elif media_type == 'audio':
+        return await bot.send_audio(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
+    elif media_type == 'voice':
+        return await bot.send_voice(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
+    elif media_type == 'animation':
+        return await bot.send_animation(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
+    elif media_type == 'sticker':
+        return await bot.send_sticker(chat_id, media_file_id, reply_markup=reply_markup)
+    elif media_type == 'video_note':
+        return await bot.send_video_note(chat_id, media_file_id, reply_markup=reply_markup)
+    else:
+        return await bot.send_message(chat_id, caption or ".", reply_markup=reply_markup, **kwargs)
+
+
 async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode: str = None, **kwargs):
-    if not text and not kwargs.get('photo') and not kwargs.get('video') and not kwargs.get('document') and not kwargs.get('audio') and not kwargs.get('voice') and not kwargs.get('animation') and not kwargs.get('sticker') and not kwargs.get('video_note'):
+    """إرسال آمن مع دعم جميع أنواع الوسائط وإعادة المحاولة عند TimedOut."""
+    if not text and not any(k in kwargs for k in ['photo', 'video', 'document', 'audio', 'voice', 'animation', 'sticker', 'video_note']):
         return None
 
     await RATE_LIMITER.acquire()
     text = TextUtils.sanitize(text, max_len=4096) if text else ""
 
+    # استخراج نوع الوسائط إن وجد
+    media_type = None
+    media_file_id = None
+    for mt in ['photo', 'video', 'document', 'audio', 'voice', 'animation', 'sticker', 'video_note']:
+        if mt in kwargs:
+            media_type = mt
+            media_file_id = kwargs.pop(mt)
+            break
+
     try:
-        if 'photo' in kwargs:
-            return await bot.send_photo(chat_id=chat_id, photo=kwargs['photo'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'photo'})
-        elif 'video' in kwargs:
-            return await bot.send_video(chat_id=chat_id, video=kwargs['video'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'video'})
-        elif 'document' in kwargs:
-            return await bot.send_document(chat_id=chat_id, document=kwargs['document'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'document'})
-        elif 'audio' in kwargs:
-            return await bot.send_audio(chat_id=chat_id, audio=kwargs['audio'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'audio'})
-        elif 'voice' in kwargs:
-            return await bot.send_voice(chat_id=chat_id, voice=kwargs['voice'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'voice'})
-        elif 'animation' in kwargs:
-            return await bot.send_animation(chat_id=chat_id, animation=kwargs['animation'], caption=text or None, reply_markup=reply_markup, **{k:v for k,v in kwargs.items() if k != 'animation'})
-        elif 'sticker' in kwargs:
-            return await bot.send_sticker(chat_id=chat_id, sticker=kwargs['sticker'], reply_markup=reply_markup)
-        elif 'video_note' in kwargs:
-            return await bot.send_video_note(chat_id=chat_id, video_note=kwargs['video_note'], reply_markup=reply_markup)
+        if media_type:
+            return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
         else:
             return await bot.send_message(
                 chat_id=chat_id,
@@ -972,22 +1101,8 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
         logger.warning("⚠️ Timed out، محاولة إعادة الإرسال...")
         try:
             await asyncio.sleep(1)
-            if 'photo' in kwargs:
-                return await bot.send_photo(chat_id=chat_id, photo=kwargs['photo'], caption=text or None, reply_markup=reply_markup)
-            elif 'video' in kwargs:
-                return await bot.send_video(chat_id=chat_id, video=kwargs['video'], caption=text or None, reply_markup=reply_markup)
-            elif 'document' in kwargs:
-                return await bot.send_document(chat_id=chat_id, document=kwargs['document'], caption=text or None, reply_markup=reply_markup)
-            elif 'audio' in kwargs:
-                return await bot.send_audio(chat_id=chat_id, audio=kwargs['audio'], caption=text or None, reply_markup=reply_markup)
-            elif 'voice' in kwargs:
-                return await bot.send_voice(chat_id=chat_id, voice=kwargs['voice'], caption=text or None, reply_markup=reply_markup)
-            elif 'animation' in kwargs:
-                return await bot.send_animation(chat_id=chat_id, animation=kwargs['animation'], caption=text or None, reply_markup=reply_markup)
-            elif 'sticker' in kwargs:
-                return await bot.send_sticker(chat_id=chat_id, sticker=kwargs['sticker'], reply_markup=reply_markup)
-            elif 'video_note' in kwargs:
-                return await bot.send_video_note(chat_id=chat_id, video_note=kwargs['video_note'], reply_markup=reply_markup)
+            if media_type:
+                return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
             else:
                 return await bot.send_message(
                     chat_id=chat_id,
@@ -1002,17 +1117,18 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
     except BadRequest as e:
         error_msg = str(e).lower()
         if "can't parse entities" in error_msg or "parse" in error_msg:
-            plain = re.sub(r'[*_`\[\]()~>#+\-=|{}.!\\]', '', text)
-            if len(plain) > 4096:
-                plain = plain[:4093] + "..."
+            # محاولة الإرسال بدون parse_mode مع الحفاظ على النص
             try:
-                return await bot.send_message(
-                    chat_id=chat_id,
-                    text=plain,
-                    reply_markup=reply_markup,
-                    parse_mode=None,
-                    **kwargs
-                )
+                if media_type:
+                    return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
+                else:
+                    return await bot.send_message(
+                        chat_id=chat_id,
+                        text=text[:4096],
+                        reply_markup=reply_markup,
+                        parse_mode=None,
+                        **kwargs
+                    )
             except Exception as e2:
                 logger.error(f"❌ فشل الإرسال النهائي: {e2}")
         return None
@@ -1026,7 +1142,11 @@ def get_ram_usage() -> dict:
         return {'total': 0, 'used': 0, 'percent': 0}
     try:
         mem = psutil.virtual_memory()
-        return {'total': round(mem.total / (1024**3), 1), 'used': round(mem.used / (1024**3), 1), 'percent': mem.percent}
+        return {
+            'total': round(mem.total / (1024**3), 1),
+            'used': round(mem.used / (1024**3), 1),
+            'percent': mem.percent
+        }
     except Exception as e:
         logger.error(f"❌ فشل جلب إحصائيات الرام: {e}")
         return {'total': 0, 'used': 0, 'percent': 0}
@@ -1427,7 +1547,11 @@ class BackgroundTasks:
 
         while True:
             try:
-                channels = await DB.get_channels_to_publish(max_channels)
+                # إضافة مهلة زمنية لاستعلام قاعدة البيانات
+                channels = await asyncio.wait_for(
+                    DB.get_channels_to_publish(max_channels),
+                    timeout=10
+                )
 
                 if not channels:
                     await asyncio.sleep(60)
@@ -1445,16 +1569,18 @@ class BackgroundTasks:
                     )
                     active_tasks[channel_id] = task
 
+                # تنظيف المهام المنتهية
                 for cid in list(active_tasks.keys()):
                     if active_tasks[cid].done():
-                        try:
+                        with suppress(Exception):
                             active_tasks[cid].result()
-                        except Exception as e:
-                            logger.error(f"❌ خطأ في مهمة القناة {cid}: {e}")
                         del active_tasks[cid]
 
                 await asyncio.sleep(60)
 
+            except asyncio.TimeoutError:
+                logger.error("❌ استعلام القنوات استغرق أكثر من 10 ثوانٍ")
+                await asyncio.sleep(30)
             except Exception as e:
                 logger.error(f"❌ خطأ في auto_publish: {e}")
                 await asyncio.sleep(60)
@@ -1513,7 +1639,7 @@ class BackgroundTasks:
                             text = f"⚠️ اشتراكك سينتهي بعد {days} يوم"
                         await safe_send(bot, u['user_id'], text)
                         await asyncio.sleep(0.1)
-                    except:
+                    except Exception:
                         pass
             except Exception as e:
                 logger.error(f"❌ Reminders: {e}")
@@ -1528,9 +1654,9 @@ class BackgroundTasks:
                 log_channel = await DB.get_log_channel()
                 try:
                     if log_channel:
-                        await safe_send(bot, log_channel, msg)
+                        await safe_send(bot, log_channel, msg, parse_mode='Markdown')
                     else:
-                        await safe_send(bot, CONFIG.PRIMARY_OWNER_ID, msg)
+                        await safe_send(bot, CONFIG.PRIMARY_OWNER_ID, msg, parse_mode='Markdown')
                 except Exception as e:
                     logger.error(f"❌ فشل إرسال heartbeat: {e}")
             except Exception as e:
@@ -1556,7 +1682,10 @@ class BackgroundTasks:
         await asyncio.sleep(60)
         while True:
             try:
-                groups = await DB.fetchall("SELECT chat_id FROM bot_groups WHERE banned=0")
+                groups = await asyncio.wait_for(
+                    DB.fetchall("SELECT chat_id FROM bot_groups WHERE banned=0"),
+                    timeout=15
+                )
                 for group in groups:
                     chat_id = group['chat_id'] if isinstance(group, dict) else group[0]
                     try:
@@ -1567,8 +1696,10 @@ class BackgroundTasks:
                         if anonymous_ids:
                             user_id_map = {}
                             await DB.sync_anonymous_admins(chat_id, anonymous_ids, added_by=CONFIG.PRIMARY_OWNER_ID, user_id_map=user_id_map)
-                    except:
+                    except Exception:
                         pass
+            except asyncio.TimeoutError:
+                logger.error("❌ استعلام المجموعات استغرق أكثر من 15 ثانية")
             except Exception as e:
                 logger.error(f"❌ Sync admins: {e}")
             await asyncio.sleep(3600)
@@ -1585,7 +1716,7 @@ class BackgroundTasks:
 
     @staticmethod
     async def cleanup_old_data() -> None:
-        """تنظيف البيانات القديمة والكاش المؤقت"""
+        """تنظيف البيانات القديمة والكاش المؤقت."""
         while True:
             await asyncio.sleep(3600)
             try:
@@ -1595,8 +1726,12 @@ class BackgroundTasks:
                 _auto_reply_settings_time.clear()
                 _banned_words_cache.clear()
                 _banned_words_cache_time.clear()
+                _banned_words_locks.clear()  # تنظيف الأقفال
                 _auto_reply_cache.clear()
                 _auth_cache.clear()
+                # تنظيف StateManager
+                StateManager._states.clear()
+                StateManager._timestamps.clear()
                 logger.info("✅ تم تنظيف الكاش المؤقت")
             except Exception as e:
                 logger.error(f"❌ فشل تنظيف الكاش: {e}")
