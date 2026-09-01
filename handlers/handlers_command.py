@@ -9,7 +9,8 @@ handlers_command.py - معالجات الأوامر (CommandHandlers) - النس
 + /add_admin /remove_admin /export_replies /import_replies /backup /restore
 + /auto_publish /auto_recycle /channels /posts /mood
 + ربط جميع النصوص الثابتة بنظام الترجمة _trans
-+ إصلاح تمرير متغيرات القائمة الرئيسية
++ إصلاح متغيرات القائمة الرئيسية main_menu
++ إصلاح متغيرات معلومات المطور developer_info
 """
 
 import asyncio
@@ -236,10 +237,12 @@ class CommandHandlers:
     async def developer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
-        text = await get_text(lang, 'developer_info',
-                              owner_id=CONFIG.PRIMARY_OWNER_ID,
-                              bot_name=CONFIG.BOT_NAME,
-                              bot_username=CONFIG.BOT_USERNAME)
+        text = await get_text(
+            lang,
+            'developer_info',
+            developer_name=getattr(CONFIG, 'DEVELOPER_NAME', "ريلاكس"),
+            developer_contact=getattr(CONFIG, 'DEVELOPER_CONTACT', "@Reelaaaxbot")
+        )
         await safe_send(context.bot, user_id, text)
 
     @staticmethod
