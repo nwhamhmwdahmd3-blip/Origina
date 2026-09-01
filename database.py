@@ -14,6 +14,7 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ صيانة دورية وتحسين تلقائي
 - ✅ استعادة قاعدة البيانات من نسخة احتياطية
 - ✅ تحسين get_channels_to_publish لاستخدام publishable_unpublished_count
+- ✅ ترتيب المنشورات حسب الأقل فشلاً أولاً لضمان عدالة النشر
 """
 
 import sqlite3
@@ -1626,7 +1627,7 @@ class Database:
                    WHERE p.channel_db_id = ? AND p.published = 0
                      AND (p.fail_count IS NULL OR p.fail_count < 3)
                      AND uc.banned = 0
-                   ORDER BY p.created_at ASC LIMIT 1""",
+                   ORDER BY p.fail_count ASC, p.created_at ASC LIMIT 1""",
                 (channel_db_id,)
             )
             if post:
@@ -1642,7 +1643,7 @@ class Database:
                 return None
             await self.execute("UPDATE posts SET published = 0, published_at = NULL, fail_count = 0 WHERE channel_db_id = ? AND published = 1", (channel_db_id,))
             post = await self.fetchone(
-                "SELECT p.id, p.text, p.media_type, p.media_file_id, p.fail_count FROM posts p WHERE p.channel_db_id = ? AND p.published = 0 ORDER BY p.created_at ASC LIMIT 1",
+                "SELECT p.id, p.text, p.media_type, p.media_file_id, p.fail_count FROM posts p WHERE p.channel_db_id = ? AND p.published = 0 ORDER BY p.fail_count ASC, p.created_at ASC LIMIT 1",
                 (channel_db_id,)
             )
             return post
