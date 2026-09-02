@@ -1,4 +1,4 @@
-##!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
@@ -31,6 +31,8 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - إصلاح معالجة warn_penalty_set
 - إصلاح زر مدة العقوبة
 - إصلاح أزرار set_warn_penalty
+- إصلاح استيراد handlers_command
+- إصلاح زر enable_all وdisable_all
 """
 
 import asyncio
@@ -1065,6 +1067,52 @@ class CallbackHandlers:
         if action == "warn_penalty_duration":
             context.user_data['penalty_type'] = 'warn_penalty'
             await CallbackHandlers._show_penalty_durations(update, context, query, chat_id, lang, 'warn_penalty')
+            return
+
+        # ========== معالجة تفعيل الكل ==========
+        if action == "enable_all":
+            try:
+                update_data = {
+                    'delete_links': 1, 'mentions': 1, 'slow_mode': 1,
+                    'delete_videos': 1, 'delete_audio': 1, 'delete_animation': 1,
+                    'delete_service': 1, 'delete_documents': 1, 'delete_stickers': 1,
+                    'delete_forwarded': 1, 'delete_polls': 1, 'delete_games': 1,
+                    'delete_voice': 1, 'delete_video_note': 1, 'delete_photos': 1,
+                    'welcome_enabled': 1, 'goodbye_enabled': 1, 'antiflood_enabled': 1,
+                    'night_mode_enabled': 1, 'warn_enabled': 1,
+                    'auto_approve_join': 1, 'auto_reject_join': 0,
+                }
+                await DB.update_security_settings(chat_id, **update_data)
+                await _safe_answer(query, "✅ تم تفعيل جميع الحمايات")
+                settings = await DB.get_security_settings(chat_id)
+                await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
+                return
+            except Exception as e:
+                logger.error(f"خطأ في enable_all: {e}", exc_info=True)
+                await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
+            return
+
+        # ========== معالجة تعطيل الكل ==========
+        if action == "disable_all":
+            try:
+                update_data = {
+                    'delete_links': 0, 'mentions': 0, 'slow_mode': 0,
+                    'delete_videos': 0, 'delete_audio': 0, 'delete_animation': 0,
+                    'delete_service': 0, 'delete_documents': 0, 'delete_stickers': 0,
+                    'delete_forwarded': 0, 'delete_polls': 0, 'delete_games': 0,
+                    'delete_voice': 0, 'delete_video_note': 0, 'delete_photos': 0,
+                    'welcome_enabled': 0, 'goodbye_enabled': 0, 'antiflood_enabled': 0,
+                    'night_mode_enabled': 0, 'warn_enabled': 0,
+                    'auto_approve_join': 0, 'auto_reject_join': 0,
+                }
+                await DB.update_security_settings(chat_id, **update_data)
+                await _safe_answer(query, "✅ تم تعطيل جميع الحمايات")
+                settings = await DB.get_security_settings(chat_id)
+                await safe_edit(query, KeyboardFactory._format_security_text(settings), reply_markup=KeyboardFactory.build("security", chat_id=chat_id, lang=lang), bot=context.bot)
+                return
+            except Exception as e:
+                logger.error(f"خطأ في disable_all: {e}", exc_info=True)
+                await _safe_answer(query, "❌ حدث خطأ", show_alert=True)
             return
 
         try:
