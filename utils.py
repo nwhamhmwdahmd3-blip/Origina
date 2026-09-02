@@ -11,6 +11,7 @@ utils.py - الأدوات المساعدة للبوت (نسخة محسنة مع 
 - تطبيق الإصلاحات المقترحة (النقاط 1،6،7،8،9،14)
 - تطبيق إصلاحات إضافية بعد الفحص الثاني (النقاط 1،2،5،6،8،9،11،13،14)
 - إضافة تحسينات اختيارية: timeout للطلبات، تحسين أسماء المتغيرات، فحص Content-Type
+- إضافة عرض حالة الوسائط في _format_security_text
 """
 
 import asyncio
@@ -837,6 +838,9 @@ class KeyboardFactory:
             f"⚠️ تحذيرات: {st(settings.get('warn_enabled', 0))} | 📊 حد: {settings.get('max_warnings', 3)}\n",
             f"🎯 ترحيب: {st(settings.get('welcome_enabled', 0))} | 👋 وداع: {st(settings.get('goodbye_enabled', 0))}",
             f"🗑️ رسائل الخدمة: {st(settings.get('delete_service', 0))}",
+            # السطر الجديد لعرض حالة الوسائط
+            f"🎬 فيديو: {st(settings.get('delete_videos', 0))} | 🎤 صوتي: {st(settings.get('delete_voice', 0))} | 🖼️ ملصقات: {st(settings.get('delete_stickers', 0))}",
+            f"📄 ملفات: {st(settings.get('delete_documents', 0))} | 📸 صور: {st(settings.get('delete_photos', 0))} | 🎞️ متحرك: {st(settings.get('delete_animation', 0))}",
             f"✅ موافقة: {st(settings.get('auto_approve_join', 0))} | ❌ رفض: {st(settings.get('auto_reject_join', 0))}\n",
             f"⏱️ كتم: {settings.get('mute_default_duration', 3600)}ث | 🚫 حظر: {settings.get('ban_default_duration', 0)}ث | 🔒 تقييد: {settings.get('restrict_default_duration', 1800)}ث",
             f"⚠️ مخالفات: {settings.get('violation_strikes', 3)} | ⏱️ مدة: {settings.get('violation_duration', 60)}ث",
