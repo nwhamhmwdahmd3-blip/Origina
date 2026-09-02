@@ -30,6 +30,7 @@ handlers_callback.py - المعالج النهائي الكامل لجميع ا�
 - إصلاح مشكلة _trans مع lang=None
 - إصلاح معالجة warn_penalty_set
 - إصلاح زر مدة العقوبة
+- إصلاح أزرار set_warn_penalty
 """
 
 import asyncio
@@ -165,7 +166,7 @@ class CallbackHandlers:
         now_time = time.monotonic()
         last_time = context.user_data.get(debounce_key, 0)
         if now_time - last_time < 1.5:
-            await _safe_answer(query, await _trans('wait_moment', 'ar', "⚠️ انتظر لحظة"))
+            await _safe_answer(query, "⚠️ انتظر لحظة")
             return
         context.user_data[debounce_key] = now_time
 
@@ -176,7 +177,7 @@ class CallbackHandlers:
         if 'start_time' not in context.bot_data:
             context.bot_data['start_time'] = time.monotonic()
 
-        # ========== معالجة set_warn_penalty الجديدة ==========
+        # ========== معالجة set_warn_penalty ==========
         if data.startswith("set_warn_penalty:"):
             try:
                 _, penalty_type, chat_id_str = data.split(":")
@@ -193,7 +194,7 @@ class CallbackHandlers:
                 await _safe_answer(query, "❌ بيانات غير صالحة", show_alert=True)
             return
 
-        # ========== معالجة set_warn_duration الجديدة ==========
+        # ========== معالجة set_warn_duration ==========
         if data.startswith("set_warn_duration:"):
             try:
                 _, duration_str, chat_id_str = data.split(":")
@@ -243,7 +244,7 @@ class CallbackHandlers:
                 StateManager.clear(user_id)
                 context.user_data.clear()
                 context.args = []
-                await _safe_answer(query, await _trans('cancelled', lang, "❌ تم الإلغاء"))
+                await _safe_answer(query, "❌ تم الإلغاء")
                 return
 
             if base_data == CB.HELP:
@@ -253,19 +254,15 @@ class CallbackHandlers:
                 return
 
             if base_data == CB.TRIAL:
-                await _safe_answer(query, await _trans('activating', lang, "🔄 جارٍ التفعيل..."))
+                await _safe_answer(query, "🔄 جارٍ التفعيل...")
                 if await DB.has_used_trial(user_id):
                     await safe_edit(query, await _trans('trial_used', lang, "❌ لقد استخدمت التجربة المجانية بالفعل."), bot=context.bot)
                     return
                 days = await DB.activate_trial(user_id)
                 if days > 0:
-                    text = await _trans('trial_activated', lang, "✅ تم تفعيل التجربة المجانية لمدة {days} يوم")
-                    try:
-                        text = text.format(days=days)
-                    except:
-                        text = f"✅ تم تفعيل التجربة المجانية لمدة {days} يوم"
+                    text = f"✅ تم تفعيل التجربة المجانية لمدة {days} يوم"
                 else:
-                    text = await _trans('trial_failed', lang, "❌ تعذر تفعيل التجربة")
+                    text = "❌ تعذر تفعيل التجربة"
                 await safe_edit(query, text, bot=context.bot)
                 return
 
@@ -303,11 +300,10 @@ class CallbackHandlers:
             if base_data == CB.SETTINGS:
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
-                settings_title = await _trans('settings_title', lang, "⚙️ الإعدادات")
                 auto_label = await _trans('auto_publish_status', lang, "📤 النشر")
                 recycle_label = await _trans('auto_recycle_status', lang, "♻️ التدوير")
                 kb = KeyboardFactory.build("settings", lang=lang)
-                await safe_edit(query, f"{settings_title}\n\n{auto_label}: {auto}\n{recycle_label}: {rec}", reply_markup=kb, bot=context.bot)
+                await safe_edit(query, f"⚙️ الإعدادات\n\n{auto_label}: {auto}\n{recycle_label}: {rec}", reply_markup=kb, bot=context.bot)
                 return
 
             if base_data == CB.TOGGLE_AUTO:
@@ -315,11 +311,10 @@ class CallbackHandlers:
                 await DB.set_auto_publish(user_id, not cur)
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
-                settings_title = await _trans('settings_title', lang, "⚙️ الإعدادات")
                 auto_label = await _trans('auto_publish_status', lang, "📤 النشر")
                 recycle_label = await _trans('auto_recycle_status', lang, "♻️ التدوير")
                 kb = KeyboardFactory.build("settings", lang=lang)
-                await safe_edit(query, f"{settings_title}\n\n{auto_label}: {auto}\n{recycle_label}: {rec}", reply_markup=kb, bot=context.bot)
+                await safe_edit(query, f"⚙️ الإعدادات\n\n{auto_label}: {auto}\n{recycle_label}: {rec}", reply_markup=kb, bot=context.bot)
                 return
 
             if base_data == CB.TOGGLE_REC:
@@ -327,26 +322,25 @@ class CallbackHandlers:
                 await DB.set_auto_recycle(user_id, not cur)
                 auto = "✅" if await DB.get_auto_publish_status(user_id) else "❌"
                 rec = "✅" if await DB.get_auto_recycle_status(user_id) else "❌"
-                settings_title = await _trans('settings_title', lang, "⚙️ الإعدادات")
                 auto_label = await _trans('auto_publish_status', lang, "📤 النشر")
                 recycle_label = await _trans('auto_recycle_status', lang, "♻️ التدوير")
                 kb = KeyboardFactory.build("settings", lang=lang)
-                await safe_edit(query, f"{settings_title}\n\n{auto_label}: {auto}\n{recycle_label}: {rec}", reply_markup=kb, bot=context.bot)
+                await safe_edit(query, f"⚙️ الإعدادات\n\n{auto_label}: {auto}\n{recycle_label}: {rec}", reply_markup=kb, bot=context.bot)
                 return
 
             # ========== الباقات والدفع ==========
             if base_data == CB.PLANS:
-                await safe_edit(query, await _trans('plan_selector', lang, "💎 اختر باقة:"), reply_markup=KeyboardFactory.build("plans", lang=lang), bot=context.bot)
+                await safe_edit(query, "💎 اختر باقة:", reply_markup=KeyboardFactory.build("plans", lang=lang), bot=context.bot)
                 return
 
             if base_data == "gift_plans":
                 plans = await DB.get_gift_plans()
                 if not plans:
-                    await safe_edit(query, await _trans('no_gift_plans', lang, "📭 لا توجد خطط هدايا"), bot=context.bot)
+                    await safe_edit(query, "📭 لا توجد خطط هدايا", bot=context.bot)
                     return
                 kb = [[InlineKeyboardButton(f"🎁 {p['days']} يوم - {p['price']} ⭐", callback_data=f"buy_gift:{p['id']}")] for p in plans]
-                kb.append([InlineKeyboardButton(await _trans('back', lang, "🔙 رجوع"), callback_data=CB.BACK)])
-                await safe_edit(query, await _trans('gift_plans_text', lang, "💎 اختر خطة هدية:"), reply_markup=InlineKeyboardMarkup(kb), bot=context.bot)
+                kb.append([InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)])
+                await safe_edit(query, "💎 اختر خطة هدية:", reply_markup=InlineKeyboardMarkup(kb), bot=context.bot)
                 return
 
             if base_data == "redeem_gift":
@@ -356,7 +350,7 @@ class CallbackHandlers:
                 return
 
             if data.startswith("buy_sub_"):
-                await _safe_answer(query, await _trans('preparing', lang, "🔄 جارٍ التحضير..."))
+                await _safe_answer(query, "🔄 جارٍ التحضير...")
                 try:
                     days = int(data.split("_")[-1])
                 except:
@@ -429,9 +423,9 @@ class CallbackHandlers:
             if base_data == CB.INVOICES:
                 invoices = await DB.get_user_invoices(user_id, 10)
                 if not invoices:
-                    await safe_edit(query, await _trans('no_invoices', lang, "📭 لا توجد فواتير"), bot=context.bot)
+                    await safe_edit(query, "📭 لا توجد فواتير", bot=context.bot)
                     return
-                text = await _trans('my_invoices', lang, "🧾 فواتيري") + "\n\n" + "\n".join(f"• #{inv['number']} - {inv['amount']} ⭐" for inv in invoices)
+                text = "🧾 فواتيري\n\n" + "\n".join(f"• #{inv['number']} - {inv['amount']} ⭐" for inv in invoices)
                 await safe_edit(query, text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data=CB.BACK)]]), bot=context.bot)
                 return
 
@@ -443,27 +437,17 @@ class CallbackHandlers:
                     code = code[4:]
                 link = f"https://t.me/{CONFIG.BOT_USERNAME}?start=ref_{code}"
 
-                referral_title = await _trans('referral_title', lang, "🔗 نظام الإحالات")
-                referral_link_label = await _trans('referral_link_label', lang, "📎 رابطك:")
-                referral_referred = await _trans('referral_referred', lang, "👥 المُحالين:")
-                referral_available = await _trans('referral_available', lang, "🎁 الأيام المتاحة:")
-                days_suffix = await _trans('days_suffix', lang, "يوم")
-
                 text = (
-                    f"{referral_title}\n\n"
-                    f"{referral_link_label}\n{link}\n\n"
-                    f"{referral_referred} {stats['total']}\n"
-                    f"{referral_available} {stats['available']} {days_suffix}"
+                    f"🔗 نظام الإحالات\n\n"
+                    f"📎 رابطك:\n{link}\n\n"
+                    f"👥 المُحالين: {stats['total']}\n"
+                    f"🎁 الأيام المتاحة: {stats['available']} يوم"
                 )
 
-                ref_claim_btn = KeyboardFactory.get_text("ref_claim", lang)
-                ref_list_btn = KeyboardFactory.get_text("ref_list", lang)
-                back_btn = KeyboardFactory.get_text("back", lang)
-
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(ref_claim_btn, callback_data=CB.REF_CLAIM),
-                     InlineKeyboardButton(ref_list_btn, callback_data=CB.REF_LIST)],
-                    [InlineKeyboardButton(back_btn, callback_data=CB.BACK)]
+                    [InlineKeyboardButton("🎁 صرف المكافأة", callback_data=CB.REF_CLAIM),
+                     InlineKeyboardButton("📋 المُحالين", callback_data=CB.REF_LIST)],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data=CB.BACK)]
                 ])
                 await safe_edit(query, text, reply_markup=kb, bot=context.bot)
                 return
@@ -496,33 +480,22 @@ class CallbackHandlers:
                     settings['weekly_report'] = new_val
                     await DB.update_reminder_settings(user_id, weekly_report=new_val)
 
-                reminder_title = await _trans('reminder_title', lang, "⏰ التذكيرات")
-                rem_sub_label = await _trans('rem_sub_label', lang, "🔔 الاشتراك")
-                rem_daily_label = await _trans('rem_daily_label', lang, "📊 يومي")
-                rem_weekly_label = await _trans('rem_weekly_label', lang, "📈 أسبوعي")
-
                 text = (
-                    f"{reminder_title}\n\n"
-                    f"{rem_sub_label}: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
-                    f"{rem_daily_label}: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
-                    f"{rem_weekly_label}: {'✅' if settings.get('weekly_report') else '❌'}"
+                    f"⏰ التذكيرات\n\n"
+                    f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
+                    f"📊 يومي: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
+                    f"📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
                 )
                 await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang), bot=context.bot)
                 return
 
             if base_data == CB.REMINDER:
                 settings = await DB.get_reminder_settings(user_id) or {}
-
-                reminder_title = await _trans('reminder_title', lang, "⏰ التذكيرات")
-                rem_sub_label = await _trans('rem_sub_label', lang, "🔔 الاشتراك")
-                rem_daily_label = await _trans('rem_daily_label', lang, "📊 يومي")
-                rem_weekly_label = await _trans('rem_weekly_label', lang, "📈 أسبوعي")
-
                 text = (
-                    f"{reminder_title}\n\n"
-                    f"{rem_sub_label}: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
-                    f"{rem_daily_label}: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
-                    f"{rem_weekly_label}: {'✅' if settings.get('weekly_report') else '❌'}"
+                    f"⏰ التذكيرات\n\n"
+                    f"🔔 الاشتراك: {'✅' if settings.get('subscription_reminder') else '❌'}\n"
+                    f"📊 يومي: {'✅' if settings.get('daily_stats_reminder') else '❌'}\n"
+                    f"📈 أسبوعي: {'✅' if settings.get('weekly_report') else '❌'}"
                 )
                 await safe_edit(query, text, reply_markup=KeyboardFactory.build("reminder", lang=lang), bot=context.bot)
                 return
@@ -1095,16 +1068,17 @@ class CallbackHandlers:
             return
 
         try:
-            if action in ['links', 'mentions', 'slow', 'video', 'audio', 'anim', 'service', 'doc', 'sticker', 'forward', 'poll', 'game', 'voice', 'videonote', 'welcome', 'goodbye', 'flood', 'night', 'approve_join', 'reject_join', 'nsfw']:
-                toggle_map = {
-                    "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
-                    "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
-                    "service": "delete_service", "doc": "delete_documents", "sticker": "delete_stickers",
-                    "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
-                    "voice": "delete_voice", "videonote": "delete_video_note", "welcome": "welcome_enabled",
-                    "goodbye": "goodbye_enabled", "flood": "antiflood_enabled", "night": "night_mode_enabled",
-                    "approve_join": "auto_approve_join", "reject_join": "auto_reject_join", "nsfw": "nsfw_enabled",
-                }
+            toggle_map = {
+                "links": "delete_links", "mentions": "mentions", "slow": "slow_mode",
+                "video": "delete_videos", "audio": "delete_audio", "anim": "delete_animation",
+                "service": "delete_service", "doc": "delete_documents", "sticker": "delete_stickers",
+                "forward": "delete_forwarded", "poll": "delete_polls", "game": "delete_games",
+                "voice": "delete_voice", "videonote": "delete_video_note", "welcome": "welcome_enabled",
+                "goodbye": "goodbye_enabled", "flood": "antiflood_enabled", "night": "night_mode_enabled",
+                "approve_join": "auto_approve_join", "reject_join": "auto_reject_join", "nsfw": "nsfw_enabled",
+            }
+
+            if action in toggle_map:
                 col = toggle_map[action]
                 settings = await DB.get_security_settings(chat_id)
                 new_val = 1 - settings.get(col, 0)
