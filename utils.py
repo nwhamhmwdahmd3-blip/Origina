@@ -8,6 +8,9 @@ utils.py - الأدوات المساعدة للبوت (نسخة محسنة مع 
 - تحسينات إضافية طفيفة لا تؤثر على السلوك الحالي
 - دمج اختياري مع cache.py (بدون إزالة الكاشات المحلية)
 - إصلاحات دقيقة في بعض النقاط
+- تطبيق الإصلاحات المقترحة (النقاط 1،6،7،8،9،14)
+- تطبيق إصلاحات إضافية بعد الفحص الثاني (النقاط 1،2،5،6،8،9،11،13،14)
+- إضافة تحسينات اختيارية: timeout للطلبات، تحسين أسماء المتغيرات، فحص Content-Type
 """
 
 import asyncio
@@ -22,7 +25,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any, Union
 from enum import Enum, auto
-from collections import OrderedDict, deque
+from collections import OrderedDict, deque, defaultdict
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from contextlib import suppress
@@ -165,6 +168,7 @@ class RateLimiter:
                     wait_time = 1 - (now - self._last_calls[0])
                     if wait_time > 0:
                         await asyncio.sleep(wait_time)
+                        now = time.time()  # إعادة حساب الوقت بعد الانتظار
                 self._last_calls.append(now)
 
 
@@ -295,7 +299,10 @@ class TranslationManager:
             template = key
         try:
             return template.format_map(kwargs)
-        except (KeyError, IndexError):
+        except KeyError:
+            # استبدال المفاتيح المفقودة بسلسلة فارغة
+            return template.format_map(defaultdict(str, kwargs))
+        except Exception:
             return template
 
     @classmethod
@@ -611,8 +618,7 @@ class KeyboardFactory:
         "rem_weekly", "rem_days", "translation", "trans_off",
         "invoices", "groups", "admin", "panel_close",
         "pub_all", "post_add", "post_pub", "post_list", "post_rec",
-        "sec_antiflood_settings", "sec_night_settings",
-        "sec_penalty_durations", "sec_close", "admin_uptime"
+        "admin_uptime"
     }
 
     _default_texts = {
@@ -790,6 +796,7 @@ class KeyboardFactory:
             if menu_name in default_menus:
                 rows = default_menus[menu_name]
             else:
+                logger.warning(f"⚠️ قائمة الأزرار '{menu_name}' غير معروفة")
                 rows = []
 
         keyboard = []
@@ -808,6 +815,10 @@ class KeyboardFactory:
                         callback = f"{item}:{chat_id}"
                     btn_row.append(InlineKeyboardButton(text, callback_data=callback))
             keyboard.append(btn_row)
+
+        if not keyboard:
+            keyboard = [[InlineKeyboardButton(cls.get_text("back", lang), callback_data="back")]]
+
         return InlineKeyboardMarkup(keyboard)
 
     @classmethod
@@ -900,9 +911,7 @@ async def get_banned_words_cached(chat_id: int) -> List[str]:
                 return words
             except Exception as e:
                 logger.error(f"❌ فشل جلب الكلمات المحظورة من قاعدة البيانات: {e}")
-                # إرجاع الكاش القديم إذا وجد حتى لو انتهت صلاحيته
-                if chat_id in _banned_words_cache:
-                    return _banned_words_cache[chat_id]
+                # إرجاع قائمة فارغة عند الفشل، وليس الكاش القديم المنتهي
                 return []
     else:
         # الكاش غير مفعّل: جلب مباشر بدون قفل
@@ -936,8 +945,7 @@ def invalidate_banned_words_cache(chat_id: int = None) -> None:
         # مسح الكل لضمان تطبيق الكلمات العامة الجديدة فورًا
         _banned_words_cache.clear()
         _banned_words_cache_time.clear()
-        # تنظيف الأقفال غير الضرورية
-        _banned_words_locks.clear()
+        # لا نمسح الأقفال هنا للحفاظ على الاستقرار
     else:
         _banned_words_cache.pop(chat_id, None)
         _banned_words_cache_time.pop(chat_id, None)
@@ -1009,9 +1017,9 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
         if me.status not in ['administrator', 'creator']:
             return {'can_act': False, 'reason': 'البوت ليس مشرفاً'}
         can_delete = getattr(me, 'can_delete_messages', False)
-        can_ban = getattr(me, 'can_restrict_members', False)
+        can_restrict = getattr(me, 'can_restrict_members', False)
         can_pin = getattr(me, 'can_pin_messages', False)
-        if not can_delete or not can_ban:
+        if not can_delete or not can_restrict:
             return {'can_act': False, 'reason': 'صلاحيات ناقصة'}
         return {'can_act': True, 'reason': '', 'can_pin': can_pin}
     except Exception as e:
@@ -1024,6 +1032,9 @@ async def check_bot_permissions(bot, chat_id: int) -> dict:
 
 async def _send_media(bot, chat_id, media_type, media_file_id, caption=None, reply_markup=None, **kwargs):
     """إرسال الوسائط حسب النوع."""
+    # الأنواع التي لا تدعم caption
+    no_caption_types = {'voice', 'sticker', 'video_note'}
+
     if media_type == 'photo':
         return await bot.send_photo(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
     elif media_type == 'video':
@@ -1033,13 +1044,25 @@ async def _send_media(bot, chat_id, media_type, media_file_id, caption=None, rep
     elif media_type == 'audio':
         return await bot.send_audio(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
     elif media_type == 'voice':
-        return await bot.send_voice(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
+        # لا يدعم caption، أرسل النص كرسالة منفصلة بعد الإرسال
+        sent = await bot.send_voice(chat_id, media_file_id, reply_markup=reply_markup, **kwargs)
+        if caption:
+            await bot.send_message(chat_id, caption)
+        return sent
     elif media_type == 'animation':
         return await bot.send_animation(chat_id, media_file_id, caption=caption, reply_markup=reply_markup, **kwargs)
     elif media_type == 'sticker':
-        return await bot.send_sticker(chat_id, media_file_id, reply_markup=reply_markup)
+        # لا يدعم caption، أرسل النص كرسالة منفصلة بعد الإرسال
+        sent = await bot.send_sticker(chat_id, media_file_id, reply_markup=reply_markup)
+        if caption:
+            await bot.send_message(chat_id, caption)
+        return sent
     elif media_type == 'video_note':
-        return await bot.send_video_note(chat_id, media_file_id, reply_markup=reply_markup)
+        # لا يدعم caption، أرسل النص كرسالة منفصلة بعد الإرسال
+        sent = await bot.send_video_note(chat_id, media_file_id, reply_markup=reply_markup)
+        if caption:
+            await bot.send_message(chat_id, caption)
+        return sent
     else:
         return await bot.send_message(chat_id, caption or ".", reply_markup=reply_markup, **kwargs)
 
@@ -1061,9 +1084,12 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
             media_file_id = kwargs.pop(mt)
             break
 
+    # قص النص إلى 1024 حرف إذا كان سيستخدم كـ caption
+    caption_text = text[:1024] if media_type else text
+
     try:
         if media_type:
-            return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
+            return await _send_media(bot, chat_id, media_type, media_file_id, caption=caption_text or None, reply_markup=reply_markup, **kwargs)
         else:
             return await bot.send_message(
                 chat_id=chat_id,
@@ -1077,7 +1103,7 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
         try:
             await asyncio.sleep(1)
             if media_type:
-                return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
+                return await _send_media(bot, chat_id, media_type, media_file_id, caption=caption_text or None, reply_markup=reply_markup, **kwargs)
             else:
                 return await bot.send_message(
                     chat_id=chat_id,
@@ -1095,7 +1121,7 @@ async def safe_send(bot, chat_id: int, text: str, reply_markup=None, parse_mode:
             # محاولة الإرسال بدون parse_mode مع الحفاظ على النص
             try:
                 if media_type:
-                    return await _send_media(bot, chat_id, media_type, media_file_id, caption=text or None, reply_markup=reply_markup, **kwargs)
+                    return await _send_media(bot, chat_id, media_type, media_file_id, caption=caption_text or None, reply_markup=reply_markup, **kwargs)
                 else:
                     return await bot.send_message(
                         chat_id=chat_id,
@@ -1156,10 +1182,21 @@ class MutePenalty(PenaltyStrategy):
             return False, "لا يمكن كتم البوت"
         duration = kwargs.get('duration', 60)
         until_date = TimeUtils.utc_now() + timedelta(seconds=duration) if duration > 0 else None
+        # صلاحيات كتم صريحة: تعطيل جميع الإرساليات مع السماح بالدعوة فقط
+        permissions = ChatPermissions(
+            can_send_messages=False,
+            can_send_media_messages=False,
+            can_send_polls=False,
+            can_send_other_messages=False,
+            can_add_web_page_previews=False,
+            can_change_info=False,
+            can_invite_users=True,
+            can_pin_messages=False
+        )
         try:
             await bot.restrict_chat_member(
                 chat_id, user_id,
-                ChatPermissions(can_send_messages=False),
+                permissions,
                 until_date=until_date
             )
             return True, "✅ تم الكتم"
@@ -1196,10 +1233,21 @@ class RestrictPenalty(PenaltyStrategy):
             return False, "لا يمكن تقييد البوت"
         duration = kwargs.get('duration', 0)
         until_date = TimeUtils.utc_now() + timedelta(seconds=duration) if duration > 0 else None
+        # تقييد: السماح بالرسائل النصية فقط دون وسائط أو تفاعلات أخرى
+        permissions = ChatPermissions(
+            can_send_messages=True,
+            can_send_media_messages=False,
+            can_send_polls=False,
+            can_send_other_messages=False,
+            can_add_web_page_previews=False,
+            can_change_info=False,
+            can_invite_users=True,
+            can_pin_messages=False
+        )
         try:
             await bot.restrict_chat_member(
                 chat_id, user_id,
-                ChatPermissions(can_send_messages=True, can_send_media_messages=False),
+                permissions,
                 until_date=until_date
             )
             return True, "✅ تم التقييد"
@@ -1356,7 +1404,8 @@ async def import_auto_replies(chat_id: int, file_path_or_data: Union[str, List[D
 
 async def fetch_json_from_url(url: str) -> Optional[Union[list, dict]]:
     try:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=10)  # إضافة مهلة 10 ثوانٍ
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url) as response:
                 response.raise_for_status()
                 data = await response.json()
@@ -1457,13 +1506,19 @@ class BackgroundTasks:
             elif media_type == 'audio' and media_file_id:
                 await bot.send_audio(channel_id, media_file_id, caption=caption)
             elif media_type == 'voice' and media_file_id:
-                await bot.send_voice(channel_id, media_file_id, caption=caption)
+                await bot.send_voice(channel_id, media_file_id)
+                if text:
+                    await bot.send_message(channel_id, text)
             elif media_type == 'animation' and media_file_id:
                 await bot.send_animation(channel_id, media_file_id, caption=caption)
             elif media_type == 'sticker' and media_file_id:
                 await bot.send_sticker(channel_id, media_file_id)
+                if text:
+                    await bot.send_message(channel_id, text)
             elif media_type == 'video_note' and media_file_id:
                 await bot.send_video_note(channel_id, media_file_id)
+                if text:
+                    await bot.send_message(channel_id, text)
             else:
                 await bot.send_message(channel_id, text[:4096] if text else ".")
             return True
@@ -1505,6 +1560,8 @@ class BackgroundTasks:
                         await safe_send(bot, user_id, f"✅ تم نشر منشور في قناتك")
                 except Exception as e:
                     logger.warning(f"تعذر إرسال إشعار النشر للمستخدم {user_id}: {e}")
+                # الانتظار الفعلي بعد النشر
+                await asyncio.sleep(sleep_seconds)
             else:
                 await DB.increment_post_fail(post['id'])
 
@@ -1517,6 +1574,8 @@ class BackgroundTasks:
         max_channels = getattr(CONFIG, 'MAX_CHANNELS_PER_CYCLE', 20)
         min_interval_minutes = await get_min_publish_interval()
         sleep_seconds = min_interval_minutes * 60
+        # Semaphore للحد من عدد المهام المتزامنة
+        publish_semaphore = asyncio.Semaphore(max_channels)
 
         active_tasks = {}
 
@@ -1537,12 +1596,13 @@ class BackgroundTasks:
                     if channel_id in active_tasks and not active_tasks[channel_id].done():
                         continue
 
-                    task = asyncio.create_task(
-                        BackgroundTasks._publish_single_channel(
-                            bot, ch, sleep_seconds
-                        )
-                    )
+                    async def run_publish(ch=ch, bot=bot, sleep_seconds=sleep_seconds):
+                        async with publish_semaphore:
+                            await BackgroundTasks._publish_single_channel(bot, ch, sleep_seconds)
+
+                    task = asyncio.create_task(run_publish())
                     active_tasks[channel_id] = task
+                    await asyncio.sleep(0.5)  # مهلة صغيرة بين إنشاء المهام
 
                 # تنظيف المهام المنتهية
                 for cid in list(active_tasks.keys()):
@@ -1701,13 +1761,17 @@ class BackgroundTasks:
                 _auto_reply_settings_time.clear()
                 _banned_words_cache.clear()
                 _banned_words_cache_time.clear()
-                _banned_words_locks.clear()  # تنظيف الأقفال
                 _auto_reply_cache.clear()
                 _auth_cache.clear()
-                # تنظيف StateManager
-                StateManager._states.clear()
-                StateManager._timestamps.clear()
-                logger.info("✅ تم تنظيف الكاش المؤقت")
+                # تنظيف الحالات المنتهية فقط
+                now = time.time()
+                expired_users = [
+                    uid for uid, ts in StateManager._timestamps.items()
+                    if now - ts > StateManager._timeout
+                ]
+                for uid in expired_users:
+                    StateManager.clear(uid)
+                logger.info("✅ تم تنظيف الكاش المؤقت والحالات المنتهية")
             except Exception as e:
                 logger.error(f"❌ فشل تنظيف الكاش: {e}")
 
@@ -1751,6 +1815,10 @@ async def webhook_handler(request):
         logger.error("❌ Webhook app not initialized")
         return web.Response(status=503, text="Service Unavailable")
     try:
+        # فحص Content-Type
+        if request.content_type != 'application/json':
+            logger.warning("⚠️ Webhook request with non-JSON content")
+            return web.Response(status=400, text="Bad Request")
         data = await request.json()
         await _webhook_app.process_update(Update.de_json(data, _webhook_app.bot))
         return web.Response(status=200, text="OK")
