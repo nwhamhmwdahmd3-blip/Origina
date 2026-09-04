@@ -257,5 +257,24 @@
   "antiflood_settings_btn": "🌊 إعدادات الفيضان:",
   "auto_reply_settings_btn": "🤖 إعدادات الردود التلقائية:",
   "night_mode": "الوضع الليلي",
-  "antiflood": "الفيضان"
+  "antiflood": "الفيضان",
+
+  "ad_channels_menu_title": "📢 إدارة قنوات الإعلانات",
+  "add_ad_channel_prompt": "📝 أرسل معرف القناة أو @username:",
+  "ad_channel_saved": "✅ تم حفظ قناة الإعلانات بنجاح!",
+  "ad_channel_add_failed": "❌ فشل إضافة القناة. تأكد من عدم تكرارها.",
+  "invalid_channel_id": "❌ معرف قناة غير صالح أو لا يمكن الوصول إليها",
+  "my_ad_channels_title": "📢 **قنوات الإعلانات الخاصة بك:**",
+  "no_ad_channels": "📭 لا توجد قنوات إعلانات مضافة.",
+  "set_ad_price_prompt": "💰 أرسل المعرف الداخلي للقناة والسعر الجديد:",
+  "enable_ad_channel_prompt": "✅ أرسل المعرف الداخلي للقناة لتفعيلها:",
+  "disable_ad_channel_prompt": "❌ أرسل المعرف الداخلي للقناة لتعطيلها:",
+  "delete_ad_channel_prompt": "🗑️ أرسل المعرف الداخلي للقناة لحذفها:",
+  "ad_price_set_success": "✅ تم تحديد السعر: {price} ⭐",
+  "ad_channel_enabled": "✅ تم تفعيل القناة",
+  "ad_channel_disabled": "✅ تم تعطيل القناة",
+  "ad_channel_deleted": "✅ تم حذف القناة",
+  "not_channel_owner": "❌ هذه القناة ليست ملكك",
+  "invalid_internal_id": "❌ معرف داخلي غير صالح",
+  "ad_ch_menu": "📢 الإعلانات"
 }

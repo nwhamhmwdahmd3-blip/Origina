@@ -157,7 +157,7 @@ class CommandHandlers:
         recycle_text = enabled_text if recycle else disabled_text
 
         # بناء لوحة المفاتيح
-        kb_rows = KeyboardFactory.get_menu("main_menu", lang)
+        kb_rows = await KeyboardFactory.get_menu("main_menu", lang)
         keyboard = []
 
         for row in kb_rows:
@@ -165,10 +165,10 @@ class CommandHandlers:
             for item in row:
                 if item == "admin_panel_btn":
                     if CONFIG.is_developer(user_id):
-                        text_btn = KeyboardFactory.get_text("admin_panel_btn", lang)
+                        text_btn = await KeyboardFactory.get_text("admin_panel_btn", lang)
                         btn_row.append(InlineKeyboardButton(text_btn, callback_data=CB.ADMIN))
                 else:
-                    text_btn = KeyboardFactory.get_text(item, lang)
+                    text_btn = await KeyboardFactory.get_text(item, lang)
                     if item.endswith("_url"):
                         url = f"https://t.me/{CONFIG.BOT_USERNAME}?startgroup"
                         btn_row.append(InlineKeyboardButton(text_btn, url=url))
@@ -178,7 +178,7 @@ class CommandHandlers:
                 keyboard.append(btn_row)
 
         if CONFIG.is_developer(user_id):
-            admin_text = KeyboardFactory.get_text("admin_panel_btn", lang)
+            admin_text = await KeyboardFactory.get_text("admin_panel_btn", lang)
             if not any(btn.callback_data == CB.ADMIN for row in keyboard for btn in row):
                 keyboard.append([InlineKeyboardButton(admin_text, callback_data=CB.ADMIN)])
 
@@ -223,14 +223,14 @@ class CommandHandlers:
     async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
-        kb = KeyboardFactory.build("plans", lang=lang)
+        kb = await KeyboardFactory.build("plans", lang=lang)
         await safe_send(context.bot, user_id, await _trans('plan_selector', lang, "💎 اختر باقة:"), reply_markup=kb)
 
     @staticmethod
     async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         lang = await DB.get_user_language(user_id) or 'ar'
-        kb = KeyboardFactory.build("support", lang=lang)
+        kb = await KeyboardFactory.build("support", lang=lang)
         await safe_send(context.bot, user_id, await _trans('send_support_message', lang, "📞 أرسل رسالة الدعم"), reply_markup=kb)
 
     @staticmethod
@@ -272,7 +272,7 @@ class CommandHandlers:
                 row = []
         if row:
             buttons.append(row)
-        back_text = KeyboardFactory.get_text("back", lang)
+        back_text = await KeyboardFactory.get_text("back", lang)
         buttons.append([InlineKeyboardButton(back_text, callback_data=CB.BACK)])
         kb = InlineKeyboardMarkup(buttons)
         current_lang = await _trans('current_language', lang, "الحالية")
@@ -316,7 +316,7 @@ class CommandHandlers:
             ])
 
         kb.append([
-            InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)
+            InlineKeyboardButton(await KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)
         ])
 
         await safe_send(context.bot, user_id, text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
@@ -524,7 +524,7 @@ class CommandHandlers:
         context.user_data['security_chat_id'] = chat_id
         settings = await DB.get_security_settings(chat_id)
         text = KeyboardFactory._format_security_text(settings)
-        kb = KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
+        kb = await KeyboardFactory.build("security", chat_id=chat_id, lang=lang)
         await safe_send(context.bot, user_id, text, reply_markup=kb)
 
     @staticmethod
@@ -537,7 +537,7 @@ class CommandHandlers:
         if not await is_authorized_in_group(context.bot, chat_id, user_id):
             await safe_send(context.bot, user_id, await _trans('unauthorized', lang, "❌ غير مصرح"))
             return
-        kb = KeyboardFactory.build("panel", chat_id=chat_id, lang=lang)
+        kb = await KeyboardFactory.build("panel", chat_id=chat_id, lang=lang)
         await safe_send(context.bot, user_id, await _trans('group_panel', lang, "📋 لوحة تحكم المجموعة"), reply_markup=kb)
 
     @staticmethod
@@ -973,7 +973,7 @@ class CommandHandlers:
         kb = []
         for plan in plans:
             kb.append([InlineKeyboardButton(f"🎁 {plan['days']} يوم - {plan['price']} ⭐", callback_data=f"buy_gift:{plan['id']}")])
-        kb.append([InlineKeyboardButton(KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
+        kb.append([InlineKeyboardButton(await KeyboardFactory.get_text("back", lang), callback_data=CB.BACK)])
         await safe_send(context.bot, user_id, await _trans('gift_plans_text', lang, "💎 اختر خطة هدية:"), reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
 
     @staticmethod

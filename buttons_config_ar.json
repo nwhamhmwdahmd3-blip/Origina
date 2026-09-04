@@ -11,7 +11,6 @@
     "ch_stats": "📊 إحصائيات",
     "ch_del": "🗑️ حذف",
     "ch_sel": "📌 اختيار",
-    "sched_btn": "📅 الجدولة",
     "add_group_button": "➕ إضافة مجموعة",
     "security_button": "🛡️ الأمان",
     "groups": "👥 مجموعاتي",
@@ -52,9 +51,6 @@
     "admin_backup": "💾 نسخ احتياطي",
     "admin_restore": "🔄 استعادة نسخة",
     "admin_restore_sel": "📂 اختيار نسخة",
-    "admin_show_backups": "📂 عرض النسخ المتاحة",
-    "admin_upload_backup": "📤 رفع نسخة من الجهاز",
-    "admin_disable_force": "🔓 تعطيل الاشتراك الإجباري",
     "admin_send_update": "📢 إرسال تحديث",
     "admin_set_update_ch": "📢 تعيين قناة التحديثات",
     "admin_show_update": "👀 عرض قناة التحديثات",
@@ -75,7 +71,6 @@
     "admin_rem_banned": "🗑️ حذف كلمة",
     "admin_create_contest": "🏆 إنشاء مسابقة",
     "admin_declare_winner": "🏆 إعلان الفائز",
-    "admin_declare_winner_sel": "🏆 اختيار مسابقة",
     "admin_del_contest": "🗑️ حذف مسابقة",
     "admin_export_replies": "📤 تصدير الردود",
     "admin_import_replies": "📥 استيراد ردود",
@@ -92,10 +87,8 @@
     "rem_daily": "📊 التقرير اليومي",
     "rem_weekly": "📈 التقرير الأسبوعي",
     "rem_days": "📅 عدد الأيام",
-    "rem_lang": "🌐 لغة التذكير",
     "translation": "🌐 الترجمة",
     "trans_off": "❌ إيقاف الترجمة",
-    "trans_set": "✅ تعيين",
     "referral": "🔗 الإحالات",
     "ref_claim": "🎁 صرف المكافأة",
     "ref_list": "📋 قائمة المُحالين",
@@ -135,7 +128,6 @@
     "sec_links": "🔗 الروابط",
     "sec_mentions": "👤 المعرفات",
     "sec_slow": "🐌 الوضع البطيء",
-    "sec_slow_mode_seconds": "⏱️ مدة الوضع البطيء",
     "sec_flood": "🌊 الفيضان",
     "sec_video": "🎬 فيديو",
     "sec_audio": "🎵 موسيقى",
@@ -149,7 +141,7 @@
     "sec_voice": "🎤 صوتي",
     "sec_videonote": "🎥 فيديو ملاحظة",
     "sec_banned_words": "🚫 كلمات محظورة",
-    "sec_toggle_banned_words": "✅ تفعيل الحذف / ❌ تعطيل الحذف",
+    "sec_toggle_banned_words": "🔄 تبديل حذف الكلمات",
     "sec_welcome": "🎯 ترحيب",
     "sec_welcome_text": "📝 نص الترحيب",
     "sec_goodbye": "👋 وداع",
@@ -195,7 +187,16 @@
     "sec_penalty_ban": "🚫 حظر",
     "sec_penalty_mute": "🔇 كتم",
     "sec_penalty_kick": "👢 طرد",
-    "sec_penalty_restrict": "🔒 تقييد"
+    "sec_penalty_restrict": "🔒 تقييد",
+    "ad_ch_menu": "📢 قنوات الإعلانات",
+    "ad_ch_add": "➕ إضافة قناة إعلانات",
+    "ad_ch_list": "📋 قنواتي الإعلانية",
+    "ad_ch_set_price": "💰 تحديد سعر",
+    "ad_ch_enable": "✅ تفعيل",
+    "ad_ch_disable": "❌ تعطيل",
+    "ad_ch_delete": "🗑️ حذف",
+    "ad_ch_cancel": "❌ إلغاء",
+    "ad_ch_back": "🔙 رجوع للإعلانات"
   },
   "menus": {
     "main_menu": {
@@ -206,6 +207,7 @@
         ["pub_all"],
         ["plans", "subscribe"],
         ["gift_plans", "redeem_gift"],
+        ["ad_ch_menu"],
         ["support", "developer"],
         ["help", "language"],
         ["trial", "contests"],
@@ -248,10 +250,10 @@
         ["admin_uptime"],
         ["admin_metrics"],
         ["admin_backup", "admin_restore"],
+        ["admin_restore_sel"],
         ["admin_send_update", "admin_set_update_ch"],
         ["admin_show_update"],
         ["admin_force_sub", "admin_set_force"],
-        ["admin_disable_force"],
         ["admin_broadcast"],
         ["admin_tickets", "admin_del_tickets"],
         ["admin_log_ch", "admin_set_log_ch"],
@@ -261,6 +263,7 @@
         ["admin_banned_words", "admin_add_banned"],
         ["admin_list_banned", "admin_rem_banned"],
         ["admin_create_contest", "admin_declare_winner"],
+        ["admin_del_contest"],
         ["admin_export_replies", "admin_import_replies"],
         ["admin_import_github"],
         ["admin_refresh_cache"],
@@ -272,8 +275,8 @@
     "security": {
       "rows": [
         ["sec_links", "sec_mentions"],
-        ["sec_slow", "sec_slow_mode_seconds"],
-        ["sec_flood", "sec_antiflood_settings"],
+        ["sec_slow", "sec_flood"],
+        ["sec_antiflood_settings"],
         ["sec_video", "sec_audio"],
         ["sec_anim", "sec_service"],
         ["sec_doc", "sec_sticker"],
@@ -389,6 +392,14 @@
       "rows": [
         ["sec_set_violation_strikes", "sec_set_violation_duration"],
         ["back"]
+      ]
+    },
+    "ad_channels": {
+      "rows": [
+        ["ad_ch_add", "ad_ch_list"],
+        ["ad_ch_set_price", "ad_ch_enable"],
+        ["ad_ch_disable", "ad_ch_delete"],
+        ["ad_ch_back"]
       ]
     }
   }

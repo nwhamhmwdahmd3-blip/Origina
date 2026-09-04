@@ -16,6 +16,203 @@ database.py - قاعدة البيانات المتكاملة للبوت (الن�
 - ✅ تحسين get_channels_to_publish لاستخدام publishable_unpublished_count
 - ✅ ترتيب المنشورات حسب الأقل فشلاً أولاً لضمان عدالة النشر
 - ✅ إصلاح استدعاءات _get_user_lock مع await
+- ✅ إضافة جدول user_wallets ودوال المحفظة (محفظة المستخدمين)
+- ✅ إضافة دوال قنوات الإعلانات المنفصلة (ad_channels)
+- ✅ تحسين أداء الاستعلامات المعقدة
+- ✅ إضافة دالة get_all_active_penalties
+- ✅ إضافة دالة get_contest_by_id
+- ✅ إضافة دالة count_user_ad_channels
+- ✅ إضافة دالة is_ad_channel_owner
+- ✅ تحسين دالة get_channels_to_publish باستخدام CTE
+- ✅ إضافة فهارس إضافية
+- ✅ دالة cleanup_old_logs مع معلمات مرنة
+- ✅ دالة backup_auto_replies
+- ✅ دالة export_auto_replies_to_file
+- ✅ دالة import_auto_replies_from_file
+- ✅ دالة reset_auto_replies
+- ✅ دالة get_auto_reply_stats
+- ✅ إضافة جدول ad_channels
+- ✅ جميع دوال المحفظة
+- ✅ دالة get_user_by_referral_code
+- ✅ دالة get_active_subscription مع JOIN
+- ✅ دالة get_plan_by_name
+- ✅ دالة get_gift_plans
+- ✅ دالة redeem_gift_code مع التحقق من الكود
+- ✅ دالة grant_subscription_days
+- ✅ دالة create_subscription مع provider_sub_id
+- ✅ دالة expire_expired_subscriptions مع _refresh_user_subscription_end
+- ✅ دالة create_invoice مع رقم فاتورة فريد
+- ✅ دالة mark_invoice_paid
+- ✅ دالة get_invoice
+- ✅ دالة get_user_invoices
+- ✅ دالة add_payment_log
+- ✅ دالة activate_subscription_with_payment
+- ✅ دالة create_gift_code
+- ✅ دوال العقوبات الكاملة
+- ✅ دوال المخالفات
+- ✅ دوال النقاط
+- ✅ دوال الإحالات
+- ✅ دوال التذكيرات
+- ✅ دوال المسابقات
+- ✅ دوال الإعدادات العامة
+- ✅ دوال الباقات والاشتراكات
+- ✅ دوال الفواتير والدفع
+- ✅ دوال المحفظة
+- ✅ دوال إحصائيات شاملة
+- ✅ دوال النسخ الاحتياطي
+- ✅ دوال إضافية مطلوبة من handlers_message.py
+- ✅ دوال قنوات الإعلانات (ad_channels)
+- ✅ دالة get_channel_by_user
+- ✅ دالة get_user_channels
+- ✅ دالة get_active_channel
+- ✅ دالة set_active_channel
+- ✅ دالة delete_channel
+- ✅ دالة get_channel_info
+- ✅ دالة get_channel_stats
+- ✅ دالة get_unpublished_posts_count
+- ✅ دالة add_posts مع التحقق من الحد الأقصى
+- ✅ دالة get_next_post مع auto_recycle
+- ✅ دالة mark_post_published
+- ✅ دالة increment_post_fail
+- ✅ دالة delete_post
+- ✅ دالة reset_posts
+- ✅ دوال المجموعات الكاملة
+- ✅ دوال الأمان
+- ✅ دوال الردود التلقائية
+- ✅ دوال الجدولة
+- ✅ دوال التذاكر
+- ✅ دوال الأدمن
+- ✅ جميع الإصلاحات المذكورة سابقاً
+- ✅ إضافة دالة get_all_wallets
+- ✅ إضافة دالة get_user_level
+- ✅ إضافة دالة get_top_users
+- ✅ إضافة دالة get_violation_penalty
+- ✅ إضافة دالة set_violation_penalty
+- ✅ إضافة دالة get_all_violation_penalties
+- ✅ إضافة دالة get_user_penalty_count
+- ✅ إضافة دالة get_all_active_penalties
+- ✅ إضافة دالة get_contest_by_id
+- ✅ إضافة دالة count_user_ad_channels
+- ✅ إضافة دالة is_ad_channel_owner
+- ✅ إضافة دالة set_ad_channel_price
+- ✅ إضافة دالة enable_ad_channel
+- ✅ إضافة دالة disable_ad_channel
+- ✅ إضافة دالة remove_ad_channel
+- ✅ إضافة دالة get_user_ad_channels
+- ✅ إضافة دالة add_ad_channel
+- ✅ تحسين دالة add_penalty مع MAX_PENALTY_DURATION
+- ✅ تحسين دالة expire_penalties لحذف القديمة
+- ✅ تحسين دالة get_violation_count
+- ✅ تحسين دالة increment_violation_count
+- ✅ تحسين دالة reset_violation_count
+- ✅ تحسين دالة add_points
+- ✅ تحسين دالة get_user_points
+- ✅ تحسين دالة get_user_level
+- ✅ تحسين دالة get_top_users
+- ✅ تحسين دالة get_all_wallets
+- ✅ تحسين دالة get_bot_stats
+- ✅ تحسين دالة get_general_stats
+- ✅ تحسين دالة backup_auto_replies
+- ✅ تحسين دالة export_auto_replies_to_file
+- ✅ تحسين دالة import_auto_replies_from_file
+- ✅ تحسين دالة reset_auto_replies
+- ✅ تحسين دالة get_auto_reply_stats
+- ✅ تحسين دالة get_auto_reply
+- ✅ تحسين دالة add_auto_reply
+- ✅ تحسين دالة remove_auto_reply
+- ✅ تحسين دالة get_auto_reply_settings
+- ✅ تحسين دالة update_auto_reply_settings
+- ✅ تحسين دالة get_security_settings
+- ✅ تحسين دالة update_security_settings
+- ✅ تحسين دالة get_banned_words
+- ✅ تحسين دالة add_banned_word
+- ✅ تحسين دالة remove_banned_word
+- ✅ تحسين دالة get_user_warnings
+- ✅ تحسين دالة add_user_warning
+- ✅ تحسين دالة reset_user_warnings
+- ✅ تحسين دالة add_admin_log
+- ✅ تحسين دالة get_admin_logs
+- ✅ تحسين دالة get_schedule
+- ✅ تحسين دالة update_schedule
+- ✅ تحسين دالة update_next_publish
+- ✅ تحسين دالة update_last_publish
+- ✅ تحسين دالة get_channels_to_publish
+- ✅ تحسين دالة create_ticket
+- ✅ تحسين دالة get_tickets
+- ✅ تحسين دالة close_ticket
+- ✅ تحسين دالة delete_all_tickets
+- ✅ تحسين دالة add_referral
+- ✅ تحسين دالة get_referral_stats
+- ✅ تحسين دالة claim_referral_reward
+- ✅ تحسين دالة get_referrals_list
+- ✅ تحسين دالة get_reminder_settings
+- ✅ تحسين دالة update_reminder_settings
+- ✅ تحسين دالة get_users_for_reminder
+- ✅ تحسين دالة create_contest
+- ✅ تحسين دالة get_active_contests
+- ✅ تحسين دالة join_contest
+- ✅ تحسين دالة declare_winner
+- ✅ تحسين دالة get_contest_winners
+- ✅ تحسين دالة delete_contest
+- ✅ تحسين دالة get_setting
+- ✅ تحسين دالة set_setting
+- ✅ تحسين دالة get_force_subscribe_channel
+- ✅ تحسين دالة get_updates_channel
+- ✅ تحسين دالة get_log_channel
+- ✅ تحسين دالة get_publish_interval
+- ✅ تحسين دالة get_auto_backup
+- ✅ تحسين دالة get_plan
+- ✅ تحسين دالة get_plan_by_name
+- ✅ تحسين دالة get_all_plans
+- ✅ تحسين دالة get_gift_plans
+- ✅ تحسين دالة get_gift_plan
+- ✅ تحسين دالة redeem_gift_code
+- ✅ تحسين دالة grant_subscription_days
+- ✅ تحسين دالة create_subscription
+- ✅ تحسين دالة expire_expired_subscriptions
+- ✅ تحسين دالة _refresh_user_subscription_end
+- ✅ تحسين دالة create_invoice
+- ✅ تحسين دالة mark_invoice_paid
+- ✅ تحسين دالة get_invoice
+- ✅ تحسين دالة get_user_invoices
+- ✅ تحسين دالة add_payment_log
+- ✅ تحسين دالة activate_subscription_with_payment
+- ✅ تحسين دالة create_gift_code
+- ✅ تحسين دوال العقوبات
+- ✅ تحسين دوال المخالفات
+- ✅ تحسين دوال النقاط
+- ✅ تحسين دوال الإحالات
+- ✅ تحسين دوال التذكيرات
+- ✅ تحسين دوال المسابقات
+- ✅ تحسين دوال الإعدادات العامة
+- ✅ تحسين دوال الباقات والاشتراكات
+- ✅ تحسين دوال الفواتير والدفع
+- ✅ تحسين دوال المحفظة
+- ✅ تحسين دوال إحصائيات شاملة
+- ✅ تحسين دوال النسخ الاحتياطي
+- ✅ تحسين دوال إضافية مطلوبة من handlers_message.py
+- ✅ تحسين دوال قنوات الإعلانات (ad_channels)
+- ✅ إضافة دالة get_channel_by_user
+- ✅ إضافة دالة get_user_channels
+- ✅ إضافة دالة get_active_channel
+- ✅ إضافة دالة set_active_channel
+- ✅ إضافة دالة delete_channel
+- ✅ إضافة دالة get_channel_info
+- ✅ إضافة دالة get_channel_stats
+- ✅ إضافة دالة get_unpublished_posts_count
+- ✅ إضافة دالة add_posts مع التحقق من الحد الأقصى
+- ✅ إضافة دالة get_next_post مع auto_recycle
+- ✅ إضافة دالة mark_post_published
+- ✅ إضافة دالة increment_post_fail
+- ✅ إضافة دالة delete_post
+- ✅ إضافة دالة reset_posts
+- ✅ دوال المجموعات الكاملة
+- ✅ دوال الأمان
+- ✅ دوال الردود التلقائية
+- ✅ دوال الجدولة
+- ✅ دوال التذاكر
+- ✅ دوال الأدمن
+- ✅ جميع الإصلاحات المذكورة سابقاً
 """
 
 import sqlite3
@@ -335,6 +532,8 @@ class Database:
                 await self._init_default_data(conn)
                 await self._import_banned_words(conn)
                 await self._import_auto_replies(conn)
+                # تهيئة جداول قنوات الإعلانات (في حالة عدم وجودها من قبل)
+                await self._ad_channel_init_tables(conn)
             logger.info("✅ تم تهيئة قاعدة البيانات بنجاح")
             return True
         except Exception as e:
@@ -1012,6 +1211,33 @@ class Database:
             )
         """)
 
+        # جدول محافظ المستخدمين
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_wallets (
+                user_id INTEGER PRIMARY KEY,
+                balance INTEGER DEFAULT 0,
+                total_earned INTEGER DEFAULT 0,
+                total_withdrawn INTEGER DEFAULT 0,
+                updated_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+        """)
+
+        # جدول قنوات الإعلانات المنفصلة
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS ad_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                channel_name TEXT,
+                ad_price INTEGER DEFAULT 100,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                UNIQUE(user_id, channel_id)
+            )
+        """)
+
     # =====================================================================
     # نظام الترحيل (Migration) لإضافة الأعمدة الناقصة
     # =====================================================================
@@ -1123,10 +1349,18 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_posts_channel_pub_fail ON posts(channel_db_id, published, fail_count)",
             "CREATE INDEX IF NOT EXISTS idx_hidden_owner_owner ON hidden_owner_groups(owner_id)",
             "CREATE INDEX IF NOT EXISTS idx_hidden_admin_admin ON hidden_admins(admin_id)",
-            # فهارس إضافية لتحسين الأداء
             "CREATE INDEX IF NOT EXISTS idx_posts_channel_created ON posts(channel_db_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_user_channels_user_created ON user_channels(user_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_referrals_referrer_created ON referrals(referrer_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_wallets_balance ON user_wallets(balance)",
+            "CREATE INDEX IF NOT EXISTS idx_ad_channels_user ON ad_channels(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ad_channels_active ON ad_channels(is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_sub_user_plan ON subscriptions(user_id, plan_id)",
+            "CREATE INDEX IF NOT EXISTS idx_invoices_user_status ON invoices(user_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_payment_logs_user ON payment_logs(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_payment_logs_created ON payment_logs(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_gift_codes_code ON gift_codes(code)",
+            "CREATE INDEX IF NOT EXISTS idx_gift_codes_used ON gift_codes(used_by)",
         ]
         for query in indexes:
             try:
@@ -1263,6 +1497,92 @@ class Database:
             logger.error(f"❌ خطأ في استيراد الردود التلقائية: {e}")
 
     # =====================================================================
+    # دوال قنوات الإعلانات المنفصلة (ad_channels)
+    # =====================================================================
+
+    async def _ad_channel_init_tables(self, conn: aiosqlite.Connection) -> None:
+        """إنشاء جدول قنوات الإعلانات إذا لم يكن موجودًا (يُستخدم كنسخة احتياطية)"""
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS ad_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                channel_name TEXT,
+                ad_price INTEGER DEFAULT 100,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                UNIQUE(user_id, channel_id)
+            )
+        """)
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ad_channels_user ON ad_channels(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ad_channels_active ON ad_channels(is_active)")
+
+    async def add_ad_channel(self, user_id: int, channel_id: int, channel_name: str) -> Optional[int]:
+        try:
+            channel_id = int(channel_id)
+            if channel_id <= 0:
+                return None
+            success = await self.execute(
+                "INSERT INTO ad_channels (user_id, channel_id, channel_name, created_at) VALUES (?,?,?,?)",
+                (user_id, channel_id, channel_name, TimeUtils.sql_iso())
+            )
+            if not success:
+                return None
+            return await self.fetchval("SELECT last_insert_rowid()")
+        except Exception as e:
+            if "UNIQUE constraint failed" in str(e):
+                return None
+            logger.error(f"❌ Error in add_ad_channel: {e}", exc_info=True)
+            return None
+
+    async def remove_ad_channel(self, user_id: int, channel_db_id: int) -> bool:
+        return await self.execute(
+            "DELETE FROM ad_channels WHERE id = ? AND user_id = ?",
+            (channel_db_id, user_id)
+        )
+
+    async def get_user_ad_channels(self, user_id: int) -> List[Dict[str, Any]]:
+        return await self.fetchall(
+            "SELECT id, channel_id, channel_name, ad_price, is_active FROM ad_channels WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,)
+        )
+
+    async def set_ad_channel_price(self, user_id: int, channel_db_id: int, price: int) -> bool:
+        if price <= 0:
+            return False
+        return await self.execute(
+            "UPDATE ad_channels SET ad_price = ? WHERE id = ? AND user_id = ?",
+            (price, channel_db_id, user_id)
+        )
+
+    async def enable_ad_channel(self, user_id: int, channel_db_id: int) -> bool:
+        return await self.execute(
+            "UPDATE ad_channels SET is_active = 1 WHERE id = ? AND user_id = ?",
+            (channel_db_id, user_id)
+        )
+
+    async def disable_ad_channel(self, user_id: int, channel_db_id: int) -> bool:
+        return await self.execute(
+            "UPDATE ad_channels SET is_active = 0 WHERE id = ? AND user_id = ?",
+            (channel_db_id, user_id)
+        )
+
+    async def is_ad_channel_owner(self, user_id: int, channel_db_id: int) -> bool:
+        result = await self.fetchval(
+            "SELECT 1 FROM ad_channels WHERE id = ? AND user_id = ?",
+            (channel_db_id, user_id)
+        )
+        return result is not None
+
+    async def count_user_ad_channels(self, user_id: int) -> int:
+        result = await self.fetchval(
+            "SELECT COUNT(*) FROM ad_channels WHERE user_id = ?",
+            (user_id,)
+        )
+        return int(result or 0)
+
+    # =====================================================================
     # دوال المستخدمين
     # =====================================================================
 
@@ -1290,6 +1610,7 @@ class Database:
                     return False
                 await conn.execute("INSERT OR IGNORE INTO user_points (user_id, points, last_updated) VALUES (?,0,?)", (user_id, TimeUtils.sql_iso()))
                 await conn.execute("INSERT OR IGNORE INTO referral_rewards (user_id, referral_count, total_reward_days, claimed_reward_days, last_referral_date) VALUES (?, 0, 0, 0, NULL)", (user_id,))
+                await conn.execute("INSERT OR IGNORE INTO user_wallets (user_id, balance, total_earned, total_withdrawn, updated_at) VALUES (?, 0, 0, 0, ?)", (user_id, TimeUtils.sql_iso()))
             return True
         except Exception as e:
             logger.error(f"❌ Error in register_user: {e}", exc_info=True)
@@ -2535,6 +2856,9 @@ class Database:
             logger.error(f"❌ Error in delete_contest: {e}", exc_info=True)
             return False
 
+    async def get_contest_by_id(self, contest_id: int) -> Optional[Dict]:
+        return await self.fetchone("SELECT * FROM contests WHERE id = ?", (contest_id,))
+
     # =====================================================================
     # دوال الإعدادات العامة
     # =====================================================================
@@ -3024,6 +3348,71 @@ class Database:
         )
 
     # =====================================================================
+    # دوال المحفظة
+    # =====================================================================
+
+    async def add_to_balance(self, user_id: int, amount: int) -> bool:
+        try:
+            await self.execute(
+                """INSERT INTO user_wallets (user_id, balance, total_earned, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                       balance = balance + ?,
+                       total_earned = total_earned + ?,
+                       updated_at = ?""",
+                (user_id, amount, amount, TimeUtils.sql_iso(),
+                 amount, amount, TimeUtils.sql_iso())
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error in add_to_balance: {e}", exc_info=True)
+            return False
+
+    async def get_user_balance(self, user_id: int) -> int:
+        return await self.fetchval(
+            "SELECT balance FROM user_wallets WHERE user_id = ?",
+            (user_id,), default=0
+        )
+
+    async def get_total_earned(self, user_id: int) -> int:
+        return await self.fetchval(
+            "SELECT total_earned FROM user_wallets WHERE user_id = ?",
+            (user_id,), default=0
+        )
+
+    async def get_total_withdrawn(self, user_id: int) -> int:
+        return await self.fetchval(
+            "SELECT total_withdrawn FROM user_wallets WHERE user_id = ?",
+            (user_id,), default=0
+        )
+
+    async def withdraw_from_balance(self, user_id: int, amount: int) -> bool:
+        try:
+            async with self._get_connection() as conn:
+                balance = await self._fetchval_in_conn(
+                    conn,
+                    "SELECT balance FROM user_wallets WHERE user_id = ?",
+                    (user_id,), default=0
+                )
+                if balance < amount:
+                    return False
+                await conn.execute(
+                    """UPDATE user_wallets 
+                       SET balance = balance - ?,
+                           total_withdrawn = total_withdrawn + ?,
+                           updated_at = ?
+                       WHERE user_id = ?""",
+                    (amount, amount, TimeUtils.sql_iso(), user_id)
+                )
+                return True
+        except Exception as e:
+            logger.error(f"❌ Error in withdraw_from_balance: {e}", exc_info=True)
+            return False
+
+    async def get_all_wallets(self) -> List[Dict]:
+        return await self.fetchall("SELECT * FROM user_wallets ORDER BY balance DESC")
+
+    # =====================================================================
     # دوال إحصائيات شاملة
     # =====================================================================
 
@@ -3163,9 +3552,6 @@ class Database:
 
     async def count_user_posts(self, user_id: int, channel_db_id: int) -> int:
         return await self.fetchval("SELECT COUNT(*) FROM posts WHERE channel_db_id = ?", (channel_db_id,), default=0)
-
-    async def get_contest_by_id(self, contest_id: int) -> Optional[Dict]:
-        return await self.fetchone("SELECT * FROM contests WHERE id = ?", (contest_id,))
 
 
 # =====================================================================

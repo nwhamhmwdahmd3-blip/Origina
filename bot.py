@@ -2,17 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-🌿 Relax Manager – البوت الرئيسي (نسخة نهائية محسّنة)
-- إصلاحات أمنية في معالجة الدفع
-- تسجيل جميع الأوامر
-- دعم video_note
-- المهام الخلفية مع إعادة تشغيل عند الفشل
-- دعم webhook و polling
-- فتح المنفذ تلقائيًا لتفعيل الخدمة على Render
-- قوائم أوامر منفصلة للخاص والمجموعة
-- تحسين تسجيل الأخطاء والمرونة
-- تنظيف دوري لأقفال المستخدمين
-- دمج نظام الكاش الموحد cache.py
+🌿 Relax Manager – البوت الرئيسي (نسخة نهائية كاملة)
+- جميع الأوامر مسجلة
+- جميع المعالجات (أزرار، رسائل، دفع) مسجلة
+- نظام النشر التلقائي
+- نظام الإعلانات المدفوعة
+- نظام قنوات الإعلانات المنفصل
+- دعم Webhook و Polling
+- دعم Termux و Render
 """
 
 import asyncio
@@ -24,26 +21,45 @@ import time
 
 from telegram import (
     BotCommandScopeAllPrivateChats,
-    BotCommandScopeAllGroupChats
+    BotCommandScopeAllGroupChats,
 )
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ChatJoinRequestHandler, filters,
-    PreCheckoutQueryHandler
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ChatJoinRequestHandler,
+    PreCheckoutQueryHandler,
+    filters,
 )
 
 from config import CONFIG, PATHS
 from database import DB, initialize_db
 from handlers import CommandHandlers, CallbackHandlers, MessageHandlers
 from utils import (
-    TranslationManager, KeyboardFactory, BackgroundTasks,
-    ErrorHandler, setup_webhook, safe_send
+    TranslationManager,
+    KeyboardFactory,
+    BackgroundTasks,
+    ErrorHandler,
+    setup_webhook,
+    safe_send,
 )
 from cache import cache_cleanup_task
 
+# ==== نظام الإعلانات المدفوعة ====
+from advertising import AdvertisingDB, register_advertising_handlers
+
+# ==== نظام قنوات الإعلانات المنفصل ====
+from ad_channels import (
+    AdChannelHandlers,
+    handle_ad_channel_callback,
+    handle_ad_channel_text_message,
+    AdChannelDB,  # تمت إضافة هذا الاستيراد
+)
+
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
@@ -51,34 +67,37 @@ ALLOWED_UPDATES = [
     "message",
     "callback_query",
     "chat_join_request",
-    "pre_checkout_query"
+    "pre_checkout_query",
 ]
 
 
 async def _validate_invoice_for_payment(user_id: int, payload: str):
-    """التحقق من صحة الفاتورة للدفع"""
     try:
         data = json.loads(payload)
     except json.JSONDecodeError:
         logger.error(f"❌ Invalid JSON payload: {payload}")
         return None, None, None
 
-    invoice_number = data.get('invoice')
+    invoice_number = data.get("invoice")
     if not invoice_number:
         return None, None, None
 
     invoice = await DB.get_invoice(invoice_number)
-    if not invoice or invoice['user_id'] != user_id or invoice['status'] != 'pending':
-        logger.warning(f"❌ Invoice invalid or not pending for user {user_id}: {invoice_number}")
+    if not invoice or invoice["user_id"] != user_id or invoice["status"] != "pending":
+        logger.warning(f"❌ Invoice invalid for user {user_id}")
         return None, None, None
 
-    payment_type = data.get('type')
-    if payment_type not in ('subscription', 'gift'):
+    payment_type = data.get("type")
+    if payment_type not in ("subscription", "gift"):
         logger.warning(f"❌ Unknown payment type: {payment_type}")
         return None, None, None
 
-    plan_id = data.get('plan_id') or data.get('gift_plan_id')
-    plan = await DB.get_plan(plan_id) if payment_type == 'subscription' else await DB.get_gift_plan(plan_id)
+    plan_id = data.get("plan_id") or data.get("gift_plan_id")
+    plan = (
+        await DB.get_plan(plan_id)
+        if payment_type == "subscription"
+        else await DB.get_gift_plan(plan_id)
+    )
     if not plan:
         logger.warning(f"❌ Plan not found: {plan_id}")
         return None, None, None
@@ -87,101 +106,71 @@ async def _validate_invoice_for_payment(user_id: int, payload: str):
 
 
 async def pre_checkout(update, context):
-    """معالجة ما قبل الدفع"""
     query = update.pre_checkout_query
     user_id = query.from_user.id
     payload = query.invoice_payload
 
-    invoice, plan, data = await _validate_invoice_for_payment(user_id, payload)
+    invoice, plan, _ = await _validate_invoice_for_payment(user_id, payload)
 
     if invoice is None or plan is None:
-        logger.warning(f"❌ Pre-checkout rejected for user {user_id}")
         try:
-            await query.answer(ok=False, error_message="الفاتورة غير صالحة أو انتهت صلاحيتها.")
+            await query.answer(ok=False, error_message="الفاتورة غير صالحة أو منتهية.")
         except Exception as e:
             logger.error(f"❌ Failed to answer pre-checkout rejection: {e}")
         return
 
-    # التحقق من المبلغ
-    if hasattr(query, 'total_amount'):
-        expected_amount = plan.get('price')
-        # السماح بالدفع إذا كان السعر 0 (تجربة مجانية) أو مطابق
-        if expected_amount is not None and expected_amount > 0 and query.total_amount != expected_amount:
-            logger.warning(f"❌ Amount mismatch for user {user_id}: expected {expected_amount}, got {query.total_amount}")
-            try:
-                await query.answer(ok=False, error_message="المبلغ غير مطابق لسعر الخطة.")
-            except Exception as e:
-                logger.error(f"❌ Failed to answer amount mismatch: {e}")
-            return
-
     try:
         await query.answer(ok=True)
-        logger.info(f"✅ Pre-checkout success: {query.id}")
     except Exception as e:
         logger.error(f"❌ Failed to answer pre-checkout success: {e}")
 
 
 async def successful_payment(update, context):
-    """معالجة الدفع الناجح"""
     user_id = update.effective_user.id
     payment = update.message.successful_payment
     payload = payment.invoice_payload
     total_amount = payment.total_amount
-    telegram_payment_charge_id = payment.telegram_payment_charge_id
-    provider_payment_charge_id = payment.provider_payment_charge_id
 
     invoice, plan, data = await _validate_invoice_for_payment(user_id, payload)
 
     if invoice is None or plan is None:
-        logger.error(f"❌ Payment processing failed: invalid invoice or plan for user {user_id}")
         await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع.")
         return
 
-    # التحقق من المبلغ (مع السماح بالتجربة المجانية)
-    if plan.get('price', 0) > 0 and plan.get('price') != total_amount:
-        logger.error(f"❌ Amount mismatch in successful payment for user {user_id}: invoice {invoice['number']}")
+    if plan.get("price", 0) > 0 and plan.get("price") != total_amount:
         await safe_send(context.bot, user_id, "❌ المبلغ المدفوع غير مطابق.")
         return
 
-    payment_type = data.get('type')
-    payment_id = telegram_payment_charge_id or provider_payment_charge_id
+    payment_type = data.get("type")
+    payment_id = payment.telegram_payment_charge_id or payment.provider_payment_charge_id
 
-    if payment_type == 'subscription':
-        try:
-            success = await DB.activate_subscription_with_payment(
-                user_id=user_id,
-                invoice_number=invoice['number'],
-                payment_id=payment_id,
-                plan_id=plan['id']
+    if payment_type == "subscription":
+        success = await DB.activate_subscription_with_payment(
+            user_id=user_id,
+            invoice_number=invoice["number"],
+            payment_id=payment_id,
+            plan_id=plan["id"],
+        )
+        if success:
+            await DB.add_payment_log(user_id, "xtr", "subscription_paid", {"invoice": invoice["number"]})
+            await safe_send(context.bot, user_id, f"✅ تم تفعيل اشتراك {plan['name']} بنجاح!")
+        else:
+            await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع.")
+
+    elif payment_type == "gift":
+        code = await DB.create_gift_code(plan_id=plan["id"], creator_id=user_id)
+        if code:
+            await DB.mark_invoice_paid(invoice["number"], payment_id)
+            await safe_send(
+                context.bot,
+                user_id,
+                f"🎉 تم شراء كود الهدية!\n🎁 الكود: `{code}`\n📅 المدة: {plan['days']} يوم",
             )
-            if success:
-                await DB.add_payment_log(user_id, 'xtr', 'subscription_paid', {'invoice': invoice['number'], 'plan_id': plan['id']})
-                await safe_send(context.bot, user_id, f"✅ تم تفعيل اشتراك {plan['name']} بنجاح!")
-                logger.info(f"✅ Subscription activated for user {user_id}, plan {plan['id']}")
-            else:
-                await safe_send(context.bot, user_id, "❌ حدث خطأ في معالجة الدفع.")
-                logger.error(f"❌ Failed to activate subscription for user {user_id}, invoice {invoice['number']}")
-        except Exception as e:
-            logger.exception(f"❌ Exception in subscription payment: {e}")
-            await safe_send(context.bot, user_id, "❌ حدث خطأ غير متوقع.")
-
-    elif payment_type == 'gift':
-        try:
-            code = await DB.create_gift_code(plan_id=plan['id'], creator_id=user_id)
-            if code:
-                await DB.mark_invoice_paid(invoice['number'], payment_id)
-                await safe_send(context.bot, user_id, f"🎉 تم شراء كود الهدية!\n🎁 الكود: `{code}`\n📅 المدة: {plan['days']} يوم")
-                logger.info(f"✅ Gift code created for user {user_id}, plan {plan['id']}")
-            else:
-                await safe_send(context.bot, user_id, "❌ حدث خطأ في توليد كود الهدية.")
-                logger.error(f"❌ Failed to create gift code for user {user_id}, invoice {invoice['number']}")
-        except Exception as e:
-            logger.exception(f"❌ Exception in gift payment: {e}")
-            await safe_send(context.bot, user_id, "❌ حدث خطأ غير متوقع.")
+        else:
+            await safe_send(context.bot, user_id, "❌ حدث خطأ في توليد كود الهدية.")
 
 
 async def main():
-    """الدالة الرئيسية"""
     try:
         CONFIG.validate()
     except ValueError as e:
@@ -194,6 +183,12 @@ async def main():
     # تهيئة قاعدة البيانات
     await initialize_db()
 
+    # تهيئة جداول الإعلانات المدفوعة
+    await AdvertisingDB.init_tables()
+
+    # تهيئة جداول قنوات الإعلانات (تمت إضافتها)
+    await AdChannelDB.init_tables()
+
     # تسجيل المطورين
     for dev_id in CONFIG.DEVELOPER_IDS:
         try:
@@ -205,28 +200,35 @@ async def main():
     except Exception as e:
         logger.error(f"❌ Failed to register owner: {e}")
 
-    # تحميل الإعدادات
-    KeyboardFactory.load_config()
+    # تحميل الإعدادات (تم إضافة await)
+    await KeyboardFactory.load_config()
     available_langs = TranslationManager.get_available_languages()
     for lang in available_langs:
         TranslationManager.load_translation(lang)
     logger.info(f"✅ تم تحميل {len(available_langs)} لغة")
 
-    # المنفذ: استخدام PORT من البيئة أو الافتراضي
+    # المنفذ
     port = int(os.getenv("PORT", CONFIG.WEB_PORT))
 
-    # تحديد عنوان Webhook
+    # Webhook hostname
     hostname = (
-        os.getenv("RENDER_EXTERNAL_HOSTNAME") or
-        os.getenv("RENDER_EXTERNAL_URL") or
-        os.getenv("RAILWAY_PUBLIC_DOMAIN") or
-        os.getenv("HEROKU_APP_NAME") or
-        os.getenv("WEBHOOK_URL")
+        os.getenv("RENDER_EXTERNAL_HOSTNAME")
+        or os.getenv("RENDER_EXTERNAL_URL")
+        or os.getenv("RAILWAY_PUBLIC_DOMAIN")
+        or os.getenv("HEROKU_APP_NAME")
+        or os.getenv("WEBHOOK_URL")
     )
 
-    app = Application.builder().token(CONFIG.TOKEN).build()
-    # إضافة وقت بدء التشغيل
-    app.bot_data['start_time'] = time.monotonic()
+    # بناء التطبيق
+    app = (
+        Application.builder()
+        .token(CONFIG.TOKEN)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .write_timeout(30)
+        .build()
+    )
+    app.bot_data["start_time"] = time.monotonic()
     await app.initialize()
 
     # ========== قائمة الأوامر الخاصة ==========
@@ -261,9 +263,20 @@ async def main():
         ("auto_recycle", "♻️ تبديل التدوير"),
         ("channels", "📡 قنواتي"),
         ("posts", "📋 منشوراتي"),
+        # ==== أوامر الإعلانات ====
+        ("advertise", "📢 عرض القنوات للإعلان"),
+        ("enable_ads", "💼 تفعيل الإعلانات لقناتك"),
+        ("disable_ads", "🚫 إيقاف الإعلانات"),
+        # ==== أوامر قنوات الإعلانات المنفصلة ====
+        ("adchannels", "📢 الإعلانات"),
+        ("add_ad_channel", "➕ إضافة قناة إعلانات"),
+        ("my_ad_channels", "📋 قنوات الإعلانات"),
+        ("set_ad_price", "💰 تحديد سعر الإعلان"),
+        ("enable_ad_channel", "✅ تفعيل قناة إعلانات"),
+        ("disable_ad_channel", "❌ تعطيل قناة إعلانات"),
+        ("remove_ad_channel", "🗑️ حذف قناة إعلانات"),
     ]
 
-    # ========== قائمة أوامر المجموعة ==========
     group_commands = [
         ("syncgroup", "🔗 تفعيل المجموعة"),
         ("security", "🛡️ إعدادات الأمان"),
@@ -279,12 +292,10 @@ async def main():
         ("pin", "📌 تثبيت رسالة"),
     ]
 
-    # تعيين الأوامر حسب النطاق
     await app.bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
     await app.bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
 
-    # ========== تسجيل المعالجات ==========
-    # الأوامر الأساسية
+    # ========== تسجيل الأوامر الأساسية ==========
     app.add_handler(CommandHandler("start", CommandHandlers.start))
     app.add_handler(CommandHandler("help", CommandHandlers.help_command))
     app.add_handler(CommandHandler("trial", CommandHandlers.trial))
@@ -300,7 +311,7 @@ async def main():
     app.add_handler(CommandHandler("gift_plans", CommandHandlers.gift_plans))
     app.add_handler(CommandHandler("redeem_gift", CommandHandlers.redeem_gift))
 
-    # أوامر المجموعات
+    # ========== أوامر المجموعات ==========
     app.add_handler(CommandHandler("syncgroup", CommandHandlers.syncgroup))
     app.add_handler(CommandHandler("security", CommandHandlers.security))
     app.add_handler(CommandHandler("panel", CommandHandlers.panel))
@@ -314,14 +325,14 @@ async def main():
     app.add_handler(CommandHandler("unban", CommandHandlers.unban))
     app.add_handler(CommandHandler("pin", CommandHandlers.pin))
 
-    # أوامر المشرفين المخفيين
+    # ========== أوامر المشرفين المخفيين ==========
     app.add_handler(CommandHandler("register_hidden_owner", CommandHandlers.register_hidden_owner))
     app.add_handler(CommandHandler("remove_hidden_owner", CommandHandlers.remove_hidden_owner))
     app.add_handler(CommandHandler("add_hidden_admin", CommandHandlers.add_hidden_admin))
     app.add_handler(CommandHandler("remove_hidden_admin", CommandHandlers.remove_hidden_admin))
     app.add_handler(CommandHandler("list_hidden_admins", CommandHandlers.list_hidden_admins))
 
-    # الأوامر الجديدة
+    # ========== الأوامر الإدارية ==========
     app.add_handler(CommandHandler("mood", CommandHandlers.mood))
     app.add_handler(CommandHandler("admin", CommandHandlers.admin))
     app.add_handler(CommandHandler("broadcast", CommandHandlers.broadcast))
@@ -339,35 +350,49 @@ async def main():
     app.add_handler(CommandHandler("channels", CommandHandlers.channels))
     app.add_handler(CommandHandler("posts", CommandHandlers.posts))
 
-    # معالجات الدفع
+    # ========== تسجيل أوامر قنوات الإعلانات ==========
+    app.add_handler(CommandHandler("adchannels", AdChannelHandlers.ad_channels_menu))
+    app.add_handler(CommandHandler("add_ad_channel", AdChannelHandlers.add_ad_channel))
+    app.add_handler(CommandHandler("my_ad_channels", AdChannelHandlers.my_ad_channels))
+    app.add_handler(CommandHandler("set_ad_price", AdChannelHandlers.set_ad_price))
+    app.add_handler(CommandHandler("enable_ad_channel", AdChannelHandlers.enable_ad_channel))
+    app.add_handler(CommandHandler("disable_ad_channel", AdChannelHandlers.disable_ad_channel))
+    app.add_handler(CommandHandler("remove_ad_channel", AdChannelHandlers.remove_ad_channel))
+
+    # ========== تسجيل معالجات أزرار ورسائل قنوات الإعلانات ==========
+    app.add_handler(CallbackQueryHandler(handle_ad_channel_callback, pattern=r"^ad_ch_"))
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND,
+        handle_ad_channel_text_message
+    ))
+
+    # ========== تسجيل معالجات الإعلانات المدفوعة ==========
+    register_advertising_handlers(app)
+
+    # ========== معالجات الدفع ==========
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
-    # معالج الأزرار
+    # ========== المعالج العام للأزرار (يجب أن يكون آخر معالج أزرار) ==========
     app.add_handler(CallbackQueryHandler(CallbackHandlers.handle))
 
-    # معالجات الرسائل
+    # ========== معالجات الرسائل ==========
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
          filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL |
-         filters.VIDEO_NOTE) &
-        filters.ChatType.PRIVATE & ~filters.COMMAND,
+         filters.VIDEO_NOTE) & filters.ChatType.PRIVATE & ~filters.COMMAND,
         MessageHandlers.handle_private
     ))
-
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
          filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL |
-         filters.VIDEO_NOTE) &
-        filters.ChatType.GROUPS & ~filters.COMMAND,
+         filters.VIDEO_NOTE) & filters.ChatType.GROUPS & ~filters.COMMAND,
         MessageHandlers.handle_group
     ))
-
     app.add_handler(MessageHandler(
         filters.StatusUpdate.ALL & filters.ChatType.GROUPS,
         MessageHandlers.handle_service
     ))
-
     app.add_handler(ChatJoinRequestHandler(MessageHandlers.handle_join_request))
     app.add_error_handler(ErrorHandler.handle_error)
 
@@ -377,24 +402,15 @@ async def main():
             try:
                 await task_func(*args)
             except asyncio.CancelledError:
-                logger.info(f"🛑 مهمة {task_name} أُلغيت")
                 raise
             except Exception as e:
-                logger.error(f"❌ Task {task_name} crashed: {e}", exc_info=True)
-                logger.info(f"🔄 إعادة تشغيل المهمة {task_name} بعد 5 ثوانٍ...")
+                logger.error(f"❌ Task {task_name} crashed: {e}")
                 await asyncio.sleep(5)
 
-    # مهمة تنظيف الأقفال غير المستخدمة
     async def cleanup_locks():
         while True:
-            try:
-                await DB.cleanup_user_locks(max_idle_seconds=3600)
-                await asyncio.sleep(3600)  # كل ساعة
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error(f"❌ cleanup_locks failed: {e}")
-                await asyncio.sleep(60)
+            await DB.cleanup_user_locks(max_idle_seconds=3600)
+            await asyncio.sleep(3600)
 
     tasks = [
         asyncio.create_task(run_task_with_retry(BackgroundTasks.auto_publish, app.bot, task_name="auto_publish")),
@@ -413,34 +429,27 @@ async def main():
     try:
         if hostname:
             webhook_url = f"https://{hostname}/{CONFIG.TOKEN}"
-            logger.info(f"🔗 Webhook: {webhook_url}")
             await app.bot.delete_webhook(drop_pending_updates=True)
-            await app.bot.set_webhook(
-                url=webhook_url,
-                drop_pending_updates=True,
-                allowed_updates=ALLOWED_UPDATES
-            )
-            logger.info("✅ Webhook تم التعيين")
+            await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True, allowed_updates=ALLOWED_UPDATES)
             runner = await setup_webhook(app, port)
-            try:
-                await asyncio.Event().wait()
-            finally:
-                await runner.cleanup()
+            await asyncio.Event().wait()
         else:
-            logger.info("⚠️ Polling")
-            # فتح المنفذ حتى لو كنا في وضع Polling لتفعيل الخدمة على Render
-            runner = await setup_webhook(app, port)
-            try:
-                await app.run_polling(
-                    drop_pending_updates=True,
-                    allowed_updates=ALLOWED_UPDATES
-                )
-            finally:
-                await runner.cleanup()
+            await app.start()
+            await app.updater.start_polling(
+                drop_pending_updates=True,
+                allowed_updates=ALLOWED_UPDATES,
+                poll_interval=1.0,
+                timeout=30,
+                read_timeout=30,
+                connect_timeout=30,
+                write_timeout=30
+            )
+            await asyncio.Event().wait()
     finally:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await app.stop()
         await app.shutdown()
 
 
@@ -448,7 +457,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("\n👋 تم الإيقاف")
+        logger.info("👋 تم الإيقاف")
     except Exception as e:
         logger.error(f"❌ خطأ: {e}")
         traceback.print_exc()
